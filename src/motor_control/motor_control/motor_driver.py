@@ -527,57 +527,57 @@ def main(args=None):
     try:
         # 示例：控制ID=1的电机
         motor_id = 1
-        
-        # 1. 基础控制示例
-        motor_driver.get_logger().info("=== 基础控制测试 ===")
-        motor_driver.enable_drive(motor_id)  # 使能电机（抱闸释放）
-        time.sleep(0.5)
-        # motor_driver.set_rotation_direction(motor_id, is_forward=True)  # 设置正转
-        motor_driver.set_acceleration(motor_id, 5000)  # 加速度5000 dps/s
-        motor_driver.set_deceleration(motor_id, 5000)  # 减速度5000 dps/s
-        motor_driver.set_velocity_closed_loop(motor_id, target_speed=100, max_torque=200)  # 100 dps，最大扭矩200
-        time.sleep(3)
-        
-        # 2. 状态读取示例
-        motor_driver.get_logger().info("\n=== 状态读取测试 ===")
-        state1 = motor_driver.get_motor_state1(motor_id)
-        if state1:
-            motor_driver.get_logger().info(
-                f"状态1 - 温度: {state1['temperature']}℃, "
-                f"抱闸状态: {state1['brake_status']}, "
-                f"电压: {state1['voltage']}V, "
-                f"错误: {state1['error_info']}"
-            )
-        
-        state2 = motor_driver.get_motor_state2(motor_id)
-        if state2:
-            motor_driver.get_logger().info(
-                f"状态2 - 转矩电流: {state2['torque_current']}A, "
-                f"转速: {state2['speed']}dps, "
-                f"角度: {state2['angle']}°"
-            )
-        
-        state3 = motor_driver.get_motor_state3(motor_id)
-        if state3:
-            motor_driver.get_logger().info(
-                f"状态3 - A相电流: {state3['current_a']}A, "
-                f"B相电流: {state3['current_b']}A, "
-                f"C相电流: {state3['current_c']}A"
-            )
-        
-        # 3. 配置参数示例
-        motor_driver.get_logger().info("\n=== 配置参数测试 ===")
-        motor_driver.set_comm_protection_time(motor_id, 5000)  # 通讯中断保护时间500ms
-        # can_id_info = motor_driver.read_can_id(motor_id)
-        # if can_id_info:
-            # motor_driver.get_logger().info(f"当前CAN ID信息: {can_id_info}")
-        # 4. 停止电机
-        motor_driver.stop_motor(motor_id)  # 停止电机
-        time.sleep(1)
-        motor_driver.disable_drive(motor_id)  # 非使能电机
-        motor_driver.brake_lock(motor_id)  # 抱闸锁死
-        
-        rclpy.spin(motor_driver)
+        while True:
+            # 1. 基础控制示例
+            motor_driver.get_logger().info("=== 基础控制测试 ===")
+            motor_driver.enable_drive(motor_id)  # 使能电机（抱闸释放）
+            time.sleep(0.5)
+            # motor_driver.set_rotation_direction(motor_id, is_forward=True)  # 设置正转
+            motor_driver.set_acceleration(motor_id, 5000)  # 加速度5000 dps/s
+            motor_driver.set_deceleration(motor_id, 5000)  # 减速度5000 dps/s
+            motor_driver.set_velocity_closed_loop(motor_id, target_speed=100, max_torque=200)  # 100 dps，最大扭矩200
+            time.sleep(3)
+            
+            # 2. 状态读取示例
+            motor_driver.get_logger().info("\n=== 状态读取测试 ===")
+            state1 = motor_driver.get_motor_state1(motor_id)
+            if state1:
+                motor_driver.get_logger().info(
+                    f"状态1 - 温度: {state1['temperature']}℃, "
+                    f"抱闸状态: {state1['brake_status']}, "
+                    f"电压: {state1['voltage']}V, "
+                    f"错误: {state1['error_info']}"
+                )
+            
+            state2 = motor_driver.get_motor_state2(motor_id)
+            if state2:
+                motor_driver.get_logger().info(
+                    f"状态2 - 转矩电流: {state2['torque_current']}A, "
+                    f"转速: {state2['speed']}dps, "
+                    f"角度: {state2['angle']}°"
+                )
+            
+            state3 = motor_driver.get_motor_state3(motor_id)
+            if state3:
+                motor_driver.get_logger().info(
+                    f"状态3 - A相电流: {state3['current_a']}A, "
+                    f"B相电流: {state3['current_b']}A, "
+                    f"C相电流: {state3['current_c']}A"
+                )
+            
+            # 3. 配置参数示例
+            motor_driver.get_logger().info("\n=== 配置参数测试 ===")
+            motor_driver.set_comm_protection_time(motor_id, 5000)  # 通讯中断保护时间500ms
+            # can_id_info = motor_driver.read_can_id(motor_id)
+            # if can_id_info:
+                # motor_driver.get_logger().info(f"当前CAN ID信息: {can_id_info}")
+            # 4. 停止电机
+            motor_driver.stop_motor(motor_id)  # 停止电机
+            time.sleep(1)
+            motor_driver.disable_drive(motor_id)  # 非使能电机
+            motor_driver.brake_lock(motor_id)  # 抱闸锁死
+            
+            rclpy.spin(motor_driver)
     except KeyboardInterrupt:
         motor_driver.get_logger().info("收到中断信号，停止电机...")
     finally:
