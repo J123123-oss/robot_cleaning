@@ -8,11 +8,14 @@ setup(
     name=package_name,
     version='0.0.0',
     packages=find_packages(exclude=['test']),
+    
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'msg'), glob(os.path.join('custom_msgs', 'msg', '*.msg'))),
+        (os.path.join('share', 'rtk_nav', 'launch'), [os.path.join('launch', f) for f in os.listdir('launch') if f.endswith('.launch.py')])
+
     ],
     install_requires=['setuptools', 'custom_msgs'],
     zip_safe=True,

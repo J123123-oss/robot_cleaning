@@ -14,8 +14,8 @@ from custom_msgs.msg import WTRTK
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.5
 RTK_HEADING_TOLERANCE = 0.5
-LINEAR_SPEED_BASE = 0.0124
-ANGULAR_SPEED_BASE = 0.1
+LINEAR_SPEED_BASE = 100       # origin 0.0124
+ANGULAR_SPEED_BASE = 100      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.5
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 5.0
@@ -47,7 +47,7 @@ class RTKNavigator:
         # 声明RTK路径参数
         self.rtk_path_file = self.node.declare_parameter(
             'rtk_path_file',
-            "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+            "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
         ).value
 
         # 加载航点
@@ -216,12 +216,12 @@ class RTKNavigator:
             distance = self.calc_distance_to_waypoint(first_waypoint)
             # 距离变化显著时打印
             if abs(last_distance - distance) > 0.1:
-                self.node.get_logger().info(f"到第一个航点距离：{distance:.2f}m")
+                self.node.get_logger().info(f"到第一个航点距离：{distance:.2f} m")
                 last_distance = distance
 
             # 到达距离阈值，开始航向校准
             if distance < INITIAL_MOVE_TOLERANCE:
-                self.node.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f}m")
+                self.node.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f} m")
                 target_heading = self.get_path_heading(first_waypoint)
                 self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                 self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
@@ -241,8 +241,10 @@ class RTKNavigator:
             correction = self.get_speed_correction(target_heading)
 
             base_speed = LINEAR_SPEED_BASE
-            left_speed_rad = self.rad_from_linear(base_speed) - correction
-            right_speed_rad = self.rad_from_linear(base_speed) + correction
+            left_speed_rad = -base_speed + correction
+            right_speed_rad = base_speed + correction
+            # left_speed_rad = self.rad_from_linear(base_speed) - correction
+            # right_speed_rad = self.rad_from_linear(base_speed) + correction
 
             yield (left_speed_rad, right_speed_rad)
 
@@ -270,7 +272,7 @@ class RTKControlNode(Node):
         super().__init__('rtk_control_node')
 
         # 循环频率
-        self.rate = self.create_rate(50)
+        self.rate = self.create_rate(10)
 
         # 1. 初始化RTK导航器
         self.rtk_navigator = RTKNavigator(self)
@@ -295,7 +297,43 @@ class RTKControlNode(Node):
         self.current_control_mode = ControlMode.NORMAL
 
         # 启动主循环
-        self.run()
+        self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)  # 0.1秒 = 10Hz
+
+
+    def rtk_timer_callback(self):
+        # 仅在RTK导航模式下执行导航逻辑
+        if self.current_control_mode == ControlMode.RTK_NAV:
+            # 初始化导航生成器
+            if not self.nav_generator:
+                self.nav_generator = self.rtk_navigator.move_to_first_waypoint()
+                self.publish_nav_state(NavState.INITIAL_MOVE)
+
+            # 获取导航速度并发布给电机节点
+            try:
+                if self.nav_generator:
+                    left_speed_rad, right_speed_rad = next(self.nav_generator)
+                    # 构造速度消息（x=左轮速度，y=右轮速度，z=预留）
+                    speed_msg = Vector3()
+                    speed_msg.x = left_speed_rad
+                    speed_msg.y = right_speed_rad
+                    speed_msg.z = 0.0
+                    self.motor_speed_pub.publish(speed_msg)
+            except StopIteration:
+                self.get_logger().info("第一个航点导航完成")
+                self.publish_nav_state(NavState.IDLE)
+                self.nav_generator = None
+            except Exception as e:
+                self.get_logger().error(f"RTK导航错误：{str(e)}")
+                # 发布停止指令
+                stop_speed = Vector3()
+                stop_speed.x = 0.0
+                stop_speed.y = 0.0
+                self.motor_speed_pub.publish(stop_speed)
+                self.nav_generator = None
+                self.publish_nav_state(NavState.IDLE)
+        else:
+            # 非RTK模式，发布停止速度（可选，防止电机误动）
+            pass    
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式，更新自身状态"""
@@ -355,8 +393,8 @@ class RTKControlNode(Node):
                 pass
 
             # 处理回调并延时
-            rclpy.spin_once(self, timeout_sec=0.01)
-            self.rate.sleep()
+            # rclpy.spin_once(self, timeout_sec=0.01)
+            # self.rate.sleep()
 
 # -------------------------- 主函数入口 --------------------------
 def main(args=None):
@@ -364,7 +402,7 @@ def main(args=None):
     rtk_node = RTKControlNode()
 
     try:
-        pass
+        rclpy.spin(rtk_node)
     except KeyboardInterrupt:
         rtk_node.get_logger().info("RTK控制节点收到中断信号，即将退出")
     except Exception as e:

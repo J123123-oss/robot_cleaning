@@ -26,7 +26,7 @@ STATE_DICT = {
     'd': "TURN_RIGHT",
 }
 CURRENT_STATE = "STOP"
-BASE_SPEED = 500.0  # 目标速度（dps）= BASE_SPEED*100
+BASE_SPEED = 200.0  # 目标速度（dps）= BASE_SPEED*100
 GLOBAL_MOTOR_CONFIG = [
     {"id": 1},
     {"id": 2}
@@ -47,7 +47,7 @@ class MotorControlNode(Node):
         self.rate = self.create_rate(10)
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         if not self.motor_ctrl.create_can_bus():
             self.get_logger().warn("[ROSNode] CAN串口首次初始化失败，进入重连模式")
@@ -89,6 +89,69 @@ class MotorControlNode(Node):
         # 初始化电机（进入START状态）
         self.switch_state('x')
 
+        self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
+
+    def timer_callback(self):
+        # 检查CAN串口是否正常打开
+        if not self.motor_ctrl.bus:
+            self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
+            self.motor_ctrl.reconnect_can_bus()
+
+        # 1. 发布当前控制模式（给RTK节点）
+        mode_msg = String()
+        mode_msg.data = self.current_control_mode
+        self.mode_pub.publish(mode_msg)
+
+        # 2. 按控制模式执行不同逻辑
+        if self.current_control_mode == ControlMode.REMOTE:
+            # 遥控器模式（原有逻辑）
+            if CURRENT_STATE != "START":
+                self.switch_state('x')
+            try:
+                left_speed = right_speed = BASE_SPEED
+                self.set_motors_speed(left_speed, right_speed)
+                self.get_logger().debug(f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+            except Exception as e:
+                self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
+                self.set_motors_speed(0.0, 0.0)
+
+        elif self.current_control_mode == ControlMode.NORMAL:
+            # 普通模式（键盘控制，原有逻辑）
+            state_msg = String()
+            state_msg.data = str(CURRENT_STATE)
+            self.state_pub.publish(state_msg)
+
+            # 按当前状态赋值速度
+            if CURRENT_STATE == "FORWARD":
+                left_speed = -BASE_SPEED
+                right_speed = BASE_SPEED
+            elif CURRENT_STATE == "BACKWARD":
+                left_speed = BASE_SPEED
+                right_speed = -BASE_SPEED
+            elif CURRENT_STATE == "TURN_LEFT":
+                left_speed = -BASE_SPEED
+                right_speed = -BASE_SPEED
+            elif CURRENT_STATE == "TURN_RIGHT":
+                left_speed = BASE_SPEED
+                right_speed = BASE_SPEED
+            else:
+                left_speed = 0.0
+                right_speed = 0.0
+            self.set_motors_speed(left_speed, right_speed)
+
+        elif self.current_control_mode == ControlMode.RTK_NAV:
+            # RTK导航模式（新增逻辑：使用RTK订阅的速度）
+            if CURRENT_STATE != "START":
+                self.switch_state('x')
+            # 将RTK订阅的速度转换为电机可识别的量级
+            left_speed = self.rtk_left_speed 
+            right_speed = self.rtk_right_speed 
+            self.set_motors_speed(left_speed, right_speed)
+            self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+
+        # 处理回调并延时
+        # rclpy.spin_once(self, timeout_sec=0.01)
+        # self.rate.sleep()
     def keyboard_callback(self, msg: String) -> None:
         """键盘控制回调（新增RTK模式切换）"""
         key = msg.data.strip().lower()
@@ -199,70 +262,6 @@ class MotorControlNode(Node):
         wheel_speed_msg.z = 0.0           # 预留字段
         self.speed_pub.publish(wheel_speed_msg)
 
-    def run(self) -> None:
-        """节点主循环（按控制模式切换速度来源）"""
-        while rclpy.ok():
-            # 检查CAN串口是否正常打开
-            if not self.motor_ctrl.bus:
-                self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
-                self.motor_ctrl.reconnect_can_bus()
-
-            # 1. 发布当前控制模式（给RTK节点）
-            mode_msg = String()
-            mode_msg.data = self.current_control_mode
-            self.mode_pub.publish(mode_msg)
-
-            # 2. 按控制模式执行不同逻辑
-            if self.current_control_mode == ControlMode.REMOTE:
-                # 遥控器模式（原有逻辑）
-                if CURRENT_STATE != "START":
-                    self.switch_state('x')
-                try:
-                    left_speed = right_speed = BASE_SPEED
-                    self.set_motors_speed(left_speed, right_speed)
-                    self.get_logger().debug(f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
-                except Exception as e:
-                    self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
-                    self.set_motors_speed(0.0, 0.0)
-
-            elif self.current_control_mode == ControlMode.NORMAL:
-                # 普通模式（键盘控制，原有逻辑）
-                state_msg = String()
-                state_msg.data = str(CURRENT_STATE)
-                self.state_pub.publish(state_msg)
-
-                # 按当前状态赋值速度
-                if CURRENT_STATE == "FORWARD":
-                    left_speed = -BASE_SPEED
-                    right_speed = BASE_SPEED
-                elif CURRENT_STATE == "BACKWARD":
-                    left_speed = BASE_SPEED
-                    right_speed = -BASE_SPEED
-                elif CURRENT_STATE == "TURN_LEFT":
-                    left_speed = 0.0
-                    right_speed = BASE_SPEED
-                elif CURRENT_STATE == "TURN_RIGHT":
-                    left_speed = -BASE_SPEED
-                    right_speed = 0.0
-                else:
-                    left_speed = 0.0
-                    right_speed = 0.0
-                self.set_motors_speed(left_speed, right_speed)
-
-            elif self.current_control_mode == ControlMode.RTK_NAV:
-                # RTK导航模式（新增逻辑：使用RTK订阅的速度）
-                if CURRENT_STATE != "START":
-                    self.switch_state('x')
-                # 将RTK订阅的速度转换为电机可识别的量级
-                left_speed = self.rtk_left_speed * (BASE_SPEED / 1000.0)
-                right_speed = self.rtk_right_speed * (BASE_SPEED / 1000.0)
-                self.set_motors_speed(left_speed, right_speed)
-                self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
-
-            # 处理回调并延时
-            rclpy.spin_once(self, timeout_sec=0.01)
-            self.rate.sleep()
-
 # -------------------------- 主函数入口 --------------------------
 def main(args=None):
     rclpy.init(args=args)
@@ -271,7 +270,6 @@ def main(args=None):
     motor_node = MotorControlNode()
 
     try:
-        # motor_node.run()
         rclpy.spin(motor_node)
     except KeyboardInterrupt:
         motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")

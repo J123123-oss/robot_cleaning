@@ -15,7 +15,7 @@ class WTRTKFileParser(Node):
         super().__init__('wtrtk_file_parser')
         
         # 声明并获取参数
-        self.declare_parameter('file_path', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt')
+        self.declare_parameter('file_path', '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt')
         self.declare_parameter('play_rate', 1.0)
         self.file_path = self.get_parameter('file_path').value
         self.play_rate = self.get_parameter('play_rate').value
