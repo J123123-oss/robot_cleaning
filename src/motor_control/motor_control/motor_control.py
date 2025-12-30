@@ -6,7 +6,7 @@ import time
 import os
 import sys
 import math
-from typing import Optional, List, Dict, Tuple, Generator, Union
+from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from motor_control.motor_driver import CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
 
-# 全局常量定义
+# -------------------------- 全局配置与枚举 --------------------------
 STATE_DICT = {
     'z': "STOP",
     'x': "START",
@@ -26,26 +26,28 @@ STATE_DICT = {
     'd': "TURN_RIGHT",
 }
 CURRENT_STATE = "STOP"
-BASE_SPEED = 1000.0 # 目标速度（dps）= BASE_SPEED*100
+BASE_SPEED = 500.0  # 目标速度（dps）= BASE_SPEED*100
 GLOBAL_MOTOR_CONFIG = [
     {"id": 1},
     {"id": 2}
 ]
 
-# 控制模式枚举（兼容遥控器类）
+# 控制模式枚举（新增RTK导航模式）
 class ControlMode:
-    REMOTE = "REMOTE"  # 字符串类型
-    NORMAL = "NORMAL"  # 字符串类型
+    REMOTE = "REMOTE"
+    NORMAL = "NORMAL"
+    RTK_NAV = "RTK_NAV"
 
+# -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
     def __init__(self):
-        super().__init__('motor_control_node')  # ROS2 节点初始化
+        super().__init__('motor_control_node')
 
-        # 循环频率：5Hz
+        # 循环频率：10Hz（兼容原有逻辑，可调整）
         self.rate = self.create_rate(10)
 
-        # 初始化核心模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
+        # 1. 初始化电机控制模块
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         if not self.motor_ctrl.create_can_bus():
             self.get_logger().warn("[ROSNode] CAN串口首次初始化失败，进入重连模式")
@@ -53,54 +55,77 @@ class MotorControlNode(Node):
                 self.get_logger().fatal("[ROSNode] CAN串口重连失败，无法继续运行，退出节点")
                 rclpy.signal_shutdown("CAN串口重连失败")
                 return
-            
-        # 初始化遥控器解析模块
+
+        # 2. 初始化遥控器模块
         self.sbus_remote = SBUSRemoteController()
         if not self.sbus_remote._init_serial():
-            self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持原有控制逻辑")
+            self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
 
-        # ROS2 订阅器
+        # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
             String,
             "/keyboard/control",
             self.keyboard_callback,
             10  # QoS深度
         )
+        # 新增：订阅RTK节点发布的电机速度指令
+        self.rtk_speed_sub = self.create_subscription(
+            Vector3,
+            "/rtk/motor_speed",
+            self.rtk_speed_callback,
+            10
+        )
 
-        # ROS2 发布器
+        # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
-        self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机速度
-        self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 控制模式发布
+        self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
+        self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
+
+        # 全局变量
+        self.current_control_mode = ControlMode.NORMAL  # 默认普通模式
+        self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
+        self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
 
         # 初始化电机（进入START状态）
         self.switch_state('x')
 
     def keyboard_callback(self, msg: String) -> None:
-        """键盘控制回调（仅在非遥控器模式下有效）"""
-        # 尝试获取遥控器控制模式，兼容 SBUSRemoteController 类
-        # is_remote_mode = False  # 默认为非遥控器模式
-        # try:
-        #     # 获取通道6归一化值（浮点数），判断是否为遥控器模式（接近-1.0）
-        #     ch6_val = self.sbus_remote.get_channel_normalized(6)
-        #     if abs(ch6_val - (-1.0)) < 0.1:
-        #         is_remote_mode = True
-        # except Exception as e:
-        #     # 遥控器初始化失败或获取通道失败，均视为非遥控器模式
-        #     self.get_logger().debug(f"遥控器通道获取失败：{e}，允许键盘控制")
-
-        # # 遥控器模式下忽略键盘指令
-        # if is_remote_mode:
-        #     self.get_logger().info("[ROSNode] 当前为遥控器控制模式，忽略键盘指令")
-        #     return
-        
+        """键盘控制回调（新增RTK模式切换）"""
         key = msg.data.strip().lower()
-        if key in STATE_DICT:
-            self.switch_state(key)
+
+        # 模式切换指令
+        if key == 'r':
+            # 切换到RTK导航模式
+            self.current_control_mode = ControlMode.RTK_NAV
+            self.get_logger().info(f"[ROSNode] 控制模式切换：→ {ControlMode.RTK_NAV}")
+            # 切换时自动使能电机
+            if CURRENT_STATE != "START":
+                self.switch_state('x')
+        elif key == 'n':
+            # 切回普通模式
+            self.current_control_mode = ControlMode.NORMAL
+            self.get_logger().info(f"[ROSNode] 控制模式切换：→ {ControlMode.NORMAL}")
+        elif key == 'm':
+            # 切换到遥控器模式
+            self.current_control_mode = ControlMode.REMOTE
+            self.get_logger().info(f"[ROSNode] 控制模式切换：→ {ControlMode.REMOTE}")
+        # 原有状态切换逻辑（仅非RTK模式生效）
+        elif key in STATE_DICT:
+            if self.current_control_mode != ControlMode.RTK_NAV:
+                self.switch_state(key)
+            else:
+                self.get_logger().warn("[ROSNode] 当前为RTK导航模式，忽略键盘状态指令")
         else:
-            self.get_logger().warn(f"[ROSNode] 无效键盘指令：{key}，支持指令：{list(STATE_DICT.keys())}")
+            self.get_logger().warn(f"[ROSNode] 无效键盘指令：{key}，支持指令：{list(STATE_DICT.keys()) + ['r(RTK)', 'n(普通)', 'm(遥控)']}")
+
+    def rtk_speed_callback(self, msg: Vector3):
+        """订阅RTK节点的速度指令，更新本地速度变量"""
+        self.rtk_left_speed = msg.x
+        self.rtk_right_speed = msg.y
+        self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}")
 
     def switch_state(self, key: str) -> None:
-        """状态机切换逻辑"""
+        """状态机切换逻辑（完全保留原有功能）"""
         global CURRENT_STATE
         new_state = STATE_DICT[key]
         if new_state == CURRENT_STATE:
@@ -116,7 +141,7 @@ class MotorControlNode(Node):
             for motor in GLOBAL_MOTOR_CONFIG:
                 self.motor_ctrl.set_velocity_closed_loop(motor["id"], 0)  # 初始速度0
                 self.motor_ctrl.stop_motor(motor["id"])
-                time.sleep(1)
+                time.sleep(0.01)
                 self.motor_ctrl.disable_drive(motor["id"])  # 非使能电机
                 self.motor_ctrl.brake_lock(motor["id"])  # 抱闸锁死
                 time.sleep(0.001)
@@ -127,9 +152,6 @@ class MotorControlNode(Node):
                 self.motor_ctrl.set_acceleration(motor["id"], 5000)  # 设置加速度
                 time.sleep(0.001)
                 self.motor_ctrl.set_deceleration(motor["id"], 5000)  # 设置减速度
-                # self.motor_ctrl.motor_set_mode(motor["id"], motor["run_mode"])
-                # time.sleep(0.001)
-                # self.motor_ctrl.motor_set_current_limit(motor["id"], motor["current_limit"])
                 time.sleep(0.001)
                 self.motor_ctrl.enable_drive(motor["id"])
                 time.sleep(0.001)
@@ -137,7 +159,7 @@ class MotorControlNode(Node):
                 time.sleep(0.001)
 
         elif new_state == "FORWARD":
-            # 前进：双电机正转（需先确认电机转向，调整符号）
+            # 前进：双电机正转
             left_speed = -BASE_SPEED
             right_speed = BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
@@ -148,12 +170,12 @@ class MotorControlNode(Node):
             right_speed = -BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
         elif new_state == "TURN_LEFT":
-            # 左转：左轮减速
+            # 左转
             left_speed = BASE_SPEED
             right_speed = BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
         elif new_state == "TURN_RIGHT":
-            # 右转：右轮减速
+            # 右转
             left_speed = -BASE_SPEED
             right_speed = -BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
@@ -163,61 +185,52 @@ class MotorControlNode(Node):
         state_msg.data = CURRENT_STATE
         self.state_pub.publish(state_msg)
 
-    def rad_from_linear(self, linear_speed: float) -> float:
-        """线速度转角速度（简化实现，可根据车轮半径调整）"""
-        wheel_radius = 0.05  # 示例：车轮半径0.05m
-        if wheel_radius <= 0:
-            return 0.0
-        return linear_speed / wheel_radius
-
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
-        """设置双电机速度（差速控制）"""
+        """设置双电机速度（完全保留原有功能）"""
         # 左电机（ID=1）
         self.motor_ctrl.set_velocity_closed_loop(GLOBAL_MOTOR_CONFIG[0]["id"], left_speed)
         # 右电机（ID=2）
         self.motor_ctrl.set_velocity_closed_loop(GLOBAL_MOTOR_CONFIG[1]["id"], right_speed)
-        
+
         # 构造并发布速度消息
         wheel_speed_msg = Vector3()
-        wheel_speed_msg.x = left_speed    # 左轮角速度（rad/s）
-        wheel_speed_msg.y = right_speed   # 右轮角速度（rad/s）
-        wheel_speed_msg.z = 0.0           # 预留字段，无意义设为0
+        wheel_speed_msg.x = left_speed    # 左轮角速度
+        wheel_speed_msg.y = right_speed   # 右轮角速度
+        wheel_speed_msg.z = 0.0           # 预留字段
         self.speed_pub.publish(wheel_speed_msg)
 
     def run(self) -> None:
-        """节点主循环（运行中检测串口状态和控制模式）"""
+        """节点主循环（按控制模式切换速度来源）"""
         while rclpy.ok():
             # 检查CAN串口是否正常打开
             if not self.motor_ctrl.bus:
                 self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
                 self.motor_ctrl.reconnect_can_bus()
-            
-            # 模式判断（保持原有逻辑）
-            current_mode = ControlMode.NORMAL  # 遥控器初始化失败，直接用NORMAL模式
-            
-            # 发布控制模式
+
+            # 1. 发布当前控制模式（给RTK节点）
             mode_msg = String()
-            mode_msg.data = str(current_mode)
+            mode_msg.data = self.current_control_mode
             self.mode_pub.publish(mode_msg)
-            
-            # 后续原有逻辑（心跳、速度控制等）...
-            if current_mode == ControlMode.REMOTE:
+
+            # 2. 按控制模式执行不同逻辑
+            if self.current_control_mode == ControlMode.REMOTE:
+                # 遥控器模式（原有逻辑）
                 if CURRENT_STATE != "START":
                     self.switch_state('x')
-                    self.get_logger().info("使能~~~~~")
                 try:
                     left_speed = right_speed = BASE_SPEED
                     self.set_motors_speed(left_speed, right_speed)
-                    self.get_logger().info(f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+                    self.get_logger().debug(f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
                 except Exception as e:
                     self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
                     self.set_motors_speed(0.0, 0.0)
-            else:
-                # 正常模式：持续发送心跳
+
+            elif self.current_control_mode == ControlMode.NORMAL:
+                # 普通模式（键盘控制，原有逻辑）
                 state_msg = String()
                 state_msg.data = str(CURRENT_STATE)
                 self.state_pub.publish(state_msg)
-                
+
                 # 按当前状态赋值速度
                 if CURRENT_STATE == "FORWARD":
                     left_speed = -BASE_SPEED
@@ -235,11 +248,22 @@ class MotorControlNode(Node):
                     left_speed = 0.0
                     right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            
-            # 关键：手动触发一次回调处理 + 保证延时生效
+
+            elif self.current_control_mode == ControlMode.RTK_NAV:
+                # RTK导航模式（新增逻辑：使用RTK订阅的速度）
+                if CURRENT_STATE != "START":
+                    self.switch_state('x')
+                # 将RTK订阅的速度转换为电机可识别的量级
+                left_speed = self.rtk_left_speed * (BASE_SPEED / 1000.0)
+                right_speed = self.rtk_right_speed * (BASE_SPEED / 1000.0)
+                self.set_motors_speed(left_speed, right_speed)
+                self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+
+            # 处理回调并延时
             rclpy.spin_once(self, timeout_sec=0.01)
             self.rate.sleep()
 
+# -------------------------- 主函数入口 --------------------------
 def main(args=None):
     rclpy.init(args=args)
 
@@ -247,16 +271,14 @@ def main(args=None):
     motor_node = MotorControlNode()
 
     try:
-        # 方案1：使用 spin 支撑节点运行（推荐，符合 ROS2 规范）
-        rclpy.spin(motor_node)
-        # 方案2：若需自定义循环，保留 run() 方法，同时增加 spin_once
         # motor_node.run()
+        rclpy.spin(motor_node)
     except KeyboardInterrupt:
         motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")
     except Exception as e:
         motor_node.get_logger().fatal(f"[ROSNode] 节点运行异常：{str(e)}")
     finally:
-        # 原有清理逻辑不变...
+        # 退出时停止所有电机（原有清理逻辑）
         if motor_node:
             motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
             for motor in GLOBAL_MOTOR_CONFIG:
@@ -281,7 +303,7 @@ def main(args=None):
                 motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
         motor_node.destroy_node()
         rclpy.shutdown()
-        print("[ROSNode] 节点退出完成")
+        print("[ROSNode] 电机控制节点退出完成")
 
 if __name__ == "__main__":
     main()
