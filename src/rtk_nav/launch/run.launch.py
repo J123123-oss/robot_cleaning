@@ -7,7 +7,7 @@ def generate_launch_description():
     motor_control_node = Node(
         package='motor_control',  # 对应 ROS1 的 pkg，包名不变
         executable='motor_control',  # 对应 ROS1 的 type，可执行文件名称
-        name='motor_control_node',  # 对应 ROS1 的 name，节点名称
+        # name='motor_control',  # 对应 ROS1 的 name，节点名称
         output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
@@ -23,7 +23,9 @@ def generate_launch_description():
         name='rtk_nav',
         output='screen',
         parameters=[
-            {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt'}
+            {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
+            # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
+            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt'}
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
         ]
@@ -35,9 +37,10 @@ def generate_launch_description():
         name='wtrtk_parse_txt',
         output='screen',
         parameters=[
-            {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
+            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
             # 原注释的其他参数可取消注释添加
-            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
+            {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            # {'file_path': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
         ]
     )
 
@@ -59,13 +62,14 @@ def generate_launch_description():
     #     name='cleaning_path_planner',
     #     output='screen',
     #     parameters=[
-    #         {'base_point.lon': 120.06910407},
-    #         {'base_point.lat': 30.32000295},
-    #         {'rect_width': 6.0},
-    #         {'rect_height': 15.0},
-    #         {'rotation_deg': 20.0},
+    #         #120.0711247716332,30.320803806689252
+    #         {'base_point.lon': 120.0711247716332},
+    #         {'base_point.lat': 30.320803806689252},
+    #         {'rect_width': 5.0},
+    #         {'rect_height': 10.0},
+    #         {'rotation_deg': 15.0},
     #         {'interval': 1.0},
-    #         {'start_corner': 'bottom_right'},
+    #         {'start_corner': 'top_left'},
     #         {'edge_distance_lon': 0.5},
     #         {'edge_distance_lat': 0.5},
     #         {'headless': False}

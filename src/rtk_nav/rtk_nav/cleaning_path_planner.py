@@ -229,14 +229,14 @@ class CleaningPathPlanner(Node):
     def __init__(self):
         super().__init__('cleaning_path_planner')
         
-        # 声明参数（ROS 2参数需要先声明）
-        self.declare_parameter('base_point.lon', 120.0712028)
-        self.declare_parameter('base_point.lat', 30.32071848)
-        self.declare_parameter('rect_width', 6.0)
-        self.declare_parameter('rect_height', 15.0)
-        self.declare_parameter('rotation_deg', 20.0)
+        # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
+        self.declare_parameter('base_point.lon', 120.0711247716332)
+        self.declare_parameter('base_point.lat', 30.320803806689252)
+        self.declare_parameter('rect_width', 5.0)
+        self.declare_parameter('rect_height', 10.0)
+        self.declare_parameter('rotation_deg', 15.0)
         self.declare_parameter('interval', 1.0)
-        self.declare_parameter('start_corner', 'bottom_right')
+        self.declare_parameter('start_corner', 'top_left')
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -296,7 +296,8 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
             # 确保保存目录存在
-            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            # save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             # 计算航向角并保存路径点
@@ -317,30 +318,30 @@ class CleaningPathPlanner(Node):
             # 绘制原始矩形边界
             orig_e = [corner[0] for corner in original_corners_utm] + [original_corners_utm[0][0]]
             orig_n = [corner[1] for corner in original_corners_utm] + [original_corners_utm[0][1]]
-            ax.plot(orig_e, orig_n, 'b-', label='原始区域边界')
+            ax.plot(orig_e, orig_n, 'b-', label='origin')
             
             # 绘制内部矩形边界
             inner_e = [corner[0] for corner in inner_corners_utm] + [inner_corners_utm[0][0]]
             inner_n = [corner[1] for corner in inner_corners_utm] + [inner_corners_utm[0][1]]
-            ax.plot(inner_e, inner_n, 'g--', label='内部清扫边界')
+            ax.plot(inner_e, inner_n, 'g--', label='inner')
             
             # 绘制清扫路径
             path_e = [p[0] for p in path_utm]
             path_n = [p[1] for p in path_utm]
-            ax.plot(path_e, path_n, 'r-', linewidth=1, label='清扫路径')
+            ax.plot(path_e, path_n, 'r-', linewidth=1, label='cleaning path')
             
             # 添加方向箭头
             add_direction_arrows(ax, path_utm, arrow_interval=1)
             
             # 标记起点和终点
-            ax.scatter(path_e[0], path_n[0], c='green', s=100, marker='o', label='起点')
-            ax.scatter(path_e[-1], path_n[-1], c='purple', s=100, marker='x', label='终点')
+            ax.scatter(path_e[0], path_n[0], c='green', s=100, marker='o', label='start')
+            ax.scatter(path_e[-1], path_n[-1], c='purple', s=100, marker='x', label='end')
             
-            ax.set_xlabel(f'UTM东向 (米) - 区域 {zone_num}{zone_letter}')
-            ax.set_ylabel(f'UTM北向 (米) - 区域 {zone_num}{zone_letter}')
+            ax.set_xlabel(f'UTM east m - zone {zone_num}{zone_letter}')
+            ax.set_ylabel(f'UTM north m - zone {zone_num}{zone_letter}')
             ax.set_title(
-                f'机器人清扫路径规划\n'
-                f'旋转角度: {self.param["rotation_deg"]}°, 路径间隔: {self.param["interval"]}m'
+                f'robot cleaning path planner\n'
+                f'rotation deg: {self.param["rotation_deg"]}°, path interval: {self.param["interval"]}m'
             )
             ax.legend()
             ax.grid(True)

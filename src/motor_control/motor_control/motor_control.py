@@ -26,7 +26,15 @@ STATE_DICT = {
     'd': "TURN_RIGHT",
 }
 CURRENT_STATE = "STOP"
-BASE_SPEED = 200.0  # 目标速度（dps）= BASE_SPEED*100
+
+BASE_SPEED = 100.0  # 导航目标速度（dps）= BASE_SPEED*100
+MAX_SPEED = 260.0   # 遥控器最大速度
+MIN_SPEED = -160.0  # 遥控器最小速度
+# 通道灵敏度系数（可微调，0~1之间，用于控制通道对速度的影响程度）
+CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
+CH3_SENSITIVITY = 1.0  # 左右旋转灵敏度
+DEAD_ZONE = 0.05       # 控制死区
+
 GLOBAL_MOTOR_CONFIG = [
     {"id": 1},
     {"id": 2}
@@ -40,14 +48,14 @@ class ControlMode:
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
-    def __init__(self):
-        super().__init__('motor_control_node')
+    def __init__(self, node_name='motor_control_node'):
+        super().__init__(node_name)
 
         # 循环频率：10Hz（兼容原有逻辑，可调整）
         self.rate = self.create_rate(10)
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         if not self.motor_ctrl.create_can_bus():
             self.get_logger().warn("[ROSNode] CAN串口首次初始化失败，进入重连模式")
@@ -108,9 +116,36 @@ class MotorControlNode(Node):
             if CURRENT_STATE != "START":
                 self.switch_state('x')
             try:
-                left_speed = right_speed = BASE_SPEED
+                # 步骤1：获取通道2（前进后退）和通道3（左右旋转）的归一化值（-1.0 ~ 1.0）
+                ch2_norm = self.sbus_remote.get_channel_normalized(ch_idx=2)  # 前进后退
+                ch3_norm = self.sbus_remote.get_channel_normalized(ch_idx=3)  # 左右旋转
+
+                ch2_norm = 0.0 if abs(ch2_norm) < DEAD_ZONE else ch2_norm
+                ch3_norm = 0.0 if abs(ch3_norm) < DEAD_ZONE else ch3_norm
+
+                # 步骤2：计算通道2的差速分量（前进后退，左右轮速度相反）
+                # ch2_norm > 0：前进；ch2_norm < 0：后退；=0：静止
+                forward_backward_left = ch2_norm * MAX_SPEED * CH2_SENSITIVITY
+                forward_backward_right = -forward_backward_left  # 左右轮速度相反数，实现前进后退
+
+                # 步骤3：计算通道3的同速分量（左右旋转，左右轮速度相同）
+                # ch3_norm > 0：向右旋转；ch3_norm < 0：向左旋转；=0：不旋转
+                rotate_left_right = ch3_norm * MAX_SPEED * CH3_SENSITIVITY  # 同速分量，左右轮共用
+
+                # 步骤4：速度叠加（核心：两个通道的分量相加，实现同时控制）
+                left_speed_target = forward_backward_left + rotate_left_right
+                right_speed_target = forward_backward_right + rotate_left_right
+
+                # 步骤5：上下限约束，确保速度在[MIN_SPEED, MAX_SPEED]范围内
+                left_speed = max(MIN_SPEED, min(MAX_SPEED, left_speed_target))
+                right_speed = max(MIN_SPEED, min(MAX_SPEED, right_speed_target))
+
+                # 设置电机速度
                 self.set_motors_speed(left_speed, right_speed)
-                self.get_logger().debug(f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+                self.get_logger().debug(
+                    f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f} "
+                    f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch3_norm:.2f}"
+                )
             except Exception as e:
                 self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
                 self.set_motors_speed(0.0, 0.0)
