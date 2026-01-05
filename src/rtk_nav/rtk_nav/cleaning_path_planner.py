@@ -105,11 +105,11 @@ def generate_cleaning_path_with_rotation(base_point, width, height, rotation_deg
     edge_lon = param['edge_distance_lon']
     edge_lat = param['edge_distance_lat']
     rotation_rad = degrees_to_radians(rotation_deg)
-
+    
     # 基准点转UTM
     e0, n0, zone_num, zone_letter = get_utm_coords(lat0, lon0)
     utm_zone = (zone_num, zone_letter)
-
+    
     # 1. 生成未旋转的原始矩形四个角点（以基准点为top_left）
     orig_unrot = {
         'top_left': (e0, n0),
@@ -117,63 +117,93 @@ def generate_cleaning_path_with_rotation(base_point, width, height, rotation_deg
         'bottom_right': (e0 + width, n0 - height),
         'bottom_left': (e0, n0 - height)
     }
-
-    # 2. 旋转所有原始角点，并保持命名
+    
+    # 2. 旋转所有原始角点
     orig_rot = {}
     for corner_name, (e, n) in orig_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         orig_rot[corner_name] = (e_rot, n_rot)
-    original_corners_utm = list(orig_rot.values())  # 兼容原有返回格式
-
-    # 3. 生成未旋转的内部矩形角点（同样命名）
+    original_corners_utm = list(orig_rot.values())
+    
+    # 3. 生成未旋转的内部矩形角点（边界偏移后）
     inner_unrot = {
         'top_left': (e0 + edge_lon, n0 - edge_lat),
         'top_right': (e0 + width - edge_lon, n0 - edge_lat),
         'bottom_right': (e0 + width - edge_lon, n0 - height + edge_lat),
         'bottom_left': (e0 + edge_lon, n0 - height + edge_lat)
     }
-
+    
     # 安全检查：内部区域有效性
     inner_width = (e0 + width - edge_lon) - (e0 + edge_lon)
     inner_height = (n0 - edge_lat) - (n0 - height + edge_lat)
     if inner_width <= 0.1 or inner_height <= 0.1:
         raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
-
-    # 4. 旋转内部矩形角点，并保持命名
+    
+    # 4. 旋转内部矩形角点
     inner_rot = {}
     for corner_name, (e, n) in inner_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         inner_rot[corner_name] = (e_rot, n_rot)
-    inner_corners_utm = list(inner_rot.values())  # 兼容原有返回格式
-
-    # 5. 生成未旋转的内部路径（沿宽度/高度方向，和之前逻辑一致）
+    inner_corners_utm = list(inner_rot.values())
+    
+    # 5. 根据起始角点确定路径生成方向（核心修改）
+    # 解析起始角点的方位：left/right（水平方向）、top/bottom（垂直方向）
+    hori_dir = 'left' if 'left' in start_corner else 'right'  # 水平起始方向
+    vert_dir = 'top' if 'top' in start_corner else 'bottom'    # 垂直起始方向
+    
+    # 内部矩形边界（未旋转）
+    inner_e_min = inner_unrot['top_left'][0]
+    inner_e_max = inner_unrot['top_right'][0]
+    inner_n_max = inner_unrot['top_left'][1]
+    inner_n_min = inner_unrot['bottom_left'][1]
+    
+    # 生成未旋转的内部路径（根据起始角点调整方向）
     path_utm_unrot = []
-    inner_e0_unrot = e0 + edge_lon
-    inner_n0_unrot = n0 - edge_lat
-    inner_width_unrot = width - 2 * edge_lon
-    inner_height_unrot = height - 2 * edge_lat
-
-    if inner_width_unrot >= inner_height_unrot:
-        num_strips = max(1, int(inner_height_unrot / interval) + 1)
-        for i in range(num_strips):
-            current_n_unrot = inner_n0_unrot - (inner_height_unrot) * (i / (num_strips - 1) if num_strips > 1 else 0)
-            if i % 2 == 0:
-                path_utm_unrot.append((inner_e0_unrot, current_n_unrot))
-                path_utm_unrot.append((inner_e0_unrot + inner_width_unrot, current_n_unrot))
+    if inner_width >= inner_height:
+        # 宽 >= 高：沿垂直方向分条（上下移动），水平方向交替
+        # 垂直方向步长和点数
+        num_strips = max(1, int(inner_height / interval) + 1)
+        # 根据垂直起始方向确定n的遍历顺序
+        if vert_dir == 'top':
+            n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+                        for i in range(num_strips)]
+        else:  # bottom
+            n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+                        for i in range(num_strips)]
+        
+        for i, current_n_unrot in enumerate(n_values):
+            # 根据水平起始方向和条带索引，确定水平遍历方向
+            if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
+                # 偶数条带：左->右；奇数条带：右->左（适配left起始）
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
             else:
-                path_utm_unrot.append((inner_e0_unrot + inner_width_unrot, current_n_unrot))
-                path_utm_unrot.append((inner_e0_unrot, current_n_unrot))
+                # 偶数条带：右->左；奇数条带：左->右（适配right起始）
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
     else:
-        num_strips = max(1, int(inner_width_unrot / interval) + 1)
-        for i in range(num_strips):
-            current_e_unrot = inner_e0_unrot + (inner_width_unrot) * (i / (num_strips - 1) if num_strips > 1 else 0)
-            if i % 2 == 0:
-                path_utm_unrot.append((current_e_unrot, inner_n0_unrot))
-                path_utm_unrot.append((current_e_unrot, inner_n0_unrot - inner_height_unrot))
+        # 宽 < 高：沿水平方向分条（左右移动），垂直方向交替
+        # 水平方向步长和点数
+        num_strips = max(1, int(inner_width / interval) + 1)
+        # 根据水平起始方向确定e的遍历顺序
+        if hori_dir == 'left':
+            e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+                        for i in range(num_strips)]
+        else:  # right
+            e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+                        for i in range(num_strips)]
+        
+        for i, current_e_unrot in enumerate(e_values):
+            # 根据垂直起始方向和条带索引，确定垂直遍历方向
+            if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
+                # 偶数条带：上->下；奇数条带：下->上（适配top起始）
+                path_utm_unrot.append((current_e_unrot, inner_n_max))
+                path_utm_unrot.append((current_e_unrot, inner_n_min))
             else:
-                path_utm_unrot.append((current_e_unrot, inner_n0_unrot - inner_height_unrot))
-                path_utm_unrot.append((current_e_unrot, inner_n0_unrot))
-
+                # 偶数条带：下->上；奇数条带：上->下（适配bottom起始）
+                path_utm_unrot.append((current_e_unrot, inner_n_min))
+                path_utm_unrot.append((current_e_unrot, inner_n_max))
+    
     # 6. 旋转路径点并转经纬度
     path_utm_rot = []
     path_latlon = []
@@ -182,23 +212,18 @@ def generate_cleaning_path_with_rotation(base_point, width, height, rotation_deg
         path_utm_rot.append((e_rot, n_rot))
         lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
         path_latlon.append((lon, lat))
+    
+    # 7. 确保路径起点严格对应选择的起始角点（最终校验）
+    target_start_utm = inner_rot[start_corner]
+    # 计算路径第一个点与目标起始点的距离，若偏差过大则调整（防止生成逻辑偏差）
+    first_point_dist = math.hypot(path_utm_rot[0][0] - target_start_utm[0], 
+                                  path_utm_rot[0][1] - target_start_utm[1])
+    if first_point_dist > 0.1:  # 偏差超过10cm则交换第一个点和第二个点
+        path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
+        path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
+    
+    return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
-    # 7. 根据选定的起点角点，调整路径顺序
-    # 步骤1：找到旋转后内部矩形的起点角点坐标
-    inner_start_utm = inner_rot[start_corner]
-    # 步骤2：找到路径中距离起点角点最近的点（作为新路径的起点）
-    min_dist = float('inf')
-    start_idx = 0
-    for i, (e, n) in enumerate(path_utm_rot):
-        dist = math.hypot(e - inner_start_utm[0], n - inner_start_utm[1])
-        if dist < min_dist:
-            min_dist = dist
-            start_idx = i
-    # 步骤3：重排路径（从起点索引开始，循环拼接）
-    path_utm = path_utm_rot[start_idx:] + path_utm_rot[:start_idx]
-    path_latlon = path_latlon[start_idx:] + path_latlon[:start_idx]
-
-    return path_latlon, path_utm, original_corners_utm, inner_corners_utm, utm_zone
 
 def add_direction_arrows(ax, path_utm, arrow_interval=5):
     """在路径上添加方向箭头"""
@@ -236,7 +261,7 @@ class CleaningPathPlanner(Node):
         self.declare_parameter('rect_height', 10.0)
         self.declare_parameter('rotation_deg', 15.0)
         self.declare_parameter('interval', 1.0)
-        self.declare_parameter('start_corner', 'top_left')
+        self.declare_parameter('start_corner', 'bottom_right')
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)

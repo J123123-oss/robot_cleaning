@@ -56,25 +56,25 @@ def generate_launch_description():
     # )
 
     # 清扫路径规划节点（原ROS1中注释的节点，保留注释结构和所有参数）
-    # cleaning_path_planner_node = Node(
-    #     package='rtk_nav',
-    #     executable='cleaning_path_planner',
-    #     name='cleaning_path_planner',
-    #     output='screen',
-    #     parameters=[
-    #         #120.0711247716332,30.320803806689252
-    #         {'base_point.lon': 120.0711247716332},
-    #         {'base_point.lat': 30.320803806689252},
-    #         {'rect_width': 5.0},
-    #         {'rect_height': 10.0},
-    #         {'rotation_deg': 15.0},
-    #         {'interval': 1.0},
-    #         {'start_corner': 'top_left'},
-    #         {'edge_distance_lon': 0.5},
-    #         {'edge_distance_lat': 0.5},
-    #         {'headless': False}
-    #     ]
-    # )
+    cleaning_path_planner_node = Node(
+        package='rtk_nav',
+        executable='cleaning_path_planner',
+        name='cleaning_path_planner',
+        output='screen',
+        parameters=[
+            #120.0711247716332,30.320803806689252
+            {'base_point.lon': 120.0711247716332},
+            {'base_point.lat': 30.320803806689252},
+            {'rect_width': 5.0},
+            {'rect_height': 10.0},
+            {'rotation_deg': 15.0},
+            {'interval': 1.0},
+            {'start_corner': 'top_left'},
+            {'edge_distance_lon': 0.5},
+            {'edge_distance_lat': 0.5},
+            {'headless': False}
+        ]
+    )
 
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
@@ -83,6 +83,6 @@ def generate_launch_description():
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
-    # ld.add_action(cleaning_path_planner_node)
+    ld.add_action(cleaning_path_planner_node)
 
     return ld
