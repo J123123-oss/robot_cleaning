@@ -91,6 +91,7 @@ class MotorControlNode(Node):
 
         # 全局变量
         self.current_control_mode = ControlMode.NORMAL  # 默认普通模式
+        # self.current_control_mode = self.sbus_remote.control_mode  # 默认普通模式
         self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
         self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
 
@@ -237,24 +238,14 @@ class MotorControlNode(Node):
         if new_state == "STOP":
             # 停止：失能所有电机
             for motor in GLOBAL_MOTOR_CONFIG:
-                self.motor_ctrl.set_velocity_closed_loop(motor["id"], 0)  # 初始速度0
-                self.motor_ctrl.stop_motor(motor["id"])
+                self.motor_ctrl.motor_set_speed(motor["id"], 0)  # 初始速度0
                 time.sleep(0.01)
-                self.motor_ctrl.disable_drive(motor["id"])  # 非使能电机
-                self.motor_ctrl.brake_lock(motor["id"])  # 抱闸锁死
-                time.sleep(0.001)
+                self.motor_ctrl.motor_disable(motor["id"])
 
         elif new_state == "START":
             # 启动：仅使能电机，不运动
-            for motor in GLOBAL_MOTOR_CONFIG:
-                self.motor_ctrl.set_acceleration(motor["id"], 5000)  # 设置加速度
-                time.sleep(0.001)
-                self.motor_ctrl.set_deceleration(motor["id"], 5000)  # 设置减速度
-                time.sleep(0.001)
-                self.motor_ctrl.enable_drive(motor["id"])
-                time.sleep(0.001)
-                self.motor_ctrl.set_velocity_closed_loop(motor["id"], 0)  # 初始速度0
-                time.sleep(0.001)
+            self.motor_ctrl.initialize_motors()
+            time.sleep(0.001)
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
@@ -286,9 +277,9 @@ class MotorControlNode(Node):
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
         """设置双电机速度（完全保留原有功能）"""
         # 左电机（ID=1）
-        self.motor_ctrl.set_velocity_closed_loop(GLOBAL_MOTOR_CONFIG[0]["id"], left_speed)
+        self.motor_ctrl.motor_set_speed(GLOBAL_MOTOR_CONFIG[0]["id"], left_speed)
         # 右电机（ID=2）
-        self.motor_ctrl.set_velocity_closed_loop(GLOBAL_MOTOR_CONFIG[1]["id"], right_speed)
+        self.motor_ctrl.motor_set_speed(GLOBAL_MOTOR_CONFIG[1]["id"], right_speed)
 
         # 构造并发布速度消息
         wheel_speed_msg = Vector3()
@@ -316,11 +307,9 @@ def main(args=None):
             motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
             for motor in GLOBAL_MOTOR_CONFIG:
                 try:
-                    motor_node.motor_ctrl.set_velocity_closed_loop(motor["id"], 0.0)
-                    motor_node.motor_ctrl.stop_motor(motor["id"])
+                    motor_node.motor_ctrl.motor_set_speed(motor["id"], 0.0)
                     time.sleep(0.1)
-                    motor_node.motor_ctrl.disable_drive(motor["id"])
-                    motor_node.motor_ctrl.brake_lock(motor["id"])
+                    motor_node.motor_ctrl.motor_disable(motor["id"])
                 except Exception as e:
                     motor_node.get_logger().warn(f"[ROSNode] 停止电机{motor['id']}失败：{str(e)}")
                 time.sleep(0.001)

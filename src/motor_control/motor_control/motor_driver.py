@@ -1,588 +1,592 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import can
-import time
+
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
+import struct
+import can
+import time
+import math
+from typing import Optional, List, Dict
+import threading
 
 class CanMotorDriver(Node):
     def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000):
-        super().__init__(node_name)
-        self.channel = channel
-        self.interface = interface
-        self.baudrate = baudrate  # 波特率1Mbps
-        self.bus = self.create_can_bus()
-        self.motor_driver_status = True  # 驱动状态标记
-        self.send_base_id = 0x140  # 单电机指令发送基地址
-        self.reply_base_id = 0x240  # 单电机回复基地址
-        self.multi_cmd_base_id = 0x280  # 多电机命令基地址
-        self.global_cmd_id = 0x300  # 全局ID指令地址
 
-    # -------------------------- CAN总线连接 --------------------------
-    def create_can_bus(self):
-        """创建CAN总线连接（1Mbps波特率，自动重试）"""
-        while rclpy.ok():
-            try:
-                # 配置CAN总线波特率为1Mbps
-                return can.interface.Bus(
-                    channel=self.channel,
-                    interface=self.interface,
-                    bitrate=self.baudrate
-                )
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN总线连接失败: {e}，3秒后重试...")
-                time.sleep(3)
+        super().__init__(node_name)
+
+        
+        # CAN配置
+        self.can_interface = "vcan0"  # 根据jifeng系统使用can1
+        self.bus: Optional[can.Bus] = None
+        self.can_initialized = False
+        
+        # 电机配置 (基于jifeng系统中的3个电机)
+        self.motors = [
+            {
+                "id": 1,                        # 左轮电机ID
+                "velocity": 0.0,                # 目标速度（rad/s）
+                "actual_velocity": 0.0,         # 实际速度
+                "actual_position": 0.0,         # 实际位置
+                "actual_torque": 0.0,           # 实际扭矩
+                "actual_temperature": 0.0,      # 实际温度
+                "error_code": 0,                # 故障码
+                "current_limit": 20.0,          # 电流限制（A）
+                "run_mode": 2                   # 运行模式（2速度模式）
+            },
+            {
+                "id": 2,                        # 右轮电机ID
+                "velocity": 0.0,
+                "actual_velocity": 0.0,
+                "actual_position": 0.0,
+                "actual_torque": 0.0,
+                "actual_temperature": 0.0,
+                "error_code": 0,
+                "current_limit": 20.0,
+                "run_mode": 2
+            },
+            {
+                "id": 3,                        # 前毛刷电机ID
+                "velocity": 0.0,
+                "actual_velocity": 0.0,
+                "actual_position": 0.0,
+                "actual_torque": 0.0,
+                "actual_temperature": 0.0,
+                "error_code": 0,
+                "current_limit": 20.0,
+                "run_mode": 2
+            }
+        ]
+        
+        # 主机ID (与jifeng系统保持一致)
+        self.motor_master_id = 99  # 0x63
+        
+        # 电机参数索引
+        self.RUN_MODE_INDEX = 0x7005    # 运行模式索引
+        self.SPEED_REF_INDEX = 0x700A   # 速度指令索引
+        self.LIMIT_CUR_INDEX = 0x7018   # 电流限制索引
+        self.OTHER_PARAM_INDEX = 0x7022 # 其他参数索引 (针对电机3)
+        
+        # 通信类型
+        self.COMM_WRITE_PARAM = 0x12    # 参数写入
+        self.COMM_ENABLE_MOTOR = 0x03   # 使能电机
+        self.COMM_DISABLE_MOTOR = 0x04  # 失能电机
+        self.MC_CMD_SPEED_CLOSED_LOOP = 0xA2  # 速度闭环控制命令
+        self.MC_CMD_POS_SPEED_TORQUE_FEEDBACK = 0x02  # 位置、速度、扭矩反馈命令类型
+        self.MC_CMD_QUERY_MOTOR = 0x03  # 电机状态查询命令
+        
+        # 机器人参数
+        self.wheel_radius = 0.05  # 轮子半径（米）
+        self.wheel_base = 0.3     # 轮距（米）
+        self.encoder_resolution = 4096  # 编码器分辨率（每转脉冲数）
+        
+        # 里程计参数
+        self.x = 0.0  # 机器人位置x坐标
+        self.y = 0.0  # 机器人位置y坐标
+        self.th = 0.0  # 机器人方向角度
+        
+        # 上次时间戳
+        self.last_time = self.get_clock().now()
+        
+        # 初始化CAN总线
+        if not self.create_can_bus():
+            self.get_logger().warn("Failed to initialize CAN bus, will retry periodically")
+            
+        # 初始化电机
+        self.initialize_motors()
+        
+        # 创建订阅者，用于接收速度命令
+        self.subscription = self.create_subscription(
+            Float32MultiArray,
+            'motor_speed_commands',
+            self.speed_command_callback,
+            10)
+            
+        # 创建发布者，用于发布电机速度
+        self.velocity_publisher = self.create_publisher(
+            Float32MultiArray, 
+            'motor_velocities', 
+            10)
+            
+        # 创建发布者，用于发布电机状态（位置、速度、扭矩等）
+        self.motor_feedback_publisher = self.create_publisher(
+            Float32MultiArray,
+            'motor_feedback',
+            10)
+            
+        # 创建发布者，用于发布电机故障信息
+        self.error_publisher = self.create_publisher(
+            Int32MultiArray,
+            'motor_errors',
+            10)
+            
+        # 创建发布者，用于发布整体故障状态
+        self.system_error_publisher = self.create_publisher(
+            Int32,
+            'system_error',
+            10)
+            
+        # 创建发布者，用于发布里程信息
+        self.odom_publisher = self.create_publisher(
+            Odometry,
+            'odom',
+            10)
+            
+        # 定时器，定期发送速度命令和发布电机状态
+        self.timer = self.create_timer(0.1, self.timer_callback)  # 10Hz
+        
+        # 启动接收线程
+        self.receive_thread = None
+        self.running = True
+        self.start_receive_thread()
+        
+        self.get_logger().info('Motor Control Node has been started')
+
+    def create_can_bus(self) -> bool:
+        """初始化CAN总线"""
+        try:
+            self.bus = can.Bus(interface='socketcan', channel=self.can_interface, bitrate=1000000)
+            self.can_initialized = True
+            self.get_logger().info(f'CAN bus {self.can_interface} initialized successfully')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'Failed to initialize CAN bus: {e}')
+            self.can_initialized = False
+            return False
 
     def reconnect_can_bus(self):
-        """重连CAN总线"""
-        self.get_logger().warn("尝试重连CAN总线...")
+        """重试CAN总线初始化"""
+        if not self.can_initialized:
+            self.get_logger().info("Retrying CAN bus initialization...")
+            self.create_can_bus()
+
+    def send_can_frame(self, can_id: int, data: bytes) -> bool:
+        """发送CAN帧"""
+        if not self.bus:
+            self.get_logger().error("CAN bus not initialized")
+            return False
+            
         try:
-            if self.bus is not None:
-                self.bus.shutdown()
-        except Exception:
-            pass
-        self.bus = self.create_can_bus()
-
-    # -------------------------- CAN指令发送 --------------------------
-    def send_command(self, motor_id, command_data, is_global=False, is_multi=False):
-        """
-        发送CAN指令（自动重试3次）
-        :param motor_id: 电机ID（1~32）
-        :param command_data: 8字节指令数据
-        :param is_global: 是否全局指令（使用0x300地址）
-        :param is_multi: 是否多电机命令（使用0x280+指令格式）
-        :return: 发送成功返回True，失败返回False
-        """
-        if len(command_data) != 8:
-            self.get_logger().error("指令数据必须为8字节")
-            return False
-        
-        if is_global:
-            frame_id = self.global_cmd_id
-        elif is_multi:
-            frame_id = self.multi_cmd_base_id + command_data[0]  # 0x280+指令码
-        else:
-            if not 1 <= motor_id <= 32:
-                self.get_logger().error(f"电机ID{motor_id}超出有效范围（1-32）")
-                return False
-            frame_id = self.send_base_id + motor_id
-
-        msg = can.Message(arbitration_id=frame_id, data=command_data, is_extended_id=False)
-        for attempt in range(3):
-            try:
-                self.bus.send(msg)
-                time.sleep(0.05)
-                return True
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN发送失败（电机{motor_id}）: {e}，第{attempt+1}次重试...")
-                self.reconnect_can_bus()
-        self.get_logger().error(f"电机{motor_id} CAN指令发送失败，已重试3次")
-        return False
-
-    # -------------------------- 电机基础控制 --------------------------
-    def enable_drive(self, motor_id):
-        """使能电机（松开抱闸，电机可运动）"""
-        # 使能指令：0x77 00 00 00 00 00 00 00
-        return self.send_command(motor_id, [0x77, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-    def disable_drive(self, motor_id):
-        """非使能电机"""
-        # 非使能指令：0x80 00 00 00 00 00 00 00
-        return self.send_command(motor_id, [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-    def stop_motor(self, motor_id):
-        """停止电机（不关使能）"""
-        # 停止指令：0x81 00 00 00 00 00 00 00
-        return self.send_command(motor_id, [0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-    def brake_lock(self, motor_id):
-        """抱闸锁死（关闭系统抱闸）"""
-        # 抱闸锁死指令：0x78 00 00 00 00 00 00 00
-        return self.send_command(motor_id, [0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-    def brake_release(self, motor_id):
-        """抱闸释放（开启系统抱闸，同使能指令）"""
-        return self.enable_drive(motor_id)  # 使能指令同时实现抱闸释放
-
-    def motor_reset(self, motor_id):
-        """电机复位（无返回值）"""
-        # 复位指令：0x76 00 00 00 00 00 00 00
-        return self.send_command(motor_id, [0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-    # -------------------------- 速度控制相关 --------------------------
-    def set_velocity_closed_loop(self, motor_id, target_speed, max_torque=255):
-        """
-        速度闭环控制
-        :param motor_id: 电机ID
-        :param target_speed: 目标速度（dps），实际发送时按0.01dps/LSB缩放（乘以100）
-        :param max_torque: 最大扭矩（0-255）
-        :return: 发送成功返回True
-        """
-        if not 0 <= max_torque <= 255:
-            self.get_logger().error("最大扭矩值必须在0-255之间")
-            return False
-        
-        # 速度值转换：target_speed(dps) = 发送值 * 0.01dps/LSB → 发送值 = target_speed * 100
-        send_speed = int(target_speed * 100)
-        # 4字节速度数据（低字节在前，高字节在后）
-        speed_bytes = [
-            send_speed & 0xFF,
-            (send_speed >> 8) & 0xFF,
-            (send_speed >> 16) & 0xFF,
-            (send_speed >> 24) & 0xFF
-        ]
-        # 指令格式：A2 [最大扭矩] 00 00 [速度低字节] [速度中低字节] [速度中高字节] [速度高字节]
-        command_data = [0xA2, max_torque, 0x00, 0x00] + speed_bytes
-        return self.send_command(motor_id, command_data)
-
-    # def set_rotation_direction(self, motor_id, is_forward=True):
-    #     """
-    #     设置正反转（通过速度正负实现，此方法为方向控制封装）
-    #     :param motor_id: 电机ID
-    #     :param is_forward: True-正转，False-反转
-    #     :return: 始终返回True（方向通过速度值正负实际控制）
-    #     """
-    #     # 正反转通过速度值正负实现，此处仅作为逻辑封装
-    #     direction = "正转" if is_forward else "反转"
-    #     self.get_logger().info(f"电机{motor_id}设置为{direction}（实际通过速度正负控制）")
-    #     return True
-
-    def set_acceleration(self, motor_id, acceleration):
-        """
-        设置速度规划加速度（单位：dps/s，断电保存）
-        :param motor_id: 电机ID
-        :param acceleration: 加速度值（dps/s）
-        :return: 发送成功返回True
-        """
-        # 指令格式：43 02 00 00 [加速度低字节] [加速度中低字节] [加速度中高字节] [加速度高字节]
-        acc_bytes = [
-            acceleration & 0xFF,
-            (acceleration >> 8) & 0xFF,
-            (acceleration >> 16) & 0xFF,
-            (acceleration >> 24) & 0xFF
-        ]
-        command_data = [0x43, 0x02, 0x00, 0x00] + acc_bytes
-        return self.send_command(motor_id, command_data)
-
-    def set_deceleration(self, motor_id, deceleration):
-        """
-        设置速度规划减速度（单位：dps/s，断电保存）
-        :param motor_id: 电机ID
-        :param deceleration: 减速度值（dps/s）
-        :return: 发送成功返回True
-        """
-        # 指令格式：43 03 00 00 [减速度低字节] [减速度中低字节] [减速度中高字节] [减速度高字节]
-        dec_bytes = [
-            deceleration & 0xFF,
-            (deceleration >> 8) & 0xFF,
-            (deceleration >> 16) & 0xFF,
-            (deceleration >> 24) & 0xFF
-        ]
-        command_data = [0x43, 0x03, 0x00, 0x00] + dec_bytes
-        return self.send_command(motor_id, command_data)
-
-    def get_actual_velocity(self, motor_id):
-        """
-        读取电机实际速度（通过读取状态2获取）
-        :return: 实际速度（dps），超时返回0
-        """
-        # 发送读取状态2指令：0x9C 00 00 00 00 00 00 00
-        if not self.send_command(motor_id, [0x9C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]):
-            return 0
-        
-        start_time = time.time()
-        while time.time() - start_time < 0.5:
-            try:
-                msg = self.bus.recv(timeout=0.1)
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN接收失败（电机{motor_id}）: {e}，尝试重连...")
-                self.reconnect_can_bus()
-                continue
-            
-            # 校验响应帧：回复地址为0x240+电机ID，指令码为0x9C
-            if msg and msg.arbitration_id == (self.reply_base_id + motor_id):
-                if len(msg.data) >= 8 and msg.data[0] == 0x9C:
-                    # 速度数据：Data[5]（高字节）、Data[4]（低字节），int16_t类型，1dps/LSB
-                    speed = msg.data[4] | (msg.data[5] << 8)
-                    # 处理负速度
-                    if speed > 0x7FFF:
-                        speed -= 0x10000
-                    return speed
-        
-        self.get_logger().warn(f"读取电机{motor_id}实际速度超时")
-        return 0
-
-    # -------------------------- 状态读取相关 --------------------------
-    def parse_error_state(self, error_code):
-        """解析错误状态码"""
-        error_map = {
-            0x0002: "电机堵转",
-            0x0004: "低压",
-            0x0008: "过压",
-            0x0010: "相电流过流",
-            0x0040: "功率超限",
-            0x0080: "标定参数写入错误",
-            0x0100: "超速",
-            0x0800: "元器件过温",
-            0x1000: "电机温度过温",
-            0x2000: "编码器校准错误",
-            0x4000: "编码器数据错误"
-        }
-        errors = []
-        for code, desc in error_map.items():
-            if error_code & code:
-                errors.append(desc)
-        return errors if errors else ["无错误"]
-
-    def get_motor_state1(self, motor_id):
-        """
-        读取电机状态1（温度、抱闸、电压）与错误标志
-        :return: 字典包含温度、抱闸状态、电压、错误信息
-        """
-        # 发送状态1读取指令：0x9A 00 00 00 00 00 00 00
-        if not self.send_command(motor_id, [0x9A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]):
-            return None
-        
-        start_time = time.time()
-        while time.time() - start_time < 0.5:
-            try:
-                msg = self.bus.recv(timeout=0.1)
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN接收失败（电机{motor_id}）: {e}，尝试重连...")
-                self.reconnect_can_bus()
-                continue
-            
-            if msg and msg.arbitration_id == (self.reply_base_id + motor_id):
-                if len(msg.data) >= 8 and msg.data[0] == 0x9A:
-                    # 解析数据
-                    temperature = msg.data[1]  # int8_t类型，1℃/LSB
-                    if temperature > 0x7F:
-                        temperature -= 0x100  # 转换为负温度
-                    
-                    brake_status = (msg.data[3] & 0x01)  # 假设bit0为抱闸状态位（0-锁死，1-释放）
-                    brake_desc = "释放" if brake_status else "锁死"
-                    
-                    voltage = (msg.data[4] | (msg.data[5] << 8)) * 0.1  # 0.1V/LSB
-                    
-                    error_code = msg.data[6] | (msg.data[7] << 8)  # 错误状态码
-                    error_info = self.parse_error_state(error_code)
-                    
-                    return {
-                        "temperature": temperature,
-                        "brake_status": brake_desc,
-                        "voltage": round(voltage, 1),
-                        "error_code": hex(error_code),
-                        "error_info": error_info
-                    }
-        
-        self.get_logger().warn(f"读取电机{motor_id}状态1超时")
-        return None
-
-    def get_motor_state2(self, motor_id):
-        """
-        读取电机状态2（转矩、电流、转速、角度）与错误标志
-        :return: 字典包含温度、转矩、电流、转速、角度、错误信息
-        """
-        # 发送状态2读取指令：0x9C 00 00 00 00 00 00 00
-        if not self.send_command(motor_id, [0x9C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]):
-            return None
-        
-        start_time = time.time()
-        while time.time() - start_time < 0.5:
-            try:
-                msg = self.bus.recv(timeout=0.1)
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN接收失败（电机{motor_id}）: {e}，尝试重连...")
-                self.reconnect_can_bus()
-                continue
-            
-            if msg and msg.arbitration_id == (self.reply_base_id + motor_id):
-                if len(msg.data) >= 8 and msg.data[0] == 0x9C:
-                    # 解析数据
-                    temperature = msg.data[1]  # int8_t类型，1℃/LSB
-                    if temperature > 0x7F:
-                        temperature -= 0x100
-                    
-                    torque_current = msg.data[2] | (msg.data[3] << 8)  # iq电流，int16_t，0.01A/LSB
-                    if torque_current > 0x7FFF:
-                        torque_current -= 0x10000
-                    torque = torque_current * 0.01  # 转矩电流值（A）
-                    
-                    speed = msg.data[4] | (msg.data[5] << 8)  # 转速，int16_t，1dps/LSB
-                    if speed > 0x7FFF:
-                        speed -= 0x10000
-                    
-                    angle = msg.data[6] | (msg.data[7] << 8)  # 角度，int16_t，1degree/LSB
-                    if angle > 0x7FFF:
-                        angle -= 0x10000
-                    
-                    
-                    return {
-                        "temperature": temperature,
-                        "torque_current": round(torque, 2),
-                        "speed": speed,
-                        "angle": angle,
-                    }
-        
-        self.get_logger().warn(f"读取电机{motor_id}状态2超时")
-        return None
-
-    def get_motor_state3(self, motor_id):
-        """
-        读取电机状态3（温度、三相电流）
-        :return: 字典包含温度、A/B/C相电流
-        """
-        # 发送状态3读取指令：0x9D 00 00 00 00 00 00 00
-        if not self.send_command(motor_id, [0x9D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]):
-            return None
-        
-        start_time = time.time()
-        while time.time() - start_time < 0.5:
-            try:
-                msg = self.bus.recv(timeout=0.1)
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN接收失败（电机{motor_id}）: {e}，尝试重连...")
-                self.reconnect_can_bus()
-                continue
-            
-            if msg and msg.arbitration_id == (self.reply_base_id + motor_id):
-                if len(msg.data) >= 8 and msg.data[0] == 0x9D:
-                    # 解析数据
-                    temperature = msg.data[1]  # int8_t类型，1℃/LSB
-                    if temperature > 0x7F:
-                        temperature -= 0x100
-                    
-                    # A相电流：Data[2]（低）、Data[3]（高），int16_t，0.01A/LSB
-                    current_a = msg.data[2] | (msg.data[3] << 8)
-                    if current_a > 0x7FFF:
-                        current_a -= 0x10000
-                    current_a = current_a * 0.01
-                    
-                    # B相电流：Data[4]（低）、Data[5]（高）
-                    current_b = msg.data[4] | (msg.data[5] << 8)
-                    if current_b > 0x7FFF:
-                        current_b -= 0x10000
-                    current_b = current_b * 0.01
-                    
-                    # C相电流：Data[6]（低）、Data[7]（高）
-                    current_c = msg.data[6] | (msg.data[7] << 8)
-                    if current_c > 0x7FFF:
-                        current_c -= 0x10000
-                    current_c = current_c * 0.01
-                    
-                    return {
-                        "temperature": temperature,
-                        "current_a": round(current_a, 2),
-                        "current_b": round(current_b, 2),
-                        "current_c": round(current_c, 2)
-                    }
-        
-        self.get_logger().warn(f"读取电机{motor_id}状态3超时")
-        return None
-
-    def get_motor_temperature(self, motor_id):
-        """读取电机温度（通过状态1获取）"""
-        state1 = self.get_motor_state1(motor_id)
-        return state1["temperature"] if state1 else None
-
-    def get_brake_status(self, motor_id):
-        """读取抱闸状态（通过状态1获取）"""
-        state1 = self.get_motor_state1(motor_id)
-        return state1["brake_status"] if state1 else "未知"
-
-    def get_input_voltage(self, motor_id):
-        """读取输入电压（通过状态1获取）"""
-        state1 = self.get_motor_state1(motor_id)
-        return state1["voltage"] if state1 else 0.0
-
-    def get_actual_torque(self, motor_id):
-        """读取实际转矩电流（通过状态2获取）"""
-        state2 = self.get_motor_state2(motor_id)
-        return state2["torque_current"] if state2 else 0.0
-
-    def get_actual_current(self, motor_id):
-        """读取三相电流（通过状态3获取）"""
-        state3 = self.get_motor_state3(motor_id)
-        if state3:
-            return {
-                "A相": state3["current_a"],
-                "B相": state3["current_b"],
-                "C相": state3["current_c"]
-            }
-        return None
-
-    # -------------------------- 配置参数读写 --------------------------
-    def set_comm_protection_time(self, motor_id, protect_time):
-        """
-        设置通讯中断保护时间（单位：ms）
-        :param motor_id: 电机ID
-        :param protect_time: 保护时间（ms），4字节数据
-        :return: 发送成功返回True
-        """
-        # 指令格式：B3 00 00 00 [时间低字节] [时间中低字节] [时间中高字节] [时间高字节]
-        time_bytes = [
-            protect_time & 0xFF,
-            (protect_time >> 8) & 0xFF,
-            (protect_time >> 16) & 0xFF,
-            (protect_time >> 24) & 0xFF
-        ]
-        command_data = [0xB3, 0x00, 0x00, 0x00] + time_bytes
-        return self.send_command(motor_id, command_data)
-
-    def set_baudrate(self, motor_id, is_1m=True):
-        """
-        设置CAN波特率（断电保存）
-        :param motor_id: 电机ID
-        :param is_1m: True-1Mbps，False-500kbps
-        :return: 发送成功返回True
-        """
-        baud_byte = 0x01 if is_1m else 0x00
-        # 指令格式：B4 00 00 00 00 00 00 [波特率配置字节]
-        command_data = [0xB4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, baud_byte]
-        success = self.send_command(motor_id, command_data)
-        if success:
-            baud_str = "1Mbps" if is_1m else "500kbps"
-            self.get_logger().info(f"电机{motor_id}波特率设置为{baud_str}，需重启生效")
-        return success
-
-    def read_can_id(self, motor_id):
-        """
-        读取CAN ID
-        :param motor_id: 当前电机ID
-        :return: 字典包含发送ID、回复ID，超时返回None
-        """
-        # 指令格式：79 00 01 00 00 00 00 00（Data[2]=1表示读ID）
-        command_data = [0x79, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]
-        if not self.send_command(motor_id, command_data, is_global=False):
-            return None
-        
-        start_time = time.time()
-        while time.time() - start_time < 0.5:
-            try:
-                msg = self.bus.recv(timeout=0.1)
-            except (can.CanError, OSError) as e:
-                self.get_logger().error(f"CAN接收失败（电机{motor_id}）: {e}，尝试重连...")
-                self.reconnect_can_bus()
-                continue
-            
-            if msg and msg.arbitration_id == (self.reply_base_id + motor_id):
-                print(msg.data)
-                if len(msg.data) >= 8 and msg.data[0] == 0x79:
-                    # Data[6]和Data[7]组成回复ID：0x24X → 发送ID=0x14X
-                    send_id = msg.data[6] | (msg.data[7] << 8)
-                    reply_id = send_id + 0x100  # 回复ID = 发送ID + 0x100
-                    motor_id_new = send_id - self.send_base_id  # 提取电机ID
-                    return {
-                        "send_id": hex(send_id),
-                        "reply_id": hex(reply_id),
-                        "motor_id": motor_id_new
-                    }
-        
-        self.get_logger().warn(f"读取电机{motor_id}CAN ID超时")
-        return None
-
-    def write_can_id(self, old_id, new_id):
-        """
-        写入新CAN ID
-        :param old_id: 当前电机ID
-        :param new_id: 新电机ID（1~32）
-        :return: 发送成功返回True
-        """
-        if not 1 <= new_id <= 32:
-            self.get_logger().error(f"新ID{new_id}超出有效范围（1-32）")
-            return False
-        
-        # 指令格式：79 00 00 00 00 00 00 [新ID]（Data[2]=0表示写ID）
-        command_data = [0x79, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, new_id]
-        success = self.send_command(old_id, command_data, is_global=True)
-        if success:
-            new_send_id = self.send_base_id + new_id
-            new_reply_id = self.reply_base_id + new_id
-            self.get_logger().info(
-                f"电机ID更新：旧ID={old_id} → 新ID={new_id}，"
-                f"新发送ID={hex(new_send_id)}，新回复ID={hex(new_reply_id)}"
-            )
-        return success
-
-    # -------------------------- 资源释放 --------------------------
-    def shutdown(self):
-        """关闭驱动（禁用电机+抱闸锁死+关闭CAN总线）"""
-        self.get_logger().info("关闭CAN电机驱动...")
-        try:
-            # 禁用所有电机并锁死抱闸
-            for motor_id in range(1, 33):
-                self.disable_drive(motor_id)
-                self.brake_lock(motor_id)
-            if self.bus is not None:
-                self.bus.shutdown()
+            # 确保数据长度为8字节
+            if len(data) < 8:
+                data = data.ljust(8, b'\x00')
+            elif len(data) > 8:
+                data = data[:8]
+                
+            msg = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
+            self.bus.send(msg)
+            return True
         except Exception as e:
-            self.get_logger().error(f"关闭驱动异常: {e}")
-        self.get_logger().info("CAN电机驱动已关闭")
+            self.get_logger().error(f"Failed to send CAN frame: {e}")
+            self.can_initialized = False
+            return False
+
+    def motor_set_mode(self, motor_id: int, mode: int) -> bool:
+        """设置电机模式"""
+        # 构造CAN数据段（8字节）：0x7005索引 + 模式值
+        can_data = bytearray(8)
+        struct.pack_into("<H", can_data, 0, self.RUN_MODE_INDEX)  # 0x7005（小端）
+        struct.pack_into("<B", can_data, 4, mode)                # 模式值存Byte4
+        # 构造29位CAN ID（通信类型=0x12=参数写入，主机ID=0x0063，电机ID=motor_id）
+        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
+        # 发送CAN帧
+        return self.send_can_frame(can_id, can_data)
+
+    def motor_set_current_limit(self, motor_id: int, current_limit: float) -> bool:
+        """设置电机电流限制"""
+        can_data = bytearray(8)
+        struct.pack_into("<H", can_data, 0, self.LIMIT_CUR_INDEX)  # 0x7018（小端）
+        struct.pack_into("<f", can_data, 4, current_limit)         # 电流值（float）
+        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+
+    def motor_set_other_param(self, motor_id: int, param_value: float) -> bool:
+        """设置电机其他参数"""
+        can_data = bytearray(8)
+        struct.pack_into("<H", can_data, 0, self.OTHER_PARAM_INDEX)  # 0x7022（小端）
+        struct.pack_into("<f", can_data, 4, param_value)            # 参数值（float）
+        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+
+    def motor_set_speed(self, motor_id: int, speed: float) -> bool:
+        """设置电机速度"""
+        can_data = bytearray(8)
+        struct.pack_into("<H", can_data, 0, self.SPEED_REF_INDEX)  # 0x700A（小端）
+        struct.pack_into("<f", can_data, 4, speed)                 # 速度值（float）
+        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+
+    def motor_query_feedback(self, motor_id: int) -> bool:
+        """主动查询电机反馈数据"""
+        can_data = bytearray(8)
+        can_data[0] = self.MC_CMD_QUERY_MOTOR  # 查询命令
+        can_data[1] = 0x00  # 命令子类型，0表示查询位置、速度、扭矩
+        # 构造29位CAN ID（通信类型=0x03=查询命令，主机ID=0x0063，电机ID=motor_id）
+        can_id = (self.MC_CMD_QUERY_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+
+    def motor_enable(self, motor_id: int) -> bool:
+        """使能电机"""
+        can_data = b'\x00' * 8  # 使能指令数据段全零
+        can_id = (self.COMM_ENABLE_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+        
+    def motor_disable(self, motor_id: int) -> bool:
+        """停止单个电机"""
+        can_data = b'\x80'+b'\x00' * 7
+        can_id = (self.COMM_DISABLE_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
+        return self.send_can_frame(can_id, can_data)
+
+    def initialize_motors(self):
+        """初始化所有电机"""
+        self.get_logger().info("Initializing motors...")
+        time.sleep(3.0)  # 等待CAN接口就绪，与jifeng系统保持一致
+        
+        # 初始化左轮电机 (ID=1)
+        self.get_logger().info("Initializing left wheel motor (ID=1)...")
+        self.motor_set_mode(1, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_enable(1)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(1, 20.0)  # 设置电流限制
+        time.sleep(0.01)
+
+        # 初始化右轮电机 (ID=2)
+        self.get_logger().info("Initializing right wheel motor (ID=2)...")
+        self.motor_set_mode(2, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_enable(2)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(2, 20.0)  # 设置电流限制
+        time.sleep(0.01)
+
+        # 初始化前毛刷电机 (ID=3)
+        self.get_logger().info("Initializing front brush motor (ID=3)...")
+        self.motor_set_mode(3, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_set_other_param(3, 15.0)  # 设置特定参数
+        time.sleep(0.01)
+        self.motor_enable(3)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(3, 20.0)  # 设置电流限制
+        time.sleep(0.01)
+
+    def speed_command_callback(self, msg: Float32MultiArray):
+        """处理速度命令回调函数"""
+        if len(msg.data) != 3:  # 3个电机的速度命令
+            self.get_logger().warn(f"Received speed command with incorrect length: {len(msg.data)}, expected: 3")
+            return
+            
+        # 更新电机速度目标值
+        for i in range(min(len(self.motors), len(msg.data))):
+            self.motors[i]["velocity"] = float(msg.data[i])
+        
+        self.get_logger().debug(f"Updated motor velocity targets: {[m['velocity'] for m in self.motors]}")
+
+    def send_speed_commands(self):
+        """发送速度命令给所有电机"""
+        current_time = time.time()
+        for motor in self.motors:
+            result = self.motor_set_speed(motor["id"], motor["velocity"])
+            if not result:
+                self.get_logger().error(f"Failed to set motor {motor['id']} speed")
+                # 记录错误
+                motor["error_code"] = 1
+
+    def query_motor_feedback(self):
+        """主动查询所有电机的反馈数据"""
+        for motor in self.motors:
+            result = self.motor_query_feedback(motor["id"])
+            if not result:
+                self.get_logger().error(f"Failed to query motor {motor['id']} feedback")
+                # 记录错误
+                motor["error_code"] = 3  # 查询错误
+
+    def parse_motor_feedback(self, can_id: int, data: bytearray):
+        """解析电机反馈数据（基于图片中定义的协议）"""
+        # 根据图片中的29位ID结构，从bit8~bit15提取电机ID
+        # Bit8~Bit15: 当前电机CAN ID
+        motor_id = (can_id >> 8) & 0xFF
+        
+        # 查找对应的电机
+        motor = None
+        for m in self.motors:
+            if m["id"] == motor_id:
+                motor = m
+                break
+                
+        if motor is None:
+            return
+            
+        try:
+            # 解析数据区（Byte0~Byte7）
+            # Byte0~1: 当前角度 [0~65535] 对应 (-12.57f~12.57f)
+            position_raw = (data[0] << 8) | data[1]  # 低字节在前
+            
+            # Byte2~3: 当前角速度 [0~65535] 对应 (-20rad/s~20rad/s)
+            speed_raw = (data[2] << 8) | data[3]  # 低字节在前
+            
+            # Byte4~5: 当前力矩 [0~65535] 对应 (-60Nm~60Nm)
+            torque_raw = (data[4] << 8) | data[5]  # 低字节在前
+            
+            # Byte6~7: 当前温度：Temp(摄氏度)*10
+            temp_raw = (data[6] << 8) | data[7]  # 低字节在前
+            temp = temp_raw / 10.0  # 转换为实际温度值
+            
+            # 提取故障信息和模式状态
+            # Bit21~16: 故障信息
+            fault_info = (can_id >> 16) & 0x3F
+            # Bit22~23: 模式状态
+            mode_status = (can_id >> 22) & 0x03
+            
+            # 根据电机ID使用不同的转换范围
+            if motor_id in [1, 2]:  # 左右轮电机
+                # 位置范围: -12.57 ~ 12.57
+                position = self.uint16_to_float(position_raw, -12.57, 12.57, 16)
+                # 速度范围: -20 ~ 20 rad/s
+                speed = self.uint16_to_float(speed_raw, -20.0, 20.0, 16)
+                # 扭矩范围: -60 ~ 60 Nm
+                torque = self.uint16_to_float(torque_raw, -60.0, 60.0, 16)
+            else:  # 前毛刷电机 (ID=3)
+                # 位置范围: -4π ~ 4π
+                position = self.uint16_to_float(position_raw, -4 * math.pi, 4 * math.pi, 16)
+                # 速度范围: -44 ~ 44 rad/s
+                speed = self.uint16_to_float(speed_raw, -44.0, 44.0, 16)
+                # 扭矩范围: -17 ~ 17 Nm
+                torque = self.uint16_to_float(torque_raw, -17.0, 17.0, 16)
+                
+            # 更新电机实际参数
+            motor["actual_position"] = position
+            motor["actual_velocity"] = speed
+            motor["actual_torque"] = torque
+            motor["actual_temperature"] = temp
+            
+            # 设置错误码和模式状态
+            motor["error_code"] = fault_info
+            motor["run_mode"] = mode_status
+            
+        except Exception as e:
+            self.get_logger().warn(f"Error parsing motor {motor_id} feedback: {str(e)}")
+            motor["error_code"] = 2  # 解析错误
+
+    def uint16_to_float(self, x, x_min, x_max, bits):
+        """将16位整数转换为浮点数"""
+        span = (1 << bits) - 1
+        offset = x_max - x_min
+        return offset * x / span + x_min
+
+    def update_odometry(self):
+        """更新里程信息"""
+        current_time = self.get_clock().now()
+        dt = (current_time.nanoseconds - self.last_time.nanoseconds) / 1e9
+        self.last_time = current_time
+        
+        if dt <= 0:
+            return
+
+        # 获取左右轮的实际速度（rad/s）
+        left_vel = self.motors[0]["actual_velocity"]  # 左轮电机在索引0
+        right_vel = self.motors[1]["actual_velocity"]  # 右轮电机在索引1
+
+        # 将角速度转换为线速度（m/s）
+        left_vel_linear = left_vel * self.wheel_radius
+        right_vel_linear = right_vel * self.wheel_radius
+
+        # 计算机器人线速度和角速度
+        linear_velocity = (right_vel_linear + left_vel_linear) / 2.0
+        angular_velocity = (right_vel_linear - left_vel_linear) / self.wheel_base
+
+        # 计算位移和角度变化
+        delta_x = linear_velocity * dt * 10  # 增加一个缩放因子来调整里程
+        delta_y = 0.0
+        delta_th = angular_velocity * dt
+
+        # 更新机器人位置（基于差动驱动模型）
+        self.x += delta_x * math.cos(self.th) - delta_y * math.sin(self.th)
+        self.y += delta_x * math.sin(self.th) + delta_y * math.cos(self.th)
+        self.th += delta_th
+
+        # 发布里程计消息
+        self.publish_odometry(linear_velocity, angular_velocity)
+
+    def publish_odometry(self, linear_velocity, angular_velocity):
+        """发布里程计消息"""
+        current_time = self.get_clock().now()
+        
+        # 创建Odometry消息
+        odom = Odometry()
+        odom.header.stamp = current_time.to_msg()
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
+
+        # 设置位置
+        odom.pose.pose.position.x = self.x
+        odom.pose.pose.position.y = self.y
+        odom.pose.pose.position.z = 0.0
+        odom.pose.pose.orientation = self.quaternion_from_euler(0, 0, self.th)
+
+        # 设置速度
+        odom.twist.twist.linear.x = linear_velocity
+        odom.twist.twist.linear.y = 0.0
+        odom.twist.twist.linear.z = 0.0
+        odom.twist.twist.angular.x = 0.0
+        odom.twist.twist.angular.y = 0.0
+        odom.twist.twist.angular.z = angular_velocity
+
+        # 设置协方差矩阵（暂时设置为0，可以根据实际传感器精度调整）
+        odom.pose.covariance = [0.0] * 36
+        odom.twist.covariance = [0.0] * 36
+
+        # 发布里程计消息
+        self.odom_publisher.publish(odom)
+
+    def quaternion_from_euler(self, roll, pitch, yaw):
+        """从欧拉角创建四元数"""
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        cp = math.cos(pitch * 0.5)
+        sp = math.sin(pitch * 0.5)
+        cr = math.cos(roll * 0.5)
+        sr = math.sin(roll * 0.5)
+
+        q = Quaternion()
+        q.w = cr * cp * cy + sr * sp * sy
+        q.x = sr * cp * cy - cr * sp * sy
+        q.y = cr * sp * cy + sr * cp * sy
+        q.z = cr * cp * sy - sr * sp * cy
+        
+        return q
+
+    def receive_can_frames(self):
+        """接收CAN帧的线程函数"""
+        self.get_logger().info("Starting CAN frame receiving thread...")
+        while self.running:
+            try:
+                # 如果CAN未初始化，尝试重新初始化
+                if not self.can_initialized:
+                    self.reconnect_can_bus()
+                    time.sleep(1.0)  # 等待一段时间再重试
+                    continue
+                    
+                # 使用100ms超时接收CAN帧
+                if self.bus:
+                    msg = self.bus.recv(timeout=0.1)
+                    if msg is not None:
+                        self.parse_motor_feedback(msg.arbitration_id, msg.data)
+                else:
+                    time.sleep(0.1)  # 如果没有CAN总线，短暂休眠
+            except can.CanError as e:
+                self.get_logger().error(f"CAN error while receiving frames: {str(e)}")
+                self.can_initialized = False
+                time.sleep(1.0)  # 出现错误后等待更长时间
+            except Exception as e:
+                if self.running:  # 只在运行时记录错误
+                    self.get_logger().error(f"Error receiving CAN frames: {str(e)}")
+                time.sleep(1.0)  # 出现错误后等待更长时间
+        self.get_logger().info("Stopped CAN frame receiving thread")
+
+    def start_receive_thread(self):
+        """启动接收线程"""
+        self.receive_thread = threading.Thread(target=self.receive_can_frames, daemon=True)
+        self.receive_thread.start()
+
+    def timer_callback(self):
+        """定时器回调函数，发送速度命令并发布电机状态"""
+        # 发送速度命令给所有电机
+        self.send_speed_commands()
+        
+        # # 主动查询电机反馈数据
+        # self.query_motor_feedback()
+        
+        # 更新里程信息
+        self.update_odometry()
+        
+        # 发布电机速度
+        velocity_msg = Float32MultiArray()
+        velocity_msg.data = [float(m["actual_velocity"]) for m in self.motors]
+        self.velocity_publisher.publish(velocity_msg)
+        
+        # 发布电机反馈信息（位置、速度、扭矩、温度）- 按电机ID分组
+        feedback_msg = Float32MultiArray()
+        # 每个电机的数据按顺序：[电机ID, 位置, 速度, 扭矩, 温度]
+        feedback_data = []
+        for motor in self.motors:
+            feedback_data.extend([
+                float(motor["id"]),               # 电机ID
+                motor["actual_position"],         # 位置
+                motor["actual_velocity"],         # 速度
+                motor["actual_torque"],           # 扭矩
+                motor["actual_temperature"]       # 温度
+            ])
+        feedback_msg.data = feedback_data
+        self.motor_feedback_publisher.publish(feedback_msg)
+        
+        # 发布电机错误信息
+        error_msg = Int32MultiArray()
+        error_msg.data = [int(m["error_code"]) for m in self.motors]
+        self.error_publisher.publish(error_msg)
+        
+        # 发布系统整体错误状态（如果有任何电机出错）
+        system_error = 0
+        for motor in self.motors:
+            if motor["error_code"] != 0:
+                system_error = 1
+                break
+                
+        system_error_msg = Int32()
+        system_error_msg.data = system_error
+        self.system_error_publisher.publish(system_error_msg)
+
+    def destroy_node(self):
+        """节点销毁时停止所有电机"""
+        self.get_logger().info("Stopping all motors...")
+        self.running = False  # 停止接收线程
+        
+        # 发送速度为0的命令
+        for motor in self.motors:
+            motor["velocity"] = 0.0
+        self.send_speed_commands()
+        time.sleep(0.01)  # 短暂延迟确保命令发送
+            
+        # 发送关闭命令
+        for motor in self.motors:
+            self.motor_disable(motor["id"])
+            time.sleep(0.01)  # 短暂延迟确保命令发送
+            
+        # 等待接收线程结束
+        if self.receive_thread:
+            self.receive_thread.join(timeout=1.0)
+            
+        # 关闭CAN总线
+        if self.bus:
+            self.bus.shutdown()
+            self.get_logger().info("CAN bus shutdown")
+            
+        super().destroy_node()
+
 
 def main(args=None):
     rclpy.init(args=args)
-    # 初始化电机驱动（can0接口，1Mbps波特率）
-    motor_driver = CanMotorDriver(channel='can0', interface='socketcan', baudrate=1000000)
     
     try:
-        # 示例：控制ID=1的电机
-        motor_id = 1
-        while True:
-            # 1. 基础控制示例
-            motor_driver.get_logger().info("=== 基础控制测试 ===")
-            motor_driver.enable_drive(motor_id)  # 使能电机（抱闸释放）
-            time.sleep(0.5)
-            # motor_driver.set_rotation_direction(motor_id, is_forward=True)  # 设置正转
-            motor_driver.set_acceleration(motor_id, 5000)  # 加速度5000 dps/s
-            motor_driver.set_deceleration(motor_id, 5000)  # 减速度5000 dps/s
-            motor_driver.set_velocity_closed_loop(motor_id, target_speed=100, max_torque=200)  # 100 dps，最大扭矩200
-            time.sleep(3)
-            
-            # 2. 状态读取示例
-            motor_driver.get_logger().info("\n=== 状态读取测试 ===")
-            state1 = motor_driver.get_motor_state1(motor_id)
-            if state1:
-                motor_driver.get_logger().info(
-                    f"状态1 - 温度: {state1['temperature']}℃, "
-                    f"抱闸状态: {state1['brake_status']}, "
-                    f"电压: {state1['voltage']}V, "
-                    f"错误: {state1['error_info']}"
-                )
-            
-            state2 = motor_driver.get_motor_state2(motor_id)
-            if state2:
-                motor_driver.get_logger().info(
-                    f"状态2 - 转矩电流: {state2['torque_current']}A, "
-                    f"转速: {state2['speed']}dps, "
-                    f"角度: {state2['angle']}°"
-                )
-            
-            state3 = motor_driver.get_motor_state3(motor_id)
-            if state3:
-                motor_driver.get_logger().info(
-                    f"状态3 - A相电流: {state3['current_a']}A, "
-                    f"B相电流: {state3['current_b']}A, "
-                    f"C相电流: {state3['current_c']}A"
-                )
-            
-            # 3. 配置参数示例
-            motor_driver.get_logger().info("\n=== 配置参数测试 ===")
-            motor_driver.set_comm_protection_time(motor_id, 5000)  # 通讯中断保护时间500ms
-            # can_id_info = motor_driver.read_can_id(motor_id)
-            # if can_id_info:
-                # motor_driver.get_logger().info(f"当前CAN ID信息: {can_id_info}")
-            # 4. 停止电机
-            motor_driver.stop_motor(motor_id)  # 停止电机
-            time.sleep(1)
-            motor_driver.disable_drive(motor_id)  # 非使能电机
-            motor_driver.brake_lock(motor_id)  # 抱闸锁死
-            
-            rclpy.spin(motor_driver)
+        motor_driver = CanMotorDriver()
+        rclpy.spin(motor_driver)
     except KeyboardInterrupt:
-        motor_driver.get_logger().info("收到中断信号，停止电机...")
+        pass
+    except Exception as e:
+        print(f"Unexpected error: {e}")
     finally:
-        motor_driver.shutdown()
-        rclpy.shutdown()
+        # Check if rclpy is still OK before shutdown
+        if rclpy.ok():
+            if 'motor_driver' in locals():
+                motor_driver.destroy_node()
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

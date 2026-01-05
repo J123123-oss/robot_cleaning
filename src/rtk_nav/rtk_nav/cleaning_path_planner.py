@@ -261,7 +261,7 @@ class CleaningPathPlanner(Node):
         self.declare_parameter('rect_height', 10.0)
         self.declare_parameter('rotation_deg', 15.0)
         self.declare_parameter('interval', 1.0)
-        self.declare_parameter('start_corner', 'bottom_right')
+        self.declare_parameter('start_corner', 'top_right')
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -316,13 +316,14 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  矩形高度: {self.param['rect_height']}米")
             self.get_logger().info(f"  旋转角度: {self.param['rotation_deg']}度")
             self.get_logger().info(f"  路径间隔: {self.param['interval']}米")
+            self.get_logger().info(f"  起始点: {self.param['start_corner']}")
             self.get_logger().info(f"  经度方向边缘距离: {self.param['edge_distance_lon']}米")
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
             # 确保保存目录存在
-            save_dir = os.path.expanduser("/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
-            # save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            # save_dir = os.path.expanduser("/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             # 计算航向角并保存路径点
