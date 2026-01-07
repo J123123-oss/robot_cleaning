@@ -129,8 +129,10 @@ class SBUSRemoteController:
         """根据CH6三挡开关状态更新控制模式"""
         if abs(ch6_value - RC_CH_MIN_VALUE) < DEAD_ZONE_SBUS:
             self.control_mode = "REMOTE"
-        else:
+        elif abs(ch6_value - RC_CH_HALF_RANGE) < DEAD_ZONE_SBUS:
             self.control_mode = "NORMAL"
+        else:
+            self.control_mode = "RTK_NAV"
 
     def _parse_sbus_frame(self, frame: bytes) -> Optional[list]:
         """解析SBUS帧数据（复用参考代码逻辑）"""
@@ -140,9 +142,9 @@ class SBUSRemoteController:
         if frame[0] != FRAME_HEADER_SBUS or frame[-2] != FRAME_TAIL1_SBUS:
             return None
 
-        # 解析32字节数据为16个16bit通道值（小端模式）
+        # 解析32字节数据为15个16bit通道值（小端模式）
         channels = []
-        for i in range(16):  # 16个通道
+        for i in range(15):  # 16个通道
             byte_start = 1 + 2 * i
             byte_end = byte_start + 2
             # 防止索引越界

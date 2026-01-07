@@ -45,6 +45,17 @@ motor/current_speed
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32088536, longitude: 120.06717012, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32009074, longitude: 120.06899750, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32005031, longitude: 120.06719501, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
+序号,经度,纬度,航向角(度)
+1,120.07064157,30.32105564,88.51
+2,120.07065098,30.32105585,338.51
+
+ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32105564, longitude: 120.07064157, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
+
+ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32105585, longitude: 120.07065098, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
+
+
+
+
 
 
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.3208108, longitude: 120.07117109, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1

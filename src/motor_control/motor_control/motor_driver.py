@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import Int32MultiArray
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, UInt8
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
 import struct
@@ -14,6 +14,7 @@ import time
 import math
 from typing import Optional, List, Dict
 import threading
+
 
 class CanMotorDriver(Node):
     def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000):
@@ -89,6 +90,16 @@ class CanMotorDriver(Node):
         self.x = 0.0  # 机器人位置x坐标
         self.y = 0.0  # 机器人位置y坐标
         self.th = 0.0  # 机器人方向角度
+
+        self.BASE_SPEED = 100.0  # 导航目标速度（dps）= self.BASE_SPEED*100
+        # Sensor 
+        self.front_left = None
+        self.front_right = None
+        self.mid_left = None
+        self.mid_right = None
+        self.back_left = None
+        self.back_right = None
+
         
         # 上次时间戳
         self.last_time = self.get_clock().now()
@@ -136,6 +147,13 @@ class CanMotorDriver(Node):
             Odometry,
             'odom',
             10)
+        
+        self.io_data_sub = self.create_subscription(
+            UInt8,
+            "/io_data",
+            self.io_data_callback,
+            10
+        )
             
         # 定时器，定期发送速度命令和发布电机状态
         self.timer = self.create_timer(0.1, self.timer_callback)  # 10Hz
@@ -287,6 +305,51 @@ class CanMotorDriver(Node):
             self.motors[i]["velocity"] = float(msg.data[i])
         
         self.get_logger().debug(f"Updated motor velocity targets: {[m['velocity'] for m in self.motors]}")
+
+    def io_data_callback(self, msg: UInt8):
+        """处理IO数据回调（可根据需要扩展功能）"""
+
+        # 位0 (1<<0 = 0x01)：前左
+        self.front_left = (msg.data & 0x01) == 0x01
+        
+        # 位1 (1<<1 = 0x02)：前右
+        self.front_right = (msg.data & 0x02) == 0x02
+        
+        # 位2 (1<<2 = 0x04)：中左
+        self.mid_left = (msg.data & 0x04) == 0x04
+        
+        # 位3 (1<<3 = 0x08)：中右  8
+        self.mid_right = (msg.data & 0x08) == 0x08
+        
+        # 位4 (1<<4 = 0x10)：后左 16
+        self.back_left = (msg.data & 0x10) == 0x10
+        
+        # 位5 (1<<5 = 0x20)：后右  32
+        self.back_right = (msg.data & 0x20) == 0x20
+        # if msg.data:
+        #     for m in self.motors:
+        #         self.motor_set_speed(m["id"], 0) 
+        #         self.get_logger().info(f"--------------Test Proximity Speed--------------")
+        if self.front_left or self.front_right:
+            self.motor_set_speed(1, -0.3 * self.BASE_SPEED)
+            self.motor_set_speed(2, 0.3 * self.BASE_SPEED)
+            if self.mid_left or self.mid_right:
+                self.motor_set_speed(1, 0)
+                self.motor_set_speed(2, 0)
+                while self.front_left or self.front_right and rclpy.ok():
+                    self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+                    self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+        if self.back_left or self.back_right:
+            self.motor_set_speed(1, 0)
+            self.motor_set_speed(2, 0)
+            while self.front_left or self.front_right and rclpy.ok():
+                self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+                self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+
+        self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
+        f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
+        f"back_left={self.back_left}, back_right={self.back_right}"
+        )
 
     def send_speed_commands(self):
         """发送速度命令给所有电机"""

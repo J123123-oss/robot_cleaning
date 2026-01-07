@@ -9,7 +9,7 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, UInt8
 from geometry_msgs.msg import Vector3
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -27,7 +27,6 @@ STATE_DICT = {
 }
 CURRENT_STATE = "STOP"
 
-BASE_SPEED = 100.0  # 导航目标速度（dps）= BASE_SPEED*100
 MAX_SPEED = 260.0   # 遥控器最大速度
 MIN_SPEED = -160.0  # 遥控器最小速度
 # 通道灵敏度系数（可微调，0~1之间，用于控制通道对速度的影响程度）
@@ -83,6 +82,7 @@ class MotorControlNode(Node):
             self.rtk_speed_callback,
             10
         )
+
 
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
@@ -159,17 +159,17 @@ class MotorControlNode(Node):
 
             # 按当前状态赋值速度
             if CURRENT_STATE == "FORWARD":
-                left_speed = -BASE_SPEED
-                right_speed = BASE_SPEED
+                left_speed = -self.motor_ctrl.BASE_SPEED
+                right_speed = self.motor_ctrl.BASE_SPEED
             elif CURRENT_STATE == "BACKWARD":
-                left_speed = BASE_SPEED
-                right_speed = -BASE_SPEED
+                left_speed = self.motor_ctrl.BASE_SPEED
+                right_speed = -self.motor_ctrl.BASE_SPEED
             elif CURRENT_STATE == "TURN_LEFT":
-                left_speed = -BASE_SPEED
-                right_speed = -BASE_SPEED
+                left_speed = -self.motor_ctrl.BASE_SPEED
+                right_speed = -self.motor_ctrl.BASE_SPEED
             elif CURRENT_STATE == "TURN_RIGHT":
-                left_speed = BASE_SPEED
-                right_speed = BASE_SPEED
+                left_speed = self.motor_ctrl.BASE_SPEED
+                right_speed = self.motor_ctrl.BASE_SPEED
             else:
                 left_speed = 0.0
                 right_speed = 0.0
@@ -223,6 +223,8 @@ class MotorControlNode(Node):
         self.rtk_right_speed = msg.y
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}")
 
+
+
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
         global CURRENT_STATE
@@ -249,24 +251,24 @@ class MotorControlNode(Node):
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
-            left_speed = -BASE_SPEED
-            right_speed = BASE_SPEED
+            left_speed = -self.motor_ctrl.BASE_SPEED
+            right_speed = self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
 
         elif new_state == "BACKWARD":
             # 后退：双电机反转
-            left_speed = BASE_SPEED
-            right_speed = -BASE_SPEED
+            left_speed = self.motor_ctrl.BASE_SPEED
+            right_speed = -self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
         elif new_state == "TURN_LEFT":
             # 左转
-            left_speed = BASE_SPEED
-            right_speed = BASE_SPEED
+            left_speed = self.motor_ctrl.BASE_SPEED
+            right_speed = self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
         elif new_state == "TURN_RIGHT":
             # 右转
-            left_speed = -BASE_SPEED
-            right_speed = -BASE_SPEED
+            left_speed = -self.motor_ctrl.BASE_SPEED
+            right_speed = -self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
 
         # 发布当前状态
@@ -285,7 +287,7 @@ class MotorControlNode(Node):
         wheel_speed_msg = Vector3()
         wheel_speed_msg.x = left_speed    # 左轮角速度
         wheel_speed_msg.y = right_speed   # 右轮角速度
-        wheel_speed_msg.z = 0.0           # 预留字段
+        wheel_speed_msg.z = 0.0           # brush speed
         self.speed_pub.publish(wheel_speed_msg)
 
 # -------------------------- 主函数入口 --------------------------
