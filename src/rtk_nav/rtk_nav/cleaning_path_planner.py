@@ -331,7 +331,7 @@ class CleaningPathPlanner(Node):
             headings = calculate_heading_angles(path_latlon)
             
             with open(points_filename, "w", encoding="utf-8") as f:
-                f.write("序号,经度,纬度,航向角(度)\n")
+                f.write("#序号,经度,纬度,航向角(度)\n")
                 for i in range(len(path_latlon)):
                     lon, lat = path_latlon[i]
                     heading = headings[i]

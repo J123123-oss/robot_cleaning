@@ -23,9 +23,10 @@ def generate_launch_description():
         name='rtk_nav',
         output='screen',
         parameters=[
-            {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
+            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt'}
+            # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20260107_095537.txt'}
+            {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251120_171622.txt'}
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
         ]
@@ -39,8 +40,8 @@ def generate_launch_description():
         parameters=[
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
             # 原注释的其他参数可取消注释添加
-            {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
-            # {'file_path': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            {'file_path': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
         ]
     )
 
@@ -83,6 +84,6 @@ def generate_launch_description():
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
-    ld.add_action(cleaning_path_planner_node)
+    # ld.add_action(cleaning_path_planner_node)
 
     return ld

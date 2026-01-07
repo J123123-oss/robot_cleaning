@@ -4,6 +4,7 @@ import os
 import math
 from typing import Optional, List, Dict, Tuple, Generator
 import rclpy
+import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
@@ -38,6 +39,7 @@ class RTKNavControlNode(Node):
     def __init__(self):
         super().__init__('rtk_nav_control_node')
 
+        self.process_percent = 0.0  # 路径文件处理进度百分比
         # ================== 原有RTKNavigator属性 ==================
         self.waypoints: List[Tuple[float, float, float]] = []
         self.current_waypoint_idx = 0
@@ -50,8 +52,12 @@ class RTKNavControlNode(Node):
         # 声明RTK路径参数
         self.rtk_path_file = self.declare_parameter(
             'rtk_path_file',
-            "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+            # "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+            "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
         ).value
+        
+        self.path_dir = os.path.dirname(self.rtk_path_file)  # 获取路径文件所在目录
+
 
         # 导航上下文
         self.nav_context = {
@@ -80,6 +86,85 @@ class RTKNavControlNode(Node):
 
         # 加载航点
         self.load_rtk_path()
+        # 加载初始路径文件
+        self.load_waypoints_from_file(self.rtk_path_file)
+    
+    def load_waypoints_from_file(self, file_path: str) -> bool:
+        """从文件加载航点数据"""
+        try:
+            self.waypoints = []
+            self.current_waypoint_idx = 0
+              
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()[1:]  # 跳过表头
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    seq, lon, lat, heading_deg = line.split(',')
+                    self.waypoints.append((float(lon), float(lat), float(heading_deg)))
+            
+            self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点")
+            self.rtk_path_file = file_path  # 更新当前路径文件
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"[RTKNav] 加载路径文件失败: {e}")
+            return False
+    
+    def get_next_path_file(self) -> Optional[str]:
+        """获取下一个路径文件（按文件名时间戳排序）"""
+        try:
+            # 1. 获取目录下所有符合命名规则的路径文件
+            file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
+            all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
+            
+            if not all_files:
+                self.get_logger().warn("[RTKNav] 路径目录下未找到符合规则的路径文件")
+                return None
+            
+            # 2. 按文件名中的时间戳排序（提取YYYYMMDD_HHMMSS部分）
+            def extract_timestamp(filename: str) -> str:
+                match = re.search(r'(\d{8}_\d{6})', filename)
+                return match.group(1) if match else ''
+            
+            all_files.sort(key=extract_timestamp)
+            total_files = len(all_files)  # 总文件数
+            current_file = os.path.basename(self.rtk_path_file)
+            
+            # 3. 找到当前文件的索引
+            try:
+                current_idx = all_files.index(current_file)
+            except ValueError:
+                self.get_logger().warn(f"[RTKNav] 当前文件 {current_file} 不在路径目录中，使用第一个文件")
+                # 首次使用第一个文件，进度 1/总数量
+                progress_num = 1
+                progress_percent = round((progress_num / total_files) * 100, 1)
+                self.get_logger().info(f"[RTKNav] 路径文件进度：{progress_num}/{total_files}，{progress_percent}%")
+                return os.path.join(self.path_dir, all_files[0])
+            
+            # 4. 计算并输出进度（当前文件索引+1 为已执行/待执行的序号）
+            current_progress = current_idx + 1
+            progress_percent = round((current_progress / total_files) * 100, 1)
+            # 更新进度百分比
+            self.process_percent = progress_percent
+            self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}，{progress_percent}%")
+            
+            # 5. 最后一个文件时结束循环（不再返回新文件）
+            if current_idx >= total_files - 1:
+                self.get_logger().info("[RTKNav] 已执行到最后一个路径文件（{current_file}），执行返回")
+                return None
+            
+            # 6. 获取下一个文件（非最后一个时）
+            next_idx = current_idx + 1
+            next_file = all_files[next_idx]
+            self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file}")
+            
+            return os.path.join(self.path_dir, next_file)
+            
+        except Exception as e:
+            self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
+            return None
 
     # ================== 原有RTKNavigator方法 ==================
     def load_rtk_path(self) -> bool:
@@ -128,11 +213,25 @@ class RTKNavControlNode(Node):
         self.imu_yaw = math.fmod(self.imu_yaw + math.pi, 2 * math.pi) - math.pi
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
-        """获取当前目标航点（含航向角）"""
+        """获取当前目标航点（含航向角），到达最后一个航点时自动切换路径文件"""
         idx = current_waypoint_idx if current_waypoint_idx is not None else self.current_waypoint_idx
+        
+        # 检查是否到达最后一个航点
         if idx >= len(self.waypoints):
-            self.get_logger().info("[RTKNav] 已到达最后一个航点")
-            return None
+            self.get_logger().info("[RTKNav] 已到达当前路径文件的最后一个航点，准备切换路径文件")
+            
+            # 获取下一个路径文件
+            next_file = self.get_next_path_file()
+            if next_file and self.load_waypoints_from_file(next_file):
+                # 切换文件成功，返回新文件的第一个航点
+                self.current_waypoint_idx = 0
+                return self.waypoints[0]
+            else:
+                # 没有下一个文件，返回None表示结束
+                self.get_logger().info("[RTKNav] 没有更多路径文件，导航结束")
+                return None
+        
+        # 返回当前目标航点
         return self.waypoints[idx]
 
     def calc_distance_to_waypoint(self, waypoint: Tuple[float, float, float]) -> float:
@@ -383,7 +482,7 @@ class RTKNavControlNode(Node):
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 last_waypoint_idx = self.current_waypoint_idx  # 更新上一个航点索引
-                self.get_logger().info(f"[ROSNode] 检测到航点切换，强制进入移动阶段（当前航点{self.current_waypoint_idx}）")
+                # self.get_logger().info(f"[ROSNode] 检测到航点切换，强制进入移动阶段（当前航点{self.current_waypoint_idx}）")
 
             # 3.1 获取目标航点（原有逻辑保留）
             if self.nav_context["target_waypoint"]:
