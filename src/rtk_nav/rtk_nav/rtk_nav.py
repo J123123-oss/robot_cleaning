@@ -69,7 +69,7 @@ class RTKNavControlNode(Node):
         }
 
         # ================== 原有RTKControlNode属性 ==================
-        self.rate = self.create_rate(50)
+        self.rate = self.create_rate(4)
         self.nav_generator: Optional[Generator] = None
         self.nav_running = False
         self.multi_waypoint_generator = None  # 多点导航生成器
@@ -202,7 +202,7 @@ class RTKNavControlNode(Node):
         ins_heading_deg = msg.ins_heading
         ins_heading_rad = math.radians(ins_heading_deg)
         ins_heading_rad = math.fmod(ins_heading_rad + math.pi, 2 * math.pi) - math.pi
-
+        self.get_logger().info(f"self.imu_initialized: {self.imu_initialized}")
         if not self.imu_initialized:
             self.imu_calibration_offset = -ins_heading_rad
             self.imu_initialized = True
@@ -229,6 +229,7 @@ class RTKNavControlNode(Node):
             else:
                 # 没有下一个文件，返回None表示结束
                 self.get_logger().info("[RTKNav] 没有更多路径文件，导航结束")
+                self.current_control_mode = ControlMode.NORMAL
                 return None
         
         # 返回当前目标航点
@@ -401,7 +402,7 @@ class RTKNavControlNode(Node):
             "last_distance": 0.0,
             "last_target_heading": 0.0
         }
-        self.get_logger().info("RTK导航状态已重置")
+        # self.get_logger().info("RTK导航状态已重置")
 
     # ================== 原有控制模式检查 + 多点导航生成器 ==================
     def check_control_mode(self) -> bool:

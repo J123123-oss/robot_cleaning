@@ -45,7 +45,7 @@ class SBUSRemoteController:
         self._logger = self.node.get_logger() if self.node is not None else None
 
         # 遥控器状态
-        self.ch = [RC_CH_MID_VALUE] * 16  # 16个通道原始值，初始化为中位
+        self.ch = [RC_CH_MID_VALUE] * 15  # 15个通道原始值，初始化为中位
         self.is_connected = False        # 遥控器连接状态
 
         # 线程与锁（保证数据线程安全）
