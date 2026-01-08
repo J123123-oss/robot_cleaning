@@ -3,7 +3,6 @@ import rclpy
 from rclpy.node import Node
 import serial
 import struct
-from std_msgs.msg import Float32MultiArray  # 发布IMU数据
 from std_msgs.msg import UInt8  # 发布IO数据
 
 class IMUParser(Node):
@@ -34,8 +33,6 @@ class IMUParser(Node):
         # 数据更新监控参数
         self.last_data_time = self.get_clock().now()  # 上次数据更新时间
         self.data_timeout = 3.0  # 数据超时时间(秒)
-        self.crc_error_count = 0  # CRC错误计数
-        self.max_crc_errors = 5  # 最大CRC错误数，超过则重置连接
 
         # 添加轮询状态管理
         self.io_polling_interval = 0.02   # IO查询间隔，提高频率到100Hz

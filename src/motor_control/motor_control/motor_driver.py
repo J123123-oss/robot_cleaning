@@ -117,6 +117,12 @@ class CanMotorDriver(Node):
             'motor_speed_commands',
             self.speed_command_callback,
             10)
+        self.io_subscription = self.create_subscription(
+            UInt8,
+            "io_data",
+            self.io_data_callback,
+            10
+        )
             
         # 创建发布者，用于发布电机速度
         self.velocity_publisher = self.create_publisher(
@@ -148,12 +154,7 @@ class CanMotorDriver(Node):
             'odom',
             10)
         
-        self.io_data_sub = self.create_subscription(
-            UInt8,
-            "/io_data",
-            self.io_data_callback,
-            10
-        )
+        
             
         # 定时器，定期发送速度命令和发布电机状态
         self.timer = self.create_timer(0.1, self.timer_callback)  # 10Hz

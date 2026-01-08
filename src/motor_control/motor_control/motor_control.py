@@ -34,11 +34,6 @@ CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 1.0  # 左右旋转灵敏度
 DEAD_ZONE = 0.05       # 控制死区
 
-GLOBAL_MOTOR_CONFIG = [
-    {"id": 1},
-    {"id": 2}
-]
-
 # 控制模式枚举（新增RTK导航模式）
 class ControlMode:
     REMOTE = "REMOTE"
@@ -239,7 +234,7 @@ class MotorControlNode(Node):
         # 状态执行逻辑
         if new_state == "STOP":
             # 停止：失能所有电机
-            for motor in GLOBAL_MOTOR_CONFIG:
+            for motor in self.motor_ctrl.motors:
                 self.motor_ctrl.motor_set_speed(motor["id"], 0)  # 初始速度0
                 time.sleep(0.01)
                 self.motor_ctrl.motor_disable(motor["id"])
@@ -279,9 +274,9 @@ class MotorControlNode(Node):
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
         """设置双电机速度（完全保留原有功能）"""
         # 左电机（ID=1）
-        self.motor_ctrl.motor_set_speed(GLOBAL_MOTOR_CONFIG[0]["id"], left_speed)
+        self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[0]["id"], left_speed)
         # 右电机（ID=2）
-        self.motor_ctrl.motor_set_speed(GLOBAL_MOTOR_CONFIG[1]["id"], right_speed)
+        self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[1]["id"], right_speed)
 
         # 构造并发布速度消息
         wheel_speed_msg = Vector3()
@@ -307,7 +302,7 @@ def main(args=None):
         # 退出时停止所有电机（原有清理逻辑）
         if motor_node:
             motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
-            for motor in GLOBAL_MOTOR_CONFIG:
+            for motor in motor_node.motor_ctrl.motors:
                 try:
                     motor_node.motor_ctrl.motor_set_speed(motor["id"], 0.0)
                     time.sleep(0.1)
