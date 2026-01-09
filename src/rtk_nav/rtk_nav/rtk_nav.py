@@ -33,7 +33,7 @@ class NavState:
     INITIAL_MOVE = "INITIAL_MOVE"
     WAYPOINT_MOVE = "WAYPOINT_MOVE"
     WAYPOINT_CALIB = "WAYPOINT_CALIB"
-
+    COMPLETED = "COMPLETED"
 # -------------------------- 合并后的RTK控制+导航节点 --------------------------
 class RTKNavControlNode(Node):
     def __init__(self):
@@ -587,7 +587,7 @@ class RTKNavControlNode(Node):
 
         # 4. 所有航点导航完成
         self.get_logger().info("[ROSNode] RTK多点导航全部完成")
-        self.nav_context["nav_state"] = NavState.IDLE
+        self.nav_context["nav_state"] = NavState.COMPLETED
         self.nav_running = False
         self.publish_stop_speed()  # 停止电机
         self.reset_nav_context()
@@ -645,7 +645,7 @@ class RTKNavControlNode(Node):
             except StopIteration:
                 # 导航生成器执行完毕（全部航点完成/主动退出）
                 self.get_logger().info("[ROSNode] 多点导航生成器执行完毕")
-                self.publish_nav_state(NavState.IDLE)
+                self.publish_nav_state(NavState.COMPLETED)
                 self.multi_waypoint_generator = None
                 self.nav_running = False
             except Exception as e:

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from motor_control.motor_driver import CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
-from rtk_nav.rtk_nav import RTKNavControlNode
+from rtk_nav.rtk_nav import LINEAR_SPEED_BASE, RTKNavControlNode
 
 # -------------------------- 全局配置与枚举 --------------------------
 STATE_DICT = {
@@ -54,13 +54,21 @@ class MotorControlNode(Node):
         # 循环频率：10Hz（兼容原有逻辑，可调整）
         self.rate = self.create_rate(10)
         # UNLOADING parameters
-        self.unloading_flag = False
-        self.unloading_time = 0.0
-        self.unloading_threshold = 10.0 # seconds
         # 出仓阶段标记（关键：拆分出仓为多个阶段）
-        self.unloading_phase = None  # None/"FORWARD"/"TURN"/"COMPLETE"
+        self.unloading_forword_threshold = 10.0 # seconds
+        self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
+        self.unloading_turn_target_rad = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
+
+        self.loading_turn_target_rad = 0.0  # 进仓转向目标角
+        self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
+        self.loading_phase = None
+        self.loading_start_time = 0.0
+        self.loading_timer: Optional[Timer] = None
+        self.loading_backward_start_time = 0.0
+
+        self.nav_status = None
 
         # 1. 初始化电机控制模块
         self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
@@ -78,6 +86,7 @@ class MotorControlNode(Node):
             self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
 
         self.rtk_nav = RTKNavControlNode()
+        self.imu_yaw_rad = self.rtk_nav.imu_yaw
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -93,7 +102,12 @@ class MotorControlNode(Node):
             self.rtk_speed_callback,
             10
         )
-
+        self.rtk_nav_sub = self.create_subscription(
+            String,
+            "/rtk/nav_state",
+            self.rtk_nav_status_callback,
+            10
+        )
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
@@ -231,6 +245,8 @@ class MotorControlNode(Node):
                 self.switch_state(key)
             else:
                 self.get_logger().warn("[ROSNode] 当前为RTK导航模式，忽略键盘状态指令")
+            
+
         else:
             self.get_logger().warn(f"[ROSNode] 无效键盘指令：{key}，支持指令：{list(STATE_DICT.keys()) + ['r(RTK)', 'n(普通)', 'm(遥控)']}")
 
@@ -239,6 +255,12 @@ class MotorControlNode(Node):
         self.rtk_left_speed = msg.x
         self.rtk_right_speed = msg.y
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}")
+    def rtk_nav_status_callback(self, msg: String):
+        """订阅RTK导航状态消息（备用）"""
+        self.nav_status = msg.data.strip()
+        self.get_logger().info(f"[RTKNavStatus] 当前RTK导航状态：{self.nav_status}")
+        if self.nav_status == "COMPLETED":
+            self.switch_state('l')
 
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
@@ -300,26 +322,23 @@ class MotorControlNode(Node):
             # 创建10Hz定时器处理出仓分步逻辑
             self.unloading_timer = self.create_timer(0.1, self.handle_unloading_step)
         elif new_state == "LOADING":
+            self.current_control_mode = ControlMode.NORMAL
             self.get_logger().info("[ROSNode] 进入进仓状态，启动进仓定时器")
             self.current_status = new_state
             self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
             self.loading_start_time = time.time()
-            # # 初始化进仓转向目标（与出仓相反，-90度）
-            # if self.rtk_nav.imu_yaw is None:
-            #     self.get_logger().warn("[LOADING] IMU航向角未获取，使用默认0度作为基准")
-            #     self.loading_turn_target_rad = -math.pi / 2  # 左转90度（进仓角度）
-            # else:
-            #     self.loading_turn_target_rad = self.rtk_nav.imu_yaw - math.pi / 2  #   TEST!!!!!
-            #     # 角度归一化到[-π, π]
-            #     self.loading_turn_target_rad = math.atan2(
-            #         math.sin(self.loading_turn_target_rad),
-            #         math.cos(self.loading_turn_target_rad)
-            #     )
+            # # 初始化进仓转向目标（=出仓,90度）
+            if self.rtk_nav.imu_yaw is None:
+                self.get_logger().warn("[LOADING] IMU航向角未获取，使用默认0度作为基准")
+                self.loading_turn_target_rad = math.pi / 2  # 转90度（进仓角度）
+            else:
+                self.loading_turn_target_rad = self.rtk_nav.imu_yaw + math.pi / 2  #   TEST!!!!!
+                # 角度归一化到[-π, π]
+                self.loading_turn_target_rad = math.atan2(
+                    math.sin(self.loading_turn_target_rad),
+                    math.cos(self.loading_turn_target_rad)
+                )
             self.loading_timer = self.create_timer(0.1, self.handle_loading_step)
-
-
-            # 创建10Hz定时器处理出仓分步逻辑
-            self.unloading_timer = self.create_timer(0.1, self.handle_loading_step)
 
             # current_time = time.time()
             # if self.unloading_flag == False:
@@ -331,13 +350,13 @@ class MotorControlNode(Node):
             #     target = self.imu_yaw if self.imu_yaw is not None else 0 # rad
             #     self.unloading_flag = True
 
-            # if current_time - self.unloading_time  > self.unloading_threshold:
+            # if current_time - self.unloading_time  > self.unloading_forword_threshold:
             #     # 右转
             #     left_speed = -self.motor_ctrl.BASE_SPEED
             #     right_speed = -self.motor_ctrl.BASE_SPEED
             #     self.set_motors_speed(left_speed, right_speed)
             #     if self.imu_yaw > target + math.pi / 2:
-            #         self.set_motors_speed(0, 0)
+            #         self.set_motors_speed(0.0, 0.0)
             #         # switch to RTK mode
             #         self.switch_state("r")
             #         self.get_logger.info("UNLOADING complete, switch to RTK mode")
@@ -356,20 +375,22 @@ class MotorControlNode(Node):
             return
         
         current_time = time.time()
+        correction = self.rtk_nav.get_speed_correction(self.imu_yaw_rad)
+        
         
         # ========== 阶段1：前进 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
             # 持续前进直到达到时间阈值
-            if current_time - self.unloading_start_time < self.unloading_threshold:
+            if current_time - self.unloading_start_time < self.unloading_forword_threshold:
                 # 前进：双电机正转（保持速度输出）
-                left_speed = -self.motor_ctrl.BASE_SPEED
-                right_speed = self.motor_ctrl.BASE_SPEED
+                left_speed = -(self.motor_ctrl.BASE_SPEED + correction)
+                right_speed = self.motor_ctrl.BASE_SPEED + correction
                 self.set_motors_speed(left_speed, right_speed)
                 self.get_logger().info(f"[UNLOADING] 前进阶段 - 已持续{current_time - self.unloading_start_time:.1f}秒")
             else:
                 # 前进时间到，切换到转向阶段
                 self.get_logger().info("[UNLOADING] 前进阶段完成，进入转向阶段")
-                self.unloading_phase = "TURN"
+                self.unloading_phase = "UNLOADING_TURN"
                 # 初始化转向目标（基于当前IMU航向）
                 if self.rtk_nav.imu_yaw is None:
                     self.get_logger().warn("[UNLOADING] IMU航向角未获取，使用默认0度作为基准")
@@ -381,14 +402,14 @@ class MotorControlNode(Node):
                         self.unloading_turn_target_rad -= 2 * math.pi
         
         # ========== 阶段2：转向 ==========
-        elif self.unloading_phase == "TURN":
+        elif self.unloading_phase == "UNLOADING_TURN":
             if self.rtk_nav.imu_yaw is None:
                 self.get_logger().warn("[UNLOADING] IMU航向角未获取，暂不转向")
                 return
             
             # 右转：
-            left_speed = -self.motor_ctrl.BASE_SPEED
-            right_speed = -self.motor_ctrl.BASE_SPEED
+            left_speed = -0.3 * self.motor_ctrl.BASE_SPEED
+            right_speed = -0.3 * self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
             
             # 检查是否达到转向目标
@@ -401,30 +422,15 @@ class MotorControlNode(Node):
                 self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束")
                 self.unloading_phase = "COMPLETE"
                 # 停止电机
-                self.set_motors_speed(0, 0)
-                self.rtk_nav.imu_initialized = False
+                self.set_motors_speed(0.0, 0.0)
                 # 自动切换到RTK模式
                 self.current_control_mode = ControlMode.RTK_NAV
-                # subprocess.run(
-                #     ['ros2', 'topic', 'pub', '/keyboard/control', 'std_msgs/msg/String', "{data: 'r'}", "-1"],
-                #     check=True,
-                #     stdout=subprocess.PIPE,
-                #     stderr=subprocess.PIPE,
-                #     text=True
-                # )
                 # 停止定时器
                 self.unloading_timer.cancel()
                 self.unloading_timer = None
-            elif current_time - self.unloading_start_time > 2 * self.unloading_threshold:
+            elif current_time - self.unloading_start_time > 2 * self.unloading_forword_threshold:
                 self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
-                self.rtk_nav.imu_initialized = False
-                subprocess.run(
-                    ['ros2', 'topic', 'pub', '/keyboard/control', 'std_msgs/msg/String', "{data: 'r'}", "-1"],
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
+                self.current_control_mode = ControlMode.RTK_NAV
                 self.unloading_phase = "COMPLETE"
 
         
@@ -437,11 +443,13 @@ class MotorControlNode(Node):
     def handle_loading_step(self):
         if self.loading_phase is None:
             self.get_logger().warn("[ROSNode] 进仓阶段未初始化，停止定时器")
-            self.loading_timer.cancel()
-            self.loading_timer = None
+            if self.loading_timer is not None:  # 修复BUG2：判空再取消
+                self.loading_timer.cancel()
+                self.loading_timer = None
             return
         try:
             current_time = time.time()
+            correction = self.rtk_nav.get_speed_correction(self.imu_yaw_rad)
             
             # ========== 阶段1：调整进仓角度（左转90度） ==========
             if self.loading_phase == "LOADING_TURN":
@@ -449,27 +457,34 @@ class MotorControlNode(Node):
                     self.get_logger().warn("[LOADING] IMU航向角未获取，暂不转向")
                     return
                 
-                # 左转：双电机右转（与出仓转向相反）
-                left_speed = self.BASE_SPEED
-                right_speed = self.BASE_SPEED
+                # 双电机转（=出仓转向）
+                left_speed = -0.3 * self.motor_ctrl.BASE_SPEED
+                right_speed = -0.3 * self.motor_ctrl.BASE_SPEED
                 self.set_motors_speed(left_speed, right_speed)
+                # 初始化转向目标（基于当前IMU航向）
+                # if self.rtk_nav.imu_yaw is None:
+                #     self.get_logger().warn("[UNLOADING] IMU航向角未获取，使用默认0度作为基准")
+                #     self.unloading_turn_target_rad = math.pi / 2  # 90度
+                # else:
+                #     self.unloading_turn_target_rad = self.rtk_nav.imu_yaw + math.pi / 2
+                #     # 角度归一化到[-π, π]
+                #     if self.unloading_turn_target_rad > math.pi:
+                #         self.unloading_turn_target_rad -= 2 * math.pi
                 
-                # 计算角度差（归一化）
-                current_yaw = self.normalize_angle(self.rtk_nav.imu_yaw)
-                target_yaw = self.normalize_angle(self.loading_turn_target_rad)
-                yaw_diff = abs(self.normalize_angle(current_yaw - target_yaw))
+                # 计算角度差
+                yaw_diff = abs(self.rtk_nav.imu_yaw - self.loading_turn_target_rad)
                 
                 self.get_logger().info(
-                    f"[LOADING] 角度调整阶段 - 当前航向{current_yaw:.2f}rad，"
-                    f"目标{target_yaw:.2f}rad，差值{yaw_diff:.2f}rad"
+                    f"[LOADING] 角度调整阶段 - 当前航向{self.rtk_nav.imu_yaw:.2f}rad，"
+                    f"目标{self.loading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad"
                 )
                 
-                # 角度差小于0.1rad视为调整完成
-                if yaw_diff < 0.1:
+                # 角度差小于0.05rad视为调整完成
+                if yaw_diff < 0.05:
                     self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                     self.loading_phase = "LOADING_BACKWARD"
                     self.loading_backward_start_time = current_time  # 记录后退开始时间
-                    self.set_motors_speed(0, 0)  # 短暂停止，准备后退
+                    self.set_motors_speed(0.0, 0.0)  # 短暂停止，准备后退
                 # 角度调整超时（5秒）
                 elif current_time - self.loading_start_time > 5.0:
                     self.get_logger().warn("[LOADING] 角度调整超时，强制进入后退阶段")
@@ -481,21 +496,24 @@ class MotorControlNode(Node):
                 # 持续后退直到达到时间阈值
                 if current_time - self.loading_backward_start_time < self.loading_backward_threshold:
                     # 后退：双电机反转（与前进相反）
-                    left_speed = self.motor_ctrl.BASE_SPEED
-                    right_speed = -self.motor_ctrl.BASE_SPEED
+                    left_speed = self.motor_ctrl.BASE_SPEED + correction
+                    right_speed = -(self.motor_ctrl.BASE_SPEED + correction)
                     self.set_motors_speed(left_speed, right_speed)
                     self.get_logger().info(f"[LOADING] 后退进仓阶段 - 已持续{current_time - self.loading_backward_start_time:.1f}秒")
                 else:
                     self.get_logger().info("[LOADING] 后退进仓完成，进入完成阶段")
                     self.loading_phase = "COMPLETE"
-                    self.set_motors_speed(0, 0)  # 停止电机
-                    self.rtk_nav.imu_initialized = False
-                    # 切换到RTK/待机模式（根据需求调整）
-                    self.current_control_mode = ControlMode.NORMAL
+                    # self.set_motors_speed(0, 0)  # 停止电机
+                    # 切换到待机模式 # STOP
+                    # self.switch_state("z")
+                    # self.current_control_mode = ControlMode.NORMAL
             
             # ========== 阶段3：进仓完成 ==========
             elif self.loading_phase == "COMPLETE":
                 self.get_logger().info("[LOADING] 进仓流程完成")
+                self.set_motors_speed(0, 0)  # 停止电机
+                # 切换到待机模式 # STOP
+                self.switch_state("z")
                 self.loading_timer.cancel()
                 self.loading_timer = None
         except Exception as e:
@@ -510,8 +528,8 @@ class MotorControlNode(Node):
 
         # 构造并发布速度消息
         wheel_speed_msg = Vector3()
-        wheel_speed_msg.x = left_speed    # 左轮角速度
-        wheel_speed_msg.y = right_speed   # 右轮角速度
+        wheel_speed_msg.x = float(left_speed)    # 左轮角速度
+        wheel_speed_msg.y = float(right_speed)   # 右轮角速度
         wheel_speed_msg.z = 0.0           # brush speed
         self.speed_pub.publish(wheel_speed_msg)
 
