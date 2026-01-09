@@ -21,26 +21,41 @@ RTK循迹测试 Ros2
     注释wtrtk_parse_txt，启动launch中的wtrtk_serial_driver
     进入实时导航，提前进行步骤1确定路径
 
-
-Ros1 Old Version
-1
-先单独启动launch运行cleaning_path_planner，生成轨迹，并保存。
-2
-launch运行MotorControlNode修改"~rtk_path_file"为cleaning_path目录下刚生成的文件
-RTK可通过launch中录制的RTK消息解析调试，实地测试使用RTK实时消息解析
-
-
-通过之前RTK采样数据转换为导航路线测试导航运行情况，流程可以跑通，偏角部分还有问题。
-解析遥控器解码的数据并转换为运动控制,待测试。
-电机控制订阅/current_speed,并执行
-步骤：
-启动launch文件后，发布start消息：
-rostopic pub /rtk_nav/start std_msgs/String "data: 'start'"
-订阅motor/state
-motor/current_speed
-1,120.06717012,30.32088536,88.51
-47,120.06899750,30.32009074,268.51
-48,120.06719501,30.32005031,268.51
+```mermaid
+graph TD
+    A[开机使能 START] --> B[遥控器]
+    A -->a[键盘]
+    a --> C
+    A -->b[MQTT]
+    b --> C
+    B --> C[出仓 UNLOADING]
+    C --> D[定时直行]
+    D --> d
+    d[转向] --> E[RTK起始点]
+    E{角度满足?}
+    E -- 是 --> F[切换控制模式]
+    c[记录IMU朝向]-->d
+    G --> e[重置IMU]
+    F --> G[RTK导航开始]
+    E -- 否 --> W[超时不满足]
+    W --> d
+    e --> H[区域1]
+    H --> I{超声波检测边缘触发?}
+    I -- 是 --> J[退回组件]
+    J --> K[到达下一个点]
+    H --> L{距离/角度条件}
+    L --> K
+    K --> M[......]
+    M --> N[区域2]
+    N --> O[......]
+    O --> P[RTK返回中转点]
+    P --> Q[区域n-1]
+    Q --> R[区域n]
+    R --> S[RTK结束]
+    S --> T[进仓LOADING]
+    T --> U[转向，后退进仓]
+    U --> V[停止STOP]
+```
 
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32088536, longitude: 120.06717012, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32009074, longitude: 120.06899750, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
