@@ -270,7 +270,7 @@ class MotorControlNode(Node):
 
     def io_data_callback(self, msg: UInt8):
         """处理IO数据回调（可根据需要扩展功能）"""
-        if self.current_control_mode == ControlMode.REMOTE:
+        if self.current_control_mode != ControlMode.RTK_NAV:
             # 位0 (1<<0 = 0x01)：前左
             self.front_left = (msg.data & 0x01) == 0x01
             

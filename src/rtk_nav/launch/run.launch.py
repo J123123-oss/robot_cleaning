@@ -77,6 +77,27 @@ def generate_launch_description():
         ]
     )
 
+    # 清扫路径规划节点（原ROS1中注释的节点，保留注释结构和所有参数）
+    three_point_planner_node = Node(
+        package='rtk_nav',
+        executable='three_point_planner',
+        name='three_point_planner',
+        output='screen',
+        parameters=[
+            #120.0711247716332,30.320803806689252
+            {'calib_point_a.lon': 120.0711247716332},
+            {'calib_point_a.lat': 30.320803806689252},
+            {'calib_point_b.lon': 120.0712247716332},
+            {'calib_point_b.lat': 30.320903806689252},
+            {'calib_point_c.lon': 120.0710247716332},
+            {'calib_point_c.lat': 30.320853806689252},
+            {'interval': 1.0},
+            {'start_corner': 'top_left'},
+            {'edge_distance_lon': 0.5},
+            {'edge_distance_lat': 0.5},
+            {'headless': False}
+        ]
+    )
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
     ld.add_action(motor_control_node)
@@ -85,5 +106,6 @@ def generate_launch_description():
     # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
     # ld.add_action(cleaning_path_planner_node)
+    # ld.add_action(three_point_planner_node)
 
     return ld

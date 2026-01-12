@@ -336,7 +336,7 @@ def add_direction_arrows(ax, path_utm, arrow_interval=5):
 
 class CleaningPathPlanner(Node):
     def __init__(self):
-        super().__init__('cleaning_path_planner')
+        super().__init__('three_point_planner')
         
         # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
         self.declare_parameter('calib_point_a.lon', 120.0711247716332)
