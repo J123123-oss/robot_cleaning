@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from motor_control.motor_driver import CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
-from rtk_nav.rtk_nav import LINEAR_SPEED_BASE, RTKNavControlNode
+from rtk_nav.rtk_nav import RTKNavControlNode
 
 # -------------------------- 全局配置与枚举 --------------------------
 STATE_DICT = {
@@ -106,6 +106,12 @@ class MotorControlNode(Node):
             String,
             "/rtk/nav_state",
             self.rtk_nav_status_callback,
+            10
+        )
+        self.io_subscription = self.create_subscription(
+            UInt8,
+            "io_data",
+            self.io_data_callback,
             10
         )
         # 4. ROS2 发布器
@@ -258,10 +264,38 @@ class MotorControlNode(Node):
     def rtk_nav_status_callback(self, msg: String):
         """订阅RTK导航状态消息（备用）"""
         self.nav_status = msg.data.strip()
-        self.get_logger().info(f"[RTKNavStatus] 当前RTK导航状态：{self.nav_status}")
+        # self.get_logger().info(f"[RTKNavStatus] 当前RTK导航状态：{self.nav_status}")
         if self.nav_status == "COMPLETED":
             self.switch_state('l')
 
+    def io_data_callback(self, msg: UInt8):
+        """处理IO数据回调（可根据需要扩展功能）"""
+        if self.current_control_mode == ControlMode.REMOTE:
+            # 位0 (1<<0 = 0x01)：前左
+            self.front_left = (msg.data & 0x01) == 0x01
+            
+            # 位1 (1<<1 = 0x02)：前右
+            self.front_right = (msg.data & 0x02) == 0x02
+            
+            # 位2 (1<<2 = 0x04)：中左
+            self.mid_left = (msg.data & 0x04) == 0x04
+            
+            # 位3 (1<<3 = 0x08)：中右  8
+            self.mid_right = (msg.data & 0x08) == 0x08
+            
+            # 位4 (1<<4 = 0x10)：后左 16
+            self.back_left = (msg.data & 0x10) == 0x10
+            
+            # 位5 (1<<5 = 0x20)：后右  32
+            self.back_right = (msg.data & 0x20) == 0x20
+            if msg.data is not 0:
+                self.get_logger().info(f"--------------Boundary Detected--------------")
+                self.motor_set_speed(1, 0)
+                self.motor_set_speed(2, 0) 
+            # else:
+                # recover speed
+                # self.motor_set_speed(1, 0)
+                # self.motor_set_speed(2, 0) 
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
         new_state = STATE_DICT[key]
@@ -416,9 +450,9 @@ class MotorControlNode(Node):
             yaw_diff = abs(self.rtk_nav.imu_yaw - self.unloading_turn_target_rad)
             self.get_logger().debug(f"[UNLOADING] 转向阶段 - 当前航向{self.rtk_nav.imu_yaw:.2f}rad，目标{self.unloading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad")
             
-            # 角度差小于0.1rad（约5.7度）视为转向完成
+            # 角度差小于0.05rad（约2.86度）视为转向完成
             
-            if yaw_diff < 0.1:
+            if yaw_diff < 0.05:
                 self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束")
                 self.unloading_phase = "COMPLETE"
                 # 停止电机

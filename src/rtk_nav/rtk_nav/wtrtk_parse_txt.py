@@ -21,7 +21,7 @@ class WTRTKFileParser(Node):
         self.play_rate = self.get_parameter('play_rate').value
         
         # 创建发布者（使用不同的回调组以支持多线程）
-        self.fix_pub = self.create_publisher(NavSatFix, '/fix', 10)
+        # self.fix_pub = self.create_publisher(NavSatFix, '/fix', 10)
         self.wtrtk_pub = self.create_publisher(WTRTK, '/wtrtk_data', 10)
         
         self.buffer = ""  # 缓存文件读取的数据
@@ -218,7 +218,7 @@ class WTRTKFileParser(Node):
             # 发布GNGGA解析结果
             if last_fix:
                 last_fix.header.stamp = self.get_clock().now().to_msg()
-                self.fix_pub.publish(last_fix)
+                # self.fix_pub.publish(last_fix)
                 self.get_logger().debug(
                     f"Published GNGGA: lat={last_fix.latitude:.6f}, "
                     f"lon={last_fix.longitude:.6f}, alt={last_fix.altitude:.2f}"

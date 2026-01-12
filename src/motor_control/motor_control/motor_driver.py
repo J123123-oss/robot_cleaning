@@ -117,12 +117,12 @@ class CanMotorDriver(Node):
             'motor_speed_commands',
             self.speed_command_callback,
             10)
-        self.io_subscription = self.create_subscription(
-            UInt8,
-            "io_data",
-            self.io_data_callback,
-            10
-        )
+        # self.io_subscription = self.create_subscription(
+        #     UInt8,
+        #     "io_data",
+        #     self.io_data_callback,
+        #     10
+        # )
             
         # 创建发布者，用于发布电机速度
         self.velocity_publisher = self.create_publisher(
@@ -307,50 +307,52 @@ class CanMotorDriver(Node):
         
         self.get_logger().debug(f"Updated motor velocity targets: {[m['velocity'] for m in self.motors]}")
 
-    def io_data_callback(self, msg: UInt8):
-        """处理IO数据回调（可根据需要扩展功能）"""
+    # def io_data_callback(self, msg: UInt8):
+    #     """处理IO数据回调（可根据需要扩展功能）"""
 
-        # 位0 (1<<0 = 0x01)：前左
-        self.front_left = (msg.data & 0x01) == 0x01
+    #     # 位0 (1<<0 = 0x01)：前左
+    #     self.front_left = (msg.data & 0x01) == 0x01
         
-        # 位1 (1<<1 = 0x02)：前右
-        self.front_right = (msg.data & 0x02) == 0x02
+    #     # 位1 (1<<1 = 0x02)：前右
+    #     self.front_right = (msg.data & 0x02) == 0x02
         
-        # 位2 (1<<2 = 0x04)：中左
-        self.mid_left = (msg.data & 0x04) == 0x04
+    #     # 位2 (1<<2 = 0x04)：中左
+    #     self.mid_left = (msg.data & 0x04) == 0x04
         
-        # 位3 (1<<3 = 0x08)：中右  8
-        self.mid_right = (msg.data & 0x08) == 0x08
+    #     # 位3 (1<<3 = 0x08)：中右  8
+    #     self.mid_right = (msg.data & 0x08) == 0x08
         
-        # 位4 (1<<4 = 0x10)：后左 16
-        self.back_left = (msg.data & 0x10) == 0x10
+    #     # 位4 (1<<4 = 0x10)：后左 16
+    #     self.back_left = (msg.data & 0x10) == 0x10
         
-        # 位5 (1<<5 = 0x20)：后右  32
-        self.back_right = (msg.data & 0x20) == 0x20
-        # if msg.data:
-        #     for m in self.motors:
-        #         self.motor_set_speed(m["id"], 0) 
-        #         self.get_logger().info(f"--------------Test Proximity Speed--------------")
-        if self.front_left or self.front_right:
-            self.motor_set_speed(1, -0.3 * self.BASE_SPEED)
-            self.motor_set_speed(2, 0.3 * self.BASE_SPEED)
-            if self.mid_left or self.mid_right:
-                self.motor_set_speed(1, 0)
-                self.motor_set_speed(2, 0)
-                while self.front_left or self.front_right and rclpy.ok():
-                    self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
-                    self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
-        if self.back_left or self.back_right:
-            self.motor_set_speed(1, 0)
-            self.motor_set_speed(2, 0)
-            while self.front_left or self.front_right and rclpy.ok():
-                self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
-                self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+    #     # 位5 (1<<5 = 0x20)：后右  32
+    #     self.back_right = (msg.data & 0x20) == 0x20
+    #     if msg.data is not 0:
+    #         self.get_logger().info(f"--------------Boundary Detected--------------")
+    #         self.motor_set_speed(1, 0)
+    #         self.motor_set_speed(2, 0) 
+            # for m in self.motors:
+                # self.motor_set_speed(m["id"], 0)
+        # if self.front_left or self.front_right:
+        #     self.motor_set_speed(1, -0.3 * self.BASE_SPEED)
+        #     self.motor_set_speed(2, 0.3 * self.BASE_SPEED)
+        #     if self.mid_left or self.mid_right:
+        #         self.motor_set_speed(1, 0)
+        #         self.motor_set_speed(2, 0)
+        #         while self.front_left or self.front_right and rclpy.ok():
+        #             self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+        #             self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+        # if self.back_left or self.back_right:
+        #     self.motor_set_speed(1, 0)
+        #     self.motor_set_speed(2, 0)
+        #     while self.front_left or self.front_right and rclpy.ok():
+        #         self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+        #         self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
 
-        self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
-        f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
-        f"back_left={self.back_left}, back_right={self.back_right}"
-        )
+        # self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
+        # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
+        # f"back_left={self.back_left}, back_right={self.back_right}"
+        # )
 
     def send_speed_commands(self):
         """发送速度命令给所有电机"""

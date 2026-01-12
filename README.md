@@ -40,13 +40,14 @@ graph TD
     E -- 否 --> W[超时不满足]
     W --> d
     e --> H[区域1]
-    H --> I{超声波检测边缘触发?}
-    I -- 是 --> J[退回组件]
-    J --> K[到达下一个点]
-    H --> L{距离/角度条件}
-    L --> K
-    K --> M[......]
-    M --> N[区域2]
+    H[区域1] --> I{超声波检测边缘触发?}
+    I -- 是 --> J[退回组件] --> K[到达下一个点]
+    I -- 否 --> L{角度小于阈值}
+    L -->|是/否 都实时检测超声波| I{超声波检测边缘触发?}
+    L -- 是 --> f{距离小于阈值}
+    f -->|是/否 都实时检测超声波| I{超声波检测边缘触发?}
+    f -- 是 --> K[到达下一个点]
+    K --> M[......] --> N[区域2]
     N --> O[......]
     O --> P[RTK返回中转点]
     P --> Q[区域n-1]
@@ -55,6 +56,7 @@ graph TD
     S --> T[进仓LOADING]
     T --> U[转向，后退进仓]
     U --> V[停止STOP]
+
 ```
 
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32088536, longitude: 120.06717012, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1

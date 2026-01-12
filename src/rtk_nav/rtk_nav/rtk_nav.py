@@ -3,13 +3,16 @@
 import os
 import math
 from typing import Optional, List, Dict, Tuple, Generator
+
 import rclpy
 import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
-from std_msgs.msg import String       # 用于发布控制模式和导航状态
+from std_msgs.msg import String, UInt8       # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
+
 
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
@@ -49,6 +52,32 @@ class RTKNavControlNode(Node):
         self.imu_calibration_offset = 0.0
         self.current_control_mode = ControlMode.NORMAL
 
+
+
+        # Sensor 
+        self.front_left = False # test, None origin
+        self.front_right = False
+        self.mid_left = None
+        self.mid_right = None
+        self.back_left = None
+        self.back_right = None
+
+        self.correct_speed_scale = 0.4
+        # self.is_boundary_triggered = False # test, False origin
+        # 定义参数描述：bool类型，名称：is_boundary_triggered，默认值：False
+        boundary_param_desc = ParameterDescriptor(
+            type=ParameterType.PARAMETER_BOOL,
+            description='手动强制开启/关闭边界触发，True=触发矫正，False=强制关闭边界矫正(屏蔽传感器)'
+        )
+        # 声明参数 + 绑定到类成员变量
+        self.declare_parameter('is_boundary_triggered', False, boundary_param_desc)
+        # 读取初始值（程序启动时的默认值）
+        self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
+
+        # ========== ✅ 必须添加：参数回调函数，监听参数修改事件 ==========
+        self.add_on_set_parameters_callback(self.update_boundary_parameter)
+
+
         # 声明RTK路径参数
         self.rtk_path_file = self.declare_parameter(
             'rtk_path_file',
@@ -80,7 +109,7 @@ class RTKNavControlNode(Node):
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
-
+        self.io_data_rtk_sub = self.create_subscription(String, '/io/data', self.io_data_rtk_callback, 10)
         # 定时器（10Hz驱动导航逻辑）
         self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)
 
@@ -111,7 +140,105 @@ class RTKNavControlNode(Node):
         except Exception as e:
             self.get_logger().error(f"[RTKNav] 加载路径文件失败: {e}")
             return False
+    def update_boundary_parameter(self, params):
+        """
+        ROS2动态参数回调函数：监听参数修改，实时更新 self.is_boundary_triggered
+        运行中修改参数后，立刻生效，无需重启节点
+        """
+        for param in params:
+            if param.name == 'is_boundary_triggered':
+                # 强制更新类成员变量
+                self.is_boundary_triggered = param.value
+                # 打印日志，方便调试查看修改结果
+                if self.is_boundary_triggered:
+                    self.get_logger().warn(f"✅ [手动设置] 开启边界触发：self.is_boundary_triggered = {self.is_boundary_triggered}")
+                else:
+                    self.get_logger().info(f"✅ [手动设置] 关闭边界触发：self.is_boundary_triggered = {self.is_boundary_triggered} (强制屏蔽传感器矫正)")
+        # 必须返回成功状态
+        return SetParametersResult(successful=True)
+    def get_boundary_correct_speed(self):
+        """
+        边界触发时的实时矫正速度计算
+        返回：(left_speed_correct, right_speed_correct) 矫正速度(/s)
+        核心逻辑：哪边传感器触发 → 向反方向小幅度移动矫正，避开边界
+        """
+        base_correct_speed = self.correct_speed_scale * LINEAR_SPEED_BASE
+        left_speed = 0.0
+        right_speed = 0.0
+
+        # 前侧传感器触发 → 小幅后退矫正
+        if self.front_left or self.front_right:
+            left_speed = base_correct_speed
+            right_speed = -base_correct_speed
+        
+        # 后侧传感器触发 → 小幅前进矫正
+        elif self.back_left or self.back_right:
+            left_speed = -base_correct_speed
+            right_speed = base_correct_speed
+
+        # 左侧传感器触发(中左/前左/后左) → 小幅向右矫正,turn_right,+,+
+        if self.mid_left or self.front_left or self.back_left:
+            left_speed = base_correct_speed * 0.8
+            right_speed = base_correct_speed * 0.8
+
+        # 右侧传感器触发(中右/前右/后右) → 小幅向左矫正,turn_left,-,-
+        if self.mid_right or self.front_right or self.back_right:
+            left_speed = -base_correct_speed * 0.8
+            right_speed = -base_correct_speed * 0.8
+
+        self.get_logger().info(f"[RTKNav] 执行边界矫正，矫正速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
+        return (left_speed, right_speed)
     
+    def io_data_rtk_callback(self, msg: UInt8):
+        self.get_logger().info(f"[RTKNav] 收到IO数据: {msg.data}")
+        # 位0 (1<<0 = 0x01)：前左
+        self.front_left = (msg.data & 0x01) == 0x01
+        
+        # 位1 (1<<1 = 0x02)：前右
+        self.front_right = (msg.data & 0x02) == 0x02
+        
+        # 位2 (1<<2 = 0x04)：中左
+        self.mid_left = (msg.data & 0x04) == 0x04
+        
+        # 位3 (1<<3 = 0x08)：中右  8
+        self.mid_right = (msg.data & 0x08) == 0x08
+        
+        # 位4 (1<<4 = 0x10)：后左 16
+        self.back_left = (msg.data & 0x10) == 0x10
+        
+        # 位5 (1<<5 = 0x20)：后右  32
+        self.back_right = (msg.data & 0x20) == 0x20
+
+        # 逻辑：如果是【手动通过rqt设置为False】，则不再更新这个变量，永久保持False；否则正常读取传感器
+        if not self.is_boundary_triggered:
+            return
+        
+        self.is_boundary_triggered = msg.data & 0xFF
+        # if msg.data:
+        #     for m in self.motors:
+        #         self.motor_set_speed(m["id"], 0) 
+        #         self.get_logger().info(f"--------------Test Proximity Speed--------------")
+        # if self.front_left or self.front_right:
+        #     self.motor_set_speed(1, -0.3 * self.BASE_SPEED)
+        #     self.motor_set_speed(2, 0.3 * self.BASE_SPEED)
+        #     if self.mid_left or self.mid_right:
+        #         self.motor_set_speed(1, 0)
+        #         self.motor_set_speed(2, 0)
+        #         while self.front_left or self.front_right and rclpy.ok():
+        #             self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+        #             self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+        # if self.back_left or self.back_right:
+        #     self.motor_set_speed(1, 0)
+        #     self.motor_set_speed(2, 0)
+        #     while self.front_left or self.front_right and rclpy.ok():
+        #         self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+        #         self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
+
+        # self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
+        # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
+        # f"back_left={self.back_left}, back_right={self.back_right}"
+        # )
+
     def get_next_path_file(self) -> Optional[str]:
         """获取下一个路径文件（按文件名时间戳排序）"""
         try:
@@ -202,7 +329,7 @@ class RTKNavControlNode(Node):
         ins_heading_deg = msg.ins_heading
         ins_heading_rad = math.radians(ins_heading_deg)
         ins_heading_rad = math.fmod(ins_heading_rad + math.pi, 2 * math.pi) - math.pi
-        self.get_logger().info(f"self.imu_initialized: {self.imu_initialized}")
+        # self.get_logger().info(f"self.imu_initialized: {self.imu_initialized}")
         if not self.imu_initialized:
             self.imu_calibration_offset = -ins_heading_rad
             self.imu_initialized = True
@@ -440,6 +567,9 @@ class RTKNavControlNode(Node):
                 self.nav_context["calib_generator"] = None
             else:
                 current_nav_state = self.nav_context["nav_state"]
+        if self.is_boundary_triggered:
+            self.get_logger().info("boundary_triggered!!!")
+            self.get_logger().warn("boundary_triggered!!!")
 
         # 2. 阶段1：初始移动（初始点→第一个航点）- 仅首次启动且非恢复时执行
         if current_nav_state == NavState.INITIAL_MOVE and not resume:
@@ -453,6 +583,9 @@ class RTKNavControlNode(Node):
                 # 获取初始移动速度
                 try:
                     left_speed, right_speed = next(initial_move_generator)
+                    if self.is_boundary_triggered:
+                        # 触发边界 → 暂停校准，执行矫正速度
+                        left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)  # 向定时器回调返回速度
                 except StopIteration:
                     # 初始移动完成，切换到第一个航点
@@ -513,6 +646,10 @@ class RTKNavControlNode(Node):
                 # 执行航向校准
                 try:
                     left_speed, right_speed = next(calib_generator)
+                    if self.is_boundary_triggered:
+                        # 触发边界 → 暂停校准，执行矫正速度
+                        left_speed, right_speed = self.get_boundary_correct_speed()
+
                     yield (left_speed, right_speed)
                 except StopIteration as e:
                     # 校准完成，切换到下一个航点
@@ -570,8 +707,11 @@ class RTKNavControlNode(Node):
                 if distance >= RTK_WAYPOINT_TOLERANCE:
                     correction = self.get_speed_correction(target_heading)
                     base_speed_rad = self.rad_from_linear(LINEAR_SPEED_BASE)
-                    left_speed = base_speed_rad - correction
+                    left_speed = -base_speed_rad - correction
                     right_speed = base_speed_rad + correction
+                    if self.is_boundary_triggered:
+                        # 触发边界 → 暂停校准，执行矫正速度
+                        left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 # 距离达标：切换到航向校准阶段
                 else:
