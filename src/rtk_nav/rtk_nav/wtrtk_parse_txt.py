@@ -119,7 +119,11 @@ class WTRTKFileParser(Node):
             
             # 协方差设置
             fix_msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
-            fix_msg.position_covariance = [0.1, 0, 0, 0, 0.1, 0, 0, 0, 1.0]
+            fix_msg.position_covariance = [
+                float(0.1), float(0.0), float(0.0),
+                float(0.0), float(0.1), float(0.0),
+                float(0.0), float(0.0), float(1.0)
+            ]
             
         except (ValueError, IndexError) as e:
             self.get_logger().warn(f"Failed to parse GNGGA fields: {str(e)}")

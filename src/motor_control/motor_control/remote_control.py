@@ -23,9 +23,9 @@ class SBUSRemoteController(Node):
     """
     ✅ 核心修改：继承ROS2的Node类（解决日志上下文问题）
     ✅ 解析逻辑：1:1复用你CustomRCParser的稳定串口解析逻辑
-    ✅ 线程模型：ROS2标准定时器替代while循环，无阻塞、无GIL竞争
+    ✅ 线程模型：ROS2标准定时器替代while循环，无阻塞、无GIL竞争col 
     """
-    def __init__(self, port="/dev/ttyUSB0", baudrate=115200):
+    def __init__(self, port="/dev/remote_control", baudrate=115200):
         super().__init__("remote_control_node")
         # 串口配置
         self.port = port
@@ -75,6 +75,7 @@ class SBUSRemoteController(Node):
             self.serial_init_flag = False
             self.is_connected = False
             self.get_logger().error("❌ 遥控器串口初始化失败: %s | 检查串口路径/权限" % str(e))
+            self._reconnect_serial()
 
     def _reconnect_serial(self) -> bool:
         """串口自动重连逻辑"""
@@ -196,6 +197,7 @@ class SBUSRemoteController(Node):
                 # with self.data_lock:
                 self.is_connected = False
                 time.sleep(0.1)
+                self._reconnect_serial()
 
     def get_channel_raw(self, ch_idx):
         # if not 0 <= ch_idx < 16:
@@ -241,7 +243,7 @@ class SBUSRemoteController(Node):
 def main(args=None):
     rclpy.init(args=args)
     # 实例化节点（继承Node，日志上下文有效）
-    remote_node = SBUSRemoteController(port="/dev/ttyUSB0", baudrate=115200)
+    remote_node = SBUSRemoteController(port="/dev/remote_control", baudrate=115200)
     try:
         # ✅ ROS2标准spin，阻塞但不卡死，定时器正常运行
         rclpy.spin(remote_node)

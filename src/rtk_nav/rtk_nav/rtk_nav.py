@@ -79,13 +79,16 @@ class RTKNavControlNode(Node):
 
 
         # 声明RTK路径参数
-        self.rtk_path_file = self.declare_parameter(
-            'rtk_path_file',
-            # "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
-            "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
-        ).value
+        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20260107_095537.txt")
+        self.rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.path_dir = os.path.dirname(self.rtk_path_file)
+        # self.rtk_path_file = self.declare_parameter(
+        #     'rtk_path_file',
+        #     # "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+        #     "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+        # )
         
-        self.path_dir = os.path.dirname(self.rtk_path_file)  # 获取路径文件所在目录
+        # self.path_dir = os.path.dirname(self.rtk_path_file)  # 获取路径文件所在目录
 
 
         # 导航上下文
