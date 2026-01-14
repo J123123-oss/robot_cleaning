@@ -86,9 +86,12 @@ def rotate_point(e, n, e0, n0, rotation_rad):
     n_trans = n - n0
     
     # 旋转矩阵（顺时针旋转，适配地理坐标系习惯）
-    e_rot_trans = e_trans * math.cos(rotation_rad) - n_trans * math.sin(rotation_rad)
-    n_rot_trans = e_trans * math.sin(rotation_rad) + n_trans * math.cos(rotation_rad)
-    
+    # e_rot_trans = e_trans * math.cos(rotation_rad) - n_trans * math.sin(rotation_rad)
+    # n_rot_trans = e_trans * math.sin(rotation_rad) + n_trans * math.cos(rotation_rad)
+    # 逆时针旋转（如需逆时针旋转，使用以下公式）
+    e_rot_trans = e_trans * math.cos(rotation_rad) + n_trans * math.sin(rotation_rad)  # θ为逆时针旋转角
+    n_rot_trans = -e_trans * math.sin(rotation_rad) + n_trans * math.cos(rotation_rad)
+
     # 平移回原坐标系
     e_rot = e_rot_trans + e0
     n_rot = n_rot_trans + n0
@@ -143,6 +146,7 @@ def calculate_region_from_3points(point_a, point_b, point_c):
     
     # ========== 修复点2：旋转角度计算，原始逻辑正确，保留 ==========
     angle_rad = math.atan2(ab_e, ab_n)  # 与正北的夹角（弧度）
+    # angle_rad = angle_rad - math.pi  # 弧度减180°
     rotation_deg = radians_to_degrees(angle_rad)
     
     # ========== 修复点3：基准点UTM坐标 核心修正公式【彻底解决偏移】 ==========
@@ -339,19 +343,19 @@ class CleaningPathPlanner(Node):
         # self.declare_parameter('calib_point_b.lat', 30.31985644014249)
         # self.declare_parameter('calib_point_c.lon', 120.06933736386713)
         # self.declare_parameter('calib_point_c.lat', 30.31988471205802)
-        self.declare_parameter('calib_point_a.lon', 120.06916774367069)  # 第一个点 = start_corner
-        self.declare_parameter('calib_point_a.lat', 30.320349035482604)
-        self.declare_parameter('calib_point_b.lon', 120.069343119751)
-        self.declare_parameter('calib_point_b.lat', 30.319865295979422)
-        self.declare_parameter('calib_point_c.lon', 120.06915847480371)
-        self.declare_parameter('calib_point_c.lat', 30.319843208521007)
+        self.declare_parameter('calib_point_a.lon', 120.06908157229124)  # 第一个点 = start_corner
+        self.declare_parameter('calib_point_a.lat', 30.320549326045818)  # 120.06908157229124,30.320549326045818
+        self.declare_parameter('calib_point_b.lon', 120.06934719266512)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
+        self.declare_parameter('calib_point_b.lat', 30.319875087155783)
+        self.declare_parameter('calib_point_c.lon', 120.06893303174934)
+        self.declare_parameter('calib_point_c.lat', 30.320515493992254)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
 
-        # self.declare_parameter('calib_point_a.lon', 120.06933736386713)
-        # self.declare_parameter('calib_point_a.lat', 30.31988471205802)
-        # self.declare_parameter('calib_point_b.lon', 120.06850651709006)
-        # self.declare_parameter('calib_point_b.lat', 30.319635655639967)
-        # self.declare_parameter('calib_point_c.lon', 120.068436359051)
-        # self.declare_parameter('calib_point_c.lat', 30.319807695247267)
+        # self.declare_parameter('calib_point_a.lon', 120.06891577325935)#120.06891577325935,30.320537691107706
+        # self.declare_parameter('calib_point_a.lat', 30.320537691107706)
+        # self.declare_parameter('calib_point_b.lon', 120.0691364728377)#120.0691364728377,30.319852150388023
+        # self.declare_parameter('calib_point_b.lat', 30.319852150388023)
+        # self.declare_parameter('calib_point_c.lon', 120.06873704947856)#120.06873704947856,30.320508473942272
+        # self.declare_parameter('calib_point_c.lat', 30.320508473942272)
 
         self.declare_parameter('interval', 2.8)
         self.declare_parameter('start_corner', 'bottom_right')
@@ -446,6 +450,22 @@ class CleaningPathPlanner(Node):
             inner_n = [corner[1] for corner in inner_corners_utm] + [inner_corners_utm[0][1]]
             ax.plot(inner_e, inner_n, 'g--', label='inner')
             
+            # 1. 提取A、B、C三点UTM坐标
+            a_lon, a_lat = self.param['calib_point_a']
+            b_lon, b_lat = self.param['calib_point_b']
+            c_lon, c_lat = self.param['calib_point_c']
+            a_e, a_n, _, _ = get_utm_coords(a_lat, a_lon)
+            b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
+            c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
+
+            # 2. 绘制A、B、C三点及标注
+            ax.scatter(a_e, a_n, c='red', s=120, marker='s', label='Calib Point A', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point A', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+            ax.scatter(b_e, b_n, c='orange', s=120, marker='o', label='Calib Point B', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point B', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+            ax.scatter(c_e, c_n, c='purple', s=120, marker='^', label='Calib Point C', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point C', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+
             # 绘制清扫路径
             path_e = [p[0] for p in path_utm]
             path_n = [p[1] for p in path_utm]
