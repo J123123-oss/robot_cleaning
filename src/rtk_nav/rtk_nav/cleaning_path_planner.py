@@ -257,11 +257,11 @@ class CleaningPathPlanner(Node):
         # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
         self.declare_parameter('base_point.lon', 120.0711247716332)
         self.declare_parameter('base_point.lat', 30.320803806689252)
-        self.declare_parameter('rect_width', 5.0)
-        self.declare_parameter('rect_height', 10.0)
+        self.declare_parameter('rect_width', 10.0)
+        self.declare_parameter('rect_height', 5.0)
         self.declare_parameter('rotation_deg', 15.0)
         self.declare_parameter('interval', 1.0)
-        self.declare_parameter('start_corner', 'top_right')
+        self.declare_parameter('start_corner', 'top_left')
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -340,7 +340,12 @@ class CleaningPathPlanner(Node):
             
             # 绘制清扫路径
             fig, ax = plt.subplots(figsize=(10, 8))
-            
+
+            a_lon, a_lat = self.get_parameter('base_point.lon').value, self.get_parameter('base_point.lat').value
+            a_e, a_n, _, _ = get_utm_coords(a_lat, a_lon)
+            ax.scatter(a_e, a_n, c='red', s=120, marker='s', label='Base_point', edgecolors='black', linewidth=1.5)
+            ax.annotate('base_point', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+
             # 绘制原始矩形边界
             orig_e = [corner[0] for corner in original_corners_utm] + [original_corners_utm[0][0]]
             orig_n = [corner[1] for corner in original_corners_utm] + [original_corners_utm[0][1]]

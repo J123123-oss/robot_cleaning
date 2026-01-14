@@ -101,6 +101,8 @@ def calculate_region_from_3points(point_a, point_b, point_c):
     
     # ========== 修复点2：旋转角度计算，原始逻辑正确，保留 ==========
     angle_rad = math.atan2(ab_e, ab_n)  # 与正北的夹角（弧度）
+    angle_rad = angle_rad - math.pi    # change angle + PI
+
     rotation_deg = radians_to_degrees(angle_rad)
     
     # ========== 修复点3：基准点UTM坐标 核心修正公式【彻底解决偏移】 ==========
@@ -412,15 +414,6 @@ class MultiAreaCleaningPathPlanner(Node):
                     heading = merged_headings[idx]
                     f.write(f"{idx+1},{lon:.8f},{lat:.8f},{heading:.2f}\n")
             self.get_logger().info(f"多区域路径文件已保存到：{points_filename}")
-            # 提取A、B、C三点的UTM坐标（复用get_utm_coords函数，确保与区域计算用坐标一致）
-            a_lon, a_lat = self.param['calib_point_a']
-            b_lon, b_lat = self.param['calib_point_b']
-            c_lon, c_lat = self.param['calib_point_c']
-
-            # 转换为UTM坐标
-            a_e, a_n, _, _ = get_utm_coords(a_lat, a_lon)
-            b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
-            c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
             
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
@@ -443,7 +436,6 @@ class MultiAreaCleaningPathPlanner(Node):
         # 支持无限个区域，颜色循环使用，区分度高
         hex_colors = ["#1f77b4", '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
         line_styles = ['-', '--'] # 实线=原始边界，虚线=内部边界
-        
         
         for i, (orig_corners, inner_corners) in enumerate(zip(all_orig_corners, all_inner_corners)):
             color = hex_colors[i % len(hex_colors)]
