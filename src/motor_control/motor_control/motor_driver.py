@@ -199,6 +199,7 @@ class CanMotorDriver(Node):
                 
             msg = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
             self.bus.send(msg)
+            time.sleep(0.01) 
             return True
         except Exception as e:
             self.get_logger().error(f"Failed to send CAN frame: {e}")
