@@ -84,18 +84,75 @@ def generate_launch_description():
         name='three_point_planner',
         output='screen',
         parameters=[
-            #120.0711247716332,30.320803806689252
-            {'calib_point_a.lon': 120.0711247716332},
-            {'calib_point_a.lat': 30.320803806689252},
-            {'calib_point_b.lon': 120.0712247716332},
-            {'calib_point_b.lat': 30.320903806689252},
-            {'calib_point_c.lon': 120.0710247716332},
-            {'calib_point_c.lat': 30.320853806689252},
+            # 120.06908560397895,30.320565863954112
+            # 120.06927447409858,30.32005925988348
+            # 120.06909883839826,30.32003703889293
+            # {'calib_point_a.lon': 120.06916774367069},
+            # #120.06916774367069,30.320349035482604
+            # # {'area_0.calib_point_b.lon': 120.06927447409858},#120.069343119751,30.319865295979422
+            # # {'area_0.calib_point_c.lon': 120.06909883839826},#120.06915847480371,30.319843208521007
+            # {'calib_point_a.lat': 30.320349035482604},
+            # {'calib_point_b.lon': 120.069343119751},
+            # {'calib_point_b.lat': 30.319865295979422},
+            # {'calib_point_c.lon': 120.06915847480371},
+            # {'calib_point_c.lat': 30.319843208521007},
+            
+            {'calib_point_a.lon': 120.06915847480371},#120.06915847480371,30.319843208521007
+            # {'area_1.calib_point_a.lat': 30.32003703889293},
+            # {'area_1.calib_point_b.lon': 120.06887765281415},#120.06887765281415,30.32052106709264
+            # {'area_1.calib_point_b.lat': 30.32052106709264},
+            # {'area_1.calib_point_c.lon': 120.06862983594995},#120.06862983594995,30.32045493714768
+            {'calib_point_a.lat': 30.319843208521007},
+            {'calib_point_b.lon': 120.06887765281415},
+            {'calib_point_b.lat': 30.32052106709264},
+            {'calib_point_c.lon': 120.06862983594995},
+            {'calib_point_c.lat': 30.32045493714768},
             {'interval': 1.0},
             {'start_corner': 'top_left'},
             {'edge_distance_lon': 0.5},
             {'edge_distance_lat': 0.5},
             {'headless': False}
+        ]
+    )
+    # 多区域清扫路径规划节点
+    full_path_planner = Node(
+        package='rtk_nav',
+        executable='full_path_planner',  # 注意： executable名称需与脚本文件名一致（或通过setup.py配置）
+        name='full_path',
+        output='screen',
+        parameters=[
+            # ---------------------- 全局配置 ----------------------
+            {'area_count': 2},  # 区域数量（根据实际需求修改）
+            {'default.interval': 2.0},  # 默认路径间隔（可被区域专属参数覆盖）
+            {'default.start_corner': 'top_left'},  # 默认起始角点
+            {'default.edge_distance_lon': 0.5},  # 默认经度方向边界距离
+            {'default.edge_distance_lat': 0.5},  # 默认纬度方向边界距离
+            {'headless': False},  # 是否无头模式（不显示图片）
+            
+            # ---------------------- 区域0参数（必填：3个标定点；可选：覆盖默认参数） ----------------------
+            # 120.06908560397895,30.320565863954112
+            # 120.06927447409858,30.32005925988348
+            # 120.06909883839826,30.32003703889293
+            {'area_0.calib_point_a.lon': 120.06908560397895},#120.06916774367069,30.320349035482604
+            {'area_0.calib_point_a.lat': 30.320565863954112},
+            {'area_0.calib_point_b.lon': 120.06927447409858},#120.069343119751,30.319865295979422
+            {'area_0.calib_point_b.lat': 30.32005925988348},
+            {'area_0.calib_point_c.lon': 120.06909883839826},#120.06915847480371,30.319843208521007
+            {'area_0.calib_point_c.lat': 30.32003703889293},
+            {'area_0.interval': 2.8},  # 可选：覆盖默认间隔
+            {'area_0.start_corner': 'bottom_right'},  # 可选：覆盖默认起始角点
+            
+            # ---------------------- 区域1参数（示例：第二个区域） ----------------------
+            {'area_1.calib_point_a.lon': 120.06909883839826},#120.06915847480371,30.319843208521007
+            {'area_1.calib_point_a.lat': 30.32003703889293},
+            {'area_1.calib_point_b.lon': 120.06887765281415},#120.06887765281415,30.32052106709264
+            {'area_1.calib_point_b.lat': 30.32052106709264},
+            {'area_1.calib_point_c.lon': 120.06862983594995},#120.06862983594995,30.32045493714768
+            {'area_1.calib_point_c.lat': 30.32045493714768},
+            {'area_1.interval': 2.8},  # 可选：该区域间隔为1.2m（覆盖默认）
+            {'area_1.start_corner': 'top_left'},  # 可选：覆盖默认起始角点
+            {'area_1.edge_distance_lon': 0.5},  # 可选：该区域经度边界距离0.6m
+            {'area_1.edge_distance_lat': 0.5}  # 可选：该区域纬度边界距离0.6m
         ]
     )
     # 组装所有节点到 LaunchDescription
@@ -107,5 +164,6 @@ def generate_launch_description():
     # ld.add_action(wtrtk_serial_driver_node)
     # ld.add_action(cleaning_path_planner_node)
     # ld.add_action(three_point_planner_node)
+    # ld.add_action(full_path_planner)
 
     return ld

@@ -137,33 +137,26 @@ def calculate_region_from_3points(point_a, point_b, point_c):
     # 计算AC在垂直方向的投影长度（第二条边长度）
     ac_perp_length = ac_e * perp_e + ac_n * perp_n
     
-    # 确定宽度和高度（取较长的为height，较短的为width）
-    if ab_length >= abs(ac_perp_length):
-        height = ab_length
-        width = abs(ac_perp_length)
-    else:
-        height = abs(ac_perp_length)
-        width = ab_length
+    # ========== 修复点1：宽高赋值逻辑，还原业务语义 ==========
+    height = ab_length  # AB为主边，固定为高度
+    width_origin = ac_perp_length  # 带符号的真实宽度，用于计算基准点
     
-    # 计算旋转角度（AB向量与正北方向的夹角）
-    # 正北方向向量是(0,1)
+    # ========== 修复点2：旋转角度计算，原始逻辑正确，保留 ==========
     angle_rad = math.atan2(ab_e, ab_n)  # 与正北的夹角（弧度）
     rotation_deg = radians_to_degrees(angle_rad)
     
-    # 计算原逻辑的基准点（top_left）：从A点反向计算
-    # 先确定top_left在UTM中的坐标
-    if ac_perp_length > 0:
-        # C点在AB左侧，top_left = A点 - 垂直方向向量 * width
-        top_left_e = a_e - perp_e * width
-        top_left_n = a_n - perp_n * width
-    else:
-        # C点在AB右侧，top_left = A点 + 垂直方向向量 * width
-        top_left_e = a_e + perp_e * width
-        top_left_n = a_n + perp_n * width
+    # ========== 修复点3：基准点UTM坐标 核心修正公式【彻底解决偏移】 ==========
+    top_left_e = a_e + perp_e * width_origin
+    top_left_n = a_n + perp_n * width_origin
+
     
     # 转换top_left回经纬度作为base_point
     top_left_lat, top_left_lon = get_latlon_from_utm(top_left_e, top_left_n, zone_num, zone_letter)
     base_point = (top_left_lon, top_left_lat)
+    
+    # 对外返回的宽高取绝对值（物理尺寸为正数）
+    width = abs(width_origin)
+    print("计算区域参数：base_point={}, width={}, height={}, rotation_deg={}".format(base_point, width, height, rotation_deg))
     
     return base_point, width, height, rotation_deg, (a_e, a_n), (zone_num, zone_letter)
 
@@ -339,14 +332,29 @@ class CleaningPathPlanner(Node):
         super().__init__('three_point_planner')
         
         # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
-        self.declare_parameter('calib_point_a.lon', 120.0711247716332)
-        self.declare_parameter('calib_point_a.lat', 30.320803806689252)
-        self.declare_parameter('calib_point_b.lon', 120.0712247716332)
-        self.declare_parameter('calib_point_b.lat', 30.320903806689252)
-        self.declare_parameter('calib_point_c.lon', 120.0710247716332)
-        self.declare_parameter('calib_point_c.lat', 30.320853806689252)
-        self.declare_parameter('interval', 1.0)
-        self.declare_parameter('start_corner', 'top_left')
+
+        # self.declare_parameter('calib_point_a.lon', 120.06916853686953)
+        # self.declare_parameter('calib_point_a.lat', 30.3203481042197)
+        # self.declare_parameter('calib_point_b.lon', 120.0691430881223)
+        # self.declare_parameter('calib_point_b.lat', 30.31985644014249)
+        # self.declare_parameter('calib_point_c.lon', 120.06933736386713)
+        # self.declare_parameter('calib_point_c.lat', 30.31988471205802)
+        self.declare_parameter('calib_point_a.lon', 120.06916774367069)  # 第一个点 = start_corner
+        self.declare_parameter('calib_point_a.lat', 30.320349035482604)
+        self.declare_parameter('calib_point_b.lon', 120.069343119751)
+        self.declare_parameter('calib_point_b.lat', 30.319865295979422)
+        self.declare_parameter('calib_point_c.lon', 120.06915847480371)
+        self.declare_parameter('calib_point_c.lat', 30.319843208521007)
+
+        # self.declare_parameter('calib_point_a.lon', 120.06933736386713)
+        # self.declare_parameter('calib_point_a.lat', 30.31988471205802)
+        # self.declare_parameter('calib_point_b.lon', 120.06850651709006)
+        # self.declare_parameter('calib_point_b.lat', 30.319635655639967)
+        # self.declare_parameter('calib_point_c.lon', 120.068436359051)
+        # self.declare_parameter('calib_point_c.lat', 30.319807695247267)
+
+        self.declare_parameter('interval', 2.8)
+        self.declare_parameter('start_corner', 'bottom_right')
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -414,7 +422,7 @@ class CleaningPathPlanner(Node):
             os.makedirs(save_dir, exist_ok=True)
             
             # 计算航向角并保存路径点
-            points_filename = os.path.join(save_dir, f"cleaning_path_{timestamp}.txt")
+            points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
             headings = calculate_heading_angles(path_latlon)
             
             with open(points_filename, "w", encoding="utf-8") as f:
@@ -462,7 +470,7 @@ class CleaningPathPlanner(Node):
             plt.tight_layout()
             
             # 保存带时间戳的图片
-            img_filename = os.path.join(save_dir, f'cleaning_path_{timestamp}.png')
+            img_filename = os.path.join(save_dir, f'three_path_{timestamp}.png')
             plt.savefig(img_filename, dpi=300)
             self.get_logger().info(f"路径图已保存到 {img_filename}")
             

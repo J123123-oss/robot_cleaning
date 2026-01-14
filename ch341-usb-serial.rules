@@ -1,0 +1,1 @@
+KERNEL=="ttyUSB*", KERNELS=="1-1.2", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="remote_control"
