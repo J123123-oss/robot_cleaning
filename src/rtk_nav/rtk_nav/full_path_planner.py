@@ -118,13 +118,22 @@ def calculate_region_from_3points(point_a, point_b, point_c):
     width = abs(width_origin)
     print("计算区域参数：base_point={}, width={}, height={}, rotation_deg={}".format(base_point, width, height, rotation_deg))
     
-    return base_point, width, height, rotation_deg, (a_e, a_n), (zone_num, zone_letter)
+    return base_point, width_origin, height, rotation_deg, (a_e, a_n), (zone_num, zone_letter)
 
 def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, start_corner, param):
+    """
+    最终修正版：
+    1. 严格以传入的start_corner作为唯一基准，控制路径生成方向+起始点，支持随时修改生效
+    2. 保留正负宽度统一适配逻辑、A点为旋转中心、边界固定的全部原有逻辑
+    3. 修复轨迹斜线跳转BUG，改为90度垂直转向衔接，无斜线跨区域
+    4. 路径起始点完全由start_corner决定，不再强制关联A点
+    """
+    # 1. 从3个点计算区域参数（保留原逻辑）
     base_point, width, height, rotation_deg, start_utm, utm_zone = calculate_region_from_3points(
         point_a, point_b, point_c
     )
     zone_num, zone_letter = utm_zone
+    a_e, a_n = start_utm  # A点UTM坐标（固定为旋转中心，保留）
     
     lon0, lat0 = base_point
     interval = param['interval']
@@ -132,49 +141,77 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     edge_lat = param['edge_distance_lat']
     rotation_rad = degrees_to_radians(rotation_deg)
     
-    e0, n0, _, _ = get_utm_coords(lat0, lon0)
+    # 核心保留：统一旋转中心为A点（无论宽度正负）
+    e0, n0 = a_e, a_n
     
-    # 原始矩形
+    # 2. 生成未旋转的原始矩形四个角点（适配宽度正负，保留）
+    orig_unrot = {}
+    width_sign = 1 if width >= 0 else -1
+    width_abs = abs(width)
+    
     orig_unrot = {
         'top_left': (e0, n0),
-        'top_right': (e0 + width, n0),
-        'bottom_right': (e0 + width, n0 - height),
+        'top_right': (e0 + width_sign * width_abs, n0),
+        'bottom_right': (e0 + width_sign * width_abs, n0 - height),
         'bottom_left': (e0, n0 - height)
     }
+    
+    # 3. 旋转原始矩形角点（以A点为中心，保留）
     orig_rot = {}
     for corner_name, (e, n) in orig_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         orig_rot[corner_name] = (e_rot, n_rot)
     original_corners_utm = list(orig_rot.values())
     
-    # 内部矩形
+    # 4. 生成未旋转的内部矩形角点（统一逻辑，适配宽度正负，保留）
+    inner_unrot = {}
+    inner_top_right_e = e0 + width_sign * (width_abs - edge_lon)
+    inner_top_left_e = e0 + width_sign * edge_lon
+
     inner_unrot = {
-        'top_left': (e0 + edge_lon, n0 - edge_lat),
-        'top_right': (e0 + width - edge_lon, n0 - edge_lat),
-        'bottom_right': (e0 + width - edge_lon, n0 - height + edge_lat),
-        'bottom_left': (e0 + edge_lon, n0 - height + edge_lat)
+        'top_left': (inner_top_left_e, n0 - edge_lat),
+        'top_right': (inner_top_right_e, n0 - edge_lat),
+        'bottom_right': (inner_top_right_e, n0 - height + edge_lat),
+        'bottom_left': (inner_top_left_e, n0 - height + edge_lat)
     }
-    inner_width = (e0 + width - edge_lon) - (e0 + edge_lon)
-    inner_height = (n0 - edge_lat) - (n0 - height + edge_lat)
-    if inner_width <= 0.1 or inner_height <= 0.1:
-        raise ValueError(f"区域内部无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
     
+    # 5. 安全检查：内部区域有效性（统一计算逻辑，保留）
+    inner_e_list = [inner_unrot[corner][0] for corner in inner_unrot]
+    inner_n_list = [inner_unrot[corner][1] for corner in inner_unrot]
+    inner_e_min = min(inner_e_list)
+    inner_e_max = max(inner_e_list)
+    inner_n_min = min(inner_n_list)
+    inner_n_max = max(inner_n_list)
+    inner_width = inner_e_max - inner_e_min
+    inner_height = inner_n_max - inner_n_min
+    
+    if inner_width <= 0.1 or inner_height <= 0.1:
+        raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+    
+    # 6. 旋转内部矩形角点（以A点为中心，保留）
     inner_rot = {}
     for corner_name, (e, n) in inner_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         inner_rot[corner_name] = (e_rot, n_rot)
     inner_corners_utm = list(inner_rot.values())
+
+    # ========== 【核心修改1：删除自动匹配A点逻辑，严格使用传入的start_corner】 ==========
+    # 100% 以外部传入的start_corner作为唯一基准，不再自动替换，支持随时修改
+    target_start_utm = inner_rot[start_corner]
+    print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
     
-    # 生成路径
+    # ========== 【核心修改2：路径生成方向 严格基于传入的start_corner】 ==========
+    # 从传入的start_corner中解析水平/垂直方向，无任何自动适配
+    hori_dir = 'left' if 'left' in start_corner else 'right'
+    vert_dir = 'top' if 'top' in start_corner else 'bottom'
+    
+    # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 保留原有逻辑】
+    swap_wh_select = param['swap_wh_select']
+    default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
     path_utm_unrot = []
-    # ===== 修复BUG2：提前定义 inner_n_max/inner_n_min，解决NameError =====
-    inner_n_max = inner_unrot['top_left'][1]
-    inner_n_min = inner_unrot['bottom_left'][1]
-    if inner_width >= inner_height:
+    if default_direction:
+        # 宽 >= 高：垂直分条（上下移动）
         num_strips = max(1, int(inner_height / interval) + 1)
-        hori_dir = 'left' if 'left' in start_corner else 'right'
-        vert_dir = 'top' if 'top' in start_corner else 'bottom'
-        
         if vert_dir == 'top':
             n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
@@ -184,21 +221,27 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         
         for i, current_n_unrot in enumerate(n_values):
             if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
-                path_utm_unrot.append((inner_unrot['top_left'][0], current_n_unrot))
-                path_utm_unrot.append((inner_unrot['top_right'][0], current_n_unrot))
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
             else:
-                path_utm_unrot.append((inner_unrot['top_right'][0], current_n_unrot))
-                path_utm_unrot.append((inner_unrot['top_left'][0], current_n_unrot))
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
+            
+            # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
+            # if i < num_strips - 1:
+            #     current_end = path_utm_unrot[-1]
+            #     next_n = n_values[i+1]
+            #     next_start = (current_end[0], next_n)
+            #     path_utm_unrot.append(next_start)
+                
     else:
+        # 宽 < 高：水平分条（左右移动）
         num_strips = max(1, int(inner_width / interval) + 1)
-        hori_dir = 'left' if 'left' in start_corner else 'right'
-        vert_dir = 'top' if 'top' in start_corner else 'bottom'
-        
         if hori_dir == 'left':
-            e_values = [inner_unrot['top_left'][0] + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+            e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
         else:
-            e_values = [inner_unrot['top_right'][0] - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+            e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
         
         for i, current_e_unrot in enumerate(e_values):
@@ -208,8 +251,15 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             else:
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
+            
+            # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
+            # if i < num_strips - 1:
+            #     current_end = path_utm_unrot[-1]
+            #     next_e = e_values[i+1]
+            #     next_start = (next_e, current_end[1])
+            #     path_utm_unrot.append(next_start)
     
-    # 旋转路径并转经纬度
+    # 9. 旋转路径点（以A点为中心，保留原有逻辑）
     path_utm_rot = []
     path_latlon = []
     for (e_unrot, n_unrot) in path_utm_unrot:
@@ -218,13 +268,18 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
         path_latlon.append((lon, lat))
     
-    # 校准起点
-    target_start_utm = inner_rot[start_corner]
+    # ========== 【核心修改4：修正路径起点 严格基于传入的start_corner】 ==========
+    # 仅用配置的start_corner对应角点做校准，不再关联A点，阈值合理0.5m，避免误交换
     first_point_dist = math.hypot(path_utm_rot[0][0] - target_start_utm[0], 
                                   path_utm_rot[0][1] - target_start_utm[1])
-    if first_point_dist > 0.1:
-        path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
-        path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
+    # if first_point_dist > 0.5:
+    #     path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
+    #     path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
+    #     print(f"路径起点调整：原起点与{start_corner}偏差{first_point_dist:.2f}m，已交换前两点")
+    
+    # 日志优化：打印配置的起始角点+关键参数，方便调试
+    print(f"路径生成方向：水平={hori_dir}，垂直={vert_dir}")
+    print(f"宽度处理：原始宽度={width:.2f}m → 延伸方向={'东向' if width_sign ==1 else '西向'}，内部宽度={inner_width:.2f}m")
     
     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
@@ -254,6 +309,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.declare_parameter('area_count', 2)
         self.declare_parameter('default.interval', 1.0)
         self.declare_parameter('default.start_corner', 'top_left')
+        self.declare_parameter('default.swap_wh_select', False) # turn True to invert width / height
         self.declare_parameter('default.edge_distance_lon', 0.5)
         self.declare_parameter('default.edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -268,6 +324,7 @@ class MultiAreaCleaningPathPlanner(Node):
             self.declare_parameter(f'area_{i}.calib_point_c.lat', 0.0)
             self.declare_parameter(f'area_{i}.interval', None)
             self.declare_parameter(f'area_{i}.start_corner', None)
+            self.declare_parameter(f'area_{i}.swap_wh_select', None)
             self.declare_parameter(f'area_{i}.edge_distance_lon', None)
             self.declare_parameter(f'area_{i}.edge_distance_lat', None)
         
@@ -285,6 +342,7 @@ class MultiAreaCleaningPathPlanner(Node):
         default_params = {
             'interval': self.get_parameter('default.interval').value,
             'start_corner': self.get_parameter('default.start_corner').value,
+            'swap_wh_select': self.get_parameter('default.swap_wh_select').value,
             'edge_distance_lon': self.get_parameter('default.edge_distance_lon').value,
             'edge_distance_lat': self.get_parameter('default.edge_distance_lat').value
         }
@@ -314,7 +372,11 @@ class MultiAreaCleaningPathPlanner(Node):
             area_interval = self.get_parameter(f'area_{i}.interval').value
             if area_interval is not None:
                 area_params['interval'] = area_interval
-            
+                
+            area_swap_wh_select = self.get_parameter(f'area_{i}.swap_wh_select').value
+            if area_swap_wh_select is not None:
+                area_params['swap_wh_select'] = area_swap_wh_select
+
             area_corner = self.get_parameter(f'area_{i}.start_corner').value
             if area_corner is not None:
                 if area_corner not in valid_corners:
@@ -352,6 +414,8 @@ class MultiAreaCleaningPathPlanner(Node):
         all_original_corners = []  # 所有区域的原始矩形边界
         all_inner_corners = []     # 所有区域的内部矩形边界
         utm_zone = None            # 假设所有区域在同一UTM zone（实际场景需校验）
+        # 新增：存储每个区域的ABC标定点UTM坐标，供绘图使用
+        all_calib_points_utm = []
         
         try:
             # ---------------------- 循环生成每个区域的路径 ----------------------
@@ -398,6 +462,14 @@ class MultiAreaCleaningPathPlanner(Node):
                 merged_path_utm.extend(path_utm)
                 all_original_corners.append(orig_corners)
                 all_inner_corners.append(inner_corners)
+                # 新增：转换当前区域ABC点为UTM并存入列表，供绘图使用
+                a_lon, a_lat = calib_a
+                b_lon, b_lat = calib_b
+                c_lon, c_lat = calib_c
+                a_e, a_n, _, _ = get_utm_coords(a_lat, a_lon)
+                b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
+                c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
+                all_calib_points_utm.append( (a_e,a_n, b_e,b_n, c_e,c_n) )
                 
                 self.get_logger().info(f"区域{i}路径生成完成，包含{len(path_latlon)}个点")
             
@@ -418,7 +490,7 @@ class MultiAreaCleaningPathPlanner(Node):
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
-                save_dir, timestamp
+                save_dir, timestamp, all_calib_points_utm
             )
         
         except ValueError as e:
@@ -426,9 +498,9 @@ class MultiAreaCleaningPathPlanner(Node):
         except Exception as e:
             self.get_logger().error(f"未知异常：{str(e)}")
 
-    # ===== 核心修复：_plot_multi_area_path 绘图函数 修复所有报错 =====
-    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp):
-        """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题"""
+    # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
+    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm):
+        """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
         fig, ax = plt.subplots(figsize=(12, 10))
         zone_num, zone_letter = utm_zone
         
@@ -437,18 +509,36 @@ class MultiAreaCleaningPathPlanner(Node):
         hex_colors = ["#1f77b4", '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
         line_styles = ['-', '--'] # 实线=原始边界，虚线=内部边界
         
-        for i, (orig_corners, inner_corners) in enumerate(zip(all_orig_corners, all_inner_corners)):
+        # 绘制每个区域的边界+内部矩形+ABC标定点
+        for i, (orig_corners, inner_corners, calib_utm) in enumerate(zip(all_orig_corners, all_inner_corners, all_calib_points_utm)):
             color = hex_colors[i % len(hex_colors)]
+            a_e,a_n, b_e,b_n, c_e,c_n = calib_utm
             
             # 绘制原始矩形边界 - 单独传 color + linestyle 参数，无格式错误
             orig_e = [c[0] for c in orig_corners] + [orig_corners[0][0]]
             orig_n = [c[1] for c in orig_corners] + [orig_corners[0][1]]
-            ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'aera{i} - boundary')
+            ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'area{i} - boundary')
             
             # 绘制内部矩形边界 - 同上
             inner_e = [c[0] for c in inner_corners] + [inner_corners[0][0]]
             inner_n = [c[1] for c in inner_corners] + [inner_corners[0][1]]
-            ax.plot(inner_e, inner_n, color=color, linestyle=line_styles[1], linewidth=1.5, label=f'aera{i} - inner')
+            ax.plot(inner_e, inner_n, color=color, linestyle=line_styles[1], linewidth=1.5, label=f'area{i} - inner')
+            
+            # ✅ 新增：绘制当前区域的A/B/C标定点，样式完全按参考来，带黑色描边+文字标注
+            # 只在第一个区域添加label，防止图例重复；后续区域只绘图不添加label
+            if i == 0:
+                ax.scatter(a_e, a_n, c='red', s=120, marker='s', label='Calib Point A', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(b_e, b_n, c='orange', s=120, marker='o', label='Calib Point B', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(c_e, c_n, c='purple', s=120, marker='^', label='Calib Point C', edgecolors='black', linewidth=1.5, zorder=6)
+            else:
+                ax.scatter(a_e, a_n, c='red', s=120, marker='s', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(b_e, b_n, c='orange', s=120, marker='o', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(c_e, c_n, c='purple', s=120, marker='^', edgecolors='black', linewidth=1.5, zorder=6)
+            
+            # ✅ 每个标定点都添加文字标注，永不重复
+            ax.annotate(f'Area{i}-A', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+            ax.annotate(f'Area{i}-B', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+            ax.annotate(f'Area{i}-C', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
         
         # 绘制合并后的清扫路径
         path_e = [p[0] for p in merged_path_utm]

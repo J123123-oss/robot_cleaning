@@ -122,45 +122,64 @@ def generate_launch_description():
         output='screen',
         parameters=[
             # ---------------------- 全局配置 ----------------------
-            {'area_count': 2},  # 区域数量（根据实际需求修改）
+            {'area_count': 3},  # 区域数量（根据实际需求修改）
             {'default.interval': 2.0},  # 默认路径间隔（可被区域专属参数覆盖）
-            {'default.start_corner': 'top_left'},  # 默认起始角点
+            {'default.start_corner': 'top_right'},  # 默认起始角点
+            {'default.swap_wh_select': True},  # default: inner_width=delta lon, inner_width >= inner_height,up-down
             {'default.edge_distance_lon': 0.5},  # 默认经度方向边界距离
             {'default.edge_distance_lat': 0.5},  # 默认纬度方向边界距离
             {'headless': False},  # 是否无头模式（不显示图片）
             
             # ---------------------- 区域0参数（必填：3个标定点；可选：覆盖默认参数） ----------------------
-            # 120.06908560397895,30.320565863954112
-            # 120.06927447409858,30.32005925988348
-            # 120.06909883839826,30.32003703889293
-
             # 120.06908157229124,30.320549326045818
             # 120.06934719266512,30.319875087155783
             # 120.06893303174934,30.320515493992254
-            {'area_0.calib_point_a.lon': 120.06908157229124},#120.06916774367069,30.320349035482604
-            {'area_0.calib_point_a.lat': 30.320549326045818},
-            {'area_0.calib_point_b.lon': 120.06934719266512},#120.069343119751,30.319865295979422
-            {'area_0.calib_point_b.lat': 30.319875087155783},
-            {'area_0.calib_point_c.lon': 120.06893303174934},#120.06915847480371,30.319843208521007
-            {'area_0.calib_point_c.lat': 30.320515493992254},
-            {'area_0.interval': 2.8},  # 可选：覆盖默认间隔
-            {'area_0.start_corner': 'top_left'},  # 可选：覆盖默认起始角点
+            {'area_0.calib_point_a.lon': 120.0691124656172},
+            {'area_0.calib_point_a.lat': 30.3200001861353},
+            {'area_0.calib_point_b.lon': 120.06902223898602},
+            {'area_0.calib_point_b.lat': 30.320249484457765},
+            {'area_0.calib_point_c.lon': 120.06884603228838},
+            {'area_0.calib_point_c.lat': 30.319928373774324},
+            {'area_0.interval': 2.3},  # 可选：覆盖默认间隔
+            {'area_0.start_corner': 'bottom_left'},  # 可选：覆盖默认起始角点
+            # {'area_0.swap_wh_select': True},  # 可选：覆盖默认inner_width=delta lon
+
             
             # ---------------------- 区域1参数（示例：第二个区域） ----------------------
             # 120.06891577325935,30.320537691107706
             # 120.0691364728377,30.319852150388023
             # 120.06873704947856,30.320508473942272
 
-            {'area_1.calib_point_a.lon': 120.06891577325935},#120.06915847480371,30.319843208521007
-            {'area_1.calib_point_a.lat': 30.320537691107706},
-            {'area_1.calib_point_b.lon': 120.0691364728377},#120.06887765281415,30.32052106709264
-            {'area_1.calib_point_b.lat': 30.319852150388023},
-            {'area_1.calib_point_c.lon': 120.06873704947856},#120.06862983594995,30.32045493714768
-            {'area_1.calib_point_c.lat': 30.320508473942272},
-            {'area_1.interval': 2.8},  # 可选：该区域间隔为1.2m（覆盖默认）
-            {'area_1.start_corner': 'top_left'},  # 可选：覆盖默认起始角点
-            {'area_1.edge_distance_lon': 0.5},  # 可选：该区域经度边界距离0.6m
-            {'area_1.edge_distance_lat': 0.5}  # 可选：该区域纬度边界距离0.6m
+            {'area_1.calib_point_a.lon': 120.06939750637723},
+            {'area_1.calib_point_a.lat': 30.319874909665536},
+            {'area_1.calib_point_b.lon': 120.06935553828153},
+            {'area_1.calib_point_b.lat': 30.320058864609038},
+            {'area_1.calib_point_c.lon': 120.06891137342275},
+            {'area_1.calib_point_c.lat': 30.319765710359487},
+            {'area_1.interval': 2.4},  # 可选：该区域间隔为1.2m（覆盖默认）
+            {'area_1.start_corner': 'bottom_right'},  # 可选：覆盖默认起始角点
+            {'area_1.swap_wh_select': False},  # 可选：覆盖默认inner_width=delta lon
+
+            # AERA_1
+            # a120.0691124656172,30.3200001861353
+            # b120.06902223898602,30.320249484457765
+            # c120.06884603228838,30.319928373774324
+            # A120.06939750637723,30.319874909665536
+            # B120.06935553828153,30.320058864609038
+            # C120.06891137342275,30.319765710359487
+            # A`120.06922485147298,30.32040989499512
+            # B`120.06935553828153,30.320058864609038
+            # C`120.06907218060923,30.320421493893136
+            {'area_2.calib_point_a.lon': 120.06922485147298},
+            {'area_2.calib_point_a.lat': 30.32040989499512},
+            {'area_2.calib_point_b.lon': 120.06935553828153},
+            {'area_2.calib_point_b.lat': 30.320058864609038},
+            {'area_2.calib_point_c.lon': 120.06907218060923},
+            {'area_2.calib_point_c.lat': 30.320421493893136},
+            {'area_2.interval': 2.0},  # 可选：该区域间隔为1.2m（覆盖默认）
+            {'area_2.start_corner': 'bottom_right'},  # 可选：bottom_right need to invert
+            # {'area_2.swap_wh_select': True},  # 可选：覆盖默认inner_width=delta lon
+
         ]
     )
     # 组装所有节点到 LaunchDescription

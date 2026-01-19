@@ -33,8 +33,9 @@ STATE_DICT = {
     'u': "UNLOADING"
 }
 
-MAX_SPEED = 260.0   # 遥控器最大速度
-MIN_SPEED = -160.0  # 遥控器最小速度
+MAX_SPEED = 160.0   # 遥控器最大速度
+MIN_SPEED = -130.0  # 遥控器最小速度
+BRUSH_SPEED = 300.0
 # 通道灵敏度系数（可微调，0~1之间，用于控制通道对速度的影响程度）
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 1.0  # 左右旋转灵敏度
@@ -180,9 +181,14 @@ class MotorControlNode(Node):
                     f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f} "
                     f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch0_norm:.2f}"
                 )
+                ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)  # brush A key
+                ch6_norm = 0.0 if abs(ch6_norm) < DEAD_ZONE else ch6_norm
+                brush_speed = ch6_norm * BRUSH_SPEED
+                self.set_brush_speed(brush_speed)
             except Exception as e:
                 self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
                 self.set_motors_speed(0.0, 0.0)
+                self.set_brush_speed(0.0)
 
         elif self.current_control_mode == "NORMAL":
             # 普通模式（键盘控制，原有逻辑）
@@ -207,6 +213,8 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
             self.set_motors_speed(left_speed, right_speed)
+            # stop brush
+            self.set_brush_speed(0.0)
 
         elif self.current_control_mode == "RTK_NAV":
             # RTK导航模式（新增逻辑：使用RTK订阅的速度）
@@ -217,6 +225,8 @@ class MotorControlNode(Node):
             right_speed = self.rtk_right_speed 
             self.set_motors_speed(left_speed, right_speed)
             self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
+            # start brush
+            self.set_brush_speed(BRUSH_SPEED)
 
         # 处理回调并延时
         # rclpy.spin_once(self, timeout_sec=0.01)
@@ -574,6 +584,11 @@ class MotorControlNode(Node):
         wheel_speed_msg.y = float(right_speed)   # 右轮角速度
         wheel_speed_msg.z = 0.0           # brush speed
         self.speed_pub.publish(wheel_speed_msg)
+        
+    def set_brush_speed(self, brush_speed: float) -> None:
+        """设置 刷 电机速度"""
+        # 刷盘电机（ID=3）
+        self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[2]["id"], brush_speed)
 
 # -------------------------- 主函数入口 --------------------------
 def main(args=None):

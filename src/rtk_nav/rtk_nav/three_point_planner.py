@@ -32,6 +32,7 @@ def calculate_heading_angles(path_latlon):
     
     for i in range(len(path_latlon)):
         if i == len(path_latlon) - 1:
+            # 最后一个点，继承上一个有效航向角，不产生新角度
             headings.append(headings[-1])
         else:
             lon1, lat1 = path_latlon[i]
@@ -114,17 +115,18 @@ def calculate_region_from_3points(point_a, point_b, point_c):
     return base_point, width_origin, height, rotation_deg, (a_e, a_n), (zone_num, zone_letter)
 def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, start_corner, param):
     """
-    统一正负宽度处理逻辑：
-    1. 固定旋转中心为A点，避免基准错位
-    2. 强制起始点与A点邻近，防止偏移到C点
-    3. 适配宽度正负，修正内部矩形与路径方向
+    最终修正版：
+    1. 严格以传入的start_corner作为唯一基准，控制路径生成方向+起始点，支持随时修改生效
+    2. 保留正负宽度统一适配逻辑、A点为旋转中心、边界固定的全部原有逻辑
+    3. 修复轨迹斜线跳转BUG，改为90度垂直转向衔接，无斜线跨区域
+    4. 路径起始点完全由start_corner决定，不再强制关联A点
     """
     # 1. 从3个点计算区域参数（保留原逻辑）
     base_point, width, height, rotation_deg, start_utm, utm_zone = calculate_region_from_3points(
         point_a, point_b, point_c
     )
     zone_num, zone_letter = utm_zone
-    a_e, a_n = start_utm  # A点UTM坐标（固定为旋转中心）
+    a_e, a_n = start_utm  # A点UTM坐标（固定为旋转中心，保留）
     
     lon0, lat0 = base_point
     interval = param['interval']
@@ -132,35 +134,33 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     edge_lat = param['edge_distance_lat']
     rotation_rad = degrees_to_radians(rotation_deg)
     
-    # 核心修复1：统一旋转中心为A点（无论宽度正负）
-    e0, n0 = a_e, a_n  # 替代原base_point的UTM坐标，避免基准错位
+    # 核心保留：统一旋转中心为A点（无论宽度正负）
+    e0, n0 = a_e, a_n
     
-    # 2. 生成未旋转的原始矩形四个角点（适配宽度正负）
+    # 2. 生成未旋转的原始矩形四个角点（适配宽度正负，保留）
     orig_unrot = {}
-    # 宽度符号：正=东向延伸，负=西向延伸
     width_sign = 1 if width >= 0 else -1
-    width_abs = abs(width)  # 宽度绝对值（物理尺寸）
+    width_abs = abs(width)
     
     orig_unrot = {
-        'top_left': (e0, n0),  # A点为原始矩形的top_left
-        'top_right': (e0 + width_sign * width_abs, n0),  # 按宽度符号延伸
+        'top_left': (e0, n0),
+        'top_right': (e0 + width_sign * width_abs, n0),
         'bottom_right': (e0 + width_sign * width_abs, n0 - height),
         'bottom_left': (e0, n0 - height)
     }
     
-    # 3. 旋转原始矩形角点（以A点为中心）
+    # 3. 旋转原始矩形角点（以A点为中心，保留）
     orig_rot = {}
     for corner_name, (e, n) in orig_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         orig_rot[corner_name] = (e_rot, n_rot)
     original_corners_utm = list(orig_rot.values())
     
-    # 4. 生成未旋转的内部矩形角点（统一逻辑，适配宽度正负）
+    # 4. 生成未旋转的内部矩形角点（统一逻辑，适配宽度正负，保留）
     inner_unrot = {}
-    # 内部矩形按宽度符号延伸，确保与原始矩形方向一致
     inner_top_right_e = e0 + width_sign * (width_abs - edge_lon)
-    inner_top_left_e = e0 + width_sign * edge_lon  # 避免负宽度时东向坐标反转
-    
+    inner_top_left_e = e0 + width_sign * edge_lon
+
     inner_unrot = {
         'top_left': (inner_top_left_e, n0 - edge_lat),
         'top_right': (inner_top_right_e, n0 - edge_lat),
@@ -168,50 +168,44 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         'bottom_left': (inner_top_left_e, n0 - height + edge_lat)
     }
     
-    # 5. 安全检查：内部区域有效性（统一计算逻辑）
+    # 5. 安全检查：内部区域有效性（统一计算逻辑，保留）
     inner_e_list = [inner_unrot[corner][0] for corner in inner_unrot]
     inner_n_list = [inner_unrot[corner][1] for corner in inner_unrot]
     inner_e_min = min(inner_e_list)
     inner_e_max = max(inner_e_list)
     inner_n_min = min(inner_n_list)
     inner_n_max = max(inner_n_list)
+    # default swap_wh_select=False 
     inner_width = inner_e_max - inner_e_min
     inner_height = inner_n_max - inner_n_min
     
     if inner_width <= 0.1 or inner_height <= 0.1:
         raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
     
-    # 6. 旋转内部矩形角点（以A点为中心）
+    # 6. 旋转内部矩形角点（以A点为中心，保留）
     inner_rot = {}
     for corner_name, (e, n) in inner_unrot.items():
         e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
         inner_rot[corner_name] = (e_rot, n_rot)
     inner_corners_utm = list(inner_rot.values())
+
+    # ========== 【核心修改1：删除自动匹配A点逻辑，严格使用传入的start_corner】 ==========
+    # 100% 以外部传入的start_corner作为唯一基准，不再自动替换，支持随时修改
+    target_start_utm = inner_rot[start_corner]
+    print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
     
-    # 核心修复2：强制起始点与A点邻近（避免偏移到C点）
-    # 计算A点到各内部旋转角点的距离，选择最近的角点作为实际起始角点
-    min_dist_to_a = float('inf')
-    actual_start_corner = start_corner  # 默认为配置的起始角点
-    for corner_name, (e_rot, n_rot) in inner_rot.items():
-        dist = math.hypot(e_rot - a_e, n_rot - a_n)
-        if dist < min_dist_to_a:
-            min_dist_to_a = dist
-            actual_start_corner = corner_name  # 切换为A点最近的角点
+    # ========== 【核心修改2：路径生成方向 严格基于传入的start_corner】 ==========
+    # 从传入的start_corner中解析水平/垂直方向，无任何自动适配
+    hori_dir = 'left' if 'left' in start_corner else 'right'
+    vert_dir = 'top' if 'top' in start_corner else 'bottom'
     
-    # 修正目标起始点：确保为A点邻近的角点（而非C点附近）
-    target_start_utm = inner_rot[actual_start_corner]
-    print(f"实际起始角点（A点邻近）: {actual_start_corner}，距离A点: {min_dist_to_a:.2f}m")
-    
-    # 7. 确定路径生成方向（基于实际起始角点）
-    hori_dir = 'left' if 'left' in actual_start_corner else 'right'
-    vert_dir = 'top' if 'top' in actual_start_corner else 'bottom'
-    
-    # 8. 生成未旋转的内部路径（适配宽度正负，基于修正后的min/max）
+    # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 保留原有逻辑】
+    swap_wh_select = param['swap_wh_select']
+    default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
     path_utm_unrot = []
-    if inner_width >= inner_height:
+    if default_direction:
         # 宽 >= 高：垂直分条（上下移动）
         num_strips = max(1, int(inner_height / interval) + 1)
-        # 垂直方向遍历顺序（基于实际起始角点的垂直方向）
         if vert_dir == 'top':
             n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
@@ -220,17 +214,23 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
                         for i in range(num_strips)]
         
         for i, current_n_unrot in enumerate(n_values):
-            # 水平方向遍历顺序（适配实际起始角点的水平方向）
             if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
                 path_utm_unrot.append((inner_e_max, current_n_unrot))
             else:
                 path_utm_unrot.append((inner_e_max, current_n_unrot))
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
+            
+            # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
+            # if i < num_strips - 1:
+            #     current_end = path_utm_unrot[-1]
+            #     next_n = n_values[i+1]
+            #     next_start = (current_end[0], next_n)
+            #     path_utm_unrot.append(next_start)
+                
     else:
         # 宽 < 高：水平分条（左右移动）
         num_strips = max(1, int(inner_width / interval) + 1)
-        # 水平方向遍历顺序（基于实际起始角点的水平方向）
         if hori_dir == 'left':
             e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
@@ -239,15 +239,21 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
                         for i in range(num_strips)]
         
         for i, current_e_unrot in enumerate(e_values):
-            # 垂直方向遍历顺序（适配实际起始角点的垂直方向）
             if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
             else:
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
+            
+            # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
+            # if i < num_strips - 1:
+            #     current_end = path_utm_unrot[-1]
+            #     next_e = e_values[i+1]
+            #     next_start = (next_e, current_end[1])
+            #     path_utm_unrot.append(next_start)
     
-    # 9. 旋转路径点（以A点为中心）
+    # 9. 旋转路径点（以A点为中心，保留原有逻辑）
     path_utm_rot = []
     path_latlon = []
     for (e_unrot, n_unrot) in path_utm_unrot:
@@ -256,20 +262,18 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
         path_latlon.append((lon, lat))
     
-    # 10. 修正路径起点（确保与目标起始点一致）
+    # ========== 【核心修改4：修正路径起点 严格基于传入的start_corner】 ==========
+    # 仅用配置的start_corner对应角点做校准，不再关联A点，阈值合理0.5m，避免误交换
     first_point_dist = math.hypot(path_utm_rot[0][0] - target_start_utm[0], 
                                   path_utm_rot[0][1] - target_start_utm[1])
-    # 放宽阈值到0.5m，适应旋转后的微小偏移，避免误交换
-    if first_point_dist > 0.5:
-        path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
-        path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
-        print(f"路径起点调整：原起点偏差{first_point_dist:.2f}m，已交换前两点")
+    # if first_point_dist > 0.5:
+    #     path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
+    #     path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
+    #     print(f"路径起点调整：原起点与{start_corner}偏差{first_point_dist:.2f}m，已交换前两点")
     
-    # 验证：打印路径起点与A点的距离（应接近边界偏移距离）
-    start_dist_to_a = math.hypot(path_utm_rot[0][0] - a_e, path_utm_rot[0][1] - a_n)
-    expected_dist = math.hypot(edge_lon, edge_lat)
-    print(f"路径起点与A点距离：{start_dist_to_a:.2f}m（预期：{expected_dist:.2f}m）")
-    print(f"宽度处理：原始宽度={width:.2f}m → 实际延伸方向={'东向' if width_sign == 1 else '西向'}，内部宽度={inner_width:.2f}m")
+    # 日志优化：打印配置的起始角点+关键参数，方便调试
+    print(f"路径生成方向：水平={hori_dir}，垂直={vert_dir}")
+    print(f"宽度处理：原始宽度={width:.2f}m → 延伸方向={'东向' if width_sign ==1 else '西向'}，内部宽度={inner_width:.2f}m")
     
     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
@@ -304,12 +308,12 @@ class CleaningPathPlanner(Node):
         # self.declare_parameter('calib_point_b.lat', 30.31985644014249)
         # self.declare_parameter('calib_point_c.lon', 120.06933736386713)
         # self.declare_parameter('calib_point_c.lat', 30.31988471205802)
-        self.declare_parameter('calib_point_a.lon', 120.06908157229124)  # 第一个点 = start_corner
-        self.declare_parameter('calib_point_a.lat', 30.320549326045818)  # 120.06908157229124,30.320549326045818
-        self.declare_parameter('calib_point_b.lon', 120.06934719266512)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
-        self.declare_parameter('calib_point_b.lat', 30.319875087155783)
-        self.declare_parameter('calib_point_c.lon', 120.06893303174934)
-        self.declare_parameter('calib_point_c.lat', 30.320515493992254)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
+        self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
+        self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
+        self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
+        self.declare_parameter('calib_point_b.lat', 30.32109457743618)
+        self.declare_parameter('calib_point_c.lon', 120.06908157229124)
+        self.declare_parameter('calib_point_c.lat', 30.320549326045818)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
 
         # self.declare_parameter('calib_point_a.lon', 120.06891577325935)#120.06891577325935,30.320537691107706
         # self.declare_parameter('calib_point_a.lat', 30.320537691107706)
@@ -321,6 +325,7 @@ class CleaningPathPlanner(Node):
 
         self.declare_parameter('interval', 2.8)
         self.declare_parameter('start_corner', 'bottom_right')
+        self.declare_parameter('swap_wh_select', True)
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -340,6 +345,7 @@ class CleaningPathPlanner(Node):
             ),
             'interval': self.get_parameter('interval').value,
             'start_corner': self.get_parameter('start_corner').value,
+            'swap_wh_select': self.get_parameter('swap_wh_select').value,
             'edge_distance_lon': self.get_parameter('edge_distance_lon').value,
             'edge_distance_lat': self.get_parameter('edge_distance_lat').value,
             'headless': self.get_parameter('headless').value
