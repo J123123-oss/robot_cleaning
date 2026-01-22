@@ -458,7 +458,7 @@ class MotorControlNode(Node):
                 # "battery_total_voltage": self.battery_total_voltage, # 电池总电压
                 # "battery_current": self.battery_current, # 电池电流
                 # "progress": self.progress,
-                "imu_yaw": round(self.imu_yaw, 2) if self.imu_yaw is not None else 0.00,
+                "imu_yaw": round(self.imu_yaw_rad, 2) if self.imu_yaw_rad is not None else 0.00,
                 # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
                 # "velocity_low": round(velocity_low , 2),
                 # "velocity_brush": round(velocity_brush, 2),

@@ -18,8 +18,8 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.2
 RTK_HEADING_TOLERANCE = 0.5
-LINEAR_SPEED_BASE = 100.0       # origin 0.0124
-TURN_SPEED = 50.0      # origin 0.1
+LINEAR_SPEED_BASE = 5.0       # origin 0.0124
+TURN_SPEED = 2.5      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.5
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 5.0
@@ -171,23 +171,23 @@ class RTKNavControlNode(Node):
 
         # 前侧传感器触发 → 小幅后退矫正
         if self.front_left or self.front_right:
-            left_speed = base_correct_speed
-            right_speed = -base_correct_speed
+            left_speed = -base_correct_speed
+            right_speed = base_correct_speed
         
         # 后侧传感器触发 → 小幅前进矫正
         elif self.back_left or self.back_right:
-            left_speed = -base_correct_speed
-            right_speed = base_correct_speed
+            left_speed = base_correct_speed
+            right_speed = -base_correct_speed
 
         # 左侧传感器触发(中左/前左/后左) → 小幅向右矫正,turn_right,+,+
         if self.mid_left or self.front_left or self.back_left:
-            left_speed = base_correct_speed * 0.8
-            right_speed = base_correct_speed * 0.8
+            left_speed = -base_correct_speed * 0.8
+            right_speed = -base_correct_speed * 0.8
 
         # 右侧传感器触发(中右/前右/后右) → 小幅向左矫正,turn_left,-,-
         if self.mid_right or self.front_right or self.back_right:
-            left_speed = -base_correct_speed * 0.8
-            right_speed = -base_correct_speed * 0.8
+            left_speed = base_correct_speed * 0.8
+            right_speed = base_correct_speed * 0.8
 
         self.get_logger().info(f"[RTKNav] 执行边界矫正，矫正速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
         return (left_speed, right_speed)
@@ -341,6 +341,7 @@ class RTKNavControlNode(Node):
 
         self.imu_yaw = ins_heading_rad + self.imu_calibration_offset
         self.imu_yaw = math.fmod(self.imu_yaw + math.pi, 2 * math.pi) - math.pi
+
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
         """获取当前目标航点（含航向角），到达最后一个航点时自动切换路径文件"""
