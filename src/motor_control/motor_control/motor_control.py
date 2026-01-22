@@ -207,10 +207,10 @@ class MotorControlNode(Node):
 
                 # 设置电机速度
                 self.set_motors_speed(left_speed, right_speed)
-                self.get_logger().info(
+                # self.get_logger().info(
                     # f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f} "
                     # f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch0_norm:.2f}"
-                )
+                # )
                 ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)  # brush A key
                 ch6_norm = 0.0 if abs(ch6_norm) < DEAD_ZONE else ch6_norm
                 brush_speed = ch6_norm * BRUSH_SPEED
