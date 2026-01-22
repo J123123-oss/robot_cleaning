@@ -408,14 +408,14 @@ class RTKNavControlNode(Node):
         # 动态kp：大误差用大kp（快速修正），小误差用小kp（避免震荡）
         # 动态比例系数
         if yaw_error_deg > 10:
-            kp = 20
+            kp = 0.1
         elif yaw_error_deg > 3:
-            kp = 10
+            kp = 0.08
         else:
-            kp = 5
+            kp = 0.05
 
         correction = kp * yaw_error
-        max_correction = 50
+        max_correction = 1
         return max(min(correction, max_correction), -max_correction)
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
