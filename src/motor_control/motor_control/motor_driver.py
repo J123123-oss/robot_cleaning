@@ -23,7 +23,7 @@ class CanMotorDriver(Node):
 
         
         # CAN配置
-        self.can_interface = "can0"  # 根据jifeng系统使用can1
+        self.can_interface = channel  # can0
         self.bus: Optional[can.Bus] = None
         self.can_initialized = False
         

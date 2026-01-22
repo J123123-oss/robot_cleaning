@@ -12,8 +12,11 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8
 from geometry_msgs.msg import Vector3
+import traceback
+import json
 import subprocess
 import threading
+from enum import Enum
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,23 +25,36 @@ from motor_control.remote_control import SBUSRemoteController
 from rtk_nav.rtk_nav import RTKNavControlNode
 
 # -------------------------- 全局配置与枚举 --------------------------
-STATE_DICT = {
-    'z': "STOP",
-    'x': "START",
-    'w': "FORWARD",
-    's': "BACKWARD",
-    'a': "TURN_LEFT",
-    'd': "TURN_RIGHT",
-    'l': "LOADING",
-    'u': "UNLOADING"
-}
+# STATE_DICT = {
+#     'z': "STOP",
+#     'x': "START",
+#     'w': "FORWARD",
+#     's': "BACKWARD",
+#     'a': "TURN_LEFT",
+#     'd': "TURN_RIGHT",
+#     'l': "LOADING",
+#     'u': "UNLOADING"
+# }
 
-MAX_SPEED = 160.0   # 遥控器最大速度
-MIN_SPEED = -130.0  # 遥控器最小速度
-BRUSH_SPEED = 300.0
+# ===================== 状态枚举（避免拼写错误） =====================
+class RobotStateKey(Enum):
+    STOP = "z"
+    START = "x"
+    FORWARD = "w"
+    BACKWARD = "s"
+    TURN_LEFT = "a"
+    TURN_RIGHT = "d"
+    LOADING = "l"
+    UNLOADING = "u"
+
+STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'z':'STOP', 'x':'START'...}
+
+MAX_SPEED = 10.0   # 遥控器最大速度
+MIN_SPEED = -10.0  # 遥控器最小速度
+BRUSH_SPEED = 30.0
 # 通道灵敏度系数（可微调，0~1之间，用于控制通道对速度的影响程度）
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
-CH3_SENSITIVITY = 1.0  # 左右旋转灵敏度
+CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.05       # 控制死区
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
@@ -113,6 +129,7 @@ class MotorControlNode(Node):
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
+        self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # mqtt msg
 
         # 全局变量
         self.current_control_mode = "NORMAL"  # 默认普通模式
@@ -130,6 +147,19 @@ class MotorControlNode(Node):
         self.switch_state('x')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
+
+        # add mqtt 
+        self.main_board = True # 主控板状态MQTT
+        self.imu_sensor = True # IMU传感器状态MQTT
+        self.motor_driver = True # 电机驱动器状态MQTT
+
+        self.robot_cmd_subscription = self.create_subscription(
+            String,
+            "robot_cmd",
+            self.status_callback,
+            10
+        )
+
 
     def timer_callback(self):
         self.imu_yaw_rad = self.rtk_nav.imu_yaw
@@ -159,13 +189,13 @@ class MotorControlNode(Node):
                 ch0_norm = 0.0 if abs(ch0_norm) < DEAD_ZONE else ch0_norm
 
                 # 步骤2：计算通道2的差速分量（前进后退，左右轮速度相反）
-                # ch2_norm > 0：前进；ch2_norm < 0：后退；=0：静止
-                forward_backward_left = ch2_norm * MAX_SPEED * CH2_SENSITIVITY
-                forward_backward_right = -forward_backward_left  # 左右轮速度相反数，实现前进后退
+                # ch2_norm < 0：前进；ch2_norm > 0：后退；=0：静止
+                forward_backward_right = ch2_norm * MAX_SPEED * CH2_SENSITIVITY
+                forward_backward_left = -forward_backward_right  # 左右轮速度相反数，实现前进后退
 
                 # 步骤3：计算通道3的同速分量（左右旋转，左右轮速度相同）
                 # ch0_norm > 0：向右旋转；ch0_norm < 0：向左旋转；=0：不旋转
-                rotate_left_right = ch0_norm * MAX_SPEED * CH3_SENSITIVITY  # 同速分量，左右轮共用
+                rotate_left_right = -ch0_norm * MAX_SPEED * CH3_SENSITIVITY  # 同速分量，左右轮共用
 
                 # 步骤4：速度叠加（核心：两个通道的分量相加，实现同时控制）
                 left_speed_target = forward_backward_left + rotate_left_right
@@ -178,8 +208,8 @@ class MotorControlNode(Node):
                 # 设置电机速度
                 self.set_motors_speed(left_speed, right_speed)
                 self.get_logger().info(
-                    f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f} "
-                    f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch0_norm:.2f}"
+                    # f"[RemoteControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f} "
+                    # f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch0_norm:.2f}"
                 )
                 ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)  # brush A key
                 ch6_norm = 0.0 if abs(ch6_norm) < DEAD_ZONE else ch6_norm
@@ -304,6 +334,10 @@ class MotorControlNode(Node):
                 # self.motor_set_speed(2, 0.0) 
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
+        # 新增：先校验key是否在STATE_DICT中，避免KeyError
+        if key not in STATE_DICT:
+            self.get_logger().warn(f"[ROSNode] 无效状态切换key：{key} (仅支持: {list(STATE_DICT.keys())})")
+            return
         new_state = STATE_DICT[key]
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
@@ -408,6 +442,128 @@ class MotorControlNode(Node):
         state_msg = String()
         state_msg.data = self.current_status
         self.state_pub.publish(state_msg)
+
+    def publish_state(self):
+        """发布机器人状态消息（MQTT）"""
+        try:
+            # 始终使用最新的速度值（可能是新获取的，也可能是之前保存的）
+            # velocity_up = self.last_velocity_up
+            # velocity_low = self.last_velocity_low
+            # velocity_brush = self.last_velocity_brush
+
+            state_msg = {
+                "status": self.current_status,
+                # "battery": self.battery_remaining, # 电池百分比,
+                # "battery_temperatures": self.battery_temperatures, # 电池温度，共3个
+                # "battery_total_voltage": self.battery_total_voltage, # 电池总电压
+                # "battery_current": self.battery_current, # 电池电流
+                # "progress": self.progress,
+                "imu_yaw": round(self.imu_yaw, 2) if self.imu_yaw is not None else 0.00,
+                # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
+                # "velocity_low": round(velocity_low , 2),
+                # "velocity_brush": round(velocity_brush, 2),
+                # "velocity_locking": 0,
+                # "sensors_status": self.sensors_status,  # 超声波传感器状态
+                "device_status": {
+                "main_board": self.main_board,
+                "imu_sensor": self.imu_sensor,
+                "motor_driver": self.motor_driver,
+                "comm_module": True  },
+                # "complete_state":self.complete_state, # 任务完成状态
+                # "auto_mode": self.auto_mode, # 自动模式开关,默认开
+                # "relay_status": self.relay_status,
+                # "relay_auto_off": self.relay_auto_off,
+	            #     "brush_forward":  self.brush_forward ,# BACKWARD滚刷方向，False=反转（default） True=正转
+                # # "auto_step": self.auto_step, # 当前自动程序所在状态
+                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))  # 2025-07-15 14:58:43
+            }
+            # ========== 2. 核心修复：构造std_msgs.String对象（而非直接传str） ==========
+            ros_string_msg = String()  # 创建ROS2的String对象
+            ros_string_msg.data = json.dumps(state_msg, ensure_ascii=False)  # 给data赋值为JSON字符串
+
+            # ========== 3. 发布String对象（而非str） ==========
+            self.robot_state_pub.publish(ros_string_msg)
+            self.get_logger().info(f"[ROSNode] 成功发布状态: {ros_string_msg.data}")
+        except Exception as e:
+            error_msg = {
+                "status": "ERROR",  # 或者自定义异常内容
+                "error_detail": str(e),
+                "traceback": traceback.format_exc(),
+                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}  # 2025-07-15 14:58:43
+            # 核心修复：异常时也必须发布String对象
+            error_ros_msg = String()
+            error_ros_msg.data = json.dumps(error_msg, ensure_ascii=False)
+            self.robot_state_pub.publish(error_ros_msg)
+            self.get_logger().error(f"[ROSNode] 发布状态失败: {str(e)}\n{traceback.format_exc()}")
+
+    def status_callback(self, msg):
+        """处理状态消息（完整修复：逻辑纠正+异常防护+类型校验）"""
+        # 第一步：校验msg类型（修复"Expected String got str"错误）
+        if not isinstance(msg, String):
+            self.get_logger().error(f"[ROSNode] 无效消息类型：{type(msg)}，仅支持std_msgs/String")
+            return
+        
+        # 第二步：提取消息内容（确保是字符串）
+        msg_data = msg.data.strip() if isinstance(msg.data, str) else ""
+        if not msg_data:
+            self.get_logger().warn("[ROSNode] 空消息，跳过处理")
+            return
+
+        try:
+            # 第三步：解析JSON（容错处理）
+            cmd_obj = json.loads(msg_data)
+            # 关键修复：先判断command是否存在
+            if "command" not in cmd_obj:
+                self.get_logger().warn(f"[ROSNode] 未找到command字段: {msg_data}")
+                return
+            
+            command = cmd_obj.get("command", "").strip()
+            self.get_logger().info(f"[ROSNode] 解析到command：{command}")
+
+            # 第四步：处理有效command
+            if command == "GET_STATUS":
+                self.publish_state()
+            elif command in STATE_DICT:
+                self.switch_state(command)  # 传递STATE_DICT的key（如"z"/"x"）
+            else:
+                self.get_logger().warn(f"[ROSNode] 不支持的command：{command} (支持: GET_STATUS/{list(STATE_DICT.keys())})")
+        
+        except json.JSONDecodeError as e:
+            # JSON解析失败：尝试按纯字符串处理（仅当字符串是STATE_DICT的key时才处理）
+            self.get_logger().warn(f"[ROSNode] 消息不是有效JSON，尝试按字符串处理: {msg_data}, 错误: {e}")
+            # 关键修复：仅当字符串是STATE_DICT的key时，才调用switch_state
+            raw_command = msg_data.strip()
+            if raw_command in STATE_DICT:
+                self.switch_state(raw_command)
+            else:
+                self.get_logger().error(f"[ROSNode] 无效的字符串指令：{raw_command} (仅支持: {list(STATE_DICT.keys())})")
+            self.publish_state()
+        except Exception as e:
+            # 捕获所有其他异常，避免节点崩溃
+            self.get_logger().error(f"[ROSNode] 处理消息时发生未知错误: {msg_data}, 错误: {str(e)}", exc_info=True)
+            # self.publish_state()
+
+
+    # def status_callback(self, msg):
+    #     """处理状态消息"""
+    #     try:
+    #         cmd_obj = json.loads(msg.data)
+    #         command = cmd_obj.get("command", None)
+    #         if command == "GET_STATUS":
+    #             self.publish_state()
+    #             # return
+
+    #         elif command in STATE_DICT:
+    #         # self.status_list:
+    #             # print("cmd:", command)
+    #             self.switch_state(command)  
+    #         else:
+    #             self.get_logger().warn(f"未找到command字段: {msg.data}")
+            
+    #     except Exception as e:
+    #         self.get_logger().warn(f"消息解析失败，尝试按字符串处理: {msg.data}, 错误: {e}")
+    #         self.switch_state(msg.data)
+    #         self.publish_state()
 
     def handle_unloading_step(self):
         """出仓分步处理（定时器回调，每100ms执行一次）"""
@@ -602,7 +758,10 @@ def main(args=None):
     except KeyboardInterrupt:
         motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")
     except Exception as e:
-        motor_node.get_logger().fatal(f"[ROSNode] 节点运行异常：{str(e)}")
+        # motor_node.get_logger().fatal(f"[ROSNode] 节点运行异常：{str(e)}")
+        motor_node.get_logger().fatal(
+            f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
+        )
     finally:
         # 退出时停止所有电机（原有清理逻辑）
         if motor_node:

@@ -1,8 +1,17 @@
-# 导入 ROS2 Launch 相关依赖
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration, TextSubstitution
+from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
+    # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
+    declare_robot_id_arg = DeclareLaunchArgument(
+        "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
+        default_value=TextSubstitution(text="ROS2_TEST"),  # 默认值
+        description="机器人唯一标识ID，用于拼接MQTT主题"
+    )
+
+
     # 定义电机控制节点
     motor_control_node = Node(
         package='motor_control',  # 对应 ROS1 的 pkg，包名不变
@@ -76,42 +85,27 @@ def generate_launch_description():
             {'headless': False}
         ]
     )
-
-    # 清扫路径规划节点（原ROS1中注释的节点，保留注释结构和所有参数）
-    three_point_planner_node = Node(
-        package='rtk_nav',
-        executable='three_point_planner',
-        name='three_point_planner',
-        output='screen',
+    # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
+    mqtt_ros_bridge_node = Node(
+        package="mqtt_ros2",  # ROS2功能包名（替换为你的实际包名）
+        executable="mqtt_ros2_bridge",  # 节点可执行文件名（setup.py中配置的console_scripts名称）
+        name="mqtt",  # 节点名称 和ROS1的 name="mqtt_ros_bridge" 对应
+        output="screen",  # 日志输出到终端（ROS1的 output="screen"）
+        emulate_tty=True,  # 确保彩色日志、交互正常
+        # 传递参数（对应ROS1的 <param>）
         parameters=[
-            # 120.06908560397895,30.320565863954112
-            # 120.06927447409858,30.32005925988348
-            # 120.06909883839826,30.32003703889293
-            # {'calib_point_a.lon': 120.06916774367069},
-            # #120.06916774367069,30.320349035482604
-            # # {'area_0.calib_point_b.lon': 120.06927447409858},#120.069343119751,30.319865295979422
-            # # {'area_0.calib_point_c.lon': 120.06909883839826},#120.06915847480371,30.319843208521007
-            # {'calib_point_a.lat': 30.320349035482604},
-            # {'calib_point_b.lon': 120.069343119751},
-            # {'calib_point_b.lat': 30.319865295979422},
-            # {'calib_point_c.lon': 120.06915847480371},
-            # {'calib_point_c.lat': 30.319843208521007},
-            
-            {'calib_point_a.lon': 120.06915847480371},#120.06915847480371,30.319843208521007
-            # {'area_1.calib_point_a.lat': 30.32003703889293},
-            # {'area_1.calib_point_b.lon': 120.06887765281415},#120.06887765281415,30.32052106709264
-            # {'area_1.calib_point_b.lat': 30.32052106709264},
-            # {'area_1.calib_point_c.lon': 120.06862983594995},#120.06862983594995,30.32045493714768
-            {'calib_point_a.lat': 30.319843208521007},
-            {'calib_point_b.lon': 120.06887765281415},
-            {'calib_point_b.lat': 30.32052106709264},
-            {'calib_point_c.lon': 120.06862983594995},
-            {'calib_point_c.lat': 30.32045493714768},
-            {'interval': 1.0},
-            {'start_corner': 'top_left'},
-            {'edge_distance_lon': 0.5},
-            {'edge_distance_lat': 0.5},
-            {'headless': False}
+            {
+                "broker": "121.40.57.48",  # MQTT服务器地址
+                "port": 1883,  # MQTT端口
+                "user": "gf-mounted",  # MQTT用户名
+                "password": "20230810",  # MQTT密码
+                # 拼接参数：robot/$(arg robot_ID)/status → ROS2用LaunchConfiguration
+                "topic_status": ["robot/", LaunchConfiguration("robot_ID"), "/status"],
+                "topic_cmd": ["robot/", LaunchConfiguration("robot_ID"), "/cmd"],
+                "topic_command": ["robot/", LaunchConfiguration("robot_ID"), "/command"],
+                "topic_result": ["robot/", LaunchConfiguration("robot_ID"), "/result"],
+                "client_id": ["python-mqtt-client-", LaunchConfiguration("robot_ID")]
+            }
         ]
     )
     # 多区域清扫路径规划节点
@@ -184,13 +178,14 @@ def generate_launch_description():
     )
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
-    # ld.add_action(motor_control_node)
+    ld.add_action(declare_robot_id_arg)
+    ld.add_action(mqtt_ros_bridge_node)
+    ld.add_action(motor_control_node)
     # ld.add_action(wtrtk_parse_txt_node)
-    # ld.add_action(RTKNavigator)
+    ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
     # ld.add_action(cleaning_path_planner_node)
-    # ld.add_action(three_point_planner_node)
-    ld.add_action(full_path_planner)
+    # ld.add_action(full_path_planner)
 
     return ld

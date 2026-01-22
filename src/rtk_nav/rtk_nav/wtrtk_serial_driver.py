@@ -34,6 +34,7 @@ class WTRTKSerialDriver(Node):
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
+        self.timer = self.create_timer(0.5, self.publish_latest_data)
         
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()
@@ -229,57 +230,77 @@ class WTRTKSerialDriver(Node):
         return msg
 
     def read_serial(self):
-        """持续读取串口数据并解析 ✅ 修复所有BUG"""
+        """持续读取串口数据并解析 ✅ 修复延迟和旧数据问题"""
         while rclpy.ok():
+            # 检查串口是否打开，未打开则重连
             if not self.ser or not self.ser.is_open:
                 self.get_logger().warn("Serial port closed, reconnecting...")
                 if not self.connect_serial():
-                    time.sleep(1)
+                    time.sleep(0.1)  # 缩短重连等待，减少阻塞
                     continue
             
             try:
+                # 读取串口最新数据
                 data = self.ser.read(1024)
                 if data:
+                    # 将新数据追加到缓冲区，并限制缓冲区长度
                     self.buffer += data.decode('utf-8', errors='replace')
-                    
-                    # ✅ 【修复BUG2】串口缓存长度限制，防止脏数据导致缓存溢出
                     if len(self.buffer) > self.buffer_max_len:
-                        self.buffer = self.buffer[-self.buffer_max_len:]
+                        self.buffer = self.buffer[-self.buffer_max_len:]  # 只保留末尾的最新数据
                     
-                    # 处理缓存中的所有完整帧
-                    while True:
-                        gngga_start = self.buffer.find('$GNGGA')
-                        wtrtk_start = self.buffer.find('$WTRTK')
-                        
-                        if gngga_start == -1 and wtrtk_start == -1:
-                            break
-                        
-                        target_start = min([s for s in [gngga_start, wtrtk_start] if s != -1])
+                    # ✅ 核心修改：只处理最新的一帧，丢弃旧帧
+                    latest_gngga_idx = self.buffer.rfind('$GNGGA')  # 找最后一个GNGGA起始位（最新）
+                    latest_wtrtk_idx = self.buffer.rfind('$WTRTK')  # 找最后一个WTRTK起始位（最新）
+                    
+                    # 确定要处理的最新帧起始位置
+                    target_start = -1
+                    frame_type = ""
+                    if latest_gngga_idx != -1 and latest_wtrtk_idx != -1:
+                        # 两者都有，取位置更靠后的（更新的）
+                        if latest_gngga_idx > latest_wtrtk_idx:
+                            target_start = latest_gngga_idx
+                            frame_type = "GNGGA"
+                        else:
+                            target_start = latest_wtrtk_idx
+                            frame_type = "WTRTK"
+                    elif latest_gngga_idx != -1:
+                        target_start = latest_gngga_idx
+                        frame_type = "GNGGA"
+                    elif latest_wtrtk_idx != -1:
+                        target_start = latest_wtrtk_idx
+                        frame_type = "WTRTK"
+                    
+                    # 处理最新的一帧
+                    if target_start != -1:
                         end_idx = self.buffer.find('\r\n', target_start)
-                        if end_idx == -1:
-                            break
-                        
-                        frame = self.buffer[target_start:end_idx]
-                        self.buffer = self.buffer[end_idx+2:]
-
-                        # 立即发布，无需等待线程触发
-                        if frame.startswith("$GNGGA"):
-                            parsed_fix = self.parse_gngga(frame)
-                            if parsed_fix:
-                                self.latest_fix = parsed_fix
-                                self.fix_pub.publish(parsed_fix)
-                        elif frame.startswith("$WTRTK"):
-                            parsed_wtrtk = self.parse_wtrtk(frame)
-                            if parsed_wtrtk:
-                                self.latest_wtrtk = parsed_wtrtk
-                                self.wtrtk_pub.publish(parsed_wtrtk)
-                        time.sleep(0.5)  # 保持1Hz频率 /2
+                        if end_idx != -1:
+                            # 提取最新帧并发布
+                            frame = self.buffer[target_start:end_idx]
+                            # 清空缓冲区（只保留未解析完的尾部），避免旧数据堆积
+                            self.buffer = self.buffer[end_idx+2:]
+                            
+                            if frame_type == "GNGGA":
+                                parsed_fix = self.parse_gngga(frame)
+                                if parsed_fix:
+                                    self.latest_fix = parsed_fix
+                                    # self.fix_pub.publish(parsed_fix)
+                            elif frame_type == "WTRTK":
+                                parsed_wtrtk = self.parse_wtrtk(frame)
+                                if parsed_wtrtk:
+                                    self.latest_wtrtk = parsed_wtrtk
+                                    # self.wtrtk_pub.publish(parsed_wtrtk)
             
             except Exception as e:
                 self.get_logger().error(f"Serial read error: {str(e)}")
                 if self.ser:
                     self.ser.close()
-                time.sleep(1)
+                time.sleep(0.1)  # 缩短异常等待，减少阻塞
+    def publish_latest_data(self):
+        """定时器触发，每秒发布一次最新解析的数据"""
+        if self.latest_fix:
+            self.fix_pub.publish(self.latest_fix)
+        if self.latest_wtrtk:
+            self.wtrtk_pub.publish(self.latest_wtrtk)
 
 def main(args=None):
     rclpy.init(args=args)
