@@ -18,8 +18,8 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.2
 RTK_HEADING_TOLERANCE = 0.5
-LINEAR_SPEED_BASE = 5.0       # origin 0.0124
-TURN_SPEED = 2.5      # origin 0.1
+LINEAR_SPEED_BASE = 2.5       # origin 0.0124
+TURN_SPEED = 1.3      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.5
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 5.0

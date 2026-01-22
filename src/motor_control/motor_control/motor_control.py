@@ -177,8 +177,8 @@ class MotorControlNode(Node):
         # 2. 按控制模式执行不同逻辑
         if self.current_control_mode == "REMOTE":
             # 遥控器模式（原有逻辑）
-            if self.current_status != "START":
-                self.switch_state('x')
+            # if self.current_status != "START":
+            #     self.switch_state('x')
             try:
 
                 # 步骤1：获取通道2（前进后退）和通道3（左右旋转）的归一化值（-1.0 ~ 1.0）
@@ -248,8 +248,8 @@ class MotorControlNode(Node):
 
         elif self.current_control_mode == "RTK_NAV":
             # RTK导航模式（新增逻辑：使用RTK订阅的速度）
-            if self.current_status != "START":
-                self.switch_state('x')
+            # if self.current_status != "START":
+            #     self.switch_state('x')
             # 将RTK订阅的速度转换为电机可识别的量级
             left_speed = self.rtk_left_speed 
             right_speed = self.rtk_right_speed 
@@ -271,8 +271,8 @@ class MotorControlNode(Node):
             self.current_control_mode = "RTK_NAV"
             self.get_logger().info(f"[ROSNode] 控制模式切换：→ RTK_NAV")
             # 切换时自动使能电机
-            if self.current_status != "START":
-                self.switch_state('x')
+            # if self.current_status != "START":
+            #     self.switch_state('x')
         elif key == 'n':
             # 切回普通模式
             self.current_control_mode = "NORMAL"
