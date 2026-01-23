@@ -10,13 +10,15 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8
+from std_msgs.msg import String, UInt8, Float32
 from geometry_msgs.msg import Vector3
 import traceback
 import json
 import subprocess
 import threading
 from enum import Enum
+from sensor_msgs.msg import NavSatFix
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -51,11 +53,12 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'z':'STOP', 'x':'START
 
 MAX_SPEED = 10.0   # 遥控器最大速度
 MIN_SPEED = -10.0  # 遥控器最小速度
-BRUSH_SPEED = 30.0
+BRUSH_SPEED = 15.0
 # 通道灵敏度系数（可微调，0~1之间，用于控制通道对速度的影响程度）
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.05       # 控制死区
+RC_CH_MAX_VALUE = 1722
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
@@ -82,7 +85,7 @@ class MotorControlNode(Node):
         self.nav_status = None
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         if not self.motor_ctrl.create_can_bus():
             self.get_logger().warn("[ROSNode] CAN串口首次初始化失败，进入重连模式")
@@ -95,9 +98,19 @@ class MotorControlNode(Node):
         self.sbus_remote = SBUSRemoteController()
         if not self.sbus_remote.is_connected:
             self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
-
+        self.imu_yaw_rad = 0.0
+        self.current_lon = 0.0
+        self.current_lat = 0.0
+        # self.current_location = (0.0, 0.0)
         self.rtk_nav = RTKNavControlNode()
-        
+        # self.current_location = self.rtk_nav.current_gps
+
+        # if isinstance(self.current_location, (tuple, list)) and len(self.current_location) == 2:
+        #     # 解包有效数据
+        #     self.current_lon, self.current_lat = self.current_location
+        #     # self.current_lon, self.current_lat = self.rtk_nav.current_gps
+        # else:
+        #     # 数据无效时使用默认值，并打印警告日志
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -125,11 +138,18 @@ class MotorControlNode(Node):
             self.io_data_callback,
             10
         )
+        self.io_subscription = self.create_subscription(
+            Float32,
+            "imu_heading",
+            self.imu_heading_callback,
+            10
+        )
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # mqtt msg
+        self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
 
         # 全局变量
         self.current_control_mode = "NORMAL"  # 默认普通模式
@@ -160,9 +180,22 @@ class MotorControlNode(Node):
             10
         )
 
+    def gps_callback(self, msg: NavSatFix) -> None:
+        if msg.status.status < 0:
+            self.get_logger().warn("GPS信号无效")
+            return
+
+        status_map = {1: "弱", 2: "差分", 3: "RTK", 4: "RTK固定解"}
+        if msg.status.status in status_map:
+            self.get_logger().debug(f"GPS状态：{status_map[msg.status.status]}")
+
+        self.current_gps = (msg.longitude, msg.latitude)
+        self.current_lon = msg.longitude
+        self.current_lat = msg.latitude
+        # self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
+
 
     def timer_callback(self):
-        self.imu_yaw_rad = self.rtk_nav.imu_yaw
         self.current_control_mode = self.sbus_remote.control_mode
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
@@ -212,8 +245,9 @@ class MotorControlNode(Node):
                     # f"通道2归一化值：{ch2_norm:.2f}，通道3归一化值：{ch0_norm:.2f}"
                 # )
                 ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)  # brush A key
-                ch6_norm = 0.0 if abs(ch6_norm) < DEAD_ZONE else ch6_norm
-                brush_speed = ch6_norm * BRUSH_SPEED
+                ch6_norm = 1.0 if ch6_norm == 1.0 else 0.0
+                # self.get_logger().info(f"通道6归一化值：{ch6_norm:.2f}")
+                brush_speed = -ch6_norm * BRUSH_SPEED
                 self.set_brush_speed(brush_speed)
             except Exception as e:
                 self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
@@ -332,6 +366,11 @@ class MotorControlNode(Node):
                 # recover speed
                 # self.motor_set_speed(1, 0.0)
                 # self.motor_set_speed(2, 0.0) 
+
+    def imu_heading_callback(self, msg:Float32):
+        """imu correction"""
+        self.imu_yaw_rad = msg.data
+
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
         # 新增：先校验key是否在STATE_DICT中，避免KeyError
@@ -459,6 +498,8 @@ class MotorControlNode(Node):
                 # "battery_current": self.battery_current, # 电池电流
                 # "progress": self.progress,
                 "imu_yaw": round(self.imu_yaw_rad, 2) if self.imu_yaw_rad is not None else 0.00,
+                "current_lon": self.current_lon,
+                "current_lat": self.current_lat,
                 # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
                 # "velocity_low": round(velocity_low , 2),
                 # "velocity_brush": round(velocity_brush, 2),

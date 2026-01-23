@@ -1,0 +1,66 @@
+rosbag2_bagfile_information:
+  version: 9
+  storage_identifier: mcap
+  duration:
+    nanoseconds: 18001622288
+  starting_time:
+    nanoseconds_since_epoch: 1769077092677909211
+  message_count: 74
+  topics_with_message_count:
+    - topic_metadata:
+        name: /wtrtk_data
+        type: custom_msgs/msg/WTRTK
+        serialization_format: cdr
+        offered_qos_profiles:
+          - history: unknown
+            depth: 0
+            reliability: reliable
+            durability: volatile
+            deadline:
+              sec: 9223372036
+              nsec: 854775807
+            lifespan:
+              sec: 9223372036
+              nsec: 854775807
+            liveliness: automatic
+            liveliness_lease_duration:
+              sec: 9223372036
+              nsec: 854775807
+            avoid_ros_namespace_conventions: false
+        type_description_hash: RIHS01_c1ab759b1d3f96564c18487c19e8d1bdc2188c8d98ccc4892fc1aad7fabb17d4
+      message_count: 37
+    - topic_metadata:
+        name: /fix
+        type: sensor_msgs/msg/NavSatFix
+        serialization_format: cdr
+        offered_qos_profiles:
+          - history: unknown
+            depth: 0
+            reliability: reliable
+            durability: volatile
+            deadline:
+              sec: 9223372036
+              nsec: 854775807
+            lifespan:
+              sec: 9223372036
+              nsec: 854775807
+            liveliness: automatic
+            liveliness_lease_duration:
+              sec: 9223372036
+              nsec: 854775807
+            avoid_ros_namespace_conventions: false
+        type_description_hash: RIHS01_62223ab3fe210a15976021da7afddc9e200dc9ec75231c1b6a557fc598a65404
+      message_count: 37
+  compression_format: ""
+  compression_mode: ""
+  relative_file_paths:
+    - rosbag2_2026_01_22-18_18_11_0.mcap
+  files:
+    - path: rosbag2_2026_01_22-18_18_11_0.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1769077092677909211
+      duration:
+        nanoseconds: 18001622288
+      message_count: 74
+  custom_data: ~
+  ros_distro: jazzy

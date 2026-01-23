@@ -9,7 +9,7 @@ import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
-from std_msgs.msg import String, UInt8       # 用于发布控制模式和导航状态
+from std_msgs.msg import String, UInt8, Float32       # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
 
@@ -47,6 +47,8 @@ class RTKNavControlNode(Node):
         self.waypoints: List[Tuple[float, float, float]] = []
         self.current_waypoint_idx = 0
         self.current_gps: Optional[Tuple[float, float]] = None
+        self.current_lon = 0.0
+        self.current_lat = 0.0
         self.imu_yaw = 0.0
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
@@ -79,7 +81,7 @@ class RTKNavControlNode(Node):
 
 
         # 声明RTK路径参数
-        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20260107_095537.txt")
+        self.declare_parameter("rtk_path_file", "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/场景1_updown.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
         self.path_dir = os.path.dirname(self.rtk_path_file)
         # self.rtk_path_file = self.declare_parameter(
@@ -109,6 +111,7 @@ class RTKNavControlNode(Node):
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
+        self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
@@ -327,6 +330,10 @@ class RTKNavControlNode(Node):
             self.get_logger().debug(f"GPS状态：{status_map[msg.status.status]}")
 
         self.current_gps = (msg.longitude, msg.latitude)
+        self.current_lon = msg.longitude
+        self.current_lat = msg.latitude
+        self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
+
 
     def heading_callback(self, msg: WTRTK) -> None:
         ins_heading_deg = msg.ins_heading
@@ -341,6 +348,9 @@ class RTKNavControlNode(Node):
 
         self.imu_yaw = ins_heading_rad + self.imu_calibration_offset
         self.imu_yaw = math.fmod(self.imu_yaw + math.pi, 2 * math.pi) - math.pi
+        imu_msg= Float32()
+        imu_msg.data = self.imu_yaw
+        self.imu_heading_pub.publish(imu_msg)
 
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:

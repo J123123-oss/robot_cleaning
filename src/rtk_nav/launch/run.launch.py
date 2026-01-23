@@ -7,7 +7,7 @@ def generate_launch_description():
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="ROS2_TEST"),  # 默认值
+        default_value=TextSubstitution(text="ROS2_VM"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
@@ -47,10 +47,10 @@ def generate_launch_description():
         name='wtrtk_parse_txt',
         output='screen',
         parameters=[
-            {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
+            # {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
-            # {'file_path': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            {'file_path': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
         ]
     )
 
@@ -181,7 +181,7 @@ def generate_launch_description():
     ld.add_action(declare_robot_id_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
-    # ld.add_action(wtrtk_parse_txt_node)
+    ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
