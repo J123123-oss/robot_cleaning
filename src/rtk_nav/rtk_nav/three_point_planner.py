@@ -302,18 +302,21 @@ class CleaningPathPlanner(Node):
         # 保留原参数配置
         # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
 
-        # self.declare_parameter('calib_point_a.lon', 120.06916853686953)
-        # self.declare_parameter('calib_point_a.lat', 30.3203481042197)
-        # self.declare_parameter('calib_point_b.lon', 120.0691430881223)
-        # self.declare_parameter('calib_point_b.lat', 30.31985644014249)
-        # self.declare_parameter('calib_point_c.lon', 120.06933736386713)
-        # self.declare_parameter('calib_point_c.lat', 30.31988471205802)
-        self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
-        self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
-        self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
-        self.declare_parameter('calib_point_b.lat', 30.32109457743618)
-        self.declare_parameter('calib_point_c.lon', 120.06908157229124)
-        self.declare_parameter('calib_point_c.lat', 30.320549326045818)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
+        # 120.07113330166666,30.321393565666668
+        # 120.07104722000001,30.321617500000002
+        # 120.07112942683334
+        self.declare_parameter('calib_point_c.lon', 120.07113330166666)
+        self.declare_parameter('calib_point_c.lat', 30.321393565666668)
+        self.declare_parameter('calib_point_b.lon', 120.07104722000001)
+        self.declare_parameter('calib_point_b.lat', 30.321617500000002)
+        self.declare_parameter('calib_point_a.lon', 120.07112942683334)
+        self.declare_parameter('calib_point_a.lat', 30.321631682333336)
+        # self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
+        # self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
+        # self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
+        # self.declare_parameter('calib_point_b.lat', 30.32109457743618)
+        # self.declare_parameter('calib_point_c.lon', 120.06908157229124)
+        # self.declare_parameter('calib_point_c.lat', 30.320549326045818)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
 
         # self.declare_parameter('calib_point_a.lon', 120.06891577325935)#120.06891577325935,30.320537691107706
         # self.declare_parameter('calib_point_a.lat', 30.320537691107706)
@@ -323,9 +326,11 @@ class CleaningPathPlanner(Node):
         # self.declare_parameter('calib_point_c.lat', 30.320508473942272)
 
 
+
+
         self.declare_parameter('interval', 2.8)
         self.declare_parameter('start_corner', 'bottom_right')
-        self.declare_parameter('swap_wh_select', True)
+        self.declare_parameter('swap_wh_select', False)
         self.declare_parameter('edge_distance_lon', 0.5)
         self.declare_parameter('edge_distance_lat', 0.5)
         self.declare_parameter('headless', False)
@@ -380,7 +385,7 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")

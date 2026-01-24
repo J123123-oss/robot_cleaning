@@ -13,14 +13,13 @@ from std_msgs.msg import String, UInt8, Float32       # 用于发布控制模式
 from custom_msgs.msg import WTRTK
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
 
-
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.2
+RTK_WAYPOINT_TOLERANCE = 0.5
 RTK_HEADING_TOLERANCE = 0.5
 LINEAR_SPEED_BASE = 2.5       # origin 0.0124
 TURN_SPEED = 1.3      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.5
+INITIAL_MOVE_TOLERANCE = 3.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 5.0
 
@@ -81,7 +80,7 @@ class RTKNavControlNode(Node):
 
 
         # 声明RTK路径参数
-        self.declare_parameter("rtk_path_file", "/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/场景1_updown.txt")
+        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260124_151608.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
         self.path_dir = os.path.dirname(self.rtk_path_file)
         # self.rtk_path_file = self.declare_parameter(
@@ -332,7 +331,7 @@ class RTKNavControlNode(Node):
         self.current_gps = (msg.longitude, msg.latitude)
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
-        self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
+        # self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
 
 
     def heading_callback(self, msg: WTRTK) -> None:
@@ -515,7 +514,7 @@ class RTKNavControlNode(Node):
                         return True
                 return True
 
-            # 未到达，直线行驶并纠偏
+            # 未到达，直线行驶并轻微纠偏以确保到达第一个航点
             target_heading = self.get_path_heading(first_waypoint)
             correction = self.get_speed_correction(target_heading)
 
@@ -527,11 +526,11 @@ class RTKNavControlNode(Node):
 
         return False
 
-    def rad_from_linear(self, linear_speed: float) -> float:
-        """线速度转电机角速度（适配电机节点参数）"""
-        reduction_ratio = 1.0 #7.75
-        wheel_diameter = 1.0 #0.04874
-        return (linear_speed * reduction_ratio) / wheel_diameter
+    def reset_imu_calibration(self):
+        """重置IMU校准状态，用于在切换模式后重新校准"""
+        self.imu_initialized = False
+        self.imu_calibration_offset = 0.0
+        self.get_logger().info("IMU校准状态已重置")
 
     def reset_nav_context(self):
         """重置导航状态"""
@@ -764,14 +763,18 @@ class RTKNavControlNode(Node):
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式，更新自身状态"""
+        previous_mode = self.current_control_mode
         self.current_control_mode = msg.data
-        # 切换非RTK模式时，重置导航状态
+        # 切换到RTK模式时，重置IMU校准
+        if self.current_control_mode == ControlMode.RTK_NAV and previous_mode != ControlMode.RTK_NAV:
+            self.reset_imu_calibration()
+        # 切换非RTK模式时，保存导航状态，停止导航
         if self.current_control_mode != ControlMode.RTK_NAV:
             if self.multi_waypoint_generator:
                 self.multi_waypoint_generator = None
             self.nav_running = False
             self.publish_stop_speed()
-            self.reset_nav_context()
+            # 不重置导航上下文，保存状态以便后续恢复
 
     def rtk_timer_callback(self):
         """10Hz定时器回调，驱动多点导航逻辑"""

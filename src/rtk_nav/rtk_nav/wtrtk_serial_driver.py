@@ -132,12 +132,14 @@ class WTRTKSerialDriver(Node):
             fix_msg.altitude = altitude
             
             # ✅ 【修复核心报错】严格遵循ROS2 NavSatStatus枚举值规范
-            if fix_status == 0:
-                fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
-            elif fix_status == 1:
-                fix_msg.status.status = NavSatStatus.STATUS_FIX
-            elif fix_status >= 2:
-                fix_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
+            # if fix_status == 0:
+            #     fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
+            # elif fix_status == 1:
+            #     fix_msg.status.status = NavSatStatus.STATUS_FIX
+            # elif fix_status >= 2:
+            #     fix_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
+            
+            fix_msg.status.status = fix_status
             fix_msg.status.service = NavSatStatus.SERVICE_GPS
             
             # ✅ 【修复position_covariance类型错误】强制转为numpy float64数组 + 固定9位长度
