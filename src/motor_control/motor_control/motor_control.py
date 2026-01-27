@@ -70,14 +70,14 @@ class MotorControlNode(Node):
         self.rate = self.create_rate(10)
         # UNLOADING parameters
         # 出仓阶段标记（关键：拆分出仓为多个阶段）
-        self.unloading_forword_threshold = 10.0 # seconds
+        self.unloading_forword_threshold = 2.0 # seconds
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
         self.unloading_turn_target_rad = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
         self.loading_turn_target_rad = 0.0  # 进仓转向目标角
-        self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
+        self.loading_backward_threshold = 2.0  # 进仓后退时长（秒）
         self.loading_phase = None
         self.loading_start_time = 0.0
         self.loading_timer: Optional[Timer] = None

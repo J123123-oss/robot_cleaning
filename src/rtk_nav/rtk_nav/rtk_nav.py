@@ -492,6 +492,8 @@ class RTKNavControlNode(Node):
         last_distance = 0
         while rclpy.ok():
             distance = self.calc_distance_to_waypoint(first_waypoint)
+
+            
             # 距离变化显著时打印
             if abs(last_distance - distance) > 0.1:
                 self.get_logger().info(f"到第一个航点距离：{distance:.2f} m")
