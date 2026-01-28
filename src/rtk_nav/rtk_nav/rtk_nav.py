@@ -15,13 +15,13 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.5
-RTK_HEADING_TOLERANCE = 0.5
-LINEAR_SPEED_BASE = 2.5       # origin 0.0124
-TURN_SPEED = 1.3      # origin 0.1
+RTK_WAYPOINT_TOLERANCE = 1.0
+RTK_HEADING_TOLERANCE = 0.2
+LINEAR_SPEED_BASE = 0.1      # origin 0.0124
+TURN_SPEED = 0.5      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 3.0
 IMU_CALIBRATION_TIMEOUT = 3.0
-HEADING_CALIBRATION_TIMEOUT = 5.0
+HEADING_CALIBRATION_TIMEOUT = 15.0
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -173,23 +173,23 @@ class RTKNavControlNode(Node):
 
         # 前侧传感器触发 → 小幅后退矫正
         if self.front_left or self.front_right:
-            left_speed = -base_correct_speed
-            right_speed = base_correct_speed
+            left_speed = base_correct_speed
+            right_speed = -base_correct_speed
         
         # 后侧传感器触发 → 小幅前进矫正
         elif self.back_left or self.back_right:
-            left_speed = base_correct_speed
-            right_speed = -base_correct_speed
+            left_speed = -base_correct_speed
+            right_speed = base_correct_speed
 
         # 左侧传感器触发(中左/前左/后左) → 小幅向右矫正,turn_right,+,+
         if self.mid_left or self.front_left or self.back_left:
-            left_speed = -base_correct_speed * 0.8
-            right_speed = -base_correct_speed * 0.8
+            left_speed = base_correct_speed * 0.8
+            right_speed = base_correct_speed * 0.8
 
         # 右侧传感器触发(中右/前右/后右) → 小幅向左矫正,turn_left,-,-
         if self.mid_right or self.front_right or self.back_right:
-            left_speed = base_correct_speed * 0.8
-            right_speed = base_correct_speed * 0.8
+            left_speed = -base_correct_speed * 0.8
+            right_speed = -base_correct_speed * 0.8
 
         self.get_logger().info(f"[RTKNav] 执行边界矫正，矫正速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
         return (left_speed, right_speed)
@@ -424,7 +424,7 @@ class RTKNavControlNode(Node):
             kp = 0.05
 
         correction = kp * yaw_error
-        max_correction = 1
+        max_correction = 0.1
         return max(min(correction, max_correction), -max_correction)
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
@@ -434,6 +434,7 @@ class RTKNavControlNode(Node):
 
         while rclpy.ok():
             heading_error_rad = self.get_heading_error(target_heading)
+            self.get_logger().info(f"heading_error_rad:{heading_error_rad}")
             heading_error_deg = math.degrees(abs(heading_error_rad))
 
             # 校准达标
@@ -457,12 +458,12 @@ class RTKNavControlNode(Node):
                     heading_error_rad += 2 * math.pi
             # 根据修正后的误差计算转向方向
             if heading_error_rad > 0:
-                # 顺时针旋转（根据你的电机控制逻辑调整，若反向则互换左右速度）
-                left_speed = turn_speed
+                # turn_right旋转（根据你的电机控制逻辑调整，若反向则互换左右速度）
+                left_speed = -turn_speed
                 right_speed = -turn_speed
             else:
-                # 逆时针旋转
-                left_speed = -turn_speed
+                # turn_left旋转
+                left_speed = turn_speed
                 right_speed = turn_speed
 
             yield (left_speed, right_speed)
@@ -721,7 +722,7 @@ class RTKNavControlNode(Node):
                 # 距离未达标：直线行驶+实时纠偏
                 if distance >= RTK_WAYPOINT_TOLERANCE:
                     correction = self.get_speed_correction(target_heading)
-                    base_speed_rad = self.rad_from_linear(LINEAR_SPEED_BASE)
+                    base_speed_rad = LINEAR_SPEED_BASE
                     left_speed = -base_speed_rad - correction
                     right_speed = base_speed_rad + correction
                     if self.is_boundary_triggered:

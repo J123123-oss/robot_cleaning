@@ -55,15 +55,15 @@ def generate_launch_description():
     )
 
     # RTK实时消息解析节点（原ROS1中注释的节点，保留注释结构）
-    # wtrtk_serial_driver_node = Node(
-    #     package='rtk_nav',
-    #     executable='wtrtk_serial_driver',
-    #     name='wtrtk_serial_driver',
-    #     parameters=[
-    #         {'port': '/dev/WTRTK'},
-    #         {'baud': 460800}
-    #     ]
-    # )
+    wtrtk_serial_driver_node = Node(
+        package='rtk_nav',
+        executable='wtrtk_serial_driver',
+        name='wtrtk_serial_driver',
+        parameters=[
+            {'port': '/dev/WTRTK'},
+            {'baud': 460800}
+        ]
+    )
 
     # 清扫路径规划节点（原ROS1中注释的节点，保留注释结构和所有参数）
     cleaning_path_planner_node = Node(
@@ -184,7 +184,7 @@ def generate_launch_description():
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释
-    # ld.add_action(wtrtk_serial_driver_node)
+    ld.add_action(wtrtk_serial_driver_node)
     # ld.add_action(cleaning_path_planner_node)
     # ld.add_action(full_path_planner)
 

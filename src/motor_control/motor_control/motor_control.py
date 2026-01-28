@@ -71,6 +71,8 @@ class MotorControlNode(Node):
         # UNLOADING parameters
         # 出仓阶段标记（关键：拆分出仓为多个阶段）
         self.unloading_forword_threshold = 2.0 # seconds
+        self.unloading_turn_start_time = None
+        self.unloading_turn_time_max = 20.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
         self.unloading_turn_target_rad = 0.0  # 出仓转向目标角
@@ -78,10 +80,13 @@ class MotorControlNode(Node):
 
         self.loading_turn_target_rad = 0.0  # 进仓转向目标角
         self.loading_backward_threshold = 2.0  # 进仓后退时长（秒）
+        self.loading_turn_time = 10.0
         self.loading_phase = None
         self.loading_start_time = 0.0
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
+
+        self.yaw_diff_min = 0.1 #0.00174     # = 0.1 degree
 
         self.nav_status = None
 
@@ -278,11 +283,11 @@ class MotorControlNode(Node):
                 left_speed = self.motor_ctrl.BASE_SPEED
                 right_speed = -self.motor_ctrl.BASE_SPEED
             elif self.current_status == "TURN_LEFT":
-                left_speed = -self.motor_ctrl.BASE_SPEED
-                right_speed = -self.motor_ctrl.BASE_SPEED
-            elif self.current_status == "TURN_RIGHT":
                 left_speed = self.motor_ctrl.BASE_SPEED
                 right_speed = self.motor_ctrl.BASE_SPEED
+            elif self.current_status == "TURN_RIGHT":
+                left_speed = -self.motor_ctrl.BASE_SPEED
+                right_speed = -self.motor_ctrl.BASE_SPEED
             else:
                 left_speed = 0.0
                 right_speed = 0.0
@@ -401,12 +406,12 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
 
-        if self.unloading_timer is not None:
-            self.unloading_timer.cancel()
-            self.unloading_timer = None
-        if self.loading_timer is not None:
-            self.loading_timer.cancel()
-            self.loading_timer = None
+        # if self.unloading_timer is not None:
+        #     self.unloading_timer.cancel()
+        #     self.unloading_timer = None
+        # if self.loading_timer is not None:
+        #     self.loading_timer.cancel()
+        #     self.loading_timer = None
 
         # 状态执行逻辑
         if new_state == "STOP":
@@ -414,7 +419,7 @@ class MotorControlNode(Node):
             for motor in self.motor_ctrl.motors:
                 self.motor_ctrl.motor_set_speed(motor["id"], 0.0)  # 初始速度0
                 time.sleep(0.01)
-                self.motor_ctrl.motor_disable(motor["id"])
+                # self.motor_ctrl.motor_disable(motor["id"])
 
         elif new_state == "START":
             # 启动：仅使能电机，不运动
@@ -510,7 +515,8 @@ class MotorControlNode(Node):
                 # "battery_total_voltage": self.battery_total_voltage, # 电池总电压
                 # "battery_current": self.battery_current, # 电池电流
                 # "progress": self.progress,
-                "imu_yaw": round(self.imu_yaw_rad, 2) if self.imu_yaw_rad is not None else 0.00,
+                "imu_yaw": self.imu_yaw_rad if self.imu_yaw_rad is not None else 0.00,
+                # "imu_yaw": round(self.imu_yaw_rad, 2) if self.imu_yaw_rad is not None else 0.00,
                 "current_lon": self.current_lon,
                 "current_lat": self.current_lat,
                 # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
@@ -660,11 +666,12 @@ class MotorControlNode(Node):
                 left_speed = -(self.motor_ctrl.BASE_SPEED + correction)
                 right_speed = self.motor_ctrl.BASE_SPEED + correction
                 self.set_motors_speed(left_speed, right_speed)
-                self.get_logger().info(f"[UNLOADING] 前进阶段 - 已持续{current_time - self.unloading_start_time:.1f}秒")
+                # self.get_logger().info(f"[UNLOADING] 前进阶段 - 已持续{current_time - self.unloading_start_time:.1f}秒")
             else:
                 # 前进时间到，切换到转向阶段
                 self.get_logger().info("[UNLOADING] 前进阶段完成，进入转向阶段")
                 self.unloading_phase = "UNLOADING_TURN"
+                self.unloading_turn_start_time = current_time
                 # 初始化转向目标（基于当前IMU航向）
                 if self.imu_yaw_rad is None:
                     self.get_logger().warn("[UNLOADING] IMU航向角未获取，使用默认0度作为基准")
@@ -686,17 +693,17 @@ class MotorControlNode(Node):
                 return
             
             # 右转：
-            left_speed = -0.3 * self.motor_ctrl.BASE_SPEED
-            right_speed = -0.3 * self.motor_ctrl.BASE_SPEED
+            left_speed = -1.0 * self.motor_ctrl.BASE_SPEED
+            right_speed = -1.0 * self.motor_ctrl.BASE_SPEED
             self.set_motors_speed(left_speed, right_speed)
             
             # 检查是否达到转向目标
             yaw_diff = abs(self.imu_yaw_rad - self.unloading_turn_target_rad)
-            self.get_logger().debug(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_rad:.2f}rad，目标{self.unloading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad")
+            self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_rad:.2f}rad，目标{self.unloading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad")
             
-            # 角度差小于0.05rad（约2.86度）视为转向完成
+            # 角度差小于0.1degree = self.yaw_diff_minrad视为转向完成
             
-            if yaw_diff < 0.05:
+            if abs(yaw_diff) < self.yaw_diff_min:
                 self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束")
                 self.unloading_phase = "COMPLETE"
                 # 停止电机
@@ -706,7 +713,7 @@ class MotorControlNode(Node):
                 # 停止定时器
                 self.unloading_timer.cancel()
                 self.unloading_timer = None
-            elif current_time - self.unloading_start_time > 2 * self.unloading_forword_threshold:
+            elif current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
                 self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
                 self.current_control_mode = "RTK_NAV"
                 self.unloading_phase = "COMPLETE"
@@ -741,8 +748,8 @@ class MotorControlNode(Node):
                     return
                 
                 # 双电机转（=出仓转向）
-                left_speed = -0.3 * self.motor_ctrl.BASE_SPEED
-                right_speed = -0.3 * self.motor_ctrl.BASE_SPEED
+                left_speed = -1.0 * self.motor_ctrl.BASE_SPEED
+                right_speed = -1.0 * self.motor_ctrl.BASE_SPEED
                 self.set_motors_speed(left_speed, right_speed)
                 # 初始化转向目标（基于当前IMU航向）
                 # if self.imu_yaw_rad is None:
@@ -762,14 +769,14 @@ class MotorControlNode(Node):
                     f"目标{self.loading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad"
                 )
                 
-                # 角度差小于0.05rad视为调整完成
-                if yaw_diff < 0.05:
+                # 角度差小于0.1degree = self.yaw_diff_minrad视为调整完成
+                if abs(yaw_diff) < self.yaw_diff_min:
                     self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                     self.loading_phase = "LOADING_BACKWARD"
                     self.loading_backward_start_time = current_time  # 记录后退开始时间
                     self.set_motors_speed(0.0, 0.0)  # 短暂停止，准备后退
-                # 角度调整超时（5秒）
-                elif current_time - self.loading_start_time > 5.0:
+                # 角度调整超时（10秒）
+                elif current_time - self.loading_start_time > self.loading_turn_time:
                     self.get_logger().warn("[LOADING] 角度调整超时，强制进入后退阶段")
                     self.loading_phase = "LOADING_BACKWARD"
                     self.loading_backward_start_time = current_time

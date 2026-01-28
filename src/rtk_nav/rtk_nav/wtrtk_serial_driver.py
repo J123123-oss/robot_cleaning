@@ -34,7 +34,7 @@ class WTRTKSerialDriver(Node):
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
-        self.timer = self.create_timer(0.5, self.publish_latest_data)
+        self.timer = self.create_timer(0.1, self.publish_latest_data)
         
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()

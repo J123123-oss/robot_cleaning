@@ -78,7 +78,7 @@ class MQTTRos2Bridge(Node):
             "topic_command":self.topic_command, "topic_result":self.topic_result,
             "client_id":self.client_id, "ca_cert":self.ca_cert
         }
-        self.get_logger().info(f"✅ 初始化完成，最终配置: {self.config}")
+        # self.get_logger().info(f"✅ 初始化完成，最终配置: {self.config}")
 
         # ===================== ROS2 发布者/订阅者创建 (替代rospy的pub/sub) =====================
         # ROS2 发布: 给ROS2内部发指令 /robot_cmd
