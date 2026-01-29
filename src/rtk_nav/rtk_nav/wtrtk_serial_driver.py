@@ -15,7 +15,7 @@ class WTRTKSerialDriver(Node):
         super().__init__('wtrtk_serial_driver')
         
         # 读取参数（默认端口和波特率）
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        self.declare_parameter('port', '/dev/WTRTK')
         self.declare_parameter('baud', 460800)
         self.port = self.get_parameter('port').value
         self.baud_rate = self.get_parameter('baud').value
@@ -34,7 +34,7 @@ class WTRTKSerialDriver(Node):
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
-        self.timer = self.create_timer(0.1, self.publish_latest_data)
+        self.timer = self.create_timer(0.25, self.publish_latest_data)
         
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()
@@ -169,7 +169,7 @@ class WTRTKSerialDriver(Node):
         
         content = frame[7:star_pos]
         fields = content.split(',')
-        
+        # self.get_logger().info("fields: %s" % fields)
         if len(fields) != 25:
             return None
         
@@ -299,8 +299,8 @@ class WTRTKSerialDriver(Node):
                 time.sleep(0.1)  # 缩短异常等待，减少阻塞
     def publish_latest_data(self):
         """定时器触发，每秒发布一次最新解析的数据"""
-        if self.latest_fix:
-            self.fix_pub.publish(self.latest_fix)
+        # if self.latest_fix:
+        #     self.fix_pub.publish(self.latest_fix)
         if self.latest_wtrtk:
             self.wtrtk_pub.publish(self.latest_wtrtk)
 

@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 import serial
 import struct
-from std_msgs.msg import UInt8  # 发布IO数据
+from std_msgs.msg import UInt8, Float32MultiArray  # 新增Float32MultiArray发布电池数据
 
 class IMUParser(Node):
     def destroy_node(self):
@@ -17,27 +17,29 @@ class IMUParser(Node):
         super().__init__('imu_parser_node')
         
         # 参数配置
-        self.declare_parameter('serial_port', '/dev/ttyv1')
-        self.declare_parameter('baudrate',115200)
+        self.declare_parameter('serial_port', '/dev/ttyS4')
+        self.declare_parameter('baudrate', 9600)
         
         self.port = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baudrate = self.get_parameter('baudrate').get_parameter_value().integer_value
-        self.device_addr = 0x50
-        self.rx_frame_length = 7
-        self.io_cmd = bytes.fromhex("01 02 00 00 00 08 79 CC")  # 修改IO采集命令为8位数据 (00 08 表示8个bit)
+        self.battery_ID = 0x0B # 新增：电池设备地址
+        self.io_cmd = bytes.fromhex("01 02 00 00 00 08 79 CC")  # IO采集命令
+        self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
         self.ser = None
         self.reconnect_interval = 1.0  # 重连间隔
         self.last_reconnect_time = 0
-        self.buffer = bytearray()  # 添加缓冲区初始化
+        self.buffer = bytearray()  # 串口接收缓冲区
 
         # 数据更新监控参数
         self.last_data_time = self.get_clock().now()  # 上次数据更新时间
         self.data_timeout = 3.0  # 数据超时时间(秒)
 
-        # 添加轮询状态管理
-        self.io_polling_interval = 0.02   # IO查询间隔，提高频率到100Hz
+        # 轮询状态管理
+        self.io_polling_interval = 0.05   # IO查询间隔（100Hz）
         self.last_io_poll_time = 0
-        
+        # 新增：电池轮询配置（稍慢于IO，避免串口冲突）
+        self.battery_polling_interval = 10.0
+        self.last_battery_poll_time = 0
 
         # 初始化串口
         try:
@@ -47,13 +49,14 @@ class IMUParser(Node):
             self.get_logger().error("Exception occurred while initializing serial connection: %s" % str(e))
             self.get_logger().warn("Will retry in main loop.")
 
-        # 发布IO数据
-        self.io_pub = self.create_publisher(UInt8, '/io_data', 1)  # 修改为UInt8
+        # 发布器配置
+        self.io_pub = self.create_publisher(UInt8, '/io_data', 1)  # IO数据发布器
+        self.battery_pub = self.create_publisher(Float32MultiArray, '/battery_data', 1)  # 新增：电池数据发布器
         
-        # 统一的轮询定时器，避免冲突（提高频率以支持更精确的IO轮询）
+        # 统一的轮询定时器，避免冲突
         self.polling_timer = self.create_timer(0.005, self.polling_callback)
         
-        # 主循环 (提高频率以更快处理数据)
+        # 主循环
         self.main_loop_timer = self.create_timer(0.005, self.main_loop)
 
     def init_serial(self):
@@ -88,23 +91,27 @@ class IMUParser(Node):
             return False
 
     def polling_callback(self):
-        """统一的轮询回调函数，避免设备冲突，提高IO查询频率"""
+        """统一的轮询回调函数，分时轮询IO和电池，避免串口冲突"""
         current_time = self.get_clock().now().nanoseconds / 1e9
         
-        # 检查是否需要查询IO - 更频繁地查询IO
+        # 轮询IO（高频）
         if current_time - self.last_io_poll_time >= self.io_polling_interval:
-            # 查询IO
             self.safe_serial_write(self.io_cmd)
             self.get_logger().debug("Sent IO query command: %s" % ' '.join(format(x, '02x') for x in self.io_cmd))
             self.last_io_poll_time = current_time
+        
+        # 新增：轮询电池（低频，分时发送避免冲突）
+        if current_time - self.last_battery_poll_time >= self.battery_polling_interval:
+            self.safe_serial_write(self.battery_cmd)
+            self.get_logger().debug("Sent battery query command: %s" % ' '.join(format(x, '02x') for x in self.battery_cmd))
+            self.last_battery_poll_time = current_time
 
     def parse_io_response(self, data):
         """解析IO返回数据"""
-        self.get_logger().debug("Received IO data: %s" % ' '.join(format(x, '02x') for x in data))
+        # self.get_logger().info("Received IO data: %s" % ' '.join(format(x, '02x') for x in data))
         
         # 检查响应是否符合Modbus RTU协议格式
-        # 响应格式: 设备地址(1) + 功能码(1) + 数据长度(1) + 数据(N) + CRC(2)
-        if len(data) < 4 or data[1] != 0x02:  # 功能码应为02, 最小长度为4（地址+功能码+长度+数据+CRC）
+        if len(data) < 4 or data[1] != 0x02:
             self.get_logger().debug("Invalid IO frame: length=%d, func_code=0x%02x" % (len(data), data[1] if len(data) > 1 else 0))
             return None
 
@@ -122,29 +129,71 @@ class IMUParser(Node):
             return None
 
         # 解析IO数据
-        # 数据格式: 01 02 01 XX YY ZZ (假设读取8个bit，数据长度为1)
-        # XX 是1字节的IO状态数据，其中每个位代表一个IO口状态
-        io_data_byte = data[3]  # 读取单个字节
-        
+        io_data_byte = data[3]
         self.get_logger().debug("Parsed IO state: 0x%02x (%d)" % (io_data_byte, io_data_byte))
         return {'io_state': io_data_byte}
 
+    def parse_battery_response(self, data):
+        """新增：解析电池返回数据，返回格式化的电池参数"""
+        self.get_logger().info("Received battery data: %s" % ' '.join(format(x, '02x') for x in data))
+        
+        # 1. 基础格式校验（设备地址self.battery_ID，功能码0x04）
+        if len(data) < 9 or data[0] != self.battery_ID or data[1] != 0x04:
+            self.get_logger().debug("Invalid battery frame: length=%d, addr=0x%02x, func_code=0x%02x" % 
+                                  (len(data), data[0] if len(data) > 0 else 0, data[1] if len(data) > 1 else 0))
+            return None
+        
+        # 2. 数据长度校验（3个寄存器=6字节数据）
+        if data[2] != 0x06:
+            self.get_logger().debug("Battery data length mismatch: expected=6, actual=%d" % data[2])
+            return None
+        
+        expected_frame_length = 11  # 地址(1)+功能码(1)+长度(1)+数据(6)+CRC(2)
+        if len(data) != expected_frame_length:
+            self.get_logger().debug("Battery frame length mismatch: expected=%d, actual=%d" % (expected_frame_length, len(data)))
+            return None
+        
+        # 3. CRC校验
+        recv_crc = data[-2:]
+        calc_crc = self.calculate_modbus_crc(data[:-2])
+        if recv_crc != calc_crc:
+            self.get_logger().warn("Battery: CRC check failed")
+            return None
+        
+        # 4. 解析具体电池参数（大端模式，高位在前）
+        battery_data = {}
+        
+        # 4.1 电池剩余容量百分比（无符号16位，0.01%单位）
+        capacity_raw = (data[3] << 8) | data[4]
+        battery_data['capacity_percent'] = capacity_raw * 0.01
+        
+        # 4.2 电池组总电流（有符号16位，补码，0.01A单位）
+        current_raw = (data[5] << 8) | data[6]
+        if current_raw > 0x7FFF:
+            current_raw -= 0x10000
+        battery_data['total_current'] = current_raw * 0.01
+        
+        # 4.3 电池组总电压（无符号16位，0.01V单位）
+        voltage_raw = (data[7] << 8) | data[8]
+        battery_data['total_voltage'] = voltage_raw * 0.01
+        
+        # 打印解析结果（便于调试）
+        self.get_logger().debug(f"Parsed battery: {battery_data['capacity_percent']:.2f}% | "
+                              f"{battery_data['total_current']:.2f}A | {battery_data['total_voltage']:.2f}V")
+        return battery_data
+
     def main_loop(self):
-        """主循环"""
+        """主循环：处理串口数据，解析IO和电池帧"""
         try:
             # 检查数据是否超时
             elapsed_time = (self.get_clock().now() - self.last_data_time).nanoseconds / 1e9
             if elapsed_time > self.data_timeout:
                 self.get_logger().warn("Data timeout (%.2f seconds since last data), resetting connection" % elapsed_time)
-                self.last_data_time = self.get_clock().now()  # 重置时间，避免连续触发
-                self.init_serial()  # 重置连接
+                self.last_data_time = self.get_clock().now()
+                self.init_serial()
             
             # 读取串口数据
             if self.ser and self.ser.is_open:
-                # 创建一个缓冲区来存储数据
-                if not hasattr(self, 'buffer'):
-                    self.buffer = bytearray()
-                
                 # 读取所有可用数据
                 bytes_available = self.ser.in_waiting
                 if bytes_available > 0:
@@ -156,17 +205,15 @@ class IMUParser(Node):
 
                 # 处理完整帧
                 processed_frames = 0
-                while len(self.buffer) >= 5 and processed_frames < 10:  # 至少需要5个字节才能确定帧长度
-                    # 查找帧头 - 尝试匹配可能的设备地址
+                while len(self.buffer) >= 5 and processed_frames < 10:
+                    # 查找帧头 - 匹配IO(0x01)、电池(self.battery_ID)设备地址（新增self.battery_ID）
                     header_pos = -1
                     for i in range(len(self.buffer)):
-                        # 检查是否是有效的Modbus地址 (01或0x50)
-                        if self.buffer[i] in [0x01, 0x50]:
+                        if self.buffer[i] in [0x01, self.battery_ID]:  # 新增电池地址self.battery_ID
                             header_pos = i
                             break
                     
                     if header_pos == -1:
-                        # 没有找到帧头，清空缓冲区
                         self.get_logger().debug("No frame header found, clearing buffer")
                         self.buffer.clear()
                         break
@@ -176,46 +223,46 @@ class IMUParser(Node):
                         self.get_logger().debug("Discarding %d bytes before frame header" % header_pos)
                         del self.buffer[:header_pos]
                     
-                    # 检查是否有足够的数据来确定帧长度
+                    # 检查是否有足够的数据确定帧长度
                     if len(self.buffer) < 3:
-                        # 等待更多数据
                         self.get_logger().debug("Insufficient data to determine frame length: %d bytes" % len(self.buffer))
                         break
                     
-                    # 根据功能码确定帧长度
+                    # 根据功能码处理不同设备数据
                     func_code = self.buffer[1]
+                    expected_frame_length = 0
+                    parsed_data = None
+                    
                     if func_code == 0x02:  # IO响应
                         data_length = self.buffer[2]
-                        expected_frame_length = 5 + data_length  # 地址(1) + 功能码(1) + 长度(1) + 数据(N) + CRC(2)
+                        expected_frame_length = 5 + data_length
+                        if len(self.buffer) >= expected_frame_length:
+                            frame = self.buffer[:expected_frame_length]
+                            del self.buffer[:expected_frame_length]
+                            parsed_data = self.parse_io_response(frame)
+                            if parsed_data:
+                                self.publish_io_data(parsed_data)
+                                self.last_data_time = self.get_clock().now()
+                    
+                    elif func_code == 0x04:  # 新增：电池响应（功能码0x04）
+                        expected_frame_length = 11  # 电池帧固定长度11
+                        if len(self.buffer) >= expected_frame_length:
+                            frame = self.buffer[:expected_frame_length]
+                            del self.buffer[:expected_frame_length]
+                            parsed_data = self.parse_battery_response(frame)
+                            if parsed_data:
+                                self.publish_battery_data(parsed_data)  # 发布电池数据
+                                self.last_data_time = self.get_clock().now()
+                    
                     else:
-                        # 未知功能码，跳过一个字节继续查找
+                        # 未知功能码，跳过一个字节
                         self.get_logger().debug("Unknown function code: 0x%02x, skipping byte" % func_code)
                         del self.buffer[0]
                         continue
                     
-                    # 检查数据长度是否足够
-                    if len(self.buffer) < expected_frame_length:
-                        # 等待更多数据
-                        self.get_logger().debug("Insufficient data for frame: %d/%d bytes" % (len(self.buffer), expected_frame_length))
-                        break
-                    
-                    # 提取并处理帧
-                    frame = self.buffer[:expected_frame_length]
-                    del self.buffer[:expected_frame_length]
-                    
-                    self.get_logger().debug("Processing frame: %s" % ' '.join(format(x, '02x') for x in frame))
-                    
-                    # 根据功能码选择解析函数
-                    if func_code == 0x02:  # IO响应
-                        parsed = self.parse_io_response(frame)
-                        if parsed:
-                            self.publish_io_data(parsed)
-                            # 更新数据时间戳
-                            self.last_data_time = self.get_clock().now()
-                    
                     processed_frames += 1
             
-            # 检查串口连接状态
+            # 检查串口连接状态，自动重连
             if not self.ser or not self.ser.is_open:
                 current_time = self.get_clock().now().nanoseconds / 1e9
                 if current_time - self.last_reconnect_time > self.reconnect_interval:
@@ -234,9 +281,20 @@ class IMUParser(Node):
         msg.data = io_data['io_state']
         self.io_pub.publish(msg)
 
+    def publish_battery_data(self, battery_data):
+        """新增：发布电池数据"""
+        msg = Float32MultiArray()
+        # 数据顺序：[剩余容量百分比, 总电流, 总电压]
+        msg.data = [
+            battery_data['capacity_percent'],
+            battery_data['total_current'],
+            battery_data['total_voltage']
+        ]
+        self.battery_pub.publish(msg)
+
     @staticmethod
     def calculate_crc(data):
-        """Modbus CRC16校验"""
+        """Modbus CRC16校验（保留原有，兼容旧逻辑）"""
         crc = 0xFFFF
         for byte in data:
             crc ^= byte
@@ -250,7 +308,7 @@ class IMUParser(Node):
     
     @staticmethod
     def calculate_modbus_crc(data):
-        """计算Modbus CRC校验"""
+        """计算Modbus CRC校验（复用，保证校验一致性）"""
         crc = 0xFFFF
         for byte in data:
             crc ^= byte

@@ -305,12 +305,18 @@ class CleaningPathPlanner(Node):
         # 120.07113330166666,30.321393565666668
         # 120.07104722000001,30.321617500000002
         # 120.07112942683334
-        self.declare_parameter('calib_point_c.lon', 120.07113330166666)
-        self.declare_parameter('calib_point_c.lat', 30.321393565666668)
-        self.declare_parameter('calib_point_b.lon', 120.07104722000001)
-        self.declare_parameter('calib_point_b.lat', 30.321617500000002)
-        self.declare_parameter('calib_point_a.lon', 120.07112942683334)
-        self.declare_parameter('calib_point_a.lat', 30.321631682333336)
+
+
+        # A:120.07149470883333,30.32131817333333
+        # B:120.07142615983334,30.32123303533333
+        # C:120.07151235049999,30.321311033166662
+
+        self.declare_parameter('calib_point_c.lon', 120.07149470883333)
+        self.declare_parameter('calib_point_c.lat', 30.32131817333333)
+        self.declare_parameter('calib_point_b.lon', 120.07142615983334)
+        self.declare_parameter('calib_point_b.lat', 30.32123303533333)
+        self.declare_parameter('calib_point_a.lon', 120.07151235049999)
+        self.declare_parameter('calib_point_a.lat', 30.321311033166662)
         # self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
         # self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
         # self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
@@ -328,11 +334,11 @@ class CleaningPathPlanner(Node):
 
 
 
-        self.declare_parameter('interval', 2.8)
-        self.declare_parameter('start_corner', 'bottom_right')
+        self.declare_parameter('interval', 1.0)
+        self.declare_parameter('start_corner', 'top_left')
         self.declare_parameter('swap_wh_select', False)
-        self.declare_parameter('edge_distance_lon', 0.5)
-        self.declare_parameter('edge_distance_lat', 0.5)
+        self.declare_parameter('edge_distance_lon', 0.0)
+        self.declare_parameter('edge_distance_lat', 0.0)
         self.declare_parameter('headless', False)
         
         self.param = {

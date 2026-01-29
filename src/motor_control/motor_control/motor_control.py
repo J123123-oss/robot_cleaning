@@ -75,10 +75,10 @@ class MotorControlNode(Node):
         self.unloading_turn_time_max = 20.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
-        self.unloading_turn_target_rad = 0.0  # 出仓转向目标角
+        self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_rad = 0.0  # 进仓转向目标角
+        self.loading_turn_target_deg = 0.0  # 进仓转向目标角
         self.loading_backward_threshold = 2.0  # 进仓后退时长（秒）
         self.loading_turn_time = 10.0
         self.loading_phase = None
@@ -86,9 +86,14 @@ class MotorControlNode(Node):
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
 
-        self.yaw_diff_min = 0.1 #0.00174     # = 0.1 degree
+        self.yaw_diff_min = 0.1 # 0.1 degree
 
         self.nav_status = None
+
+        self.battery_total_voltage = None  # 电池总电压
+        self.battery_current = None  # 电池电流
+        self.battery_remaining = None # 电池百分比
+        self.battery_temperatures = [] # 电池温度，共3个
 
         # 1. 初始化电机控制模块
         self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
@@ -114,7 +119,7 @@ class MotorControlNode(Node):
         self.sbus_remote = SBUSRemoteController()
         if not self.sbus_remote.is_connected:
             self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
-        self.imu_yaw_rad = None
+        self.current_location = None
         self.current_lon = 0.0
         self.current_lat = 0.0
         # 移除RTKNavControlNode的实例化，避免节点冲突
@@ -384,10 +389,16 @@ class MotorControlNode(Node):
 
     def imu_heading_callback(self, msg:Float32):
         """imu correction"""
-        self.imu_yaw_rad = msg.data
-        # self.get_logger().info(f"[imu_yaw_rad]： {self.imu_yaw_rad}")
+        self.imu_yaw_deg = msg.data
+        # self.get_logger().info(f"[imu_yaw_deg]： {self.imu_yaw_deg}")
 
-        
+    def battery_status_callback(self, msg):
+
+        self.battery_remaining = msg.capacity_percent  # 电池百分比
+        self.battery_total_voltage = round(msg.total_voltage, 2) 
+        self.battery_current = round(msg.total_current, 2)
+         # 格式化温度列表，保留一位小数
+        # self.battery_temperatures = [round(t, 1) for t in msg.temperatures] if hasattr(msg, "temperatures") else []
 
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
@@ -462,16 +473,14 @@ class MotorControlNode(Node):
             self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
             self.loading_start_time = time.time()
             # # 初始化进仓转向目标（=出仓,90度）
-            if self.imu_yaw_rad is None:
+            if self.imu_yaw_deg is None:
                 self.get_logger().warn("[LOADING] IMU航向角未获取，使用默认0度作为基准")
-                self.loading_turn_target_rad = math.pi / 2  # 转90度（进仓角度）
+                self.loading_turn_target_deg = 90  # 转90度（进仓角度）
             else:
-                self.loading_turn_target_rad = self.imu_yaw_rad + math.pi / 2  #   TEST!!!!!
-                # 角度归一化到[-π, π]
-                self.loading_turn_target_rad = math.atan2(
-                    math.sin(self.loading_turn_target_rad),
-                    math.cos(self.loading_turn_target_rad)
-                )
+                self.loading_turn_target_deg = self.imu_yaw_deg + 90  #   TEST!!!!!
+                # 角度归一化到[-180, 180]
+                self.loading_turn_target_deg = (self.loading_turn_target_deg + 180) % 360 - 180
+
             self.loading_timer = self.create_timer(0.1, self.handle_loading_step)
 
             # current_time = time.time()
@@ -489,7 +498,7 @@ class MotorControlNode(Node):
             #     left_speed = -self.motor_ctrl.BASE_SPEED
             #     right_speed = -self.motor_ctrl.BASE_SPEED
             #     self.set_motors_speed(left_speed, right_speed)
-            #     if self.imu_yaw > target + math.pi / 2:
+            #     if self.imu_yaw > target + 90:
             #         self.set_motors_speed(0.0, 0.0)
             #         # switch to RTK mode
             #         self.switch_state("r")
@@ -510,13 +519,13 @@ class MotorControlNode(Node):
 
             state_msg = {
                 "status": self.current_status,
-                # "battery": self.battery_remaining, # 电池百分比,
+                "battery": self.battery_remaining, # 电池百分比,
                 # "battery_temperatures": self.battery_temperatures, # 电池温度，共3个
-                # "battery_total_voltage": self.battery_total_voltage, # 电池总电压
-                # "battery_current": self.battery_current, # 电池电流
+                "battery_total_voltage": self.battery_total_voltage, # 电池总电压
+                "battery_current": self.battery_current, # 电池电流
                 # "progress": self.progress,
-                "imu_yaw": self.imu_yaw_rad if self.imu_yaw_rad is not None else 0.00,
-                # "imu_yaw": round(self.imu_yaw_rad, 2) if self.imu_yaw_rad is not None else 0.00,
+                "imu_yaw": self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00,
+                # "imu_yaw": round(self.imu_yaw_deg, 2) if self.imu_yaw_deg is not None else 0.00,
                 "current_lon": self.current_lon,
                 "current_lat": self.current_lat,
                 # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
@@ -626,8 +635,8 @@ class MotorControlNode(Node):
     #         self.publish_state()
     def get_heading_error(self, target_heading: float) -> float:
         """新增：计算当前航向与目标航向的误差（归一化到[-π, π]，单位：rad）"""
-        heading_error = target_heading - self.imu_yaw_rad
-        return math.fmod(heading_error + math.pi, 2 * math.pi) - math.pi
+        heading_error = target_heading - self.imu_yaw_deg
+        return math.fmod(heading_error + 180, 360) - 180
 
     def get_speed_correction(self, target_heading: float) -> float:
         yaw_error = self.get_heading_error(target_heading)
@@ -673,22 +682,19 @@ class MotorControlNode(Node):
                 self.unloading_phase = "UNLOADING_TURN"
                 self.unloading_turn_start_time = current_time
                 # 初始化转向目标（基于当前IMU航向）
-                if self.imu_yaw_rad is None:
+                if self.imu_yaw_deg is None:
                     self.get_logger().warn("[UNLOADING] IMU航向角未获取，使用默认0度作为基准")
-                    self.unloading_turn_target_rad = math.pi / 2  # 90度
+                    self.unloading_turn_target_deg = 90  # 90度
                 else:
-                    self.unloading_turn_target_rad = self.imu_yaw_rad + math.pi / 2
-                    # 角度归一化到[-π, π]
-                    if self.unloading_turn_target_rad > math.pi:
+                    self.unloading_turn_target_deg = self.imu_yaw_deg + 90
+                    # 角度归一化到[-180, 180]
+                    if self.unloading_turn_target_deg > 180:
                         # 修复代码 (标准归一化写法，与进仓逻辑保持一致)
-                        self.unloading_turn_target_rad = math.atan2(
-                            math.sin(self.unloading_turn_target_rad),
-                            math.cos(self.unloading_turn_target_rad))
-                        # self.unloading_turn_target_rad -= 2 * math.pi
-        
+                        self.unloading_turn_target_deg -= 360
+
         # ========== 阶段2：转向 ==========
         elif self.unloading_phase == "UNLOADING_TURN":
-            if self.imu_yaw_rad is None:
+            if self.imu_yaw_deg is None:
                 self.get_logger().warn("[UNLOADING] IMU航向角未获取，暂不转向")
                 return
             
@@ -698,11 +704,11 @@ class MotorControlNode(Node):
             self.set_motors_speed(left_speed, right_speed)
             
             # 检查是否达到转向目标
-            yaw_diff = abs(self.imu_yaw_rad - self.unloading_turn_target_rad)
-            self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_rad:.2f}rad，目标{self.unloading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad")
-            
-            # 角度差小于0.1degree = self.yaw_diff_minrad视为转向完成
-            
+            yaw_diff = abs(self.imu_yaw_deg - self.unloading_turn_target_deg)
+            self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}rad，目标{self.unloading_turn_target_deg:.2f}rad，差值{yaw_diff:.2f}rad")
+
+            # 角度差小于0.1degree = self.yaw_diff_min视为转向完成
+
             if abs(yaw_diff) < self.yaw_diff_min:
                 self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束")
                 self.unloading_phase = "COMPLETE"
@@ -735,15 +741,15 @@ class MotorControlNode(Node):
         try:
             current_time = time.time()
             correction = 0.0  # 初始化默认值
-            if self.imu_yaw_rad is not None:
+            if self.imu_yaw_deg is not None:
                 correction = self.get_speed_correction(0.0)
             else:
-                self.get_logger().warn("No self.imu_yaw_rad")
+                self.get_logger().warn("No self.imu_yaw_deg")
 
             
             # ========== 阶段1：调整进仓角度（左转90度） ==========
             if self.loading_phase == "LOADING_TURN":
-                if self.imu_yaw_rad is None:
+                if self.imu_yaw_deg is None:
                     self.get_logger().warn("[LOADING] IMU航向角未获取，暂不转向")
                     return
                 
@@ -752,21 +758,21 @@ class MotorControlNode(Node):
                 right_speed = -1.0 * self.motor_ctrl.BASE_SPEED
                 self.set_motors_speed(left_speed, right_speed)
                 # 初始化转向目标（基于当前IMU航向）
-                # if self.imu_yaw_rad is None:
+                # if self.imu_yaw_deg is None:
                 #     self.get_logger().warn("[UNLOADING] IMU航向角未获取，使用默认0度作为基准")
-                #     self.unloading_turn_target_rad = math.pi / 2  # 90度
+                #     self.unloading_turn_target_deg = 90  # 90度
                 # else:
-                #     self.unloading_turn_target_rad = self.imu_yaw_rad + math.pi / 2
+                #     self.unloading_turn_target_deg = self.imu_yaw_deg + 90
                 #     # 角度归一化到[-π, π]
-                #     if self.unloading_turn_target_rad > math.pi:
-                #         self.unloading_turn_target_rad -= 2 * math.pi
+                #     if self.unloading_turn_target_deg > math.pi:
+                #         self.unloading_turn_target_deg -= 2 * math.pi
                 
                 # 计算角度差
-                yaw_diff = abs(self.imu_yaw_rad - self.loading_turn_target_rad)
+                yaw_diff = abs(self.imu_yaw_deg - self.loading_turn_target_deg)
                 
                 self.get_logger().info(
-                    f"[LOADING] 角度调整阶段 - 当前航向{self.imu_yaw_rad:.2f}rad，"
-                    f"目标{self.loading_turn_target_rad:.2f}rad，差值{yaw_diff:.2f}rad"
+                    f"[LOADING] 角度调整阶段 - 当前航向{self.imu_yaw_deg:.2f}rad，"
+                    f"目标{self.loading_turn_target_deg:.2f}rad，差值{yaw_diff:.2f}rad"
                 )
                 
                 # 角度差小于0.1degree = self.yaw_diff_minrad视为调整完成
