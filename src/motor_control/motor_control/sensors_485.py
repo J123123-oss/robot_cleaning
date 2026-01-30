@@ -24,8 +24,8 @@ class Sensors_485(Node):
         self.baudrate = self.get_parameter('baudrate').get_parameter_value().integer_value
         self.battery_ID = 0x0B # 电池设备地址   0B  /  01
         self.io_cmd = bytes.fromhex("01 02 00 00 00 08 79 CC")  # IO采集命令
-        # self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
-        self.battery_cmd = bytes.fromhex(f"01 04 00 00 00 03 B0 0B")  # 电池查询命令
+        self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
+        # self.battery_cmd = bytes.fromhex(f"01 04 00 00 00 03 B0 0B")  # 电池查询命令
         self.ser = None
         self.reconnect_interval = 1.0  # 重连间隔
         self.last_reconnect_time = 0
@@ -136,7 +136,7 @@ class Sensors_485(Node):
 
     def parse_battery_response(self, data):
         """新增：解析电池返回数据，返回格式化的电池参数"""
-        self.get_logger().info("Received battery data: %s" % ' '.join(format(x, '02x') for x in data))
+        # self.get_logger().info("Received battery data: %s" % ' '.join(format(x, '02x') for x in data))
         
         # 1. 基础格式校验（设备地址self.battery_ID，功能码0x04）
         if len(data) < 9 or data[0] != self.battery_ID or data[1] != 0x04:

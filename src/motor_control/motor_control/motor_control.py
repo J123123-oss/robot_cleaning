@@ -10,7 +10,7 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32
+from std_msgs.msg import String, UInt8, Float32, Float32MultiArray
 from geometry_msgs.msg import Vector3
 import traceback
 import json
@@ -160,6 +160,12 @@ class MotorControlNode(Node):
             Float32,
             "imu_heading",
             self.imu_heading_callback,
+            10
+        )
+        self.battery_subscription = self.create_subscription(
+            Float32MultiArray,
+            "battery_data",
+            self.battery_callback,
             10
         )
         # 4. ROS2 发布器
@@ -376,10 +382,10 @@ class MotorControlNode(Node):
             
             # 位5 (1<<5 = 0x20)：后右  32
             self.back_right = (msg.data & 0x20) == 0x20
-            if msg.data != 0:
-                self.get_logger().info(f"--------------Boundary Detected--------------")
-                self.motor_set_speed(1, 0.0)
-                self.motor_set_speed(2, 0.0) 
+            # if msg.data != 0:
+            #     self.get_logger().info(f"--------------Boundary Detected--------------")
+            #     self.motor_ctrl.motor_set_speed(1, 0.0)
+            #     self.motor_ctrl.motor_set_speed(2, 0.0) 
             # else:
                 # recover speed
                 # self.motor_set_speed(1, 0.0)
@@ -390,7 +396,7 @@ class MotorControlNode(Node):
         self.imu_yaw_deg = msg.data
         # self.get_logger().info(f"[imu_yaw_deg]： {self.imu_yaw_deg}")
 
-    def battery_status_callback(self, msg):
+    def battery_callback(self, msg):
 
         self.battery_remaining = msg['capacity_percent']  # 电池百分比
         self.battery_total_voltage = round(msg['total_voltage'], 2) 

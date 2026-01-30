@@ -16,10 +16,11 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1
-RTK_HEADING_TOLERANCE = 0.2  # degree
-LINEAR_SPEED_BASE = 0.5    # origin 0.0124
+RTK_HEADING_TOLERANCE = 0.1  # degree
+LINEAR_SPEED_BASE = 5.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.2
+INITIAL_MOVE_TOLERANCE = 0.1
+RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
@@ -29,7 +30,7 @@ TURN_SPEED_SLOW = 0.2  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8   # 最大修正量
 
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 0.3
+STRAIGHT_PID_SCALE = 0.8
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 # 控制模式（与电机节点保持一致）
@@ -63,6 +64,8 @@ class RTKNavControlNode(Node):
         self.last_yaw_error = 0.0
         self.current_control_mode = ControlMode.NORMAL
 
+
+        self.current_segment_heading = None
 
 
         # Sensor 
@@ -488,10 +491,10 @@ class RTKNavControlNode(Node):
         elif yaw_error_abs > 10:
             kp = 0.03
         else:
-            kp = 0.01
+            kp = 0.005
 
         # 4. 统一KD参数（抑制超调，左右转一致）
-        kd = 0.05
+        kd = 0.03
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -501,8 +504,8 @@ class RTKNavControlNode(Node):
         # 6. 统一最大修正量限制
         correction_clamped = max(min(-correction, MAX_CORRECTION), -MAX_CORRECTION)
 
-        if abs(yaw_error - self.last_yaw_error) > 0.1:
-            self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        # if abs(yaw_error - self.last_yaw_error) > 0.1:
+            # self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
         self.last_yaw_error = yaw_error
 
         return correction_clamped 
@@ -527,7 +530,7 @@ class RTKNavControlNode(Node):
 
         while rclpy.ok():
             heading_error = self.get_heading_error(target_heading)
-            self.get_logger().info(f"heading_error:{heading_error}")
+            # self.get_logger().info(f"heading_error:{heading_error}")
 
             heading_error_deg = abs(heading_error)
             # 校准达标
@@ -561,69 +564,114 @@ class RTKNavControlNode(Node):
 
         return False
 
+    def calculate_bearing(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        计算两点间的绝对朝向角（方位角），用于初始点→第一个航点的转向目标
+        :param lat1: 起点纬度
+        :param lon1: 起点经度
+        :param lat2: 终点纬度
+        :param lon2: 终点经度
+        :return: 绝对朝向角（°，归一化到[-180°, 180°]，与IMU航向角格式一致）
+        """
+        # 转换为弧度
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
+        
+        # 方位角公式计算（0°=正北，90°=正东，180°=正南，270°=正西）
+        delta_lon = lon2_rad - lon1_rad
+        y = math.sin(delta_lon) * math.cos(lat2_rad)
+        x = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)
+        bearing_rad = math.atan2(y, x)
+        
+        # 转换为角度并归一化到[0°, 360°]
+        bearing_deg = math.degrees(bearing_rad)
+        bearing_deg = math.fmod(bearing_deg + 360.0, 360.0)
+        # 转换到[-180°, 180°]，与IMU航向角格式统一
+        bearing_deg = bearing_deg - 360.0 if bearing_deg > 180.0 else bearing_deg
+        return bearing_deg
 
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
         if not self.waypoints:
             self.get_logger().error("无航点数据, 无法执行初始移动")
             return False
-        # 等待IMU校准
-        # if not self.imu_initialized:
-                # turn_right旋转（根据你的电机控制逻辑调整, 若反向则互换左右速度）
-            #     left_speed = -turn_speed - correction
-            #     right_speed = -turn_speed - correction
-            # else:
-            #     # turn_left旋转
-            #     left_speed = turn_speed + correction
-        #     self.get_logger().info(f"等待IMU校准（超时{IMU_CALIBRATION_TIMEOUT}秒）")
-        #     start_time = self.get_clock().now()
-        #     while not self.imu_initialized and rclpy.ok():
-        #         rclpy.spin_once(self, timeout_sec=0.05)
-        #         elapsed_time = (self.get_clock().now() - start_time).nanoseconds / 1e9
-        #         if elapsed_time > IMU_CALIBRATION_TIMEOUT:
-        #             self.get_logger().warn("IMU校准超时, 使用默认偏航角")
-        #             break
+        
         first_waypoint = self.waypoints[0]
         self.nav_context["target_waypoint"] = first_waypoint
         self.get_logger().info(f"开始准备移动到第一个航点：{first_waypoint[:2]}")
         
-        # ========== 步骤1：先对正目标航向 ==========
-        target_heading = self.get_path_heading(first_waypoint)
+        # ========== 步骤1：等待GPS和IMU初始化（确保获取初始位置和航向） ==========
+        # 等待GPS信号（超时5秒）
+        start_gps_time = self.get_clock().now()
+        while not self.current_gps and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.1)
+            gps_elapsed = (self.get_clock().now() - start_gps_time).nanoseconds / 1e9
+            if gps_elapsed > RTK_CALIBRATION_TIMEOUT:
+                self.get_logger().error("获取GPS初始位置超时，无法计算行驶朝向")
+                return False
+        self.get_logger().info(f"GPS初始位置获取成功：({self.current_gps[0]:.6f}, {self.current_gps[1]:.6f})")
+        
+        # 等待IMU初始化（超时3秒）
+        start_imu_time = self.get_clock().now()
+        while not self.imu_initialized and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.05)
+            imu_elapsed = (self.get_clock().now() - start_imu_time).nanoseconds / 1e9
+            if imu_elapsed > IMU_CALIBRATION_TIMEOUT:
+                self.get_logger().warn("IMU校准超时, 使用当前偏航角")
+                break
+        self.get_logger().info(f"IMU初始化完成，当前航向：{self.imu_yaw:.2f}°")
+        
+        # ========== 步骤2：计算初始点→第一个航点的真实朝向角（核心修复） ==========
+        init_lon, init_lat = self.current_gps  # 初始点GPS位置
+        first_lon, first_lat, _ = first_waypoint  # 第一个航点经纬度
+        target_bearing = self.calculate_bearing(init_lat, init_lon, first_lat, first_lon)
+        self.get_logger().info(f"初始点→第一个航点 真实朝向角：{target_bearing:.2f}°")
+        
+        # ========== 步骤3：航向对准（以真实朝向角为目标） ==========
+        target_heading = target_bearing
         self.get_logger().info(f"开始航向对准：目标航向{target_heading:.2f}°")
         calib_generator = self.calibrate_heading_at_waypoint(target_heading)
         heading_aligned = False
+        first_straight_heading = 0.0  # 存储对准后的航向角，用于直行纠偏
         while rclpy.ok() and not heading_aligned:
             try:
                 left_speed, right_speed = next(calib_generator)
                 yield (left_speed, right_speed)
             except StopIteration:
                 self.get_logger().info("航向对准完成, 开始直线行驶到第一个航点")
+                first_straight_heading = self.imu_yaw  # 记录对准后的实际航向
                 heading_aligned = True
                 break
             except Exception as e:
-                self.get_logger().info(f"航向对准失败: {e}")
+                self.get_logger().error(f"航向对准失败: {e}")
                 return False
         
-        # ========== 步骤2：直线行驶到航点 ==========
-        last_distance = 0
-        consecutive_threshold = 5
+        # ========== 步骤4：直线行驶到第一个航点（带航向纠偏） ==========
+        # 直行纠偏配置
+        last_distance = 0.0
+        consecutive_threshold = 5  # 连续达标次数，避免误判
         consecutive_count = 0
+        
         while rclpy.ok():
+            # 计算到第一个航点的距离
             distance = self.calc_distance_to_waypoint(first_waypoint)
             
-            # 距离变化显著时打印
+            # 打印距离变化（减少日志冗余）
             if abs(last_distance - distance) > 0.1:
                 self.get_logger().info(f"到第一个航点距离：{distance:.2f} m")
                 last_distance = distance
             
-            # 连续N次距离达标, 进入后续校准
+            # 距离达标判断（连续N次达标视为到达）
             if distance < INITIAL_MOVE_TOLERANCE:
                 consecutive_count += 1
                 self.get_logger().info(f"距离达标, 连续计数：{consecutive_count}/{consecutive_threshold}")
                 if consecutive_count >= consecutive_threshold:
                     self.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f} m")
-                    # 到达后再做一次精准航向校准
-                    target_heading = self.get_path_heading(first_waypoint)
-                    self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
+                    # 到达后精准校准（使用第一个航点的预设航向角）
+                    target_waypoint_heading = self.get_path_heading(first_waypoint)
+                    self.get_logger().info(f"开始最终航向校准：目标{target_waypoint_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+                    self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_waypoint_heading)
                     self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
                     while rclpy.ok():
                         try:
@@ -635,17 +683,28 @@ class RTKNavControlNode(Node):
                             return True
                     return True
             else:
-                consecutive_count = 0
+                consecutive_count = 0  # 未达标，重置计数
             
-            # 行驶中小幅航向纠偏, 保持朝向目标
-            target_heading = self.get_path_heading(first_waypoint)
+            # ========== 直行航向纠偏逻辑（核心） ==========
+            # 目标航向：对准后的真实朝向角（first_straight_heading）
+            target_heading = first_straight_heading
+            # 计算纠偏量（基于真实朝向角的误差）
             correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
+            # 基础速度（保持原有互为相反数逻辑，仅通过correction微调差速）
             base_speed = LINEAR_SPEED_BASE
             left_speed = -base_speed + correction
             right_speed = base_speed + correction
+            
+            # 速度限制（双重保障，避免异常值）
             left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
             right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
+            
+            # 边界触发时优先执行边界矫正
+            if self.is_boundary_triggered:
+                left_speed, right_speed = self.get_boundary_correct_speed()
+            
             yield (left_speed, right_speed)
+        
         return False
 
     def reset_imu_calibration(self):
@@ -729,6 +788,8 @@ class RTKNavControlNode(Node):
                 except StopIteration:
                     # 初始移动完成, 切换到第一个航点
                     self.current_waypoint_idx = 1
+                    self.current_segment_heading = self.waypoints[0][2]
+
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
                     self.get_logger().info("[ROSNode] 初始移动完成, 进入航点导航阶段")
@@ -754,6 +815,9 @@ class RTKNavControlNode(Node):
             if self.current_waypoint_idx != last_waypoint_idx:
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
+                self.current_segment_heading = self.waypoints[self.current_waypoint_idx - 1][2]  # 上一个航点=当前路段heading
+                self.get_logger().info(f"[直行航向设置] 路段{self.current_waypoint_idx - 1}→{self.current_waypoint_idx}，目标航向（起点航向）：{self.current_segment_heading:.2f}°")
+
                 last_waypoint_idx = self.current_waypoint_idx  # 更新上一个航点索引
                 # self.get_logger().info(f"[ROSNode] 检测到航点切换, 强制进入移动阶段（当前航点{self.current_waypoint_idx}）")
 
@@ -844,6 +908,8 @@ class RTKNavControlNode(Node):
 
                 # 距离未达标：直线行驶+实时纠偏
                 if distance >= RTK_WAYPOINT_TOLERANCE:
+                    target_heading = self.current_segment_heading
+
                     correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
                     base_speed = LINEAR_SPEED_BASE
                     left_speed = -base_speed + correction

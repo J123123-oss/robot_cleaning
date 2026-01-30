@@ -2,13 +2,13 @@
 Description=Init Can0 and CH340 Driver
 # 关键1：RK3576必须等内核、总线、网卡驱动加载完成再执行，顺序不能乱
 After=sysinit.target network.target systemd-modules-load.service
-# 关键2：防止服务执行过早，强制延迟2秒启动，规避硬件初始化不完成的问题
-ExecStartPre=/bin/sleep 2
 # 关键3：仅在开机执行一次，不重复启动
 ConditionPathExists=/sys/class/net/
 
 [Service]
 # 核心修复：一次性执行脚本的必配参数
+# 关键2：防止服务执行过早，强制延迟2秒启动，规避硬件初始化不完成的问题
+ExecStartPre=/bin/sleep 2
 Type=oneshot
 RemainAfterExit=yes
 # 保持root权限（因为必须，无替代方案）

@@ -45,7 +45,7 @@ def generate_launch_description():
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20260107_095537.txt'}
-            {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260128_145139.txt'}
+            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260128_145358.txt'}
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
         ]
@@ -192,7 +192,7 @@ def generate_launch_description():
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
-    ld.add_action(sensors_485_node)
+    # ld.add_action(sensors_485_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释

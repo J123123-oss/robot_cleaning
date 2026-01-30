@@ -8,3 +8,4 @@ ip link set can0 up
 sh -c 'echo 4096 > /sys/class/net/can0/tx_queue_len'
 # start ch340
 insmod /home/ztl/robot_cleaning/ch341.ko
+chmod +x /home/ztl/robot_cleaning/motor_start.sh
