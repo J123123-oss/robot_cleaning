@@ -339,7 +339,7 @@ class CleaningPathPlanner(Node):
         self.declare_parameter('swap_wh_select', False)
         self.declare_parameter('edge_distance_lon', 0.0)
         self.declare_parameter('edge_distance_lat', 0.0)
-        self.declare_parameter('headless', False)
+        self.declare_parameter('headless', True)
         
         self.param = {
             'calib_point_a': (

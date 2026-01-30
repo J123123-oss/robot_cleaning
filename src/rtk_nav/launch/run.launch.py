@@ -26,6 +26,16 @@ def generate_launch_description():
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/道路4.txt'}
         ]
     )
+    sensors_485_node = Node(
+        package='motor_control',  # 对应 ROS1 的 pkg，包名不变
+        executable='sensors_485',  # 对应 ROS1 的 type，可执行文件名称
+        # name='sensors_485',  # 对应 ROS1 的 name，节点名称
+        # output='screen',  # 对应 ROS1 的 output，输出到终端
+        parameters=[
+            {'port': '/dev/ttyS4'},
+            {'baud': 9600}
+        ]
+    )
     RTKNavigator = Node(
         package='rtk_nav',
         executable='rtk_nav',
@@ -35,7 +45,7 @@ def generate_launch_description():
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20260107_095537.txt'}
-            # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251120_171622.txt'}
+            {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260128_145139.txt'}
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
         ]
@@ -95,16 +105,16 @@ def generate_launch_description():
         # 传递参数（对应ROS1的 <param>）
         parameters=[
             {
-                "broker": "121.40.57.48",  # MQTT服务器地址
-                "port": 1883,  # MQTT端口
-                "user": "gf-mounted",  # MQTT用户名
-                "password": "20230810",  # MQTT密码
-                # 拼接参数：robot/$(arg robot_ID)/status → ROS2用LaunchConfiguration
-                "topic_status": ["robot/", LaunchConfiguration("robot_ID"), "/status"],
-                "topic_cmd": ["robot/", LaunchConfiguration("robot_ID"), "/cmd"],
-                "topic_command": ["robot/", LaunchConfiguration("robot_ID"), "/command"],
-                "topic_result": ["robot/", LaunchConfiguration("robot_ID"), "/result"],
-                "client_id": ["python-mqtt-client-", LaunchConfiguration("robot_ID")]
+            "broker": "121.40.57.48",  # MQTT服务器地址
+            "port": 1883,  # MQTT端口
+            "user": "gf-mounted",  # MQTT用户名
+            "password": "20230810",  # MQTT密码
+            # 拼接参数：robot/$(arg robot_ID)/status → ROS2用LaunchConfiguration
+            "topic_status": ["robot/", LaunchConfiguration("robot_ID"), "/status"],
+            "topic_cmd": ["robot/", LaunchConfiguration("robot_ID"), "/cmd"],
+            "topic_command": ["robot/", LaunchConfiguration("robot_ID"), "/command"],
+            "topic_result": ["robot/", LaunchConfiguration("robot_ID"), "/result"],
+            "client_id": ["python-mqtt-client-", LaunchConfiguration("robot_ID")]
             }
         ]
     )
@@ -181,6 +191,8 @@ def generate_launch_description():
     ld.add_action(declare_robot_id_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
+
+    ld.add_action(sensors_485_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释

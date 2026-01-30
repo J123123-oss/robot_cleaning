@@ -19,7 +19,7 @@ RTK_WAYPOINT_TOLERANCE = 0.1
 RTK_HEADING_TOLERANCE = 0.2  # degree
 LINEAR_SPEED_BASE = 0.5    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 1.0
+INITIAL_MOVE_TOLERANCE = 0.2
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
@@ -28,6 +28,9 @@ TURN_SPEED_MID = 0.6   # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.2  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8   # 最大修正量
 
+# straight line speed correction factor
+STRAIGHT_PID_SCALE = 0.3
+SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -636,10 +639,12 @@ class RTKNavControlNode(Node):
             
             # 行驶中小幅航向纠偏, 保持朝向目标
             target_heading = self.get_path_heading(first_waypoint)
-            correction = 0 #self.get_speed_correction(target_heading)
+            correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
             base_speed = LINEAR_SPEED_BASE
-            left_speed = -base_speed - correction
+            left_speed = -base_speed + correction
             right_speed = base_speed + correction
+            left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
+            right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
             yield (left_speed, right_speed)
         return False
 
@@ -839,10 +844,12 @@ class RTKNavControlNode(Node):
 
                 # 距离未达标：直线行驶+实时纠偏
                 if distance >= RTK_WAYPOINT_TOLERANCE:
-                    correction = 0 #self.get_speed_correction(target_heading)
+                    correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
                     base_speed = LINEAR_SPEED_BASE
-                    left_speed = -base_speed - correction
+                    left_speed = -base_speed + correction
                     right_speed = base_speed + correction
+                    left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
+                    right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
                     if self.is_boundary_triggered:
                         # 触发边界 → 暂停校准, 执行矫正速度
                         left_speed, right_speed = self.get_boundary_correct_speed()

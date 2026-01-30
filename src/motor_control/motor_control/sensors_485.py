@@ -5,7 +5,7 @@ import serial
 import struct
 from std_msgs.msg import UInt8, Float32MultiArray  # 新增Float32MultiArray发布电池数据
 
-class IMUParser(Node):
+class Sensors_485(Node):
     def destroy_node(self):
         """清理资源"""
         if self.ser and self.ser.is_open:
@@ -14,7 +14,7 @@ class IMUParser(Node):
         super().destroy_node()
 
     def __init__(self):
-        super().__init__('imu_parser_node')
+        super().__init__('Sensors_485_node')
         
         # 参数配置
         self.declare_parameter('serial_port', '/dev/ttyS4')
@@ -22,9 +22,10 @@ class IMUParser(Node):
         
         self.port = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baudrate = self.get_parameter('baudrate').get_parameter_value().integer_value
-        self.battery_ID = 0x0B # 新增：电池设备地址
+        self.battery_ID = 0x0B # 电池设备地址   0B  /  01
         self.io_cmd = bytes.fromhex("01 02 00 00 00 08 79 CC")  # IO采集命令
-        self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
+        # self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
+        self.battery_cmd = bytes.fromhex(f"01 04 00 00 00 03 B0 0B")  # 电池查询命令
         self.ser = None
         self.reconnect_interval = 1.0  # 重连间隔
         self.last_reconnect_time = 0
@@ -322,7 +323,7 @@ class IMUParser(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = IMUParser()
+    node = Sensors_485()
     
     try:
         rclpy.spin(node)

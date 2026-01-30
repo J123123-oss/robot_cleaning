@@ -26,7 +26,9 @@ setup(
         'console_scripts': [
             'motor_control = motor_control.motor_control:main',
             'motor_driver = motor_control.motor_driver:main',
-            'remote_control = motor_control.remote_control:main'
+            'remote_control = motor_control.remote_control:main',
+            'sensors_485 = motor_control.sensors_485:main'
+
         ],
     },
 )

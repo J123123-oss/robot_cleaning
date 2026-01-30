@@ -24,8 +24,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from motor_control.motor_driver import CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
-# 移除RTKNavControlNode的导入，避免不必要的依赖
-# from rtk_nav.rtk_nav import RTKNavControlNode
 
 # -------------------------- 全局配置与枚举 --------------------------
 # STATE_DICT = {
@@ -394,9 +392,9 @@ class MotorControlNode(Node):
 
     def battery_status_callback(self, msg):
 
-        self.battery_remaining = msg.capacity_percent  # 电池百分比
-        self.battery_total_voltage = round(msg.total_voltage, 2) 
-        self.battery_current = round(msg.total_current, 2)
+        self.battery_remaining = msg['capacity_percent']  # 电池百分比
+        self.battery_total_voltage = round(msg['total_voltage'], 2) 
+        self.battery_current = round(msg['total_current'], 2)
          # 格式化温度列表，保留一位小数
         # self.battery_temperatures = [round(t, 1) for t in msg.temperatures] if hasattr(msg, "temperatures") else []
 
