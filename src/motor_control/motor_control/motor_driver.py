@@ -109,7 +109,7 @@ class CanMotorDriver(Node):
             self.get_logger().warn("Failed to initialize CAN bus, will retry periodically")
             
         # 初始化电机
-        self.initialize_motors()
+        # self.initialize_motors()
         
         # 创建订阅者，用于接收速度命令
         self.subscription = self.create_subscription(

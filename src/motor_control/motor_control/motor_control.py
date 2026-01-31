@@ -97,21 +97,21 @@ class MotorControlNode(Node):
         self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         
-        # 尝试创建CAN总线连接，失败时重试
-        max_retries = 5  # 最大重试次数
-        retry_delay = 2.0  # 重试间隔（秒）
-        for attempt in range(max_retries + 1):
-            if self.motor_ctrl.create_can_bus():
-                self.get_logger().info("[ROSNode] CAN串口初始化成功")
-                break
-            else:
-                if attempt < max_retries:
-                    self.get_logger().warn(f"[ROSNode] CAN串口初始化失败，第{attempt + 1}次重试...")
-                    time.sleep(retry_delay)
-                else:
-                    self.get_logger().fatal("[ROSNode] CAN串口重连失败，无法继续运行，退出节点")
-                    rclpy.signal_shutdown("CAN串口重连失败")
-                    return
+        # # 尝试创建CAN总线连接，失败时重试
+        # max_retries = 5  # 最大重试次数
+        # retry_delay = 2.0  # 重试间隔（秒）
+        # for attempt in range(max_retries + 1):
+        #     if self.motor_ctrl.create_can_bus():
+        #         self.get_logger().info("[ROSNode] CAN串口初始化成功")
+        #         break
+        #     else:
+        #         if attempt < max_retries:
+        #             self.get_logger().warn(f"[ROSNode] CAN串口初始化失败，第{attempt + 1}次重试...")
+        #             time.sleep(retry_delay)
+        #         else:
+        #             self.get_logger().fatal("[ROSNode] CAN串口重连失败，无法继续运行，退出节点")
+        #             rclpy.signal_shutdown("CAN串口重连失败")
+        #             return
 
         # 2. 初始化遥控器模块
         self.sbus_remote = SBUSRemoteController()
@@ -397,13 +397,17 @@ class MotorControlNode(Node):
         # self.get_logger().info(f"[imu_yaw_deg]： {self.imu_yaw_deg}")
 
     def battery_callback(self, msg):
-
-        self.battery_remaining = msg['capacity_percent']  # 电池百分比
-        self.battery_total_voltage = round(msg['total_voltage'], 2) 
-        self.battery_current = round(msg['total_current'], 2)
-         # 格式化温度列表，保留一位小数
-        # self.battery_temperatures = [round(t, 1) for t in msg.temperatures] if hasattr(msg, "temperatures") else []
-
+        """订阅电池数据的回调函数（修正版）"""
+        # 1. 先判断msg.data是否有足够的元素，避免索引越界报错（健壮性优化）
+        if len(msg.data) < 3:
+            self.get_logger().warn("警告：订阅到的电池数据不完整，跳过解析")
+            return
+        
+        # 2. 按照发布时的顺序，通过索引取值（而非字典键值对）
+        # 索引0：剩余容量百分比，索引1：总电流，索引2：总电压
+        self.battery_remaining = msg.data[0]  # 电池百分比
+        self.battery_current = round(msg.data[1], 2)  # 总电流（索引1）
+        self.battery_total_voltage = round(msg.data[2], 2)  # 总电压（索引2）
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（完全保留原有功能）"""
         # 新增：先校验key是否在STATE_DICT中，避免KeyError
