@@ -299,8 +299,8 @@ class WTRTKSerialDriver(Node):
                 time.sleep(0.1)  # 缩短异常等待，减少阻塞
     def publish_latest_data(self):
         """定时器触发，每秒发布一次最新解析的数据"""
-        # if self.latest_fix:
-        #     self.fix_pub.publish(self.latest_fix)
+        if self.latest_fix:
+            self.fix_pub.publish(self.latest_fix)
         if self.latest_wtrtk:
             self.wtrtk_pub.publish(self.latest_wtrtk)
 

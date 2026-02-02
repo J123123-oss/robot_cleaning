@@ -817,9 +817,11 @@ class MotorControlNode(Node):
                 self.get_logger().info("[LOADING] 进仓流程完成")
                 self.set_motors_speed(0, 0)  # 停止电机
                 # 切换到待机模式 # STOP
-                self.switch_state("z")
                 self.loading_timer.cancel()
                 self.loading_timer = None
+                # reset RTK status
+                self.nav_status == "IDLE"
+                self.switch_state("z")
         except Exception as e:
             self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
 

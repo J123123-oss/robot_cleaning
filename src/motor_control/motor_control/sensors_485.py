@@ -25,7 +25,7 @@ class Sensors_485(Node):
         self.battery_ID = 0x0B # 电池设备地址   0B  /  01
         self.io_cmd = bytes.fromhex("01 02 00 00 00 08 79 CC")  # IO采集命令
         self.battery_cmd = bytes.fromhex(f"{self.battery_ID:02x} 04 00 00 00 03 B0 A1")  # 电池查询命令
-        # self.battery_cmd = bytes.fromhex(f"01 04 00 00 00 03 B0 0B")  # 电池查询命令
+        # self.battery_cmd = bytes.fromhex(f"01 04 00 00 00 03 B0 0B")  # 电池查询命令   self.battery_ID = 0x01
         self.ser = None
         self.reconnect_interval = 1.0  # 重连间隔
         self.last_reconnect_time = 0
@@ -177,9 +177,11 @@ class Sensors_485(Node):
         # 4.3 电池组总电压（无符号16位，0.01V单位）
         voltage_raw = (data[7] << 8) | data[8]
         battery_data['total_voltage'] = voltage_raw * 0.01
+        if battery_data['total_voltage'] < 10.0 or battery_data['total_voltage'] > 55.0:
+            return None
         
         # 打印解析结果（便于调试）
-        self.get_logger().debug(f"Parsed battery: {battery_data['capacity_percent']:.2f}% | "
+        self.get_logger().info(f"Parsed battery: {battery_data['capacity_percent']:.2f}% | "
                               f"{battery_data['total_current']:.2f}A | {battery_data['total_voltage']:.2f}V")
         return battery_data
 

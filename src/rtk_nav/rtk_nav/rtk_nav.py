@@ -15,11 +15,11 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.1
+RTK_WAYPOINT_TOLERANCE = 0.3
 RTK_HEADING_TOLERANCE = 0.1  # degree
 LINEAR_SPEED_BASE = 5.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.1
+INITIAL_MOVE_TOLERANCE = 0.3
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -30,7 +30,7 @@ TURN_SPEED_SLOW = 0.2  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8   # 最大修正量
 
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 0.8
+STRAIGHT_PID_SCALE = 2.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 # 控制模式（与电机节点保持一致）
@@ -59,7 +59,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 0.0  # RTK安装偏移角度
+        self.rtk_install_offset = -90.0  # RTK安装偏移角度
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
@@ -421,7 +421,7 @@ class RTKNavControlNode(Node):
         yaw_error_abs = abs(yaw_error)
 
         # 2. 误差死区：避免微小震荡
-        if yaw_error_abs < RTK_WAYPOINT_TOLERANCE:
+        if yaw_error_abs < 1.0:
             self.last_yaw_error = 0.0
             return 0.0
 
@@ -434,7 +434,7 @@ class RTKNavControlNode(Node):
             kp = 0.005
 
         # 4. 统一KD参数（抑制超调，左右转一致）
-        kd = 0.03
+        kd = 0.01
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -491,7 +491,7 @@ class RTKNavControlNode(Node):
             correction = self.get_speed_correction(target_heading)
 
             # 根据修正后的误差计算转向方向
-            min_positive_speed = 0.1  # 最小正向速度，防止停滞
+            min_positive_speed = 0.1  # 最小正向速度，防止停滞 origin 0.1
             if heading_error > 0:
                 # turn_right旋转（根据你的电机控制逻辑调整, 若反向则互换左右速度）
                 left_speed = -max(turn_speed - correction, min_positive_speed)
@@ -708,7 +708,7 @@ class RTKNavControlNode(Node):
             self.get_logger().warn("boundary_triggered!!!")
 
         # 2. 阶段1：初始移动（初始点→第一个航点）- 仅首次启动且非恢复时执行
-        if current_nav_state == NavState.INITIAL_MOVE and not resume:
+        if current_nav_state == NavState.INITIAL_MOVE:
             self.get_logger().info("[ROSNode] 进入初始移动阶段：初始点→第一个航点")
             initial_move_generator = self.move_to_first_waypoint()
             while True:
@@ -885,11 +885,19 @@ class RTKNavControlNode(Node):
         previous_mode = self.current_control_mode
         self.current_control_mode = msg.data
         # 切换到RTK模式时, 重置IMU校准
+        # if self.current_control_mode == ControlMode.RTK_NAV and previous_mode != ControlMode.RTK_NAV:
+        #     # self.reset_imu_calibration()
+        #     # 新增：强制重置导航生成器和运行状态
+        #     self.multi_waypoint_generator = None
+        #     self.nav_running = False
         if self.current_control_mode == ControlMode.RTK_NAV and previous_mode != ControlMode.RTK_NAV:
-            # self.reset_imu_calibration()
-            # 新增：强制重置导航生成器和运行状态
             self.multi_waypoint_generator = None
             self.nav_running = False
+            # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
+            if self.nav_context["nav_state"] not in [NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED]:
+                self.nav_context["nav_state"] = NavState.INITIAL_MOVE
+            self.get_logger().info(f"切换到RTK模式，导航状态：{self.nav_context['nav_state']}")
+
         # 切换非RTK模式时, 保存导航状态, 停止导航
         if self.current_control_mode != ControlMode.RTK_NAV:
             if self.multi_waypoint_generator:
