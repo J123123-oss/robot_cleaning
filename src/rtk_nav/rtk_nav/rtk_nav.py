@@ -15,23 +15,26 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.3
+RTK_WAYPOINT_TOLERANCE = 0.2
 RTK_HEADING_TOLERANCE = 0.1  # degree
 LINEAR_SPEED_BASE = 5.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.3
+INITIAL_MOVE_TOLERANCE = 0.2
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
 TURN_SPEED_FAST = 0.8  # 大误差快速转向基准速度
 TURN_SPEED_MID = 0.6   # 中误差中等转向基准速度
-TURN_SPEED_SLOW = 0.2  # 小误差慢速转向基准速度（防超调）
+TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8   # 最大修正量
 
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 2.0
+STRAIGHT_PID_SCALE = 0.6
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
+
+#近距离减速阈值
+LOW_DISTANCE = 1.5
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -240,7 +243,7 @@ class RTKNavControlNode(Node):
         #         self.motor_set_speed(1, 0)
         #         self.motor_set_speed(2, 0)
         #         while self.front_left or self.front_right and rclpy.ok():
-        #             self.motor_set_speed(1, 0.3 * self.BASE_SPEED)
+        #             self.motor_set_speed(1, 0.3 * self.BASE_SPEED)sou .i
         #             self.motor_set_speed(2, -0.3 * self.BASE_SPEED)
         # if self.back_left or self.back_right:
         #     self.motor_set_speed(1, 0)
@@ -330,21 +333,26 @@ class RTKNavControlNode(Node):
             return False
 
     def gps_callback(self, msg: NavSatFix) -> None:
+        # 初始化上一状态变量（首次调用时创建）
+        if not hasattr(self, 'last_gps_status'):
+            self.last_gps_status = -1
+            
         if msg.status.status < 0:
             self.get_logger().warn("GPS信号无效")
+            # 更新上一状态为无效
+            self.last_gps_status = -1
             return
-        last_status = msg.status.status
+        
         status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
-        # when status change, print info once
-        if msg.status.status in status_map and msg.status.status != last_status:
-
+        # 仅当状态改变时才打印日志
+        if msg.status.status in status_map and msg.status.status != self.last_gps_status:
             self.get_logger().info(f"GPS状态：{status_map[msg.status.status]}")
-        last_status = msg.status.status
+            # 更新上一状态为当前状态
+            self.last_gps_status = msg.status.status
+        
         self.current_gps = (msg.longitude, msg.latitude)
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
-        # self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
-
 
     def heading_callback(self, msg: WTRTK) -> None:
         ins_heading_deg = msg.ins_heading
@@ -410,45 +418,89 @@ class RTKNavControlNode(Node):
         return math.fmod(heading_deg + 180.0, 360.0) - 180.0
 
     def get_heading_error(self, target_heading: float) -> float:
-        """新增：计算当前航向与目标航向的误差（归一化到[-π, π], 单位：rad）"""
+        """计算当前航向与目标航向的误差（归一化到[-180°, 180°]，单位：度）"""
         heading_error = target_heading - self.imu_yaw
-        # return math.fmod(heading_error + math.pi, 2 * math.pi) - math.pi
-        return math.fmod(heading_error + 180.0, 360.0) - 180.0
+        # 核心：确保归一化逻辑正确执行（先加180→取模→减180）
+        heading_error = math.fmod(heading_error + 180.0, 360.0)
+        heading_error -= 180.0
+        # 额外处理浮点数精度问题（避免因精度导致的超范围）
+        if heading_error <= -180.0:
+            heading_error += 360.0
+        elif heading_error > 180.0:
+            heading_error -= 360.0
+        return heading_error
 
+    # def get_speed_correction(self, target_heading: float) -> float:
+    #     """计算对称纠正量（保证左右转一致，明确区分yaw_error正负）"""
+    #     yaw_error = self.get_heading_error(target_heading)
+    #     yaw_error_abs = abs(yaw_error)
+
+    #     # 2. 误差死区：避免微小震荡
+    #     if yaw_error_abs < 1.0:
+    #         self.last_yaw_error = 0.0
+    #         return 0.0
+
+    #     # 3. 统一KP参数（左右转纠正量一致，不差异化）
+    #     if yaw_error_abs > 30:
+    #         kp = 0.05
+    #     elif yaw_error_abs > 10:
+    #         kp = 0.03
+    #     else:
+    #         kp = 0.005
+
+    #     # 4. 统一KD参数（抑制超调，左右转一致）
+    #     kd = 0.01
+    #     yaw_error_diff = yaw_error - self.last_yaw_error
+    #     d_term = kd * yaw_error_diff
+
+    #     # 5. 计算修正量
+    #     correction = (kp * yaw_error) - d_term
+
+    #     # 6. 统一最大修正量限制
+    #     correction_clamped = max(min(-correction, MAX_CORRECTION), -MAX_CORRECTION)
+
+    #     if abs(yaw_error - self.last_yaw_error) > 0.1:
+    #         self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+    #     self.last_yaw_error = yaw_error
+
+    #     return correction_clamped 
     def get_speed_correction(self, target_heading: float) -> float:
-        """计算对称纠正量（保证左右转一致，明确区分yaw_error正负）"""
+        """计算对称纠正量（优化PID，减少长距离累积偏移）"""
         yaw_error = self.get_heading_error(target_heading)
         yaw_error_abs = abs(yaw_error)
 
-        # 2. 误差死区：避免微小震荡
-        if yaw_error_abs < 1.0:
+        # 1. 误差死区优化：缩小死区（从1.0°→0.3°），避免微小误差累积
+        if yaw_error_abs < 0.3:
             self.last_yaw_error = 0.0
             return 0.0
 
-        # 3. 统一KP参数（左右转纠正量一致，不差异化）
+        # 2. KP参数优化：增强小误差修正灵敏度，避免累积
         if yaw_error_abs > 30:
-            kp = 0.05
+            kp = 0.08  # 大误差：适度增大，快速转向
         elif yaw_error_abs > 10:
-            kp = 0.03
+            kp = 0.05  # 中误差：增大，及时修正
         else:
-            kp = 0.005
+            kp = 0.02  # 小误差：大幅增大（原0.005），精准抵消微小偏移
 
-        # 4. 统一KD参数（抑制超调，左右转一致）
-        kd = 0.01
+        # 3. KD参数优化：增强阻尼，抑制持续偏向
+        kd = 0.05  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
+
+        # 4. 误差差分计算（保持不变）
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
-        # 5. 计算修正量
-        correction = (kp * yaw_error) - d_term
+        # 5. 修正量计算：移除负号，避免方向反转（原逻辑可能导致修正方向与误差相反）
+        correction = (kp * yaw_error) + d_term  # 核心修改：将 "-d_term" 改为 "+d_term"
 
-        # 6. 统一最大修正量限制
+        # 6. 最大修正量限制：保留，但适配新参数（避免过度修正）
         correction_clamped = max(min(-correction, MAX_CORRECTION), -MAX_CORRECTION)
 
-        # if abs(yaw_error - self.last_yaw_error) > 0.1:
-            # self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        # 日志输出（保持不变，便于调试）
+        if abs(yaw_error - self.last_yaw_error) > 0.1:
+            self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        
         self.last_yaw_error = yaw_error
-
-        return correction_clamped 
+        return correction_clamped
     
     def get_adaptive_turn_speed(self, yaw_error_abs: float) -> float:
         """
@@ -594,7 +646,9 @@ class RTKNavControlNode(Node):
             
             # 核心：每帧实时计算当前位置→目标航点的朝向角（替代固定航向）
             real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-            
+            # 新增：角度平滑（取当前与上一帧的平均值，减少波动）
+            real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
+            self.nav_context["last_target_heading"] = real_time_heading
             # 计算实时距离
             distance = self.calc_distance_to_waypoint(first_waypoint)
             
@@ -614,6 +668,7 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(f"开始最终航向校准：目标{target_waypoint_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_waypoint_heading)
                     self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
+                    
                     while rclpy.ok():
                         try:
                             left_speed, right_speed = next(self.nav_context["calib_generator"])
@@ -625,13 +680,21 @@ class RTKNavControlNode(Node):
                     return True
             else:
                 consecutive_count = 0
+            # ========== 新增：距离<1米时线性减速 ==========
+            if distance < LOW_DISTANCE:
+                # 线性减速：距离1米时速度=BASE的50%，距离0.1米时速度=BASE的10%
+                speed_scale = max(0.1, distance * 0.5)  # 0.1~0.5之间动态缩放
+                current_base_speed = LINEAR_SPEED_BASE * speed_scale
+                self.get_logger().info(f"距离小，减速：当前基础速度={current_base_speed:.2f}（原{LINEAR_SPEED_BASE:.2f}）")
+            else:
+                current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
             
             # ========== 实时角度纠偏逻辑 ==========
             target_heading = real_time_heading  # 使用实时朝向角
             correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
-            base_speed = LINEAR_SPEED_BASE
-            left_speed = -base_speed + correction
-            right_speed = base_speed + correction
+            # base_speed = LINEAR_SPEED_BASE
+            left_speed = -current_base_speed + correction
+            right_speed = current_base_speed + correction
             
             # 速度限制
             left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
@@ -815,7 +878,9 @@ class RTKNavControlNode(Node):
                 
                 # 核心：每帧实时计算朝向角
                 real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                
+                # 新增：角度平滑（取当前与上一帧的平均值，减少波动）
+                real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
+                self.nav_context["last_target_heading"] = real_time_heading
                 # 计算实时距离
                 distance = self.calc_distance_to_waypoint(target_waypoint)
                 
@@ -832,10 +897,18 @@ class RTKNavControlNode(Node):
                 if distance >= RTK_WAYPOINT_TOLERANCE:
                     target_heading = real_time_heading  # 使用实时朝向角
                     correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
-                    base_speed = LINEAR_SPEED_BASE
-                    left_speed = -base_speed + correction
-                    right_speed = base_speed + correction
+                    # ========== 新增：距离<1米时线性减速 ==========
+                    if distance < LOW_DISTANCE:
+                        speed_scale = max(0.1, distance * 0.5)  # 线性缩放，最低保留10%基础速度
+                        current_base_speed = LINEAR_SPEED_BASE * speed_scale
+                        self.get_logger().info(f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离小，减速（当前基础速度={current_base_speed:.2f}）")
+                    else:
+                        current_base_speed = LINEAR_SPEED_BASE
                     
+                    # 核心修改：用动态基础速度current_base_speed替代固定LINEAR_SPEED_BASE
+                    left_speed = -current_base_speed + correction
+                    right_speed = current_base_speed + correction
+            
                     # 速度限制
                     left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
                     right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)

@@ -118,6 +118,7 @@ class MotorControlNode(Node):
         if not self.sbus_remote.is_connected:
             self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
         self.current_location = None
+        self.rtk_status = 0  # 初始化RTK状态为0（无效状态）
         self.current_lon = 0.0
         self.current_lat = 0.0
         # 移除RTKNavControlNode的实例化，避免节点冲突
@@ -213,7 +214,8 @@ class MotorControlNode(Node):
         if msg.status.status in status_map:
             self.get_logger().debug(f"GPS状态：{status_map[msg.status.status]}")
 
-        self.current_gps = (msg.longitude, msg.latitude)
+        # self.current_gps = (msg.longitude, msg.latitude)
+        self.rtk_status = msg.status.status
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
         # self.get_logger().info(f"current_lon: {self.current_lon}, current_lat: {self.current_lat}")
@@ -534,6 +536,7 @@ class MotorControlNode(Node):
                 # "progress": self.progress,
                 "imu_yaw": self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00,
                 # "imu_yaw": round(self.imu_yaw_deg, 2) if self.imu_yaw_deg is not None else 0.00,
+                "rtk_status": self.rtk_status,  # RTK状态
                 "current_lon": self.current_lon,
                 "current_lat": self.current_lat,
                 # "velocity_up": round(velocity_up , 2),  # 保留两位小数，数值类型
@@ -541,11 +544,11 @@ class MotorControlNode(Node):
                 # "velocity_brush": round(velocity_brush, 2),
                 # "velocity_locking": 0,
                 # "sensors_status": self.sensors_status,  # 超声波传感器状态
-                "device_status": {
-                "main_board": self.main_board,
-                "imu_sensor": self.imu_sensor,
-                "motor_driver": self.motor_driver,
-                "comm_module": True  },
+                # "device_status": {
+                # "main_board": self.main_board,
+                # "imu_sensor": self.imu_sensor,
+                # "motor_driver": self.motor_driver,
+                # "comm_module": True  },
                 # "complete_state":self.complete_state, # 任务完成状态
                 # "auto_mode": self.auto_mode, # 自动模式开关,默认开
                 # "relay_status": self.relay_status,
