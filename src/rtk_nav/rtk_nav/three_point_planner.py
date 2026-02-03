@@ -311,12 +311,22 @@ class CleaningPathPlanner(Node):
         # B:120.07142615983334,30.32123303533333
         # C:120.07151235049999,30.321311033166662
 
-        self.declare_parameter('calib_point_c.lon', 120.07149470883333)
-        self.declare_parameter('calib_point_c.lat', 30.32131817333333)
-        self.declare_parameter('calib_point_b.lon', 120.07142615983334)
-        self.declare_parameter('calib_point_b.lat', 30.32123303533333)
-        self.declare_parameter('calib_point_a.lon', 120.07151235049999)
-        self.declare_parameter('calib_point_a.lat', 30.321311033166662)
+        # A:120.07129427383333,30.321726006333332
+        # B:120.07130059466665,30.321665768833334
+        # C:120.07132923066665,30.321670159499998
+        self.declare_parameter('calib_point_c.lon', 120.07132923066665)
+        self.declare_parameter('calib_point_c.lat', 30.321670159499998)
+        self.declare_parameter('calib_point_b.lon', 120.07130059466665)
+        self.declare_parameter('calib_point_b.lat', 30.321665768833334)
+        self.declare_parameter('calib_point_a.lon', 120.07129427383333)
+        self.declare_parameter('calib_point_a.lat', 30.321726006333332)
+
+        # self.declare_parameter('calib_point_c.lon', 120.07149470883333)
+        # self.declare_parameter('calib_point_c.lat', 30.32131817333333)
+        # self.declare_parameter('calib_point_b.lon', 120.07142615983334)
+        # self.declare_parameter('calib_point_b.lat', 30.32123303533333)
+        # self.declare_parameter('calib_point_a.lon', 120.07151235049999)
+        # self.declare_parameter('calib_point_a.lat', 30.321311033166662)
         # self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
         # self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
         # self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
@@ -391,7 +401,7 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")

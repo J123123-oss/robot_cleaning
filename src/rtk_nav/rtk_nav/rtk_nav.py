@@ -15,11 +15,11 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.2
+RTK_WAYPOINT_TOLERANCE = 0.1
 RTK_HEADING_TOLERANCE = 0.1  # degree
 LINEAR_SPEED_BASE = 5.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.2
+INITIAL_MOVE_TOLERANCE = 0.1
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -30,7 +30,7 @@ TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8   # 最大修正量
 
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 0.6
+STRAIGHT_PID_SCALE = 1.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 #近距离减速阈值
@@ -386,28 +386,96 @@ class RTKNavControlNode(Node):
         # 返回当前目标航点
         return self.waypoints[idx]
 
+    # def calc_distance_to_waypoint(self, waypoint: Tuple[float, float, float]) -> float:
+    #     if not self.current_gps:
+    #         return float('inf')
+
+    #     R = 6371000.0  # 地球半径（米）
+    #     lon1, lat1 = self.current_gps
+    #     lon2, lat2, _ = waypoint
+
+    #     # 转换为弧度
+    #     lon1_rad = math.radians(lon1)
+    #     lat1_rad = math.radians(lat1)
+    #     lon2_rad = math.radians(lon2)
+    #     lat2_rad = math.radians(lat2)
+
+    #     # Haversine公式计算距离
+    #     delta_lon = lon2_rad - lon1_rad
+    #     delta_lat = lat2_rad - lat1_rad
+
+    #     a = math.sin(delta_lat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2)** 2
+    #     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    #     return R * c
+    def latlon_to_utm(self, lat: float, lon: float) -> Tuple[float, float]:
+        """
+        经纬度转UTM平面坐标（米）
+        :param lat: 纬度
+        :param lon: 经度
+        :return: (utm_x, utm_y) 平面坐标，单位米
+        """
+        # WGS84椭球参数
+        a = 6378137.0  # 长半轴
+        f = 1 / 298.257223563  # 扁率
+        e_sq = 2 * f - f ** 2  # 第一偏心率平方
+
+        # 计算UTM投影带号（6度带）
+        zone = int((lon + 180) / 6) + 1
+        # 中央子午线经度
+        lon0 = (zone - 1) * 6 - 180 + 3
+
+        # 转换为弧度
+        lat_rad = math.radians(lat)
+        lon_rad = math.radians(lon)
+        lon0_rad = math.radians(lon0)
+
+        # 子午线收敛角计算
+        n = a / math.sqrt(1 - e_sq * math.sin(lat_rad) ** 2)
+        t = math.tan(lat_rad) ** 2
+        c = e_sq * math.cos(lat_rad) ** 2 / (1 - e_sq)
+        a1 = math.cos(lat_rad) * (lon_rad - lon0_rad)
+
+        # 计算UTM x坐标（东向）
+        x = n * (a1 + (1 - t + c) * a1 ** 3 / 6 + (5 - 18 * t + t ** 2 + 72 * c - 58 * e_sq) * a1 ** 5 / 120)
+        # 计算UTM y坐标（北向）
+        m = a * ((1 - e_sq / 4 - 3 * e_sq ** 2 / 64 - 5 * e_sq ** 3 / 256) * lat_rad -
+                (3 * e_sq / 8 + 3 * e_sq ** 2 / 32 + 45 * e_sq ** 3 / 1024) * math.sin(2 * lat_rad) +
+                (15 * e_sq ** 2 / 256 + 45 * e_sq ** 3 / 1024) * math.sin(4 * lat_rad) -
+                (35 * e_sq ** 3 / 3072) * math.sin(6 * lat_rad))
+        y = m + n * math.tan(lat_rad) * (a1 ** 2 / 2 + (5 - t + 9 * c + 4 * c ** 2) * a1 ** 4 / 24 +
+                                        (61 - 58 * t + t ** 2 + 600 * c - 330 * e_sq) * a1 ** 6 / 720)
+
+        # 东向偏移500km，避免负数
+        x += 500000.0
+        # 南半球偏移10000km（本方案默认北半球，若需支持南半球可添加判断）
+        if lat < 0:
+            y += 10000000.0
+
+        return x, y
     def calc_distance_to_waypoint(self, waypoint: Tuple[float, float, float]) -> float:
         if not self.current_gps:
             return float('inf')
-
-        R = 6371000.0  # 地球半径（米）
+        
+        # 获取当前位置和目标航点的经纬度
         lon1, lat1 = self.current_gps
         lon2, lat2, _ = waypoint
 
-        # 转换为弧度
-        lon1_rad = math.radians(lon1)
-        lat1_rad = math.radians(lat1)
-        lon2_rad = math.radians(lon2)
-        lat2_rad = math.radians(lat2)
+        # 转换为UTM平面坐标
+        x1, y1 = self.latlon_to_utm(lat1, lon1)
+        x2, y2 = self.latlon_to_utm(lat2, lon2)
 
-        # Haversine公式计算距离
-        delta_lon = lon2_rad - lon1_rad
-        delta_lat = lat2_rad - lat1_rad
+        # 计算平面直线距离（米）
+        distance = math.hypot(x2 - x1, y2 - y1)
 
-        a = math.sin(delta_lat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2)** 2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        # ========== 可选：距离平滑，抑制GPS抖动 ==========
+        if not hasattr(self, 'last_utm_distance'):
+            self.last_utm_distance = distance
+        # 加权平滑：当前距离70% + 历史距离30%
+        smooth_distance = 0.7 * distance + 0.3 * self.last_utm_distance
+        self.last_utm_distance = smooth_distance
 
-        return R * c
+        return smooth_distance
 
     def get_path_heading(self, waypoint: Tuple[float, float, float]) -> float:
         """获取目标航点的路径航向角（转换为rad并归一化, 与IMU基准一致）"""
@@ -470,14 +538,14 @@ class RTKNavControlNode(Node):
         yaw_error_abs = abs(yaw_error)
 
         # 1. 误差死区优化：缩小死区（从1.0°→0.3°），避免微小误差累积
-        if yaw_error_abs < 0.3:
+        if yaw_error_abs < 0.1:
             self.last_yaw_error = 0.0
             return 0.0
 
         # 2. KP参数优化：增强小误差修正灵敏度，避免累积
-        if yaw_error_abs > 30:
+        if yaw_error_abs > 60:
             kp = 0.08  # 大误差：适度增大，快速转向
-        elif yaw_error_abs > 10:
+        elif yaw_error_abs > 8:
             kp = 0.05  # 中误差：增大，及时修正
         else:
             kp = 0.02  # 小误差：大幅增大（原0.005），精准抵消微小偏移
@@ -493,7 +561,7 @@ class RTKNavControlNode(Node):
         correction = (kp * yaw_error) + d_term  # 核心修改：将 "-d_term" 改为 "+d_term"
 
         # 6. 最大修正量限制：保留，但适配新参数（避免过度修正）
-        correction_clamped = max(min(-correction, MAX_CORRECTION), -MAX_CORRECTION)
+        correction_clamped = -max(min(correction, MAX_CORRECTION), -MAX_CORRECTION)
 
         # 日志输出（保持不变，便于调试）
         if abs(yaw_error - self.last_yaw_error) > 0.1:
@@ -518,9 +586,9 @@ class RTKNavControlNode(Node):
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
         self.get_logger().info(
             f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
-        start_time = self.get_clock().now()
 
         while rclpy.ok():
+            start_time = self.get_clock().now()
             heading_error = self.get_heading_error(target_heading)
             # ========== 核心修复：归一化航向误差到[-180°, 180°]，取最短路径 ==========
             heading_error = math.fmod(heading_error + 180.0, 360.0) - 180.0
@@ -680,12 +748,12 @@ class RTKNavControlNode(Node):
                     return True
             else:
                 consecutive_count = 0
-            # ========== 新增：距离<1米时线性减速 ==========
+            # ========== 新增：距离<LOW_DISTANCE米时线性减速 ==========
             if distance < LOW_DISTANCE:
-                # 线性减速：距离1米时速度=BASE的50%，距离0.1米时速度=BASE的10%
-                speed_scale = max(0.1, distance * 0.5)  # 0.1~0.5之间动态缩放
+                # 线性减速：距离LOW_DISTANCE米时速度=BASE的50%，距离0.1米时速度=BASE的10%
+                speed_scale = max(0.1, distance/LOW_DISTANCE * 0.5)  # 0.1~0.5之间动态缩放
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                self.get_logger().info(f"距离小，减速：当前基础速度={current_base_speed:.2f}（原{LINEAR_SPEED_BASE:.2f}）")
+                # self.get_logger().info(f"距离小，减速：当前基础速度={current_base_speed:.2f}（原{LINEAR_SPEED_BASE:.2f}）")
             else:
                 current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
             
@@ -752,6 +820,15 @@ class RTKNavControlNode(Node):
         if resume:
             current_nav_state = self.nav_context["nav_state"]
             self.get_logger().info(f"从状态{current_nav_state}恢复导航")
+            # 新增：恢复校准状态时，重新初始化校准生成器
+            if current_nav_state == NavState.WAYPOINT_CALIB:
+                target_waypoint = self.nav_context["target_waypoint"]
+                if target_waypoint:
+                    target_heading = self.get_path_heading(target_waypoint)
+                    # 重新创建校准生成器（重置超时计时和误差计算）
+                    self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
+                    self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+
             # 新增：强制更新一次到目标航点的距离
             if self.nav_context["target_waypoint"]:
                 distance = self.calc_distance_to_waypoint(self.nav_context["target_waypoint"])
@@ -899,9 +976,9 @@ class RTKNavControlNode(Node):
                     correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
                     # ========== 新增：距离<1米时线性减速 ==========
                     if distance < LOW_DISTANCE:
-                        speed_scale = max(0.1, distance * 0.5)  # 线性缩放，最低保留10%基础速度
+                        speed_scale = max(0.1, distance/LOW_DISTANCE * 0.5)  # 线性缩放，最低保留10%基础速度
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                        self.get_logger().info(f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离小，减速（当前基础速度={current_base_speed:.2f}）")
+                        # self.get_logger().info(f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离小，减速（当前基础速度={current_base_speed:.2f}）")
                     else:
                         current_base_speed = LINEAR_SPEED_BASE
                     
