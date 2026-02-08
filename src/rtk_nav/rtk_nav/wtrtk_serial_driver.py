@@ -56,7 +56,7 @@ class WTRTKSerialDriver(Node):
                 self.get_logger().info(f"Connected to {self.port} at {self.baud_rate} baud")
             return True
         except Exception as e:
-            self.get_logger().error(f"Failed to open serial port {self.port}: {str(e)}")
+            # self.get_logger().error(f"Failed to open serial port {self.port}: {str(e)}")
             return False
 
     def dms_to_decimal(self, dms_str, is_latitude=True):
@@ -238,7 +238,7 @@ class WTRTKSerialDriver(Node):
             if not self.ser or not self.ser.is_open:
                 self.get_logger().warn("Serial port closed, reconnecting...")
                 if not self.connect_serial():
-                    time.sleep(0.1)  # 缩短重连等待，减少阻塞
+                    time.sleep(0.5)  # 缩短重连等待，减少阻塞
                     continue
             
             try:

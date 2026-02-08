@@ -36,6 +36,7 @@ setup(
             'wtrtk_parse_txt = rtk_nav.wtrtk_parse_txt:main',
             'wtrtk_serial_driver = rtk_nav.wtrtk_serial_driver:main',
             'rtk_nav = rtk_nav.rtk_nav:main',
+            'navsat_key_publisher = rtk_nav.navsat_key_publisher:main',
         ],
     },
 

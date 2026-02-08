@@ -16,8 +16,8 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # -------------------------- 全局配置与枚举 --------------------------
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1
-RTK_HEADING_TOLERANCE = 0.1  # degree
-LINEAR_SPEED_BASE = 5.0    # origin 0.0124
+RTK_HEADING_TOLERANCE = 1.0  # degree
+LINEAR_SPEED_BASE = 4.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1
 RTK_CALIBRATION_TIMEOUT = 5.0
@@ -27,10 +27,10 @@ HEADING_CALIBRATION_TIMEOUT = 40.0
 TURN_SPEED_FAST = 0.8  # 大误差快速转向基准速度
 TURN_SPEED_MID = 0.6   # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
-MAX_CORRECTION = 0.8   # 最大修正量
+MAX_CORRECTION = 2.5   # 最大修正量
 
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 1.0
+STRAIGHT_PID_SCALE = 0.5
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 #近距离减速阈值
@@ -58,7 +58,7 @@ class RTKNavControlNode(Node):
         # ================== 原有RTKNavigator属性 ==================
         self.waypoints: List[Tuple[float, float, float]] = []
         self.current_waypoint_idx = 0
-        self.current_gps: Optional[Tuple[float, float]] = None
+        self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
@@ -76,7 +76,12 @@ class RTKNavControlNode(Node):
         self.back_left = None
         self.back_right = None
 
-        self.correct_speed_scale = 0.4
+        self.correct_speed_scale = 0.4 # boundary correct speed scale
+        self.last_waypoint_cache = None
+        self.has_printed_coincide_log = False
+        # 新增：跨文件缓存（保存上一个文件的最后一个航点，用于计算跨文件偏角）
+        self.cross_file_last_waypoint = None  # 格式：(lon, lat, heading)
+
         # self.is_boundary_triggered = False # test, False origin
         # 定义参数描述：bool类型, 名称：is_boundary_triggered, 默认值：False
         boundary_param_desc = ParameterDescriptor(
@@ -136,12 +141,67 @@ class RTKNavControlNode(Node):
         # 加载初始路径文件
         self.load_waypoints_from_file(self.rtk_path_file)
     
+
+    # def load_waypoints_from_file(self, file_path: str) -> bool:
+    #     """从文件加载航点数据（新增跨文件缓存逻辑）"""
+    #     try:
+    #         # 核心：加载新文件前，保存当前文件的最后一个航点到跨文件缓存
+    #         if self.waypoints:  # 若当前有已加载的航点（即切换文件场景）
+    #             self.cross_file_last_waypoint = self.waypoints[-1]  # 保存最后一个航点
+    #             self.get_logger().info(f"[跨文件缓存] 保存上一个文件最后一个航点：{self.cross_file_last_waypoint}")
+            
+    #         # 重置当前文件航点数据（原有逻辑保留）
+    #         self.waypoints = []
+    #         self.current_waypoint_idx = 0
+            
+    #         with open(file_path, 'r', encoding='utf-8') as f:
+    #             lines = f.readlines()[1:]  # 跳过表头
+    #             for line in lines:
+    #                 line = line.strip()
+    #                 if not line or line.startswith('#'):
+    #                     continue
+    #                 seq, lon, lat, heading_deg = line.split(',')
+    #                 self.waypoints.append((float(lon), float(lat), float(heading_deg)))
+            
+    #         # 初始化当前文件的上一个航点缓存（原有逻辑优化）
+    #         if self.waypoints:
+    #             self.last_waypoint_cache = self.waypoints[0]
+    #             self.get_logger().info(f"[当前文件缓存] 首次加载初始化：上一个航点为{self.waypoints[0]}")
+    #         else:
+    #             self.last_waypoint_cache = None
+    #             self.cross_file_last_waypoint = None
+    #             self.get_logger().warn("[RTKNav] 未加载到有效航点，缓存重置")
+            
+    #         # 原有日志和返回逻辑保留
+    #         self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点")
+    #         self.rtk_path_file = file_path  # 更新当前路径文件
+    #         return True
+            
+    #     except Exception as e:
+    #         self.get_logger().error(f"[RTKNav] 加载路径文件失败: {e}")
+    #         return False
     def load_waypoints_from_file(self, file_path: str) -> bool:
-        """从文件加载航点数据"""
+        """从文件加载航点数据（正确顺序：先区分场景，再执行缓存逻辑）"""
         try:
+            # ================== 第一步：先区分「首次加载」和「文件切换」==================
+            # 定义首次加载的判断条件：程序启动后第一次加载文件（用一个标记位控制）
+            if not hasattr(self, 'is_first_file_load'):
+                self.is_first_file_load = True  # 首次进入时初始化标记位
+            
+            # ================== 第二步：仅文件切换时，执行缓存逻辑==================
+            if not self.is_first_file_load and self.waypoints:
+                # 只有「文件切换」（非首次加载），才保存上一文件最后一个航点
+                self.cross_file_last_waypoint = self.waypoints[-1]
+                self.get_logger().info(f"[跨文件缓存] 保存上一个文件最后一个航点：{self.cross_file_last_waypoint}")
+            else:
+                # 首次加载：强制重置 cross_file_last_waypoint 为 None
+                self.cross_file_last_waypoint = None
+                self.get_logger().info(f"[首次加载] 不执行跨文件缓存，cross_file_last_waypoint 置空")
+            
+            # ================== 第三步：重置当前文件航点数据（原有逻辑）==================
             self.waypoints = []
             self.current_waypoint_idx = 0
-              
+            
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()[1:]  # 跳过表头
                 for line in lines:
@@ -151,8 +211,33 @@ class RTKNavControlNode(Node):
                     seq, lon, lat, heading_deg = line.split(',')
                     self.waypoints.append((float(lon), float(lat), float(heading_deg)))
             
-            self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点")
-            self.rtk_path_file = file_path  # 更新当前路径文件
+            # 验证航点有效性
+            if not self.waypoints:
+                self.last_waypoint_cache = None
+                self.cross_file_last_waypoint = None
+                self.get_logger().warn("[RTKNav] 未加载到有效航点，缓存重置")
+                return False
+            
+            first_waypoint = self.waypoints[0]
+            self.get_logger().info(f"[当前文件航点验证] 第一个航点已加载：{first_waypoint}（总航点数：{len(self.waypoints)}）")
+            
+            # ================== 第四步：初始化 last_waypoint_cache（基于场景）==================
+            if self.cross_file_last_waypoint is not None:
+                # 场景1：文件切换 - 参考上一文件最后一个航点
+                self.last_waypoint_cache = self.cross_file_last_waypoint
+                self.get_logger().info(f"[当前文件缓存] 跨文件衔接：当前第一个航点[{first_waypoint}] 的前置参考航点为[{self.cross_file_last_waypoint}]")
+                self.cross_file_last_waypoint = None  # 清空缓存，防止重复使用
+            else:
+                # 场景2：首次加载 - 参考当前文件第一个航点自身
+                self.last_waypoint_cache = first_waypoint
+                self.get_logger().info(f"[当前文件缓存] 首次加载初始化：当前第一个航点[{first_waypoint}] 作为初始参考航点")
+            
+            # ================== 第五步：更新标记位（首次加载后改为 False）==================
+            self.is_first_file_load = False
+            
+            # 原有日志和返回逻辑
+            self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点（第一个航点已就绪）")
+            self.rtk_path_file = file_path
             return True
             
         except Exception as e:
@@ -231,7 +316,7 @@ class RTKNavControlNode(Node):
         if not self.is_boundary_triggered:
             return
         
-        self.is_boundary_triggered = msg.data & 0xFF
+        self.is_boundary_triggered = ~msg.data & 0x3F
         # if msg.data:
         #     for m in self.motors:
         #         self.motor_set_speed(m["id"], 0) 
@@ -256,7 +341,6 @@ class RTKNavControlNode(Node):
         # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
         # f"back_left={self.back_left}, back_right={self.back_right}"
         # )
-
     def get_next_path_file(self) -> Optional[str]:
         """获取下一个路径文件（按文件名时间戳排序）"""
         try:
@@ -297,7 +381,7 @@ class RTKNavControlNode(Node):
             
             # 5. 最后一个文件时结束循环（不再返回新文件）
             if current_idx >= total_files - 1:
-                self.get_logger().info("[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
+                self.get_logger().info(f"[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
                 return None
             
             # 6. 获取下一个文件（非最后一个时）
@@ -310,6 +394,59 @@ class RTKNavControlNode(Node):
         except Exception as e:
             self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
             return None
+    # def get_next_path_file(self) -> Optional[str]:
+    #     """获取下一个路径文件（按文件名时间戳排序）"""
+    #     try:
+    #         # 1. 获取目录下所有符合命名规则的路径文件
+    #         file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
+    #         all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
+            
+    #         if not all_files:
+    #             self.get_logger().warn("[RTKNav] 路径目录下未找到符合规则的路径文件")
+    #             return None
+            
+    #         # 2. 按文件名中的时间戳排序（提取YYYYMMDD_HHMMSS部分）
+    #         def extract_timestamp(filename: str) -> str:
+    #             match = re.search(r'(\d{8}_\d{6})', filename)
+    #             return match.group(1) if match else ''
+            
+    #         all_files.sort(key=extract_timestamp)
+    #         total_files = len(all_files)  # 总文件数
+    #         current_file = os.path.basename(self.rtk_path_file)
+            
+    #         # 3. 找到当前文件的索引
+    #         try:
+    #             current_idx = all_files.index(current_file)
+    #         except ValueError:
+    #             self.get_logger().warn(f"[RTKNav] 当前文件 {current_file} 不在路径目录中, 使用第一个文件")
+    #             # 首次使用第一个文件, 进度 1/总数量
+    #             progress_num = 1
+    #             progress_percent = round((progress_num / total_files) * 100, 1)
+    #             self.get_logger().info(f"[RTKNav] 路径文件进度：{progress_num}/{total_files}, {progress_percent}%")
+    #             return os.path.join(self.path_dir, all_files[0])
+            
+    #         # 4. 计算并输出进度（当前文件索引+1 为已执行/待执行的序号）
+    #         current_progress = current_idx + 1
+    #         progress_percent = round((current_progress / total_files) * 100, 1)
+    #         # 更新进度百分比
+    #         self.process_percent = progress_percent
+    #         self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}, {progress_percent}%")
+            
+    #         # 5. 最后一个文件时结束循环（不再返回新文件）
+    #         if current_idx >= total_files - 1:
+    #             self.get_logger().info("[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
+    #             return None
+            
+    #         # 6. 获取下一个文件（非最后一个时）
+    #         next_idx = current_idx + 1
+    #         next_file = all_files[next_idx]
+    #         self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file}")
+            
+    #         return os.path.join(self.path_dir, next_file)
+            
+    #     except Exception as e:
+    #         self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
+    #         return None
 
     # ================== 原有RTKNavigator方法 ==================
     def load_rtk_path(self) -> bool:
@@ -467,15 +604,16 @@ class RTKNavControlNode(Node):
 
         # 计算平面直线距离（米）
         distance = math.hypot(x2 - x1, y2 - y1)
+        return distance
 
-        # ========== 可选：距离平滑，抑制GPS抖动 ==========
-        if not hasattr(self, 'last_utm_distance'):
-            self.last_utm_distance = distance
-        # 加权平滑：当前距离70% + 历史距离30%
-        smooth_distance = 0.7 * distance + 0.3 * self.last_utm_distance
-        self.last_utm_distance = smooth_distance
+        # # ========== 可选：距离平滑，抑制GPS抖动 ==========
+        # if not hasattr(self, 'last_utm_distance'):
+        #     self.last_utm_distance = distance
+        # # 加权平滑：当前距离70% + 历史距离30%
+        # smooth_distance = 0.7 * distance + 0.3 * self.last_utm_distance
+        # self.last_utm_distance = smooth_distance
 
-        return smooth_distance
+        # return smooth_distance
 
     def get_path_heading(self, waypoint: Tuple[float, float, float]) -> float:
         """获取目标航点的路径航向角（转换为rad并归一化, 与IMU基准一致）"""
@@ -498,62 +636,67 @@ class RTKNavControlNode(Node):
             heading_error -= 360.0
         return heading_error
 
-    # def get_speed_correction(self, target_heading: float) -> float:
-    #     """计算对称纠正量（保证左右转一致，明确区分yaw_error正负）"""
-    #     yaw_error = self.get_heading_error(target_heading)
-    #     yaw_error_abs = abs(yaw_error)
+    def straight_get_speed_correction(self, target_heading: float) -> float:
+        """计算对称纠正量（优化PID，减少长距离累积偏移）"""
+        # yaw_error = self.get_heading_error(target_heading)
+        yaw_error = target_heading
+        yaw_error_abs = abs(target_heading)
 
-    #     # 2. 误差死区：避免微小震荡
-    #     if yaw_error_abs < 1.0:
-    #         self.last_yaw_error = 0.0
-    #         return 0.0
+        # 1. 误差死区优化：缩小死区（从1.0°→0.3°），避免微小误差累积
+        if yaw_error_abs < 0.3:
+            self.last_yaw_error = 0.0
+            return 0.0
 
-    #     # 3. 统一KP参数（左右转纠正量一致，不差异化）
-    #     if yaw_error_abs > 30:
-    #         kp = 0.05
-    #     elif yaw_error_abs > 10:
-    #         kp = 0.03
-    #     else:
-    #         kp = 0.005
+        # # 2. KP参数优化：增强小误差修正灵敏度，避免累积
+        if yaw_error_abs > 60:
+            kp = 0.04  # 大误差：适度增大，快速转向
+        elif yaw_error_abs > 20:
+            kp = 0.02  # 中误差：增大，及时修正
+        else:
+            kp = 0.002  # 小误差：大幅增大（原0.005），精准抵消微小偏移
+        # kp = 0.02
+        # 3. KD参数优化：增强阻尼，抑制持续偏向
+        kd = 0.005  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
 
-    #     # 4. 统一KD参数（抑制超调，左右转一致）
-    #     kd = 0.01
-    #     yaw_error_diff = yaw_error - self.last_yaw_error
-    #     d_term = kd * yaw_error_diff
+        # 4. 误差差分计算（保持不变）   
+        yaw_error_diff = yaw_error - self.last_yaw_error
+        d_term = kd * yaw_error_diff
 
-    #     # 5. 计算修正量
-    #     correction = (kp * yaw_error) - d_term
+        # 5. 修正量计算：移除负号，避免方向反转（原逻辑可能导致修正方向与误差相反）
+        correction = (kp * yaw_error) + d_term  # 核心修改：将 "-d_term" 改为 "+d_term"
 
-    #     # 6. 统一最大修正量限制
-    #     correction_clamped = max(min(-correction, MAX_CORRECTION), -MAX_CORRECTION)
+        # 6. 最大修正量限制：保留，但适配新参数（避免过度修正）
+        correction_clamped = -max(min(correction, MAX_CORRECTION), -MAX_CORRECTION)
 
-    #     if abs(yaw_error - self.last_yaw_error) > 0.1:
-    #         self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
-    #     self.last_yaw_error = yaw_error
-
-    #     return correction_clamped 
+        # 日志输出（保持不变，便于调试）
+        if abs(yaw_error - self.last_yaw_error) > 0.1:
+            self.get_logger().info(f"直线：yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        
+        self.last_yaw_error = yaw_error
+        return correction_clamped
+    
     def get_speed_correction(self, target_heading: float) -> float:
         """计算对称纠正量（优化PID，减少长距离累积偏移）"""
         yaw_error = self.get_heading_error(target_heading)
         yaw_error_abs = abs(yaw_error)
 
         # 1. 误差死区优化：缩小死区（从1.0°→0.3°），避免微小误差累积
-        if yaw_error_abs < 0.1:
+        if yaw_error_abs < 1.0:
             self.last_yaw_error = 0.0
             return 0.0
 
         # 2. KP参数优化：增强小误差修正灵敏度，避免累积
         if yaw_error_abs > 60:
             kp = 0.08  # 大误差：适度增大，快速转向
-        elif yaw_error_abs > 8:
-            kp = 0.05  # 中误差：增大，及时修正
+        elif yaw_error_abs > 20:
+            kp = 0.02  # 中误差：增大，及时修正
         else:
-            kp = 0.02  # 小误差：大幅增大（原0.005），精准抵消微小偏移
+            kp = 0.002  # 小误差：大幅增大（原0.005），精准抵消微小偏移
 
         # 3. KD参数优化：增强阻尼，抑制持续偏向
         kd = 0.05  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
 
-        # 4. 误差差分计算（保持不变）
+        # 4. 误差差分计算（保持不变）   
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -584,8 +727,8 @@ class RTKNavControlNode(Node):
         
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
-        self.get_logger().info(
-            f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+        # self.get_logger().info(
+            # f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
 
         while rclpy.ok():
             start_time = self.get_clock().now()
@@ -690,6 +833,7 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"开始初始航向对准：目标航向{target_heading:.2f}°")
         calib_generator = self.calibrate_heading_at_waypoint(target_heading)
         heading_aligned = False
+        last_heading = None
         while rclpy.ok() and not heading_aligned:
             try:
                 left_speed, right_speed = next(calib_generator)
@@ -697,6 +841,8 @@ class RTKNavControlNode(Node):
             except StopIteration:
                 self.get_logger().info("初始航向对准完成, 开始实时纠偏直线行驶")
                 heading_aligned = True
+                last_heading = (target_heading + 180) % 360 - 180
+                self.get_logger().info(f"记录初始旋转完成航向角：{last_heading:.2f}°")
                 break
             except Exception as e:
                 self.get_logger().error(f"初始航向对准失败: {e}")
@@ -715,7 +861,7 @@ class RTKNavControlNode(Node):
             # 核心：每帧实时计算当前位置→目标航点的朝向角（替代固定航向）
             real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
             # 新增：角度平滑（取当前与上一帧的平均值，减少波动）
-            real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
+            # real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
             self.nav_context["last_target_heading"] = real_time_heading
             # 计算实时距离
             distance = self.calc_distance_to_waypoint(first_waypoint)
@@ -758,12 +904,20 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
             
             # ========== 实时角度纠偏逻辑 ==========
-            target_heading = real_time_heading  # 使用实时朝向角
+            # target_heading = real_time_heading # 使用实时朝向角
+            target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
+            target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
+            # correction = self.straight_get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
             correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
             # base_speed = LINEAR_SPEED_BASE
+            last_left_speed = None
+            last_right_speed = None
             left_speed = -current_base_speed + correction
             right_speed = current_base_speed + correction
-            
+            if left_speed != last_left_speed or right_speed != last_right_speed:
+                self.get_logger().debug(f"初始移动：base_speed={current_base_speed:.2f}, correction={correction:.2f}, left_speed={left_speed:.2f}, right_speed={right_speed:.2f}")
+            last_left_speed = left_speed
+            last_right_speed = right_speed
             # 速度限制
             left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
             right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
@@ -892,6 +1046,24 @@ class RTKNavControlNode(Node):
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 self.get_logger().info(f"[航点切换] 进入路段{self.current_waypoint_idx - 1}→{self.current_waypoint_idx}")
+                
+                # 核心修正：处理「新文件第一个航点（索引0）+ 跨文件缓存」的场景
+                if self.current_waypoint_idx == 0 and self.cross_file_last_waypoint is not None:
+                    # 跨文件场景下，索引0的上一航点是cross_file_last_waypoint
+                    self.last_waypoint_cache = self.cross_file_last_waypoint
+                    self.get_logger().info(f"[航点切换] 跨文件场景 - 缓存上一个文件最后一个航点：{self.last_waypoint_cache}（作为当前航点0的前置参考）")
+                    self.has_printed_coincide_log = False
+                # 原有逻辑：处理当前文件内的航点切换（索引≥1）
+                elif self.current_waypoint_idx - 1 >= 0 and len(self.waypoints) > self.current_waypoint_idx - 1:
+                    self.last_waypoint_cache = self.waypoints[self.current_waypoint_idx - 1]
+                    self.get_logger().info(f"[航点切换] 缓存当前文件上一个航点{self.current_waypoint_idx - 1}：{self.last_waypoint_cache}")
+                    self.has_printed_coincide_log = False
+                # else:
+                #     # self.last_waypoint_cache = None
+                #     if not self.has_printed_coincide_log:
+                #         self.get_logger().warn("[航点切换] 无有效上一个航点，无法缓存")
+                #         self.has_printed_coincide_log = True
+                
                 last_waypoint_idx = self.current_waypoint_idx
             
             # 获取目标航点
@@ -914,9 +1086,11 @@ class RTKNavControlNode(Node):
                 if not calib_generator:
                     self.get_logger().warn("[ROSNode] 校准生成器不存在, 重新初始化")
                     target_heading = self.get_path_heading(target_waypoint)
+
                     calib_generator = self.calibrate_heading_at_waypoint(target_heading)
                     self.nav_context["calib_generator"] = calib_generator
                 try:
+                    # self.get_logger().info(f"{self.current_waypoint_idx}:航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                     left_speed, right_speed = next(calib_generator)
                     if self.is_boundary_triggered:
                         # 触发边界 → 暂停校准, 执行矫正速度
@@ -947,66 +1121,143 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     return
             
-            # 子阶段B：移动到当前航点（核心：实时RTK角度矫正）
+            # # 子阶段B：移动到当前航点（核心：实时RTK角度矫正）（核心：基于上一个航点航向计算偏角）
+            # if current_nav_state == NavState.WAYPOINT_MOVE:
+            #     # 实时获取当前位置和目标航点经纬度
+            #     current_lon, current_lat = self.current_gps
+            #     target_lon, target_lat, _ = target_waypoint
+                
+            #     # 核心：每帧实时计算朝向角
+            #     real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+            #     # 新增：角度平滑（取当前与上一帧的平均值，减少波动）
+            #     # real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
+            #     self.nav_context["last_target_heading"] = real_time_heading
+            #     # 计算实时距离
+            #     distance = self.calc_distance_to_waypoint(target_waypoint)
+
+            #     # 核心2：获取上一个航点的航向角（处理跨文件/当前文件场景）
+            #     last_heading = (self.imu_yaw +180)%360 -180  # 归一化[-180,180] # 默认值，防止未定义
+            #     if self.last_waypoint_cache:  # 优先使用当前文件内缓存
+            #         last_heading = self.last_waypoint_cache[2]  # 上一个航点的航向角
+            #     elif self.cross_file_last_waypoint:  # 跨文件场景（上一个文件中最后一个航点）
+            #         last_heading = (self.cross_file_last_waypoint[2] - 180) % 360 + 180
+            #     last_heading = (last_heading +180)%360 -180  # 归一化[-180,180]
+            #     # 距离未达标：实时纠偏行驶
+            #     last_target_heading = 0.0
+            #     if distance >= RTK_WAYPOINT_TOLERANCE:
+            #         target_heading = real_time_heading - last_heading
+            #         # if target_heading - last_target_heading > 1.0:
+            #             # self.get_logger().info(f"last_heading={last_heading:.2f}, real_time_heading={real_time_heading:.2f}, target_heading(before)={target_heading:.2f}")
+            #         # self.waypoints[self.current_waypoint_idx - 1][2] # 使用实时朝向角与上一个朝向角的夹角
+            #         target_heading = (target_heading + 180 ) % 360 - 180   # heading_error need -self.imu_yaw
+            #         correction = self.straight_get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
+            #         # ========== 新增：距离<1米时线性减速 ==========
+            #         if distance < LOW_DISTANCE:
+            #             speed_scale = max(0.1, distance/LOW_DISTANCE * 0.5)  # 线性缩放，最低保留10%基础速度
+            #             current_base_speed = LINEAR_SPEED_BASE * speed_scale
+            #             correction = correction * speed_scale
+            #             # self.get_logger().info(f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离小，减速（当前基础速度={current_base_speed:.2f}）")
+            #         else:
+            #             current_base_speed = LINEAR_SPEED_BASE
+            #         last_target_heading = target_heading
+            #         # 核心修改：用动态基础速度current_base_speed替代固定LINEAR_SPEED_BASE
+            #         last_left_speed = None
+            #         last_right_speed = None
+            #         left_speed = -current_base_speed + correction
+            #         right_speed = current_base_speed + correction
+            #         if left_speed != last_left_speed or right_speed != last_right_speed:
+            #             self.get_logger().debug(f"初始移动：base_speed={current_base_speed:.2f}, correction={correction:.2f}, left_speed={left_speed:.2f}, right_speed={right_speed:.2f}")
+            #         last_left_speed = left_speed
+            #         last_right_speed = right_speed
+            #         # 速度限制
+            #         # left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
+            #         # right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
+                    
+            #         # 边界触发优先
+            #         if self.is_boundary_triggered:
+            #             left_speed, right_speed = self.get_boundary_correct_speed()
+                    
+            #         yield (left_speed, right_speed)
+            #     # 距离达标：切换到校准阶段
+            #     else:
+            #         self.get_logger().info(
+            #             f"[ROSNode] 已到达航点{self.current_waypoint_idx}距离阈值（{distance:.2f}m ≤ {RTK_WAYPOINT_TOLERANCE}m）"
+            #         )
+            #         target_heading_1 = self.get_path_heading(target_waypoint)
+            #         calib_generator = self.calibrate_heading_at_waypoint(target_heading_1)
+            #         self.nav_context["calib_generator"] = calib_generator
+            #         current_nav_state = NavState.WAYPOINT_CALIB
+            #         self.nav_context["nav_state"] = current_nav_state
+            #         yield (0.0, 0.0)
+            #     # 打印日志（减少冗余）
+            #     if (abs(self.nav_context["last_distance"] - distance) > 0.1 or
+            #         abs(self.nav_context["last_target_heading"] - real_time_heading) > 0.1):
+            #         self.nav_context["last_distance"] = distance
+            #         self.nav_context["last_target_heading"] = real_time_heading
+            #         self.get_logger().info(
+            #             f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离{distance:.2f}m, last_heading={last_heading}, 实时朝向偏差{target_heading:.2f}°"
+            #         )
             if current_nav_state == NavState.WAYPOINT_MOVE:
                 # 实时获取当前位置和目标航点经纬度
                 current_lon, current_lat = self.current_gps
                 target_lon, target_lat, _ = target_waypoint
                 
-                # 核心：每帧实时计算朝向角
+                # 核心：每帧实时计算当前位置→目标航点的路径方位角（机器人需要行驶的正确方向）
                 real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                # 新增：角度平滑（取当前与上一帧的平均值，减少波动）
-                real_time_heading = (real_time_heading * 0.7 + self.nav_context["last_target_heading"] * 0.3)
                 self.nav_context["last_target_heading"] = real_time_heading
                 # 计算实时距离
                 distance = self.calc_distance_to_waypoint(target_waypoint)
                 
-                # 打印日志（减少冗余）
-                if (abs(self.nav_context["last_distance"] - distance) > 0.1 or
-                    abs(self.nav_context["last_target_heading"] - real_time_heading) > 0.1):
-                    self.nav_context["last_distance"] = distance
-                    self.nav_context["last_target_heading"] = real_time_heading
-                    self.get_logger().info(
-                        f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离{distance:.2f}m, 实时朝向角{real_time_heading:.2f}°"
-                    )
-                
                 # 距离未达标：实时纠偏行驶
                 if distance >= RTK_WAYPOINT_TOLERANCE:
-                    target_heading = real_time_heading  # 使用实时朝向角
-                    correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
-                    # ========== 新增：距离<1米时线性减速 ==========
+                    # 1. 目标路径航向：当前位置→目标航点的实时方位角
+                    target_path_heading = real_time_heading
+                    # 2. 核心：计算IMU当前航向 与 目标路径航向的归一化偏差角（[-180°,180°]）
+                    target_heading = self.get_heading_error(target_path_heading)
+                    # 3. 计算速度修正量（基于真实的IMU-目标航向偏差）
+                    correction = self.straight_get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
+                    
+                    # 近距离线性减速（保留原有逻辑，无需修改）
                     if distance < LOW_DISTANCE:
-                        speed_scale = max(0.1, distance/LOW_DISTANCE * 0.5)  # 线性缩放，最低保留10%基础速度
+                        speed_scale = max(0.1, distance/LOW_DISTANCE * 0.5)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                        # self.get_logger().info(f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离小，减速（当前基础速度={current_base_speed:.2f}）")
+                        # 修正量不随速度缩放，保证近距离纠偏力度
                     else:
                         current_base_speed = LINEAR_SPEED_BASE
                     
-                    # 核心修改：用动态基础速度current_base_speed替代固定LINEAR_SPEED_BASE
+                    # 计算左右轮速度（保留原有逻辑）
                     left_speed = -current_base_speed + correction
                     right_speed = current_base_speed + correction
-            
-                    # 速度限制
-                    left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
-                    right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
+                    # 速度限制（可选，根据实际电机性能开启）
+                    # left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
+                    # right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
                     
-                    # 边界触发优先
+                    # 边界触发优先（保留原有逻辑）
                     if self.is_boundary_triggered:
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     
                     yield (left_speed, right_speed)
-                # 距离达标：切换到校准阶段
+                # 距离达标：切换到航向校准阶段（保留原有逻辑）
                 else:
                     self.get_logger().info(
                         f"[ROSNode] 已到达航点{self.current_waypoint_idx}距离阈值（{distance:.2f}m ≤ {RTK_WAYPOINT_TOLERANCE}m）"
                     )
-                    target_heading = self.get_path_heading(target_waypoint)
-                    calib_generator = self.calibrate_heading_at_waypoint(target_heading)
+                    calib_target_heading = self.get_path_heading(target_waypoint)
+                    calib_generator = self.calibrate_heading_at_waypoint(calib_target_heading)
                     self.nav_context["calib_generator"] = calib_generator
                     current_nav_state = NavState.WAYPOINT_CALIB
                     self.nav_context["nav_state"] = current_nav_state
                     yield (0.0, 0.0)
-        
+                
+                # 打印日志（简化，只输出关键信息）
+                if (abs(self.nav_context["last_distance"] - distance) > 0.1 or
+                    abs(self.nav_context["last_target_heading"] - real_time_heading) > 0.1):
+                    self.nav_context["last_distance"] = distance
+                    self.nav_context["last_target_heading"] = real_time_heading
+                    # 日志输出真实偏差：IMU航向、目标路径航向、偏差角
+                    self.get_logger().info(
+                        f"[ROSNode] 目标航点{self.current_waypoint_idx}：距离{distance:.2f}m, IMU航向{self.imu_yaw:.2f}°, 目标路径航向{real_time_heading:.2f}°, 偏差角{self.get_heading_error(real_time_heading):.2f}°"
+                    )
         # 所有航点完成
         self.get_logger().info("[ROSNode] RTK多点导航全部完成")
         self.nav_context["nav_state"] = NavState.COMPLETED

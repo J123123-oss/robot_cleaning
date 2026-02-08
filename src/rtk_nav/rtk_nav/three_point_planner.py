@@ -314,12 +314,18 @@ class CleaningPathPlanner(Node):
         # A:120.07129427383333,30.321726006333332
         # B:120.07130059466665,30.321665768833334
         # C:120.07132923066665,30.321670159499998
-        self.declare_parameter('calib_point_c.lon', 120.07132923066665)
-        self.declare_parameter('calib_point_c.lat', 30.321670159499998)
-        self.declare_parameter('calib_point_b.lon', 120.07130059466665)
-        self.declare_parameter('calib_point_b.lat', 30.321665768833334)
-        self.declare_parameter('calib_point_a.lon', 120.07129427383333)
-        self.declare_parameter('calib_point_a.lat', 30.321726006333332)
+
+
+        # A:120.07132581616666,30.32166686516667
+        # B:120.07129290400002,30.32166478383333
+        # C:120.07130780466666,30.321725207
+
+        self.declare_parameter('calib_point_c.lon', 120.07132581616666)
+        self.declare_parameter('calib_point_c.lat', 30.32166686516667)
+        self.declare_parameter('calib_point_b.lon', 120.07129290400002)
+        self.declare_parameter('calib_point_b.lat', 30.32166478383333)
+        self.declare_parameter('calib_point_a.lon', 120.07130780466666)
+        self.declare_parameter('calib_point_a.lat', 30.321725207)
 
         # self.declare_parameter('calib_point_c.lon', 120.07149470883333)
         # self.declare_parameter('calib_point_c.lat', 30.32131817333333)
@@ -344,7 +350,7 @@ class CleaningPathPlanner(Node):
 
 
 
-        self.declare_parameter('interval', 1.0)
+        self.declare_parameter('interval', 3.0)
         self.declare_parameter('start_corner', 'top_left')
         self.declare_parameter('swap_wh_select', False)
         self.declare_parameter('edge_distance_lon', 0.0)
@@ -401,7 +407,7 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
