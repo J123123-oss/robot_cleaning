@@ -48,6 +48,9 @@ CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.05       # 控制死区
 RC_CH_MAX_VALUE = 1722
 
+# 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
+MAX_GPS_WAIT_TIME = 30.0
+
 #PID参数
 MAX_CORRECTION = 0.5
 
@@ -101,6 +104,9 @@ class MotorControlNode(Node):
         self.rtk_status = 0  # 初始化RTK状态为0（无效状态）
         self.current_lon = 0.0
         self.current_lat = 0.0
+        #UNLOADING完成后GPS坐标记录（用于后续验证和日志）
+        self.unloading_lon = None
+        self.unloading_lat = None
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -142,6 +148,7 @@ class MotorControlNode(Node):
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
+        self.unloading_gps_pub = self.create_publisher(Vector3, "/unloading_gps", 10)  # 电机当前速度
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # mqtt msg
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
@@ -679,10 +686,63 @@ class MotorControlNode(Node):
         
         # ========== 阶段3：完成 ==========
         elif self.unloading_phase == "COMPLETE":
-            self.get_logger().info("[UNLOADING] 出仓流程完成")
-            self.unloading_timer.cancel()
-            self.unloading_timer = None
-            self.is_in_bin_process = False  # 重置进出仓标记
+            # 新增：初始化超时计时（仅首次进入该分支时初始化）
+            if not hasattr(self, 'unloading_gps_wait_start'):
+                self.unloading_gps_wait_start = self.get_clock().now()
+                self.get_logger().info("[UNLOADING] 开始等待GPS固定解，超时时间30s")
+            
+            elapsed_time = (self.get_clock().now() - self.unloading_gps_wait_start).nanoseconds / 1e9
+
+            # 1. 优先：获取RTK Fixed固定解，正常收尾
+            if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
+                self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
+                self.unloading_lon = self.current_lon
+                self.unloading_lat = self.current_lat
+                self.get_logger().info("[UNLOADING] 出仓流程完成")
+                # 清理超时标记
+                if hasattr(self, 'unloading_gps_wait_start'):
+                    delattr(self, 'unloading_gps_wait_start')
+                # 终止定时器
+                self.unloading_timer.cancel()
+                self.unloading_timer = None
+                self.is_in_bin_process = False  # 重置进出仓标记
+            # 2. 新增：超时兜底（GPS长期无固定解，强制退出）
+            elif elapsed_time > MAX_GPS_WAIT_TIME:
+                self.get_logger().error(f"[UNLOADING] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，强制完成出仓流程")
+                # 可选：记录当前非固定解的坐标（或置空）
+                self.unloading_lon = self.current_lon
+                self.unloading_lat = self.current_lat
+                # 清理超时标记+终止定时器
+                delattr(self, 'unloading_gps_wait_start')
+                self.unloading_timer.cancel()
+                self.unloading_timer = None
+                self.is_in_bin_process = False
+            # 3. 未超时+非固定解：继续等待，可选降频打印日志（避免刷屏）
+            else:
+                # 每3s打印一次警告（替代0.1Hz高频打印）
+                if int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
+                    self.get_logger().warn(f"[UNLOADING] 出仓完成，GPS状态不佳（状态码{self.rtk_status}），已等待{elapsed_time:.1f}s，继续等待...")
+                elif self.unloading_phase == "COMPLETE":
+                    # get_gps
+                    if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
+                        self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
+                        self.unloading_lon = self.current_lon
+                        self.unloading_lat = self.current_lat
+                        heading = self.imu_yaw_deg + 90.0 if self.imu_yaw_deg is not None else 0.00
+                        heading = (heading + 360) % 360  # 归一化到0-360度
+                        # pub unloading result
+                        unloading_gps_msg = Vector3()
+                        unloading_gps_msg.x = self.unloading_lon
+                        unloading_gps_msg.y = self.unloading_lat
+                        unloading_gps_msg.z = heading
+                        self.unloading_gps_pub.publish(unloading_gps_msg)
+                        self.get_logger().info("[UNLOADING] 出仓流程完成")
+                        self.unloading_timer.cancel()
+                        self.unloading_timer = None
+                        self.is_in_bin_process = False  # 重置进出仓标记
+                    else:
+                        self.get_logger().warn(f"[UNLOADING] 出仓完成，但GPS状态不佳（状态码{self.rtk_status}），无法获取可靠坐标,继续等待GPS修正")
+
             
     # def handle_loading_step(self):
     #     """进仓分步处理（核心修复：角度计算、IMU校验、频率适配）"""

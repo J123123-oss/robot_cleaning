@@ -152,6 +152,7 @@ class RTKNavControlNode(Node):
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.io_data_rtk_sub = self.create_subscription(String, '/io/data', self.io_data_rtk_callback, 10)
+        self.unloading_gps_sub = self.create_subscription(Vector3, '/unloading_gps', self.unloading_gps_callback, 10)
         # 定时器（10Hz驱动导航逻辑）
         self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)
 
@@ -360,6 +361,12 @@ class RTKNavControlNode(Node):
         # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
         # f"back_left={self.back_left}, back_right={self.back_right}"
         # )
+    def unloading_gps_callback(self, msg: Vector3):
+        loading_lon = msg.x
+        loading_lat = msg.y
+        heading = msg.z
+        self.loading_waypoint = (loading_lon, loading_lat, heading)
+        self.get_logger().info(f"[RTKNav] 收到出仓GPS坐标: 经度={loading_lon}, 纬度={loading_lat}")
     def get_next_path_file(self) -> Optional[str]:
         """获取下一个路径文件（按文件名时间戳排序）"""
         try:
@@ -561,7 +568,17 @@ class RTKNavControlNode(Node):
             else:
                 # 没有下一个文件, 返回None表示结束
                 self.get_logger().info("[RTKNav] 没有更多路径文件, 导航结束")
-                self.current_control_mode = ControlMode.NORMAL
+                if hasattr(self, 'loading_waypoint') and self.loading_waypoint is not None:
+                    self.get_logger().info(f"[RTKNav] 开始执行返回出仓点：{self.loading_waypoint}")
+                    # 将出仓点追加到航点列表末尾
+                    self.waypoints.append(self.loading_waypoint)
+                    # 手动更新索引，指向新增的出仓点
+                    self.current_waypoint_idx = idx
+                    # 重置跨文件缓存，避免干扰
+                    # self.cross_file_last_waypoint = None
+                    # 返回出仓点作为新的目标航点
+                    return self.loading_waypoint
+                # self.current_control_mode = ControlMode.NORMAL
                 return None
         
         # 返回当前目标航点
@@ -1496,7 +1513,7 @@ class RTKNavControlNode(Node):
         self.nav_context["nav_state"] = NavState.COMPLETED
         self.nav_running = False
         self.publish_stop_speed()
-        # 保留导航状态，支持恢复
+        self.reset_nav_context()        # reset nav /保留导航状态，支持恢复
         yield (0.0, 0.0)
 
     # ================== 原有RTKControlNode核心方法 ==================
