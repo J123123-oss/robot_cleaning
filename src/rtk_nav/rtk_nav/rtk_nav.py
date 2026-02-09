@@ -938,7 +938,8 @@ class RTKNavControlNode(Node):
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
         if not self.waypoints:
             self.get_logger().error("无航点数据, 无法执行初始移动")
-            return False
+            yield (0.0, 0.0)  # 占位，使函数成为合法生成器
+            return
         
         first_waypoint = self.waypoints[0]
         self.nav_context["target_waypoint"] = first_waypoint
@@ -1160,6 +1161,14 @@ class RTKNavControlNode(Node):
         if current_nav_state == NavState.INITIAL_MOVE:
             self.get_logger().info("[ROSNode] 进入初始移动阶段：初始点→第一个航点")
             initial_move_generator = self.move_to_first_waypoint()
+            # 新增1：判断生成器是否有效（空航点时返回False，无效）
+            if not initial_move_generator:
+                self.get_logger().fatal("[ROSNode] 初始移动生成器初始化失败，无航点数据，终止导航")
+                self.nav_running = False
+                self.publish_stop_speed()
+                self.reset_nav_context()
+                yield (0.0, 0.0)
+                return
             while True:
                 # 检查控制模式, 若切换则退出
                 if not self.check_control_mode():
@@ -1173,6 +1182,14 @@ class RTKNavControlNode(Node):
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration:
+                    # 新增2：校验航点索引是否有效，防止空航点误判完成
+                    if self.current_waypoint_idx >= len(self.waypoints) and len(self.waypoints) == 0:
+                        self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
+                        self.nav_running = False
+                        self.publish_stop_speed()
+                        self.reset_nav_context()
+                        yield (0.0, 0.0)
+                        return
                     # 初始移动完成, 切换到第一个航点
                     self.current_waypoint_idx = 1
                     current_nav_state = NavState.WAYPOINT_MOVE
@@ -1555,12 +1572,24 @@ class RTKNavControlNode(Node):
                 self.multi_waypoint_generator = None
             self.nav_running = False
             self.publish_stop_speed()
+            # 新增：无航点时强制重置导航上下文，避免恢复时保留异常状态
+            if not self.waypoints:
+                self.reset_nav_context()
+                self.get_logger().info("[ROSNode] 非RTK模式：无航点数据，重置导航上下文为IDLE")
             # 不重置导航上下文, 保存状态以便后续恢复
 
     def rtk_timer_callback(self):
         """10Hz定时器回调, 驱动多点导航逻辑"""
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.RTK_NAV:
+            # 新增：启动/恢复导航前，强制校验航点有效性
+            if not self.waypoints:
+                self.get_logger().error("[ROSNode] RTK模式启动失败：无有效航点数据，请先加载航点")
+                self.nav_running = False
+                self.multi_waypoint_generator = None
+                self.reset_nav_context()  # 重置导航状态为IDLE
+                self.publish_nav_state(NavState.IDLE)
+                return
             # 初始化多点导航生成器（首次进入/导航完成后重新初始化, 解决重复进入初始点）
             if not self.multi_waypoint_generator and not self.nav_running:
                 # 判断是否需要恢复导航

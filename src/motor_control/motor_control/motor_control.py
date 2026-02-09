@@ -91,9 +91,10 @@ class MotorControlNode(Node):
         self.battery_current = None  # 电池电流
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
+        self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         
         # 2. 初始化遥控器模块
@@ -157,6 +158,7 @@ class MotorControlNode(Node):
         self.current_control_mode = "NORMAL"  # 默认普通模式
         self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
         self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
+        self.current_control_mode = self.sbus_remote.control_mode
 
         self.status_list = [
             "STOP", "START", "FORWARD", "BACKWARD", "LOADING", "UNLOADING",
@@ -211,7 +213,6 @@ class MotorControlNode(Node):
         self.imu_yaw_deg = (self.imu_yaw_deg + 180) % 360 - 180
 
     def timer_callback(self):
-        self.current_control_mode = self.sbus_remote.control_mode
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             # self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
