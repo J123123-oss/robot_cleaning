@@ -94,7 +94,7 @@ class MotorControlNode(Node):
         self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='vcan0', interface='socketcan', baudrate=1000000)
+        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         
         # 2. 初始化遥控器模块

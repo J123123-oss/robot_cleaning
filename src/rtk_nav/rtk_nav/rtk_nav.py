@@ -73,7 +73,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = -90.0  # RTK安装偏移角度
+        self.rtk_install_offset = 90.0    #-90.0(old)  # RTK安装偏移角度
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
