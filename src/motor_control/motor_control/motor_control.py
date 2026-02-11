@@ -877,7 +877,7 @@ class MotorControlNode(Node):
                 self.last_backward_log_time = 0.0
 
             # ========== 阶段1：调整进仓角度（核心：目标航向一致+稳定判定）==========
-            if self.loading_phase == "LOADING_TURN":                
+            if self.loading_phase == "LOADING_TURN":
                 # 修正1：传实际进仓目标航向，和判定目标一致，误差才能归0
                 correction = self.get_speed_correction(self.loading_turn_target_deg)
                 yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
@@ -914,12 +914,86 @@ class MotorControlNode(Node):
             
             # ========== 阶段2：后退进仓（核心：停止修正+低频日志）==========
             elif self.loading_phase == "LOADING_BACKWARD":
+                # 初始化变量
+                left = self.laser_distance[0]
+                right = self.laser_distance[1]
+                diff_dis = abs(left - right)  # 取绝对值，只关注差值大小
+                base_speed = self.motor_ctrl.BASE_SPEED
+                left_speed = 0.0
+                right_speed = 0.0
                 correction = 0.0  # 后退阶段彻底停止航向修正，解决频率混乱
-                if current_time - self.loading_backward_start_time < self.loading_backward_threshold:
-
-                    left_speed = self.motor_ctrl.BASE_SPEED + correction
-                    right_speed = -(self.motor_ctrl.BASE_SPEED + correction)
+                if self.laser_distance is None:
+                    self.get_logger().info("[LOADING] 激光测距数据不可用")
+                    return
+                
+                # 步骤1：激光距离<3000mm（核心条件）
+                if left < 3000 and right < 3000:
+                    self.get_logger().info(f"[LOADING] 激光距离有效 - 左：{left}mm, 右：{right}mm, 差值：{diff_dis}mm")
+                    
+                    # 步骤2：判断激光差值是否>500mm（大幅偏离）
+                    if diff_dis > 500:
+                        self.get_logger().info("[LOADING] 大幅偏离（差值>500mm），强力旋转对准（中速）")
+                        # 强力纠偏：左转/右转 速度为 BASE_SPEED/4.0
+                        if (left - right) > 0:  # 左侧更远，左转
+                            left_speed = base_speed / 4.0
+                            right_speed = base_speed / 4.0
+                        else:  # 右侧更远，右转
+                            left_speed = -base_speed / 4.0
+                            right_speed = -base_speed / 4.0
+                    
+                    # 步骤3：差值≤500mm → 中等速度纠偏直行
+                    else:
+                        self.get_logger().info("[LOADING] 中等偏差，中等速度纠偏直行")
+                        # 中等速度纠偏：速度为 BASE_SPEED/6.0
+                        if (left - right) > 0:  # 左侧稍远，小幅左转
+                            left_speed = base_speed / 6.0
+                            right_speed = base_speed / 6.0
+                        elif (left - right) < 0:  # 右侧稍远，小幅右转
+                            left_speed = -base_speed / 6.0
+                            right_speed = -base_speed / 6.0
+                        else:  # 无偏差，直行
+                            left_speed = -base_speed / 6.0
+                            right_speed = base_speed / 6.0
+                        
+                        # 步骤4：激光距离<500mm → 进入低速纠偏阶段
+                        if left < 500 and right < 500:
+                            self.get_logger().info("[LOADING] 近距离（<500mm），判断差值是否<50mm")
+                            # 步骤5：差值≥50mm → 低速旋转对准
+                            if diff_dis >= 50:
+                                self.get_logger().info("[LOADING] 中等偏差（50≤差值≤500），低速旋转对准")
+                                if (left - right) > 0:
+                                    left_speed = base_speed / 10.0
+                                    right_speed = base_speed / 10.0
+                                else:
+                                    left_speed = -base_speed / 10.0
+                                    right_speed = -base_speed / 10.0
+                            # 步骤6：差值<50mm → 低速纠偏直行
+                            else:
+                                self.get_logger().info("[LOADING] 差值<50mm，直行")
+                                left_speed = -base_speed / 10.0
+                                right_speed = base_speed / 10.0
+                            
+                            # 步骤7：激光距离<130mm → 最终对位判断
+                            if left < 130 and right < 130:
+                                self.get_logger().info("[LOADING] 极近距离（<130mm），判断差值是否<10mm 进行最终对位")
+                                # 步骤8：差值<10mm → 停止
+                                if diff_dis < 10:
+                                    self.get_logger().info("[LOADING] 对位完成，停止")
+                                    left_speed = 0.0
+                                    right_speed = 0.0
+                                # 步骤9：差值≥10mm → 最终对位（低速旋转）
+                                else:
+                                    self.get_logger().warning("[LOADING] 极近距离但差值≥10mm, 最终对位")
+                                    if (left - right) > 0:
+                                        left_speed = base_speed / 12.0
+                                        right_speed = base_speed / 12.0
+                                    else:
+                                        left_speed = -base_speed / 12.0
+                                        right_speed = -base_speed / 12.0
+                    
+                    # 设置最终电机速度
                     self.set_motors_speed(left_speed, right_speed)
+                
                     # 修正3：后退日志1秒1次，避免高频输出
                     if current_time - self.last_backward_log_time >= 1.0:
                         self.get_logger().info(f"[LOADING] 后退进仓阶段 - 已持续{current_time - self.loading_backward_start_time:.1f}秒")
