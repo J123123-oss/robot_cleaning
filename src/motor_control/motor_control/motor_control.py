@@ -10,7 +10,7 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32, Float32MultiArray
+from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, Int16MultiArray
 from geometry_msgs.msg import Vector3
 import traceback
 import json
@@ -52,7 +52,7 @@ RC_CH_MAX_VALUE = 1722
 MAX_GPS_WAIT_TIME = 30.0
 
 #PID参数
-MAX_CORRECTION = 0.5
+MAX_CORRECTION = 0.8
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
@@ -60,7 +60,7 @@ class MotorControlNode(Node):
         super().__init__(node_name)
 
         # 循环频率：10Hz（兼容原有逻辑，可调整）
-        self.rate = self.create_rate(10)
+        self.rate = self.create_rate(20)
         self.last_yaw_error = 0.0  # 上一次的航向误差
 
         # UNLOADING parameters
@@ -72,7 +72,7 @@ class MotorControlNode(Node):
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_deg = -169.24    #-153.05 #-159.63  # 进仓转向目标角
+        self.loading_turn_target_deg = -72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
         self.loading_turn_time = 30.0
         self.loading_phase = None
@@ -108,6 +108,9 @@ class MotorControlNode(Node):
         #UNLOADING完成后GPS坐标记录（用于后续验证和日志）
         self.unloading_lon = None
         self.unloading_lat = None
+
+        # laser distance
+        self.laser_distance = [0, 0]  # 两路激光距离，初始为0
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -146,6 +149,12 @@ class MotorControlNode(Node):
             self.battery_callback,
             10
         )
+        self.laser_subscription = self.create_subscription(
+            Int16MultiArray,
+            "laser_distance",
+            self.laser_callback,
+            10
+        )
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
@@ -158,7 +167,6 @@ class MotorControlNode(Node):
         self.current_control_mode = "NORMAL"  # 默认普通模式
         self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
         self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
-        self.current_control_mode = self.sbus_remote.control_mode
 
         self.status_list = [
             "STOP", "START", "FORWARD", "BACKWARD", "LOADING", "UNLOADING",
@@ -217,7 +225,8 @@ class MotorControlNode(Node):
         if not self.motor_ctrl.bus:
             # self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
             self.motor_ctrl.reconnect_can_bus()
-
+        self.current_control_mode = self.sbus_remote.control_mode
+        
         # 1. 发布当前控制模式（给RTK节点）
         mode_msg = String()
         mode_msg.data = self.current_control_mode if isinstance(self.current_control_mode, str) else "NORMAL"
@@ -229,7 +238,7 @@ class MotorControlNode(Node):
         # 暂停时不取消定时器，仅停止电机并在 handler 中短路，从而可在回到原模式后继续。
         if self.is_in_bin_process:
             # 如果尚未记录来源模式，则以当前模式作为来源
-            if self.bin_process_origin_mode is None:
+            if self.bin_process_origin_mode is None and self.current_control_mode != "REMOTE":
                 self.bin_process_origin_mode = self.current_control_mode
 
             if self.current_control_mode != self.bin_process_origin_mode:
@@ -385,6 +394,14 @@ class MotorControlNode(Node):
         self.battery_current = round(msg.data[1], 2)  # 总电流（索引1）
         self.battery_total_voltage = round(msg.data[2], 2)  # 总电压（索引2）
     
+    def laser_callback(self, msg: Int16MultiArray):
+        """订阅激光距离数据的回调函数"""
+        if len(msg.data) < 2:
+            self.get_logger().warn("激光距离数据不完整!")
+            return
+        
+        self.laser_distance = [msg.data[0], msg.data[1]]  # 两路激光距离
+    
     def get_heading_error(self, target_heading: float) -> float:
         """修正：计算当前航向与目标航向的误差（严格归一化到[-180, 180]，单位：deg）"""
         if self.imu_yaw_deg is None:
@@ -416,9 +433,9 @@ class MotorControlNode(Node):
             return 0.0
 
         # 分段KP参数（优化小误差修正，避免累积）
-        if yaw_error_abs > 60:
-            kp = 0.08  # 大误差：快速转向
-        elif yaw_error_abs >40: #20:
+        if yaw_error_abs > 30:
+            kp = 0.05  # 大误差：快速转向
+        elif yaw_error_abs > 10: #20:
             kp = 0.02  # 中误差：稳定修正
         else:
             kp = 0.005  # 小误差：精准修正
@@ -448,6 +465,9 @@ class MotorControlNode(Node):
         new_state = STATE_DICT[key]
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
+            return
+        if self.current_control_mode == "REMOTE":
+            self.get_logger().warn("[ROSNode] 当前为遥控器模式，禁止设置状态")
             return
         if new_state == self.current_status:
             self.get_logger().info(f"[ROSNode] 已处于{new_state}状态，无需切换")
@@ -511,7 +531,6 @@ class MotorControlNode(Node):
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.unloading_timer = self.create_timer(0.1, self.handle_unloading_step)
         elif new_state == "LOADING":
-            # self.current_control_mode = "NORMAL"
             self.get_logger().info("[ROSNode] 进入进仓状态，启动进仓定时器")
             self.current_status = new_state
             self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
@@ -616,11 +635,11 @@ class MotorControlNode(Node):
         无需减小PID参数，通过基准速度分级实现快慢切换
         """
         if yaw_error_abs > 30:
-            return 0.8 * self.motor_ctrl.BASE_SPEED # type: ignore # 大误差（>30°）：快速转向
+            return 1.0 * self.motor_ctrl.BASE_SPEED # type: ignore # 大误差（>30°）：快速转向
         elif yaw_error_abs > 10:
-            return 0.5 * self.motor_ctrl.BASE_SPEED   # 中误差（10°~30°）：中等速度
+            return 0.8 * self.motor_ctrl.BASE_SPEED   # 中误差（10°~30°）：中等速度
         else:
-            return 0.2 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
+            return 0.1 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
         
 
     def handle_unloading_step(self):
@@ -642,6 +661,9 @@ class MotorControlNode(Node):
         #     return
         
         current_time = time.time()
+        # 新增：稳定达标计数器（类内变量，初始化在__init__里，下面会说）
+        if not hasattr(self, 'yaw_stable_count_unloading'):
+            self.yaw_stable_count_unloading = 0
         
         # ========== 阶段1：前进 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
@@ -666,24 +688,29 @@ class MotorControlNode(Node):
             correction = self.get_speed_correction(self.unloading_turn_target_deg)  # 目标航向180度（假设出仓方向为正后方）
             # 修正：角度差计算（使用归一化后的误差）
             yaw_diff = self.get_heading_error(self.unloading_turn_target_deg)
-            turn_speed = self.get_adaptive_turn_speed(yaw_diff)
+            # 差值小于0，左转；差值大于0，右转，保持方向正确
+            turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
             # self.motor_ctrl.BASE_SPEED
-            self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
+            # self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
             
-            left_speed = -1.0 * turn_speed + correction
-            right_speed = -1.0 * turn_speed + correction
+            left_speed = turn_speed + correction
+            right_speed = turn_speed + correction
             self.set_motors_speed(left_speed, right_speed)
-            if abs(yaw_diff) < self.yaw_diff_min:
-                self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束")
-                self.unloading_phase = "COMPLETE"
-                self.set_motors_speed(0.0, 0.0)
-                self.unloading_timer.cancel()
-                self.unloading_timer = None
-                self.is_in_bin_process = False  # 重置进出仓标记
-            elif current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
+            # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
+            if abs(yaw_diff) < 2 * self.yaw_diff_min:
+                self.yaw_stable_count_unloading += 1
+                self.get_logger().info(f"[UNLOADING] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
+                if self.yaw_stable_count_unloading >= 3:
+                    self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束（连续3次达标）")
+                    self.unloading_phase = "COMPLETE"
+                    self.set_motors_speed(0.0, 0.0)  # 停止运动
+                    self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
+            else:
+                self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
+            if current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
                 self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
                 self.unloading_phase = "COMPLETE"
-                self.is_in_bin_process = False  # 重置进出仓标记
+                self.set_motors_speed(0.0, 0.0)  # 停止运动
         
         # ========== 阶段3：完成 ==========
         elif self.unloading_phase == "COMPLETE":
@@ -691,6 +718,7 @@ class MotorControlNode(Node):
             if not hasattr(self, 'unloading_gps_wait_start'):
                 self.unloading_gps_wait_start = self.get_clock().now()
                 self.get_logger().info("[UNLOADING] 开始等待GPS固定解，超时时间30s")
+
             
             elapsed_time = (self.get_clock().now() - self.unloading_gps_wait_start).nanoseconds / 1e9
 
@@ -700,6 +728,7 @@ class MotorControlNode(Node):
                 self.unloading_lon = self.current_lon
                 self.unloading_lat = self.current_lat
                 self.get_logger().info("[UNLOADING] 出仓流程完成")
+                self.switch_state('z') # 切回STOP状态，确保电机停止
                 # 清理超时标记
                 if hasattr(self, 'unloading_gps_wait_start'):
                     delattr(self, 'unloading_gps_wait_start')
@@ -715,6 +744,7 @@ class MotorControlNode(Node):
                 self.unloading_lat = self.current_lat
                 # 清理超时标记+终止定时器
                 delattr(self, 'unloading_gps_wait_start')
+                self.switch_state('z') # 切回STOP状态，确保电机停止
                 self.unloading_timer.cancel()
                 self.unloading_timer = None
                 self.is_in_bin_process = False
@@ -738,11 +768,14 @@ class MotorControlNode(Node):
                         unloading_gps_msg.z = heading
                         self.unloading_gps_pub.publish(unloading_gps_msg)
                         self.get_logger().info("[UNLOADING] 出仓流程完成")
+                        self.switch_state('z') # 切回STOP状态，确保电机停止
                         self.unloading_timer.cancel()
                         self.unloading_timer = None
                         self.is_in_bin_process = False  # 重置进出仓标记
-                    else:
+                    elif int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
                         self.get_logger().warn(f"[UNLOADING] 出仓完成，但GPS状态不佳（状态码{self.rtk_status}），无法获取可靠坐标,继续等待GPS修正")
+                        self.switch_state('z') # 切回STOP状态，确保电机停止
+
 
             
     # def handle_loading_step(self):
@@ -848,21 +881,22 @@ class MotorControlNode(Node):
                 # 修正1：传实际进仓目标航向，和判定目标一致，误差才能归0
                 correction = self.get_speed_correction(self.loading_turn_target_deg)
                 yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
-                turn_speed = self.get_adaptive_turn_speed(yaw_diff)
+                # 差值小于0，左转；差值大于0，右转，保持方向正确
+                turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
                 left_speed = turn_speed + correction
                 right_speed = turn_speed + correction
                 self.set_motors_speed(left_speed, right_speed)
                 
                 # 计算归一化后的角度差
-                self.get_logger().info(
-                    f"[LOADING] 角度调整阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，"
-                    f"目标{self.loading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg"
-                )
+                # self.get_logger().info(
+                #     f"[LOADING] 角度调整阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，"
+                #     f"目标{self.loading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg"
+                # )
                 
                 # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
                 if abs(yaw_diff) < self.yaw_diff_min:
                     self.yaw_stable_count += 1
-                    self.get_logger().debug(f"[LOADING] 角度误差达标，稳定计数={self.yaw_stable_count}/3")
+                    self.get_logger().info(f"[LOADING] 角度误差达标，稳定计数={self.yaw_stable_count}/3")
                     if self.yaw_stable_count >= 3:
                         self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标），进入后退进仓阶段")
                         self.loading_phase = "LOADING_BACKWARD"
@@ -882,6 +916,7 @@ class MotorControlNode(Node):
             elif self.loading_phase == "LOADING_BACKWARD":
                 correction = 0.0  # 后退阶段彻底停止航向修正，解决频率混乱
                 if current_time - self.loading_backward_start_time < self.loading_backward_threshold:
+
                     left_speed = self.motor_ctrl.BASE_SPEED + correction
                     right_speed = -(self.motor_ctrl.BASE_SPEED + correction)
                     self.set_motors_speed(left_speed, right_speed)
@@ -897,7 +932,7 @@ class MotorControlNode(Node):
             # ========== 阶段3：进仓完成 ==========
             elif self.loading_phase == "COMPLETE":
                 self.get_logger().info("[LOADING] 进仓流程完成，电机停止")
-                self.set_motors_speed(0, 0)
+                self.switch_state('z') # 切回STOP状态，确保电机停止
                 if self.loading_timer is not None:
                     self.loading_timer.cancel()
                     self.loading_timer = None

@@ -1,4 +1,4 @@
-RTK循迹测试 Ros2
+#  RTK循迹 Ros2
 
 1、 打点建图，保存路径，到launch.py中切换对应路径
     地图通过起始点经纬度，倾角，指定轨迹起点、地图间隔等确定。
@@ -20,6 +20,20 @@ RTK循迹测试 Ros2
 4、 实时导航测试
     注释wtrtk_parse_txt，启动launch中的wtrtk_serial_driver
     进入实时导航，提前进行步骤1确定路径
+
+
+## 无线充电
+### 开始充电
+ros2 service call /start_charging custom_msgs/srv/ChargeControl "{}"
+
+### 停止充电
+ros2 service call /stop_charging custom_msgs/srv/ChargeControl "{}"
+
+### 查询电压电流
+ros2 service call /query_volt_curr std_srvs/srv/Trigger "{}"
+
+### 实时订阅故障码话题
+ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 
 ```mermaid
 graph TD

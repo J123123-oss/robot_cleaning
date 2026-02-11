@@ -313,7 +313,11 @@ class RTKNavControlNode(Node):
         return (left_speed, right_speed)
     
     def io_data_rtk_callback(self, msg: UInt8):
-        self.get_logger().info(f"[RTKNav] 收到IO数据: {msg.data}")
+
+        # 按位或结果存储传感器状态
+        # self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
+        # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
+        # self.get_logger().info(f"[RTKNav] 收到IO数据: {msg.data}")
         # 位0 (1<<0 = 0x01)：前左
         self.front_left = (msg.data & 0x01) == 0x01
         
@@ -1562,7 +1566,7 @@ class RTKNavControlNode(Node):
             self.multi_waypoint_generator = None
             self.nav_running = False
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
-            if self.nav_context["nav_state"] not in [NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED]:
+            if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED]:
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE
             self.get_logger().info(f"切换到RTK模式，导航状态：{self.nav_context['nav_state']}")
 

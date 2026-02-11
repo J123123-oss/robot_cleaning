@@ -12,11 +12,13 @@ find_package(ament_cmake REQUIRED)
 # find_package(<dependency> REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WTRTK.msg"
   "msg/LatLonPoint.msg"
-  DEPENDENCIES std_msgs  # 声明依赖的消息包，缺一不可
+  "srv/ChargeControl.srv"
+  DEPENDENCIES std_msgs std_srvs
 
 )
 if(BUILD_TESTING)

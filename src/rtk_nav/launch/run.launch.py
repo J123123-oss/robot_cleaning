@@ -36,6 +36,31 @@ def generate_launch_description():
             {'baud': 9600}
         ]
     )
+        # 配置激光节点
+    laser_node = Node(
+        package='laser_distance',
+        executable='laser_distance_node.py',
+        name='laser_distance_node',
+        parameters=[
+            {'serial_port': '/dev/ttyUSBx'},    # 替换为实际串口设备路径
+            {'baud_rate': 115200}
+        ],
+        output='screen'
+    )
+
+    # 充电485节点
+    charging_node = Node(
+        package='charging_485',
+        executable='charging_node',
+        name='charging_485_node',
+        parameters=[
+            {'serial_port': '/dev/ttyUSB0'},    # 替换为实际串口设备路径
+            {'baud_rate': 115200},
+            {'slave_addr': 1},
+            {'timeout': 0.5}
+        ],
+        output='screen'
+    )
     RTKNavigator = Node(
         package='rtk_nav',
         executable='rtk_nav',
@@ -194,6 +219,8 @@ def generate_launch_description():
     ld.add_action(motor_control_node)
 
     # ld.add_action(sensors_485_node)
+    # ld.add_action(laser_node)
+    # ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释

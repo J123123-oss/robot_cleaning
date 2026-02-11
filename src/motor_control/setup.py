@@ -27,7 +27,9 @@ setup(
             'motor_control = motor_control.motor_control:main',
             'motor_driver = motor_control.motor_driver:main',
             'remote_control = motor_control.remote_control:main',
-            'sensors_485 = motor_control.sensors_485:main'
+            'sensors_485 = motor_control.sensors_485:main',
+            'laser_distance = motor_control.laser_distance:main',
+            'charging = motor_control.charging:main',
 
         ],
     },
