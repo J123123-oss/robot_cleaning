@@ -10,7 +10,7 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, Int16MultiArray
+from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16MultiArray
 from geometry_msgs.msg import Vector3
 import traceback
 import json
@@ -18,6 +18,8 @@ import subprocess
 import threading
 from enum import Enum
 from sensor_msgs.msg import NavSatFix
+import collections  # 用于创建固定长度的双端队列
+
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,7 +74,7 @@ class MotorControlNode(Node):
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_deg = -72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
+        self.loading_turn_target_deg = 90.0  # -123.94 #-157.63 #-179.22 #-72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
         self.loading_turn_time = 30.0
         self.loading_phase = None
@@ -80,7 +82,7 @@ class MotorControlNode(Node):
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
 
-        self.yaw_diff_min = 0.5 # 0.1 degree
+        self.yaw_diff_min = 0.3 # 0.1 degree
         # 新增：IMU角度更新时间戳，用于过滤旧数据
         self.last_imu_update_time = 0.0
         self.imu_update_interval = 0.2  # 要求IMU至少100ms更新一次（适配常见IMU发布频率）
@@ -110,7 +112,13 @@ class MotorControlNode(Node):
         self.unloading_lat = None
 
         # laser distance
-        self.laser_distance = [0, 0]  # 两路激光距离，初始为0
+        # 激光数据滤波配置
+        self.laser_filter_window = 5  # 滤波窗口大小（取最近5次数据平均，可调整）
+        self.laser_left_buffer = collections.deque(maxlen=self.laser_filter_window)  # 左激光缓存
+        self.laser_right_buffer = collections.deque(maxlen=self.laser_filter_window)  # 右激光缓存
+        self.laser_valid_min = 0  # 激光数据最小值（根据硬件调整）
+        self.laser_valid_max = 5000  # 激光数据最大值（根据硬件调整）
+        self.laser_distance = [0, 0]  # 滤波后的最终激光距离
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -150,7 +158,7 @@ class MotorControlNode(Node):
             10
         )
         self.laser_subscription = self.create_subscription(
-            Int16MultiArray,
+            UInt16MultiArray,
             "laser_distance",
             self.laser_callback,
             10
@@ -158,7 +166,7 @@ class MotorControlNode(Node):
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
-        self.unloading_gps_pub = self.create_publisher(Vector3, "/unloading_gps", 10)  # 电机当前速度
+        self.unloading_gps_pub = self.create_publisher(Vector3, "/unloading_gps", 10)  # 出仓完成时GPS坐标
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # mqtt msg
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
@@ -394,14 +402,43 @@ class MotorControlNode(Node):
         self.battery_current = round(msg.data[1], 2)  # 总电流（索引1）
         self.battery_total_voltage = round(msg.data[2], 2)  # 总电压（索引2）
     
-    def laser_callback(self, msg: Int16MultiArray):
-        """订阅激光距离数据的回调函数"""
+    # def laser_callback(self, msg: UInt16MultiArray):
+    #     """订阅激光距离数据的回调函数"""
+    #     if len(msg.data) < 2:
+    #         self.get_logger().warn("激光距离数据不完整!")
+    #         return
+        
+    #     self.laser_distance = [msg.data[0], msg.data[1]]  # 两路激光距离
+    def laser_callback(self, msg: UInt16MultiArray):
+        """订阅激光距离数据的回调函数，添加滑动平均滤波避免数据突变"""
+        # 1. 基础数据校验
         if len(msg.data) < 2:
             self.get_logger().warn("激光距离数据不完整!")
             return
         
-        self.laser_distance = [msg.data[0], msg.data[1]]  # 两路激光距离
-    
+        # 2. 原始数据提取与异常值过滤
+        raw_left = msg.data[0]
+        raw_right = msg.data[1]
+        
+        # 过滤明显异常的突变值（超出合理范围则丢弃）
+        if not (self.laser_valid_min <= raw_left <= self.laser_valid_max):
+            # self.get_logger().warn(f"左激光数据异常：{raw_left}mm，丢弃该值")
+            raw_left = self.laser_distance[0]  # 用上次滤波后的值替代
+        if not (self.laser_valid_min <= raw_right <= self.laser_valid_max):
+            # self.get_logger().warn(f"右激光数据异常：{raw_right}mm，丢弃该值")
+            raw_right = self.laser_distance[1]  # 用上次滤波后的值替代
+        
+        # 3. 将有效数据加入滤波缓存
+        self.laser_left_buffer.append(raw_left)
+        self.laser_right_buffer.append(raw_right)
+        
+        # 4. 计算滑动平均值（缓存未满时取现有数据的平均）
+        filtered_left = sum(self.laser_left_buffer) / len(self.laser_left_buffer)
+        filtered_right = sum(self.laser_right_buffer) / len(self.laser_right_buffer)
+        
+        # 5. 保留整数（激光数据为整数，可选）
+        self.laser_distance = [int(filtered_left), int(filtered_right)]
+        
     def get_heading_error(self, target_heading: float) -> float:
         """修正：计算当前航向与目标航向的误差（严格归一化到[-180, 180]，单位：deg）"""
         if self.imu_yaw_deg is None:
@@ -472,6 +509,13 @@ class MotorControlNode(Node):
         if new_state == self.current_status:
             self.get_logger().info(f"[ROSNode] 已处于{new_state}状态，无需切换")
             return
+        
+        # 核心修改：正在进出仓时，仅响应STOP指令，其余指令直接忽略并打印日志
+        if self.is_in_bin_process:
+            if new_state != "STOP":
+                self.get_logger().warn(f"[ROSNode] 正在执行进/出仓流程，仅支持STOP指令，忽略状态切换（{self.current_status}→{new_state}）")
+                return
+            # 若是STOP指令，正常执行，后续会重置进出仓标记
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
@@ -486,6 +530,14 @@ class MotorControlNode(Node):
             self.is_in_bin_process = False
             self.bin_process_origin_mode = None
             self.bin_process_paused = False
+            # 额外：终止进出仓定时器，防止定时器继续执行逻辑
+            if self.loading_timer is not None:
+                self.loading_timer.cancel()
+                self.loading_timer = None
+            if self.unloading_timer is not None:
+                self.unloading_timer.cancel()
+                self.unloading_timer = None
+            self.get_logger().info("[ROSNode] 进/出仓流程被STOP指令强制终止，定时器已关闭")
 
         # 状态执行逻辑
         if new_state == "STOP":
@@ -697,7 +749,7 @@ class MotorControlNode(Node):
             right_speed = turn_speed + correction
             self.set_motors_speed(left_speed, right_speed)
             # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
-            if abs(yaw_diff) < 2 * self.yaw_diff_min:
+            if abs(yaw_diff) < self.yaw_diff_min:
                 self.yaw_stable_count_unloading += 1
                 self.get_logger().info(f"[UNLOADING] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
                 if self.yaw_stable_count_unloading >= 3:
@@ -912,7 +964,7 @@ class MotorControlNode(Node):
                     self.loading_backward_start_time = current_time
                     self.yaw_stable_count = 0
             
-            # ========== 阶段2：后退进仓（核心：停止修正+低频日志）==========
+            # ========== 阶段2：激光辅助进仓（核心：停止修正+低频日志）==========
             elif self.loading_phase == "LOADING_BACKWARD":
                 # 初始化变量
                 left = self.laser_distance[0]
@@ -926,82 +978,96 @@ class MotorControlNode(Node):
                     self.get_logger().info("[LOADING] 激光测距数据不可用")
                     return
                 
-                # 步骤1：激光距离<3000mm（核心条件）
-                if left < 3000 and right < 3000:
+                # 步骤1：激光距离<5000mm（核心条件）
+                if left < 5000 and right < 5000:
                     self.get_logger().info(f"[LOADING] 激光距离有效 - 左：{left}mm, 右：{right}mm, 差值：{diff_dis}mm")
                     
-                    # 步骤2：判断激光差值是否>500mm（大幅偏离）
-                    if diff_dis > 500:
-                        self.get_logger().info("[LOADING] 大幅偏离（差值>500mm），强力旋转对准（中速）")
-                        # 强力纠偏：左转/右转 速度为 BASE_SPEED/4.0
-                        if (left - right) > 0:  # 左侧更远，左转
-                            left_speed = base_speed / 4.0
-                            right_speed = base_speed / 4.0
-                        else:  # 右侧更远，右转
-                            left_speed = -base_speed / 4.0
-                            right_speed = -base_speed / 4.0
+                    # 步骤2：判断激光差值是否>1000mm（大幅偏离）
+                    if diff_dis > 1000:
+                        self.get_logger().info("[LOADING] 大幅偏离（差值>1000mm），强力旋转对准（中速）")
+                        # 强力纠偏：左转/右转 速度为 BASE_SPEED/2.0
+                        if (left - right) < 0:  # 左转
+                            left_speed = base_speed / 2.0
+                            right_speed = base_speed / 2.0
+                        else:  # 右转
+                            left_speed = -base_speed / 2.0
+                            right_speed = -base_speed / 2.0
                     
-                    # 步骤3：差值≤500mm → 中等速度纠偏直行
+                    # 步骤3：差值≤1000mm → 中等速度纠偏直行
                     else:
-                        self.get_logger().info("[LOADING] 中等偏差，中等速度纠偏直行")
-                        # 中等速度纠偏：速度为 BASE_SPEED/6.0
-                        if (left - right) > 0:  # 左侧稍远，小幅左转
-                            left_speed = base_speed / 6.0
-                            right_speed = base_speed / 6.0
-                        elif (left - right) < 0:  # 右侧稍远，小幅右转
-                            left_speed = -base_speed / 6.0
-                            right_speed = -base_speed / 6.0
-                        else:  # 无偏差，直行
-                            left_speed = -base_speed / 6.0
-                            right_speed = base_speed / 6.0
-                        
-                        # 步骤4：激光距离<500mm → 进入低速纠偏阶段
-                        if left < 500 and right < 500:
-                            self.get_logger().info("[LOADING] 近距离（<500mm），判断差值是否<50mm")
-                            # 步骤5：差值≥50mm → 低速旋转对准
-                            if diff_dis >= 50:
-                                self.get_logger().info("[LOADING] 中等偏差（50≤差值≤500），低速旋转对准")
-                                if (left - right) > 0:
-                                    left_speed = base_speed / 10.0
-                                    right_speed = base_speed / 10.0
-                                else:
-                                    left_speed = -base_speed / 10.0
-                                    right_speed = -base_speed / 10.0
-                            # 步骤6：差值<50mm → 低速纠偏直行
+                        # 步骤7：激光距离<230mm → 最终对位判断
+                        # if left < 230 and right < 230:
+                        if left < 530 and right < 530:
+                            self.get_logger().info("[LOADING] 极近距离（<530mm），判断差值是否<2mm 进行最终对位")
+                            # 步骤8：差值<2mm → 停止
+                            if diff_dis < 2:
+                                self.get_logger().info("[LOADING] 对位完成，停止")
+                                left_speed = 0.0
+                                right_speed = 0.0
+                                self.get_logger().info("[LOADING] 后退进仓完成，进入完成阶段")
+                                self.loading_phase = "COMPLETE"
+                                self.last_backward_log_time = 0.0  # 重置日志时间
+                            # 步骤9：差值≥2mm → 最终对位（低速旋转）
                             else:
-                                self.get_logger().info("[LOADING] 差值<50mm，直行")
-                                left_speed = -base_speed / 10.0
-                                right_speed = base_speed / 10.0
-                            
-                            # 步骤7：激光距离<130mm → 最终对位判断
-                            if left < 130 and right < 130:
-                                self.get_logger().info("[LOADING] 极近距离（<130mm），判断差值是否<10mm 进行最终对位")
-                                # 步骤8：差值<10mm → 停止
-                                if diff_dis < 10:
-                                    self.get_logger().info("[LOADING] 对位完成，停止")
-                                    left_speed = 0.0
-                                    right_speed = 0.0
-                                # 步骤9：差值≥10mm → 最终对位（低速旋转）
+                                self.get_logger().warning("[LOADING] 极近距离但差值≥2mm, 最终对位")
+                                if (left - right) < 0:
+                                    left_speed = base_speed / 20.0
+                                    right_speed = base_speed / 20.0
                                 else:
-                                    self.get_logger().warning("[LOADING] 极近距离但差值≥10mm, 最终对位")
-                                    if (left - right) > 0:
-                                        left_speed = base_speed / 12.0
-                                        right_speed = base_speed / 12.0
-                                    else:
-                                        left_speed = -base_speed / 12.0
-                                        right_speed = -base_speed / 12.0
+                                    left_speed = -base_speed / 20.0
+                                    right_speed = -base_speed / 20.0
+                        # 步骤4：激光距离<1000mm → 进入低速纠偏阶段
+                        elif left < 1000 and right < 1000:
+                            # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
+                            # 步骤5：差值≥5mm → 低速旋转对准
+                            if diff_dis >= 5:
+                                self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
+                                if (left - right) < 0:
+                                    left_speed = base_speed / 4.0
+                                    right_speed = base_speed / 4.0
+                                else:
+                                    left_speed = -base_speed / 4.0
+                                    right_speed = -base_speed / 4.0
+                            # 步骤6：差值<5mm → 低速纠偏直行
+                            else:
+                                self.get_logger().info("[LOADING] 差值<5mm，直行")
+                                left_speed = -base_speed / 4.0
+                                right_speed = base_speed / 4.0
+                        else:
+                            self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<20mm")
+                            # 差值≥100mm → 中速旋转对准
+                            # 中等速度纠偏：速度为 BASE_SPEED/3.0
+                            if (left - right) < 20:  # 左转
+                                left_speed = base_speed / 3.0
+                                right_speed = base_speed / 3.0
+                            elif (left - right) > 20:  # 右转
+                                left_speed = -base_speed / 3.0
+                                right_speed = -base_speed / 3.0
+                            else:  # 小偏差，直行
+                                left_speed = -base_speed / 3.0
+                                right_speed = base_speed / 3.0
+                        
+
+                            
                     
                     # 设置最终电机速度
                     self.set_motors_speed(left_speed, right_speed)
                 
-                    # 修正3：后退日志1秒1次，避免高频输出
-                    if current_time - self.last_backward_log_time >= 1.0:
+                    # 修正3：后退日志5秒1次，避免高频输出
+                    if current_time - self.last_backward_log_time >= 5.0:
                         self.get_logger().info(f"[LOADING] 后退进仓阶段 - 已持续{current_time - self.loading_backward_start_time:.1f}秒")
                         self.last_backward_log_time = current_time
                 else:
-                    self.get_logger().info("[LOADING] 后退进仓完成，进入完成阶段")
-                    self.loading_phase = "COMPLETE"
-                    self.last_backward_log_time = 0.0  # 重置日志时间
+                    self.get_logger().info("[LOADING] 寻找目标")
+                    if left < 5000 and right > 5000:
+                        # 左转寻找目标
+                        left_speed = base_speed
+                        right_speed = base_speed
+                    else:
+                        # 右转寻找目标
+                        left_speed = -base_speed
+                        right_speed = -base_speed
+                    self.set_motors_speed(left_speed, right_speed)
             
             # ========== 阶段3：进仓完成 ==========
             elif self.loading_phase == "COMPLETE":

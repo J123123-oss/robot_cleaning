@@ -299,15 +299,15 @@ class RTKNavControlNode(Node):
             left_speed = -base_correct_speed
             right_speed = base_correct_speed
 
-        # 左侧传感器触发(中左/前左/后左) → 小幅向右矫正,turn_right,+,+
+        # 左侧传感器触发(中左/前左/后左) → 小幅向右矫正,turn_right,-,-
         if self.mid_left or self.front_left or self.back_left:
-            left_speed = base_correct_speed * 0.8
-            right_speed = base_correct_speed * 0.8
-
-        # 右侧传感器触发(中右/前右/后右) → 小幅向左矫正,turn_left,-,-
-        if self.mid_right or self.front_right or self.back_right:
             left_speed = -base_correct_speed * 0.8
             right_speed = -base_correct_speed * 0.8
+
+        # 右侧传感器触发(中右/前右/后右) → 小幅向左矫正,turn_left,+,+
+        if self.mid_right or self.front_right or self.back_right:
+            left_speed = base_correct_speed * 0.8
+            right_speed = base_correct_speed * 0.8
 
         self.get_logger().info(f"[RTKNav] 执行边界矫正, 矫正速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
         return (left_speed, right_speed)
