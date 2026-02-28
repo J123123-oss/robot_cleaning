@@ -320,13 +320,27 @@ class CleaningPathPlanner(Node):
         # B:120.07129290400002,30.32166478383333
         # C:120.07130780466666,30.321725207
 
-        self.declare_parameter('calib_point_c.lon', 120.07132581616666)
-        self.declare_parameter('calib_point_c.lat', 30.32166686516667)
-        self.declare_parameter('calib_point_b.lon', 120.07129290400002)
-        self.declare_parameter('calib_point_b.lat', 30.32166478383333)
-        self.declare_parameter('calib_point_a.lon', 120.07130780466666)
-        self.declare_parameter('calib_point_a.lat', 30.321725207)
-
+        # self.declare_parameter('calib_point_c.lon', 120.07132581616666)
+        # self.declare_parameter('calib_point_c.lat', 30.32166686516667)
+        # self.declare_parameter('calib_point_b.lon', 120.07129290400002)
+        # self.declare_parameter('calib_point_b.lat', 30.32166478383333)
+        # self.declare_parameter('calib_point_a.lon', 120.07130780466666)
+        # self.declare_parameter('calib_point_a.lat', 30.321725207)
+        
+        #0228
+        # self.declare_parameter('calib_point_c.lon', 120.07129173099999)
+        # self.declare_parameter('calib_point_c.lat', 30.32169645933333)
+        # self.declare_parameter('calib_point_b.lon', 120.07130450300001)
+        # self.declare_parameter('calib_point_b.lat', 30.321713478999996)
+        # self.declare_parameter('calib_point_a.lon', 120.07133788016667)
+        # self.declare_parameter('calib_point_a.lat', 30.32168400516667)
+        #0228 test2
+        self.declare_parameter('calib_point_c.lon', 120.07129158983335)
+        self.declare_parameter('calib_point_c.lat', 30.32169783066667)
+        self.declare_parameter('calib_point_b.lon', 120.07130318850001)
+        self.declare_parameter('calib_point_b.lat', 30.321713963833336)
+        self.declare_parameter('calib_point_a.lon', 120.07133778466665)
+        self.declare_parameter('calib_point_a.lat', 30.32168391916667)
         # self.declare_parameter('calib_point_c.lon', 120.07149470883333)
         # self.declare_parameter('calib_point_c.lat', 30.32131817333333)
         # self.declare_parameter('calib_point_b.lon', 120.07142615983334)
@@ -350,7 +364,7 @@ class CleaningPathPlanner(Node):
 
 
 
-        self.declare_parameter('interval', 3.0)
+        self.declare_parameter('interval', 2.0)
         self.declare_parameter('start_corner', 'top_left')
         self.declare_parameter('swap_wh_select', False)
         self.declare_parameter('edge_distance_lon', 0.0)

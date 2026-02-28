@@ -38,11 +38,11 @@ def generate_launch_description():
     )
         # 配置激光节点
     laser_node = Node(
-        package='laser_distance',
-        executable='laser_distance_node.py',
+        package='motor_control',
+        executable='laser_distance',
         name='laser_distance_node',
         parameters=[
-            {'serial_port': '/dev/ttyUSBx'},    # 替换为实际串口设备路径
+            {'serial_port': '/dev/ttyS4'},    # 替换为实际串口设备路径
             {'baud_rate': 115200}
         ],
         output='screen'
@@ -50,8 +50,8 @@ def generate_launch_description():
 
     # 充电485节点
     charging_node = Node(
-        package='charging_485',
-        executable='charging_node',
+        package='motor_control',
+        executable='charging',
         name='charging_485_node',
         parameters=[
             {'serial_port': '/dev/ttyUSB0'},    # 替换为实际串口设备路径
@@ -69,8 +69,10 @@ def generate_launch_description():
         parameters=[
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260203_161413.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260203_161413.txt'}
+            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260227_142302.txt'}
+            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260228_153621.txt'}
+            
             # 原注释的其他参数可取消注释添加
             # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
         ]
@@ -219,7 +221,7 @@ def generate_launch_description():
     ld.add_action(motor_control_node)
 
     # ld.add_action(sensors_485_node)
-    # ld.add_action(laser_node)
+    ld.add_action(laser_node)
     # ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)

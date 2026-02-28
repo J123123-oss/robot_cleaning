@@ -74,6 +74,11 @@ class RTKNavControlNode(Node):
         self.current_lat = 0.0
         self.imu_yaw = 0.0
         self.rtk_install_offset = -90.0    #-90.0(old)  # RTK安装偏移角度
+
+         # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
+        self.antenna_offset_front = 0.31   # 前向偏移（+：天线在车体前，-：在后）
+        self.antenna_offset_left = -0.2    # 左向偏移（-：天线在车体左，+：在右）
+
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
@@ -150,11 +155,14 @@ class RTKNavControlNode(Node):
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
         self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
+        self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
+
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.io_data_rtk_sub = self.create_subscription(String, '/io/data', self.io_data_rtk_callback, 10)
         self.unloading_gps_sub = self.create_subscription(Vector3, '/unloading_gps', self.unloading_gps_callback, 10)
+
         # 定时器（10Hz驱动导航逻辑）
         self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)
 
@@ -547,6 +555,45 @@ class RTKNavControlNode(Node):
         self.current_gps = (smooth_lon, smooth_lat)
         self.current_lon = smooth_lon
         self.current_lat = smooth_lat
+        self.get_logger().debug(f"当前天线坐标：经度={smooth_lon:.6f}, 纬度={smooth_lat:.6f}")
+
+        EARTH_RADIUS = 6378137.0       # 地球半径（米），WGS84椭球长半轴
+        # 1. 将航向角转换为弧度（注意：imu_yaw是车体朝向，需确认角度定义：0°为北，顺时针增加）
+        heading_rad = math.radians(self.imu_yaw)
+        
+        # 2. 计算天线相对于车体中心的北向（N）、东向（E）偏移量（米）
+        # 车体朝向为heading_rad，天线在前则北向偏移为正，在左则东向偏移为负（根据坐标系调整）
+        # 核心公式：
+        # 北向偏移 = 前向偏移 * cos(航向角) - 左向偏移 * sin(航向角)
+        # 东向偏移 = 前向偏移 * sin(航向角) + 左向偏移 * cos(航向角)
+        delta_n = self.antenna_offset_front * math.cos(heading_rad) - self.antenna_offset_left * math.sin(heading_rad)
+        delta_e = self.antenna_offset_front * math.sin(heading_rad) + self.antenna_offset_left * math.cos(heading_rad)
+        
+        # 3. 将米级偏移转换为经纬度偏移（弧度）
+        # 纬度偏移：delta_lat = delta_n / 地球半径
+        # 经度偏移：delta_lon = delta_e / (地球半径 * cos(纬度弧度))
+        lat_rad = math.radians(self.current_lat)
+        delta_lat_rad = delta_n / EARTH_RADIUS
+        delta_lon_rad = delta_e / (EARTH_RADIUS * math.cos(lat_rad))
+        
+        # 4. 转换为角度并计算车体中心坐标（天线坐标 - 偏移量 = 车体中心坐标）
+        car_lat = self.current_lat - math.degrees(delta_lat_rad)
+        car_lon = self.current_lon - math.degrees(delta_lon_rad)
+
+        # 发布车体中心GPS
+        car_gps_msg = NavSatFix()
+        car_gps_msg.header = msg.header
+        car_gps_msg.status = msg.status
+        car_gps_msg.latitude = car_lat
+        car_gps_msg.longitude = car_lon
+        car_gps_msg.altitude = msg.altitude  # 高度可根据实际偏移调整
+        self.car_center_gps_pub.publish(car_gps_msg)
+
+        self.current_lat = car_lat
+        self.current_lon = car_lon
+        self.current_gps = (car_lon, car_lat)
+        self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
+
 
     def heading_callback(self, msg: WTRTK) -> None:
         ins_heading_deg = msg.ins_heading

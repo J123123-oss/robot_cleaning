@@ -9,4 +9,4 @@ while ! ping -c 1 -W 2 $TARGET_IP > /dev/null 2>&1; do
     sleep 1
 done
 echo "已成功ping通 $TARGET_IP"
-source /home/ztl/robot_cleaning/install/setup.bash && ros2 launch rtk_nav run.launch.py >> /home/ztl/robot_cleaning/motor_start_log/run0208.log 2>&1
+source /home/ztl/robot_cleaning/install/setup.bash && ros2 launch rtk_nav run.launch.py >> /home/ztl/robot_cleaning/motor_start_log/run0228.log 2>&1

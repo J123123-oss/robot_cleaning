@@ -6,6 +6,7 @@
 2、 播放录制bag测试，启动launch中的wtrtk_parse_txt
 
 3、 通过话题发布
+
     ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'r'}" -1
     进入RTK导航模式，默认为Normal模式可以键盘发布控制不能RTK导航。
 
@@ -24,6 +25,7 @@
 
 ## 无线充电
 ### 开始充电
+
 ros2 service call /start_charging custom_msgs/srv/ChargeControl "{}"
 
 ### 停止充电
@@ -72,7 +74,7 @@ graph TD
     U --> V[停止STOP]
 
 ```
-出仓结束后返回:
+### 出仓结束后返回:
 ```mermaid
 graph TD
     A[RTK多点导航全部完成] --> B{订阅出仓点GPS}
@@ -80,122 +82,73 @@ graph TD
     使用multi_waypoint_nav_generator]
     D -->F
 ```
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32088536, longitude: 120.06717012, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32009074, longitude: 120.06899750, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32005031, longitude: 120.06719501, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-序号,经度,纬度,航向角(度)
-1,120.07064157,30.32105564,88.51
-2,120.07065098,30.32105585,338.51
+## 激光对正原逻辑
+### 激光对正旧：
+激光距离<3000mm:
+    if 差值>1000mm: 执行「偏转→后退2s→反向偏转检查」流程
+        if 差值<10mm: 直行 下一步
+    else 差值≤1000mm → 中等速度纠偏直行
+        if 激光距离<530mm → 最终对位判断
+            if 差值<2: 结束
+        if 激光距离<1000mm
+            差值≥5mm → 低速旋转对准
+            差值<5mm 直行 下一步
+        if 中距离（≥1000mm），判断差值是否<100mm
+            差值>100mm：中速旋转对准
+            差值<100mm：直行 下一步
+激光距离>3000mm:
+    旋转寻找
 
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32105564, longitude: 120.07064157, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32105585, longitude: 120.07065098, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-
-120.07151235,30.32131103,223.65
-2,120.07142616,30.32123303,313.93
-120.07141285, 30.3212441
-4,120.07149904,30.32132210,43.65
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32131103, longitude: 120.07151235, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32123303, longitude: 120.07142616, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.3212441, longitude: 120.07141285, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32132210, longitude: 120.07149904, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-1,120.07151235,30.32131103,223.65
-2,120.07142616,30.32123303,313.93
-3,120.07142350,30.32123525,43.65
-4,120.07150969,30.32131325,313.93
-5,120.07150703,30.32131546,223.65
-6,120.07142084,30.32123746,313.93
-7,120.07141817,30.32123967,43.65
-8,120.07150437,30.32131767,313.93
-9,120.07150170,30.32131988,223.65
-10,120.07141551,30.32124189,313.93
-11,120.07141285,30.32124410,43.65
-12,120.07149904,30.32132210,43.65
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.3208108, longitude: 120.07117109, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32073328, longitude: 120.07119762, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32072987, longitude: 120.07118433, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32080767, longitude: 120.07115780, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32080426, longitude: 120.07114451, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32072646, longitude: 120.07117104, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32072305, longitude: 120.07115776, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32080085, longitude: 120.07113123, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-1,120.,30.,73.44
-2,120.,30.,163.60
-3,120.,30.,253.44
-4,120.,30.,163.60
-5,120.,30.,73.44
-6,120.,30.,163.60
-7,120.,30.,253.44
-8,120.,30.,163.60
-9,120.,30.,73.44
-10,120.,30.,73.44
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32084408, longitude: 120.07111649, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32086709, longitude: 120.07120617, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32085840, longitude: 120.07120912, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32083543, longitude: 120.07111935, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32082679, longitude: 120.07112238, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32084980, longitude: 120.07121207, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32084116, longitude: 120.07121501, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32081814, longitude: 120.07112533, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32080950, longitude: 120.07112828, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
-
-ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32083251, longitude: 120.07121796, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1
+### 激光对正修改版
+```mermaid
+graph TD
+    A[进仓LOADING阶段] --> B{激光距离<3000mm?}
+    %% 激光超出有效区分支
+    B -- 否 --> C[旋转寻找目标（低速）]
+    C --> D{寻找超时>10s?}
+    D -- 是 --> E[后退重新定位（base/5）]
+    D -- 否 --> C
+    E --> B
+    %% 激光有效区分支
+    B -- 是 --> F{差值>1000mm?}
+    
+    %% 大幅差值闭环调整（粗调）
+    F -- 是 --> G[调整阶段：偏转对准（3s，base/4）]
+    G --> H{偏转超时?}
+    H -- 是 --> I[调整阶段：后退2s（base/5）]
+    I --> J{后退完成?}
+    J -- 是 --> K[重新读取激光值]
+    K --> L[调整阶段：反向偏转检查（2s，base/6）]
+    L --> M{检查超时?}
+    M -- 是 --> N{差值仍>1000mm?}
+    N -- 是 --> G
+    N -- 否 --> O[进入中等差值纠偏]
+    M -- 否 --> L
+    J -- 否 --> I
+    H -- 否 --> G
+    
+    %% 中等差值分级精调
+    F -- 否 --> O
+    O --> P{激光距离≥1000mm?}
+    %% 中距离（≥1000mm）
+    P -- 是 --> Q{差值>100mm?}
+    Q -- 是 --> R[中速旋转对准（base/3）]
+    Q -- 否 --> S[直行（base/3）→下一步]
+    R --> O
+    S --> O
+    %% 近距离（<1000mm）
+    P -- 否 --> T{激光距离≥330mm?}
+    T -- 是 --> U{差值≥5mm?}
+    U -- 是 --> V[低速旋转对准（base/4）]
+    U -- 否 --> W[直行（base/4）→下一步]
+    V --> O
+    W --> O
+    %% 极近距离（<330mm）终调
+    T -- 否 --> X{差值<1mm?}
+    X -- 否 --> Y[最终微调（base/20）+重置稳定计数]
+    Y --> O
+    X -- 是 --> Z{连续3次达标?}
+    Z -- 否 --> AA[小幅直行（base/10）+稳定计数+1]
+    AA --> O
+    Z -- 是 --> AB[停止→进仓完成（COMPLETE）]
+```
