@@ -15,7 +15,7 @@
 
     通过话题发布
     ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'm'}" -1
-    进入原遥控解析模式(未测试)
+    进入遥控模式
 
 4、 实时导航测试
     注释wtrtk_parse_txt，启动launch中的wtrtk_serial_driver
@@ -76,7 +76,8 @@ graph TD
 ```mermaid
 graph TD
     A[RTK多点导航全部完成] --> B{订阅出仓点GPS}
-    B --方法2--> D[添加最后一个文件末尾索引，使用multi_waypoint_nav_generator]
+    B --> D[添加最后一个文件末尾索引
+    使用multi_waypoint_nav_generator]
     D -->F
 ```
 ros2 topic pub /fix sensor_msgs/msg/NavSatFix "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: ''}, status: {status: 4, service: 0}, latitude: 30.32088536, longitude: 120.06717012, altitude: 0.0, position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], position_covariance_type: 0}" -r 1

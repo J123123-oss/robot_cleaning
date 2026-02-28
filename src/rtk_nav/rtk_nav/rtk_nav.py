@@ -22,11 +22,11 @@ HEADING_SMOOTH_WINDOW = 5  # 航向角滑动平均窗口大小（帧）
 HEADING_CHANGE_THRESHOLD = 30.0  # 航向角突变阈值（°），超过则用历史值替代
 
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.1
-RTK_HEADING_TOLERANCE = 1.0  # degree
+RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
+RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值
 LINEAR_SPEED_BASE = 4.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.1
+INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -73,7 +73,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 90.0    #-90.0(old)  # RTK安装偏移角度
+        self.rtk_install_offset = -90.0    #-90.0(old)  # RTK安装偏移角度
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
@@ -100,6 +100,8 @@ class RTKNavControlNode(Node):
         self.heading_cache = []
         # IMU偏航角滑动缓存
         self.imu_yaw_cache = []
+
+        self.last_valid_heading = None  # 存储距离≥0.5m时最后一次计算的航向
 
         # self.is_boundary_triggered = False # test, False origin
         # 定义参数描述：bool类型, 名称：is_boundary_triggered, 默认值：False
@@ -528,10 +530,10 @@ class RTKNavControlNode(Node):
         if self.current_gps and self.current_gps != [0.0, 0.0]:
             lon_diff = abs(raw_lon - self.current_gps[0])
             lat_diff = abs(raw_lat - self.current_gps[1])
-            if lon_diff > GPS_CHANGE_THRESHOLD or lat_diff > GPS_CHANGE_THRESHOLD:
-                self.get_logger().warn(f"[GPS过滤] 坐标突变（lon_diff={lon_diff:.6f}, lat_diff={lat_diff:.6f}），使用历史平滑值")
-                # 异常时不更新坐标，直接返回
-                return
+            # if lon_diff > GPS_CHANGE_THRESHOLD or lat_diff > GPS_CHANGE_THRESHOLD:
+            #     self.get_logger().warn(f"[GPS过滤] 坐标突变（lon_diff={lon_diff:.6f}, lat_diff={lat_diff:.6f}），使用历史平滑值")
+            #     # 异常时不更新坐标，直接返回
+            #     return
         
         # 2. 滑动平均平滑：保留最近N帧坐标取平均
         self.gps_cache.append((raw_lon, raw_lat))
@@ -669,31 +671,31 @@ class RTKNavControlNode(Node):
         raw_distance = math.hypot(x2 - x1, y2 - y1)
 
         # 计算平面直线距离（米）
-        # distance = math.hypot(x2 - x1, y2 - y1)
-        # return distance
+        distance = math.hypot(x2 - x1, y2 - y1)
+        return distance
 
         # ========== 新增：距离过滤逻辑 ==========
         # 1. 突变检测：与历史距离差值超过阈值则视为异常
-        smooth_distance = raw_distance
-        if self.distance_cache:
-            last_distance = self.distance_cache[-1]
-            distance_diff = abs(raw_distance - last_distance)
-            if distance_diff > DISTANCE_CHANGE_THRESHOLD:
-                self.get_logger().warn(f"[距离过滤] 距离突变（当前{raw_distance:.2f}m，上一帧{last_distance:.2f}m，差值{distance_diff:.2f}m），使用历史平滑值")
-                # 异常时使用历史平滑值
-                smooth_distance = last_distance
-            else:
-                # 正常时加入缓存做滑动平均
-                self.distance_cache.append(raw_distance)
-                if len(self.distance_cache) > GPS_SMOOTH_WINDOW:
-                    self.distance_cache.pop(0)
-                # 滑动平均平滑
-                smooth_distance = sum(self.distance_cache) / len(self.distance_cache)
-        else:
-            # 首次缓存初始化
-            self.distance_cache.append(raw_distance)
+        # smooth_distance = raw_distance
+        # if self.distance_cache:
+        #     last_distance = self.distance_cache[-1]
+        #     distance_diff = abs(raw_distance - last_distance)
+        #     if distance_diff > DISTANCE_CHANGE_THRESHOLD:
+        #         self.get_logger().warn(f"[距离过滤] 距离突变（当前{raw_distance:.2f}m，上一帧{last_distance:.2f}m，差值{distance_diff:.2f}m），使用历史平滑值")
+        #         # 异常时使用历史平滑值
+        #         smooth_distance = last_distance
+        #     else:
+        #         # 正常时加入缓存做滑动平均
+        #         self.distance_cache.append(raw_distance)
+        #         if len(self.distance_cache) > GPS_SMOOTH_WINDOW:
+        #             self.distance_cache.pop(0)
+        #         # 滑动平均平滑
+        #         smooth_distance = sum(self.distance_cache) / len(self.distance_cache)
+        # else:
+        #     # 首次缓存初始化
+        #     self.distance_cache.append(raw_distance)
         
-        return smooth_distance
+        # return smooth_distance
     def smooth_angle(self, raw_angle: float, cache: list, window_size: int, change_threshold: float) -> float:
         """
         角度平滑与突变过滤通用函数（支持航向角）
@@ -776,7 +778,7 @@ class RTKNavControlNode(Node):
         elif yaw_error_abs > 20:
             kp = 0.02  # 中误差：增大，及时修正
         else:
-            kp = 0.002  # 小误差：大幅增大（原0.005），精准抵消微小偏移
+            kp = 0.01  # 小误差：大幅增大（原0.005），精准抵消微小偏移
         # kp = 0.02
         # 3. KD参数优化：增强阻尼，抑制持续偏向
         kd = 0.01  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
@@ -917,27 +919,27 @@ class RTKNavControlNode(Node):
         # 转换到[-180°, 180°]，与IMU航向角格式统一
         raw_bearing = bearing_deg - 360.0 if bearing_deg > 180.0 else bearing_deg
         # return bearing_deg
-        smooth_bearing = raw_bearing
-        if self.heading_cache:
-            last_smooth = self.heading_cache[-1]
-            # 核心：使用环形角度差计算物理差值，避免-170→170误触发
-            angle_diff = self.get_ring_angle_diff(raw_bearing, last_smooth)
-            if angle_diff > HEADING_CHANGE_THRESHOLD:
-                self.get_logger().warn(f"[航向过滤] 角度突变（原始{raw_bearing:.2f}°，上一帧{last_smooth:.2f}°，物理差{angle_diff:.2f}°），使用历史值")
-                smooth_bearing = last_smooth
-            else:
-                # 正常则加入缓存做滑动平均
-                self.heading_cache.append(raw_bearing)
-                if len(self.heading_cache) > HEADING_SMOOTH_WINDOW:
-                    self.heading_cache.pop(0)
-                smooth_bearing = sum(self.heading_cache) / len(self.heading_cache)
-        else:
-            # 首次初始化缓存
-            self.heading_cache.append(raw_bearing)
+        # smooth_bearing = raw_bearing
+        # if self.heading_cache:
+        #     last_smooth = self.heading_cache[-1]
+        #     # 核心：使用环形角度差计算物理差值，避免-170→170误触发
+        #     angle_diff = self.get_ring_angle_diff(raw_bearing, last_smooth)
+        #     if angle_diff > HEADING_CHANGE_THRESHOLD:
+        #         self.get_logger().warn(f"[航向过滤] 角度突变（原始{raw_bearing:.2f}°，上一帧{last_smooth:.2f}°，物理差{angle_diff:.2f}°），使用历史值")
+        #         smooth_bearing = last_smooth
+        #     else:
+        #         # 正常则加入缓存做滑动平均
+        #         self.heading_cache.append(raw_bearing)
+        #         if len(self.heading_cache) > HEADING_SMOOTH_WINDOW:
+        #             self.heading_cache.pop(0)
+        #         smooth_bearing = sum(self.heading_cache) / len(self.heading_cache)
+        # else:
+        #     # 首次初始化缓存
+        #     self.heading_cache.append(raw_bearing)
         
-        # 归一化最终结果，防止浮点误差
-        smooth_bearing = math.fmod(smooth_bearing + 180.0, 360.0) - 180.0
-        return smooth_bearing
+        # # 归一化最终结果，防止浮点误差
+        # smooth_bearing = math.fmod(smooth_bearing + 180.0, 360.0) - 180.0
+        return raw_bearing
 
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
         if not self.waypoints:
@@ -1047,13 +1049,33 @@ class RTKNavControlNode(Node):
                 # self.get_logger().info(f"距离小，减速：当前基础速度={current_base_speed:.2f}（原{LINEAR_SPEED_BASE:.2f}）")
             else:
                 current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
-            
+            #  # 1. 先判断距离，决定是否更新实时航向
+            # if distance >= 0.5:
+            #     # 距离足够远时，正常计算实时航向，并更新缓存
+            #     real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+            #     self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
+            # else:
+            #     # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
+            #     if self.last_valid_heading is not None:
+            #         real_time_heading = self.last_valid_heading  # 复用之前的航向
+            #         self.get_logger().info(
+            #             f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{real_time_heading:.2f}°"
+            #         )
+            #     else:
+            #         # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
+            #         real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+            #         self.get_logger().warning(
+            #             f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
+            #         )
             # ========== 实时角度纠偏逻辑 ==========
             # target_heading = real_time_heading # 使用实时朝向角
             target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
             target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
             # correction = self.straight_get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
-            correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
+            # correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
+            yaw_error = self.get_heading_error(target_heading)
+            # 计算修正量（使用真实偏差角）
+            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
             # base_speed = LINEAR_SPEED_BASE
             last_left_speed = None
             last_right_speed = None
@@ -1380,12 +1402,33 @@ class RTKNavControlNode(Node):
                 
                 # 核心：每帧实时计算当前位置→目标航点的路径方位角（机器人需要行驶的正确方向）
                 real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                if distance < 0.5:
-                    # 固定目标航向=航点预设航向（避免近距离抖动）
-                    target_heading_fixed = self.get_path_heading(target_waypoint)
-                    real_time_heading = target_heading_fixed  # 覆盖实时计算的航向
-                    self.get_logger().info(f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{target_heading_fixed:.2f}°")
- 
+                distance = self.calc_distance_to_waypoint(target_waypoint)
+                # if distance < 0.5:
+                #     # 固定目标航向=航点预设航向（避免近距离抖动）
+                #     target_heading_fixed = self.get_heading_error(real_time_heading)
+                #     # target_heading_fixed = self.get_path_heading(target_waypoint)
+                #     real_time_heading = self.last_valid_heading  # 覆盖实时计算的航向
+                #     self.get_logger().info(f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{target_heading_fixed:.2f}°")
+                # else:
+                #     self.last_valid_heading = real_time_heading  # 缓存有效航向
+                # 1. 先判断距离，决定是否更新实时航向
+                if distance >= 0.5:
+                    # 距离足够远时，正常计算实时航向，并更新缓存
+                    real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                    self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
+                else:
+                    # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
+                    if self.last_valid_heading is not None:
+                        real_time_heading = self.last_valid_heading  # 复用之前的航向
+                        self.get_logger().info(
+                            f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{real_time_heading:.2f}°"
+                        )
+                    else:
+                        # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
+                        real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                        self.get_logger().warning(
+                            f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
+                        )
                 # 初始化航向历史缓存（最多保留5帧，可调整）
                 if not hasattr(self, 'heading_history'):
                     self.heading_history = []
@@ -1396,7 +1439,6 @@ class RTKNavControlNode(Node):
                 real_time_heading = sum(self.heading_history) / len(self.heading_history)
                 self.nav_context["last_target_heading"] = real_time_heading
                 # 计算实时距离
-                distance = self.calc_distance_to_waypoint(target_waypoint)
                 # 距离未达标：实时纠偏行驶
                 last_target_heading = 0.0
                 if distance >= RTK_WAYPOINT_TOLERANCE:
