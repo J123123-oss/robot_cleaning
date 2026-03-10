@@ -180,7 +180,27 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     inner_height = inner_n_max - inner_n_min
     
     if inner_width <= 0.1 or inner_height <= 0.1:
-        raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+        # raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+        # 获取A点和B点的UTM坐标（这里需要根据实际的经纬度转UTM逻辑调整）
+        # 假设point_a和point_b是经纬度坐标，先转换为UTM
+                # 正确转换A/B点到UTM坐标
+        a_lon, a_lat = point_a
+        b_lon, b_lat = point_b
+        
+        # 经纬度转UTM（使用正确的函数）
+        a_utm_e, a_utm_n, _, _ = get_utm_coords(a_lat, a_lon)
+        b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+        
+        # 生成AB直线路径（UTM坐标）
+        path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
+        # 经纬度路径（保持原格式：(lon, lat)）
+        path_latlon = [point_a, point_b]
+        
+        # 关键修复：给inner_corners_utm赋默认值，避免绘图时索引越界
+        # 使用原始矩形角点作为兜底，保证绘图代码能正常运行
+        inner_corners_utm = original_corners_utm.copy()
+        
+        return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
     
     # 6. 旋转内部矩形角点（以A点为中心，保留）
     inner_rot = {}
@@ -199,19 +219,76 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     hori_dir = 'left' if 'left' in start_corner else 'right'
     vert_dir = 'top' if 'top' in start_corner else 'bottom'
     
-    # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 保留原有逻辑】
+    # # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 保留原有逻辑】
+    # swap_wh_select = param['swap_wh_select']
+    # default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
+    # path_utm_unrot = []
+    # if default_direction:
+    #     # 宽 >= 高：垂直分条（上下移动）
+    #     num_strips = max(1, int(inner_height / interval) + 1)
+    #     if vert_dir == 'top':
+    #         n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    #                     for i in range(num_strips)]
+    #     else:
+    #         n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    #                     for i in range(num_strips)]
+        
+    #     for i, current_n_unrot in enumerate(n_values):
+    #         if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
+    #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+    #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    #         else:
+    #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+            
+    #         # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
+    #         # if i < num_strips - 1:
+    #         #     current_end = path_utm_unrot[-1]
+    #         #     next_n = n_values[i+1]
+    #         #     next_start = (current_end[0], next_n)
+    #         #     path_utm_unrot.append(next_start)
+                
+    # else:
+    #     # 宽 < 高：水平分条（左右移动）
+    #     num_strips = max(1, int(inner_width / interval) + 1)
+    #     if hori_dir == 'left':
+    #         e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    #                     for i in range(num_strips)]
+    #     else:
+    #         e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    #                     for i in range(num_strips)]
+        
+    #     for i, current_e_unrot in enumerate(e_values):
+    #         if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
+    #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    #         else:
+    #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+            
+    #         # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
+    #         # if i < num_strips - 1:
+    #         #     current_end = path_utm_unrot[-1]
+    #         #     next_e = e_values[i+1]
+    #         #     next_start = (next_e, current_end[1])
+    #         #     path_utm_unrot.append(next_start)
+    # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 修复间隔无效问题】
     swap_wh_select = param['swap_wh_select']
     default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
     path_utm_unrot = []
     if default_direction:
-        # 宽 >= 高：垂直分条（上下移动）
-        num_strips = max(1, int(inner_height / interval) + 1)
-        if vert_dir == 'top':
-            n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
-        else:
-            n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
+        # 宽 >= 高：垂直分条（上下移动）- 按实际interval步进
+        # 从inner_n_min到inner_n_max，按interval步进，强制包含首尾
+        n_values = []
+        current_n = inner_n_min
+        # 步进生成条带位置（严格按interval）
+        while current_n <= inner_n_max + 1e-6:  # 加微小值避免浮点误差漏尾点
+            n_values.append(current_n)
+            current_n += interval
+        # 若最后一个点与inner_n_max偏差过大，强制补充（确保覆盖完整区域）
+        if abs(n_values[-1] - inner_n_max) > 1e-3:
+            n_values.append(inner_n_max)
+        num_strips = len(n_values)  # 实际条带数由interval决定
         
         for i, current_n_unrot in enumerate(n_values):
             if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
@@ -220,23 +297,19 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             else:
                 path_utm_unrot.append((inner_e_max, current_n_unrot))
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
-            
-            # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
-            # if i < num_strips - 1:
-            #     current_end = path_utm_unrot[-1]
-            #     next_n = n_values[i+1]
-            #     next_start = (current_end[0], next_n)
-            #     path_utm_unrot.append(next_start)
                 
     else:
-        # 宽 < 高：水平分条（左右移动）
-        num_strips = max(1, int(inner_width / interval) + 1)
-        if hori_dir == 'left':
-            e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
-        else:
-            e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
+        # 宽 < 高：水平分条（左右移动）- 按实际interval步进
+        # 从inner_e_min到inner_e_max，按interval步进，强制包含首尾
+        e_values = []
+        current_e = inner_e_min
+        while current_e <= inner_e_max + 1e-6:
+            e_values.append(current_e)
+            current_e += interval
+        # 强制补充尾点（避免覆盖不全）
+        if abs(e_values[-1] - inner_e_max) > 1e-3:
+            e_values.append(inner_e_max)
+        num_strips = len(e_values)  # 实际条带数由interval决定
         
         for i, current_e_unrot in enumerate(e_values):
             if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
@@ -245,14 +318,11 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             else:
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
-            
-            # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
-            # if i < num_strips - 1:
-            #     current_end = path_utm_unrot[-1]
-            #     next_e = e_values[i+1]
-            #     next_start = (next_e, current_end[1])
-            #     path_utm_unrot.append(next_start)
-    
+        # 日志优化：打印实际条带数和间隔
+    if default_direction:
+        print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
+    else:
+        print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
     # 9. 旋转路径点（以A点为中心，保留原有逻辑）
     path_utm_rot = []
     path_latlon = []
@@ -335,12 +405,47 @@ class CleaningPathPlanner(Node):
         # self.declare_parameter('calib_point_a.lon', 120.07133788016667)
         # self.declare_parameter('calib_point_a.lat', 30.32168400516667)
         #0228 test2
-        self.declare_parameter('calib_point_c.lon', 120.07129158983335)
-        self.declare_parameter('calib_point_c.lat', 30.32169783066667)
-        self.declare_parameter('calib_point_b.lon', 120.07130318850001)
-        self.declare_parameter('calib_point_b.lat', 30.321713963833336)
-        self.declare_parameter('calib_point_a.lon', 120.07133778466665)
-        self.declare_parameter('calib_point_a.lat', 30.32168391916667)
+        # self.declare_parameter('calib_point_c.lon', 120.07129158983335)
+        # self.declare_parameter('calib_point_c.lat', 30.32169783066667)
+        # self.declare_parameter('calib_point_b.lon', 120.07130318850001)
+        # self.declare_parameter('calib_point_b.lat', 30.321713963833336)
+        # self.declare_parameter('calib_point_a.lon', 120.07133778466665)
+        # self.declare_parameter('calib_point_a.lat', 30.32168391916667)
+
+
+        #0302 
+        # self.declare_parameter('calib_point_c.lon', 120.07130777966994)
+        # self.declare_parameter('calib_point_c.lat', 30.321773908232736)
+        # self.declare_parameter('calib_point_b.lon', 120.07133322093847)
+        # self.declare_parameter('calib_point_b.lat', 30.321770802576992)
+        # self.declare_parameter('calib_point_a.lon', 120.07130344034744)
+        # self.declare_parameter('calib_point_a.lat', 30.321628654625364)
+
+        #0305  zone1 
+        # self.declare_parameter('calib_point_c.lon', 120.06777757640111)
+        # self.declare_parameter('calib_point_c.lat', 30.321156259517213)
+        # self.declare_parameter('calib_point_b.lon', 120.06775856573414)
+        # self.declare_parameter('calib_point_b.lat', 30.3212176674988)
+        # self.declare_parameter('calib_point_a.lon', 120.06789529325282)
+        # self.declare_parameter('calib_point_a.lat', 30.321251006540763)
+
+        #0305  zone2
+        # self.declare_parameter('calib_point_c.lon', 120.06761198560712)
+        # self.declare_parameter('calib_point_c.lat', 30.321116435931167)
+        # self.declare_parameter('calib_point_b.lon', 120.06758377060459)
+        # self.declare_parameter('calib_point_b.lat', 30.32120704408408)
+        # self.declare_parameter('calib_point_a.lon', 120.06770772485666)
+        # self.declare_parameter('calib_point_a.lat', 30.321238340495807)
+
+        #0305  zone3
+        self.declare_parameter('calib_point_c.lon', 120.06744037236592)
+        self.declare_parameter('calib_point_c.lat', 30.321138440383812)
+        self.declare_parameter('calib_point_b.lon', 120.0674618551937)
+        self.declare_parameter('calib_point_b.lat', 30.321077905589622)
+        self.declare_parameter('calib_point_a.lon', 120.06757631066615)
+        self.declare_parameter('calib_point_a.lat', 30.32110629748197)
+
+        
         # self.declare_parameter('calib_point_c.lon', 120.07149470883333)
         # self.declare_parameter('calib_point_c.lat', 30.32131817333333)
         # self.declare_parameter('calib_point_b.lon', 120.07142615983334)
@@ -364,9 +469,9 @@ class CleaningPathPlanner(Node):
 
 
 
-        self.declare_parameter('interval', 2.0)
-        self.declare_parameter('start_corner', 'top_left')
-        self.declare_parameter('swap_wh_select', False)
+        self.declare_parameter('interval', 1.5)
+        self.declare_parameter('start_corner', 'top_right')
+        self.declare_parameter('swap_wh_select', True)
         self.declare_parameter('edge_distance_lon', 0.0)
         self.declare_parameter('edge_distance_lat', 0.0)
         self.declare_parameter('headless', True)
@@ -421,7 +526,7 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
@@ -468,6 +573,8 @@ class CleaningPathPlanner(Node):
             
             ax.scatter(path_e[0], path_n[0], c='green', s=100, marker='o', label='start')
             ax.scatter(path_e[-1], path_n[-1], c='purple', s=100, marker='x', label='end')
+            #手动修改结束点为-2，修改结束点位置
+            # ax.scatter(path_e[-2], path_n[-2], c='purple', s=100, marker='x', label='end')
             
             ax.set_xlabel(f'UTM east m - zone {zone_num}{zone_letter}')
             ax.set_ylabel(f'UTM north m - zone {zone_num}{zone_letter}')

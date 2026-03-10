@@ -91,7 +91,7 @@ class CanMotorDriver(Node):
         self.y = 0.0  # 机器人位置y坐标
         self.th = 0.0  # 机器人方向角度
 
-        self.BASE_SPEED = 1.0 # 导航目标速度（dps）= self.BASE_SPEED*10
+        self.BASE_SPEED = 2.0 # 导航目标速度（dps）= self.BASE_SPEED*10
         # Sensor 
         self.front_left = None
         self.front_right = None

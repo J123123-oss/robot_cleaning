@@ -145,28 +145,58 @@ class Charging485Node(Node):
             self.get_logger().warn("电压电流响应格式错误")
         return volt, curr
 
-    def _parse_fault_code(self, resp: bytes) -> bytes:
+    # def _parse_fault_code(self, resp: bytes) -> bytes:
+    #     """解析故障码响应（寄存器0x05，长度2字节）"""
+    #     fault_code = 0x0000
+        
+    #     # 校验响应格式：长度≥7 + 从机地址匹配 + 功能码03 + 数据长度02
+    #     if len(resp) >= 7 and resp[0] == self.slave_addr and resp[1] == 0x03 and resp[2] == 0x02:
+    #         # 解析16位故障码
+    #         if crc16_modbus(resp[:-2]) == resp[-2:]:
+    #             fault_code = (resp[3] << 8) | resp[4]
+    #         # 校验CRC
+    #             # return fault_code
+    #         #     # 查找故障码含义
+    #         #     fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: 0x{fault_code:04X}")
+    #         #     self.get_logger().info(f"故障码解析成功 | 故障码：0x{fault_code:04X} | 含义：{fault_msg}")
+    #         # else:
+    #         #     self.get_logger().warn("故障码响应CRC校验失败")
+    #     else:
+    #         self.get_logger().warn("故障码响应格式错误")
+        
+    #     # return fault_code, fault_msg
+    #     return fault_code
+
+    def _parse_fault_code(self, resp: bytes) -> tuple[int, str]:
         """解析故障码响应（寄存器0x05，长度2字节）"""
         fault_code = 0x0000
+        fault_msg = "无故障"
         
         # 校验响应格式：长度≥7 + 从机地址匹配 + 功能码03 + 数据长度02
         if len(resp) >= 7 and resp[0] == self.slave_addr and resp[1] == 0x03 and resp[2] == 0x02:
-            # 解析16位故障码
-            if crc16_modbus(resp[:-2]) == resp[-2:]:
-                fault_code = (resp[3] << 8) | resp[4]
             # 校验CRC
-                # return fault_code
-            #     # 查找故障码含义
-            #     fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: 0x{fault_code:04X}")
-            #     self.get_logger().info(f"故障码解析成功 | 故障码：0x{fault_code:04X} | 含义：{fault_msg}")
-            # else:
-            #     self.get_logger().warn("故障码响应CRC校验失败")
+            if crc16_modbus(resp[:-2]) == resp[-2:]:
+                # 解析16位故障码
+                fault_code = (resp[3] << 8) | resp[4]
+                # 故障码映射（可扩展）
+                FAULT_CODE_MAP = {
+                    0x0000: "无故障",
+                    0x0001: "过压故障",
+                    0x0002: "欠压故障",
+                    0x0003: "过流故障",
+                    0x0004: "过热故障",
+                    0x0005: "通信故障",
+                    0x0006: "充电超时",
+                    0x0007: "电池异常",
+                }
+                fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: 0x{fault_code:04X}")
+                self.get_logger().info(f"故障码解析成功 | 故障码：0x{fault_code:04X} | 含义：{fault_msg}")
+            else:
+                self.get_logger().warn("故障码响应CRC校验失败")
         else:
             self.get_logger().warn("故障码响应格式错误")
         
-        # return fault_code, fault_msg
-        return fault_code
-
+        return fault_code, fault_msg
     # -------------------------- 定时器回调：定时查询电压电流+故障码 --------------------------
     def _timer_query_data(self):
         """定时器自动查询电压电流和故障码并发布话题"""
@@ -187,6 +217,10 @@ class Charging485Node(Node):
         msg_fault = Int16()
         msg_fault.data = fault_code
         self.fault_code_pub.publish(msg_fault)
+        # 3. 冲满停止充电（示例：电压≥14.0V或电流≥1.0A时停止充电）
+        if volt >= 54.0 and curr >= 0.1:
+            self.get_logger().info(f"检测到充电完成条件 | 电压：{volt:.1f}V | 电流：{curr:.2f}A，自动停止充电")
+            self._stop_charge_cb(None, None)  # 直接调用停止充电回调
 
     # -------------------------- 服务回调：开始充电 --------------------------
     def _start_charge_cb(self, req, res):

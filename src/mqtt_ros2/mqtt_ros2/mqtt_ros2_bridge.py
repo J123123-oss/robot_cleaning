@@ -65,6 +65,7 @@ class MQTTRos2Bridge(Node):
         self.user = self.declare_parameter('user', 'gf-mounted').value
         self.password = str(self.declare_parameter('password', '20230810').value)
         self.topic_status = self.declare_parameter('topic_status', 'robot/HANGZHOU/status').value
+        self.topic_dock_status = self.declare_parameter('topic_dock_status', 'dock/HANGZHOU/status').value
         self.topic_cmd = self.declare_parameter('topic_cmd', 'robot/HANGZHOU/cmd').value
         self.topic_command = self.declare_parameter('topic_command', 'robot/HANGZHOU/command').value
         self.topic_result = self.declare_parameter('topic_result', 'robot/HANGZHOU/result').value
@@ -74,7 +75,7 @@ class MQTTRos2Bridge(Node):
         # 打印最终配置
         self.config = {
             "broker":self.broker, "port":self.port, "user":self.user, "password":self.password,
-            "topic_status":self.topic_status, "topic_cmd":self.topic_cmd,
+            "topic_status":self.topic_status, "topic_dock_status":self.topic_dock_status, "topic_cmd":self.topic_cmd,
             "topic_command":self.topic_command, "topic_result":self.topic_result,
             "client_id":self.client_id, "ca_cert":self.ca_cert
         }
@@ -85,6 +86,7 @@ class MQTTRos2Bridge(Node):
         self.ros_cmd_pub = self.create_publisher(String, 'robot_cmd', 10)
         # ROS2 订阅: 监听ROS2内部状态 /robot_state 并转发到MQTT
         self.create_subscription(String, 'robot_state', self.ros_robot_state_callback, 10)
+        self.create_subscription(String, 'dock_state', self.ros_dock_state_callback, 10)
 
         # ===================== MQTT客户端初始化 =====================
         self.client = mqtt.Client(
@@ -268,7 +270,8 @@ class MQTTRos2Bridge(Node):
             self.get_logger().info(f"  ├─ 控制主题: {self.topic_cmd} (ROS2指令)")
             self.get_logger().info(f"  ├─ 命令主题: {self.topic_command} (终端命令)")
             self.get_logger().info(f"  ├─ 结果主题: {self.topic_result} (执行结果)")
-            self.get_logger().info(f"  └─ 状态主题: {self.topic_status} (ROS2状态)")
+            self.get_logger().info(f"  ├─ 状态主题: {self.topic_status} (ROS2状态)")
+            self.get_logger().info(f"  └─ 停靠状态主题: {self.topic_dock_status} (ROS2停靠状态)")
             self.get_logger().info("=" * 50)
             return True
         except Exception as e:
@@ -285,6 +288,11 @@ class MQTTRos2Bridge(Node):
         """ROS2回调: 监听/robot_state 话题 转发到MQTT (替代原rospy回调)"""
         self.get_logger().info(f"[ROS2] 收到robot_state: {msg.data}")
         self.publish_mqtt_msg(self.topic_status, msg.data)
+
+    def ros_dock_state_callback(self, msg):
+        """ROS2回调: 监听/dock_state 话题 转发到MQTT (替代原rospy回调)"""
+        self.get_logger().info(f"[ROS2] 收到dock_state: {msg.data}")
+        self.publish_mqtt_msg(self.topic_dock_status, msg.data)
 
     def stop_bridge(self):
         """关闭桥接 释放资源"""

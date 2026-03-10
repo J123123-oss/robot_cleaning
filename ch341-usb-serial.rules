@@ -1,2 +1,3 @@
 KERNEL=="ttyUSB*", KERNELS=="1-1.2", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="remote_control"
-KERNEL=="ttyUSB*", KERNELS=="1-1.1", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="WTRTK"
+KERNEL=="ttyS3", SUBSYSTEM=="tty", MODE:="0777", SYMLINK+="WTRTK"
+KERNEL=="ttyUSB*", KERNELS=="1-1.4.1", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="laser"

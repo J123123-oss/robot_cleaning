@@ -186,7 +186,27 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     inner_height = inner_n_max - inner_n_min
     
     if inner_width <= 0.1 or inner_height <= 0.1:
-        raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+        # raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+        # 获取A点和B点的UTM坐标（这里需要根据实际的经纬度转UTM逻辑调整）
+        # 假设point_a和point_b是经纬度坐标，先转换为UTM
+                # 正确转换A/B点到UTM坐标
+        a_lon, a_lat = point_a
+        b_lon, b_lat = point_b
+        
+        # 经纬度转UTM（使用正确的函数）
+        a_utm_e, a_utm_n, _, _ = get_utm_coords(a_lat, a_lon)
+        b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+        
+        # 生成AB直线路径（UTM坐标）
+        path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
+        # 经纬度路径（保持原格式：(lon, lat)）
+        path_latlon = [point_a, point_b]
+        
+        # 关键修复：给inner_corners_utm赋默认值，避免绘图时索引越界
+        # 使用原始矩形角点作为兜底，保证绘图代码能正常运行
+        inner_corners_utm = original_corners_utm.copy()
+        
+        return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
     
     # 6. 旋转内部矩形角点（以A点为中心，保留）
     inner_rot = {}
@@ -218,7 +238,11 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         else:
             n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
-        
+        # # 强制补充尾点（避免覆盖不全）
+        # if abs(n_values[-1] - inner_n_max) > 1e-3:
+        #     n_values.append(inner_n_max)
+        # num_strips = len(n_values)  # 实际条带数由interval决定
+
         for i, current_n_unrot in enumerate(n_values):
             if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
@@ -233,6 +257,7 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             #     next_n = n_values[i+1]
             #     next_start = (current_end[0], next_n)
             #     path_utm_unrot.append(next_start)
+        
                 
     else:
         # 宽 < 高：水平分条（左右移动）
@@ -243,6 +268,11 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         else:
             e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
                         for i in range(num_strips)]
+
+        # # 强制补充尾点（避免覆盖不全）
+        # if abs(e_values[-1] - inner_e_max) > 1e-3:
+        #     e_values.append(inner_e_max)
+        # num_strips = len(e_values)  # 实际条带数由interval决定
         
         for i, current_e_unrot in enumerate(e_values):
             if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
@@ -258,7 +288,12 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             #     next_e = e_values[i+1]
             #     next_start = (next_e, current_end[1])
             #     path_utm_unrot.append(next_start)
-    
+        # 日志优化：打印实际条带数和间隔
+    # if default_direction:
+    #     print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
+    # else:
+    #     print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
+
     # 9. 旋转路径点（以A点为中心，保留原有逻辑）
     path_utm_rot = []
     path_latlon = []

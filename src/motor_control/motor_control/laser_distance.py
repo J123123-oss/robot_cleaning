@@ -9,7 +9,7 @@ import time
 import threading
 import struct
 
-# Modbus CRC16校验函数
+# Modbus CRC16校验函数.
 def mb_crc_calculate(data):
     crc = 0xFFFF
     for byte in data:
@@ -24,9 +24,9 @@ def mb_crc_calculate(data):
 class LaserDistanceNode(Node):
     def __init__(self):
         super().__init__('laser_distance_node')
-        
+            
         # 1. 声明并获取串口参数（支持launch配置）
-        self.declare_parameter('serial_port', '/dev/ttyS4')
+        self.declare_parameter('serial_port', '/dev/laser')
         self.declare_parameter('baud_rate', 115200)
         
         self.serial_port = self.get_parameter('serial_port').get_parameter_value().string_value
@@ -123,9 +123,9 @@ class LaserDistanceNode(Node):
 
     def read_laser_data(self):
         """读取两路激光传感器数据"""
-        # 读取第一路激光数据（0x01指令）
-        if self.send_laser_command(0x01):
-            distance1 = self.read_serial_response(0x01)
+        # 读取第一路激光数据（0x01指令,修改为03）
+        if self.send_laser_command(0x03):
+            distance1 = self.read_serial_response(0x03)
             if distance1 is not None:
                 with self.mutex:
                     self.laser_distance[0] = distance1

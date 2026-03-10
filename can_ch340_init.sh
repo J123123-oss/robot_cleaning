@@ -9,3 +9,5 @@ sh -c 'echo 4096 > /sys/class/net/can0/tx_queue_len'
 # start ch340
 insmod /home/ztl/robot_cleaning/ch341.ko
 chmod +x /home/ztl/robot_cleaning/motor_start.sh
+# 待修改：降低eth0优先级或者暂时删除
+ip route del default via 192.168.3.1 dev eth0
