@@ -594,7 +594,7 @@ class MotorControlNode(Node):
         # 核心修改：正在进出仓时，仅响应HOLD指令，其余指令直接忽略并打印日志
         if self.is_in_bin_process:
             if new_state not in ["HOLD", "DISABLE"]:
-                self.get_logger().warn(f"[ROSNode] 正在执行进/出仓流程，仅支持HOLD\DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
+                self.get_logger().warn(f"[ROSNode] 正在执行进\出仓流程，仅支持HOLD\DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
                 return
             # 若是HOLD指令，正常执行，后续会重置进出仓标记
 
