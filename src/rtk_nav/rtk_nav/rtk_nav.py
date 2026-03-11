@@ -1293,23 +1293,23 @@ class RTKNavControlNode(Node):
             else:
                 current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
             #  # 1. 先判断距离，决定是否更新实时航向
-            if distance >= 0.3:
-                # 距离足够远时，正常计算实时航向，并更新缓存
-                real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
-            else:
-                # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
-                if self.last_valid_heading is not None:
-                    real_time_heading = self.last_valid_heading  # 复用之前的航向
-                    self.get_logger().info(
-                        f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{real_time_heading:.2f}°"
-                    )
-                else:
-                    # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
-                    real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                    self.get_logger().warning(
-                        f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
-                    )
+            # if distance >= 0.3:
+            #     # 距离足够远时，正常计算实时航向，并更新缓存
+            #     real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+            #     self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
+            # else:
+            #     # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
+            #     if self.last_valid_heading is not None:
+            #         real_time_heading = self.last_valid_heading  # 复用之前的航向
+            #         self.get_logger().info(
+            #             f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{real_time_heading:.2f}°"
+            #         )
+            #     else:
+            #         # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
+            #         real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+            #         self.get_logger().warning(
+            #             f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
+            #         )
             # ========== 实时角度纠偏逻辑 ==========
             # target_heading = real_time_heading # 使用实时朝向角
             target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
@@ -1864,7 +1864,7 @@ class RTKNavControlNode(Node):
 
     def state_callback(self, msg: String):
         """电机状态回调函数：监听控制状态变化，HOLD暂停导航，待测试"""
-        self.get_logger().info(f"[RTKNav] 收到电机状态: {msg.data}")
+        # self.get_logger().info(f"[RTKNav] 收到电机状态: {msg.data}")
         if msg.data == "HOLD":
             self.current_control_mode = "REMOTE" # 切换当前控制模式，暂停RTK
             # self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")

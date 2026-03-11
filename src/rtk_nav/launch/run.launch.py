@@ -123,7 +123,7 @@ def generate_launch_description():
             "topic_cmd": ["robot/", LaunchConfiguration("robot_ID"), "/cmd"],
             "topic_command": ["robot/", LaunchConfiguration("robot_ID"), "/command"],
             "topic_result": ["robot/", LaunchConfiguration("robot_ID"), "/result"],
-            "client_id": ["python-mqtt-client-", LaunchConfiguration("robot_ID")]
+            "client_id": ["python-mqtt-client-a", LaunchConfiguration("robot_ID")]
             }
         ]
     )
@@ -136,7 +136,7 @@ def generate_launch_description():
 
     ld.add_action(sensors_485_node)
     ld.add_action(laser_node)
-    # ld.add_action(charging_node)
+    ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(RTKNavigator)
     # 若需要启用注释的节点，取消以下对应行的注释

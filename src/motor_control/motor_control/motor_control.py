@@ -254,7 +254,7 @@ class MotorControlNode(Node):
         self.cli_query_fault = self.create_client(Trigger, 'query_fault_code')
         
         # 等待服务端上线（超时5秒）
-        self.wait_for_services()
+        # self.wait_for_services()
         
         self.get_logger().info("电机控制节点启动成功，已连接充电服务")
 
@@ -269,8 +269,8 @@ class MotorControlNode(Node):
         
         for srv_name, cli in services:
             if not cli.wait_for_service(timeout_sec=5.0):
-                self.get_logger().fatal(f"等待服务 {srv_name} 超时！")
-                rclpy.shutdown()
+                self.get_logger().warn(f"等待服务 {srv_name} 超时，继续运行（服务可能未启动）")
+                # 移除 rclpy.shutdown() 以避免上下文无效
     def gps_callback(self, msg: NavSatFix) -> None:
         if msg.status.status < 0:
             self.get_logger().warn("GPS信号无效")
@@ -648,7 +648,7 @@ class MotorControlNode(Node):
             # 启动：仅使能电机，不运动
             self.motor_ctrl.initialize_motors()
             time.sleep(0.001)
-            self.complete_state = False
+            self.complete_state = True
             # 恢复状态发布频率至1秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
@@ -865,12 +865,12 @@ class MotorControlNode(Node):
             self.get_logger().info(f"[ROSNode] 解析到sensors：{sensors}")
 
             # 在这里处理传感器数据
-            if sensors == 8: #车体到位
+            if sensors & 0x08 == 8: #车体到位
                 self.get_logger().info("[ROSNode] 车体到位")
                 self.start_charge_sync()
                 self.query_volt_curr_sync()
 
-            elif sensors == 1: #传感器归位
+            elif sensors & 0x01 == 2: #传感器归位
                 self.get_logger().info("[ROSNode] 传感器归位")
                 self.stop_charge_sync()
 

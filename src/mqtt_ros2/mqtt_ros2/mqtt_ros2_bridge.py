@@ -64,11 +64,11 @@ class MQTTRos2Bridge(Node):
         self.port = int(self.declare_parameter('port', 1883).value)
         self.user = self.declare_parameter('user', 'gf-mounted').value
         self.password = str(self.declare_parameter('password', '20230810').value)
-        self.topic_status = self.declare_parameter('topic_status', 'robot/HANGZHOU/status').value
-        self.topic_dock_status = self.declare_parameter('topic_dock_status', 'dock/HANGZHOU/status').value
-        self.topic_cmd = self.declare_parameter('topic_cmd', 'robot/HANGZHOU/cmd').value
-        self.topic_command = self.declare_parameter('topic_command', 'robot/HANGZHOU/command').value
-        self.topic_result = self.declare_parameter('topic_result', 'robot/HANGZHOU/result').value
+        self.topic_status = self.declare_parameter('topic_status', 'robot/HEJIN_Huaxinyuan/status').value
+        self.topic_dock_status = self.declare_parameter('topic_dock_status', 'dock/HEJIN_Huaxinyuan/status').value
+        self.topic_cmd = self.declare_parameter('topic_cmd', 'robot/HEJIN_Huaxinyuan/cmd').value
+        self.topic_command = self.declare_parameter('topic_command', 'robot/HEJIN_Huaxinyuan/command').value
+        self.topic_result = self.declare_parameter('topic_result', 'robot/HEJIN_Huaxinyuan/result').value
         self.client_id = self.declare_parameter('client_id', 'python-mqtt-client-ID').value
         self.ca_cert = self.declare_parameter('ca_cert', None).value
 
@@ -108,7 +108,7 @@ class MQTTRos2Bridge(Node):
         self.client.username_pw_set(self.user, self.password)
         
         # MQTT自动重连配置
-        self.client.reconnect_delay_set(min_delay=1, max_delay=60)
+        self.client.reconnect_delay_set(min_delay=5, max_delay=30)  # 增加重连延迟
 
     # =========================================================
     # MQTT V2 回调函数 (原逻辑完全保留)
@@ -118,8 +118,10 @@ class MQTTRos2Bridge(Node):
         if reason_code == mqtt.MQTT_ERR_SUCCESS:
             self.get_logger().info(f"  ├─ 订阅控制主题: {self.topic_cmd}")
             self.get_logger().info(f"  ├─ 订阅命令主题: {self.topic_command}")
-            client.subscribe(self.topic_cmd, qos=0)
-            client.subscribe(self.topic_command, qos=0)
+            self.get_logger().info(f"  ├─ 订阅状态主题: {self.topic_status}")
+            client.subscribe(self.topic_cmd, qos=1)
+            client.subscribe(self.topic_command, qos=1)
+            client.subscribe(self.topic_dock_status, qos=1)
 
     def on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
         self.get_logger().warn(f"\n[状态] 与服务器断开连接: {mqtt.error_string(reason_code)}")
@@ -143,6 +145,9 @@ class MQTTRos2Bridge(Node):
             
             elif msg.topic == self.topic_command:
                 self.handle_terminal_command(msg.payload.decode())
+            
+            elif msg.topic == self.topic_dock_status:
+                self.get_logger().info(f"[dock] 收到dock状态消息: {msg.payload.decode()}")
                 
         except Exception as e:
             error_msg = f"处理消息时出错: {str(e)}\n{traceback.format_exc()}"
@@ -182,7 +187,7 @@ class MQTTRos2Bridge(Node):
                 self.client.publish(
                     self.topic_result,
                     json.dumps(response, ensure_ascii=False),
-                    qos=0
+                    qos =1
                 )
                 self.get_logger().info(f"[命令执行] 已发送结果到 {self.topic_result}")
                 
@@ -198,7 +203,7 @@ class MQTTRos2Bridge(Node):
                 self.client.publish(
                     self.topic_result,
                     json.dumps(error_response, ensure_ascii=False),
-                    qos=0
+                    qos =1
                 )
             self.get_logger().error(f"[命令执行] 错误: {str(e)}")
 
@@ -255,12 +260,13 @@ class MQTTRos2Bridge(Node):
     # =========================================================
     def connect_mqtt(self):
         """MQTT连接 + 前置网络检测"""
-        keepalive = 60
+        keepalive = 30  # 降低keepalive时间到30秒测试
         while not check_network(self.broker):
             self.get_logger().warn(f"[网络检测] 网络不可用或Broker({self.broker})不可达，3秒后重试...")
             time.sleep(3)
         
-        self.get_logger().info(f"\n⏳ 网络已连通，尝试连接MQTT服务器: {self.broker}:{self.port}")
+        # self.get_logger().info(f"\n⏳ 网络已连通，等待5秒后连接MQTT服务器: {self.broker}:{self.port}")
+        # time.sleep(5)  # 延迟5秒连接，避免与其他节点初始化冲突
         
         try:
             self.client.connect(self.broker, self.port, keepalive)
@@ -279,7 +285,7 @@ class MQTTRos2Bridge(Node):
             time.sleep(3)
             return self.connect_mqtt()
 
-    def publish_mqtt_msg(self, topic, payload, qos=0):
+    def publish_mqtt_msg(self, topic, payload, qos =1):
         """封装MQTT发布方法"""
         with lock:
             self.client.publish(topic, payload, qos)
