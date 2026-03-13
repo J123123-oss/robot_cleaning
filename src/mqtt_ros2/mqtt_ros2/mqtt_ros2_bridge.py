@@ -99,6 +99,8 @@ class MQTTRos2Bridge(Node):
         self.client.on_message = self.on_message
         self.client.on_subscribe = self.on_subscribe
         self.client.on_publish = self.on_publish
+        # ROS2 发布——用于把从MQTT接收到的状态消息转发给其他节点
+        self.mqtt_status_pub = self.create_publisher(String, 'mqtt_status', 10)
 
         # MQTT TLS加密配置
         if self.ca_cert:
@@ -118,10 +120,12 @@ class MQTTRos2Bridge(Node):
         if reason_code == mqtt.MQTT_ERR_SUCCESS:
             self.get_logger().info(f"  ├─ 订阅控制主题: {self.topic_cmd}")
             self.get_logger().info(f"  ├─ 订阅命令主题: {self.topic_command}")
-            self.get_logger().info(f"  ├─ 订阅状态主题: {self.topic_status}")
+            self.get_logger().info(f"  ├─ 订阅状态主题: {self.topic_status} (将转发到ROS /mqtt_status)")
             client.subscribe(self.topic_cmd, qos=1)
             client.subscribe(self.topic_command, qos=1)
             client.subscribe(self.topic_dock_status, qos=1)
+            # 之前漏掉了对 status 主题的实际订阅，补上它
+            client.subscribe(self.topic_status, qos=1)
 
     def on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
         self.get_logger().warn(f"\n[状态] 与服务器断开连接: {mqtt.error_string(reason_code)}")
@@ -145,9 +149,16 @@ class MQTTRos2Bridge(Node):
             
             elif msg.topic == self.topic_command:
                 self.handle_terminal_command(msg.payload.decode())
+            elif msg.topic == self.topic_status:
+                # 把MQTT下发的状态消息转发成ROS String，后端节点可在 /mqtt_status 上订阅
+                if self.mqtt_status_pub:
+                    ros_msg = String()
+                    ros_msg.data = msg.payload.decode()
+                    self.mqtt_status_pub.publish(ros_msg)
+                    self.get_logger().info(f"[MQTT->ROS] 转发状态到 /mqtt_status: {ros_msg.data}")
             
-            elif msg.topic == self.topic_dock_status:
-                self.get_logger().info(f"[dock] 收到dock状态消息: {msg.payload.decode()}")
+            # elif msg.topic == self.topic_dock_status:
+            #     self.get_logger().info(f"[dock] 收到dock状态消息: {msg.payload.decode()}")
                 
         except Exception as e:
             error_msg = f"处理消息时出错: {str(e)}\n{traceback.format_exc()}"

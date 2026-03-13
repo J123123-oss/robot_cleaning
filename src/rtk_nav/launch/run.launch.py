@@ -53,8 +53,8 @@ def generate_launch_description():
         executable='charging',
         name='charging_485_node',
         parameters=[
-            {'serial_port': '/dev/ttyUSB0'},    # 替换为实际串口设备路径
-            {'baud_rate': 115200},
+            {'serial_port': '/dev/charging'},    # 替换为实际串口设备路径
+            {'baud_rate': 19200},
             {'slave_addr': 1},
             {'timeout': 0.5}
         ],
