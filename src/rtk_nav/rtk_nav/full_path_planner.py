@@ -339,6 +339,7 @@ def add_direction_arrows(ax, path_utm, arrow_interval=5):
 class MultiAreaCleaningPathPlanner(Node):
     def __init__(self):
         super().__init__('full_path')
+        self.seq_num = 0
         
         # 声明多区域参数（支持动态配置）
         self.declare_parameter('area_count', 2)
@@ -437,11 +438,31 @@ class MultiAreaCleaningPathPlanner(Node):
             })
         
         return all_areas
+
+    def get_next_sequence(self, save_dir):
+        """
+        自动读取文件夹里已有的 001_、002_、003_... 文件
+        返回下一个 3 位序号，例如：005
+        """
+        max_num = 0
+        # 遍历文件夹所有文件
+        for filename in os.listdir(save_dir):
+            # 只匹配 3 位数字开头的文件（和你的正则一致）
+            if filename[:3].isdigit() and filename[3] == '_':
+                try:
+                    num = int(filename[:3])
+                    if num > max_num:
+                        max_num = num
+                except:
+                    continue
+        # 下一个序号 +1，并自动补 0 成 3 位
+        next_num = max_num + 1
+        return f"{next_num:03d}"
     
     def plan_multi_area_path(self):
         """生成多区域连续路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+        save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
         os.makedirs(save_dir, exist_ok=True)
         
         merged_path_latlon = []
@@ -513,7 +534,8 @@ class MultiAreaCleaningPathPlanner(Node):
             merged_headings = calculate_heading_angles(merged_path_latlon)
             
             # ---------------------- 保存合并后的路径文件 ----------------------
-            points_filename = os.path.join(save_dir, f'fullpath_{timestamp}.txt')
+            self.seq_num = self.get_next_sequence(save_dir)
+            points_filename = os.path.join(save_dir, f"{self.seq_num}_full_path_{timestamp}.txt")
             with open(points_filename, "w", encoding="utf-8") as f:
                 f.write("#序号,经度,纬度,航向角(度)\n")
                 for idx in range(len(merged_path_latlon)):
@@ -597,7 +619,7 @@ class MultiAreaCleaningPathPlanner(Node):
         plt.tight_layout()
         
         # 保存图片
-        img_filename = os.path.join(save_dir, f'fullpath_{timestamp}.png')
+        img_filename = os.path.join(save_dir, f"{self.seq_num}_full_path_{timestamp}.png")
         plt.savefig(img_filename, dpi=300, bbox_inches='tight')
         self.get_logger().info(f"多区域路径图已保存到：{img_filename}")
         

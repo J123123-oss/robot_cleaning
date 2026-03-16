@@ -51,7 +51,7 @@ DISTANCE_INCREASE_COUNT = 2  # 连续增大次数阈值
 class ControlMode:
     REMOTE = "REMOTE"
     NORMAL = "NORMAL"
-    RTK_NAV = "RTK_NAV"
+    AUTO_CLEANING = "AUTO_CLEANING"
 
 # 导航状态枚举
 class NavState:
@@ -83,8 +83,8 @@ class RTKNavControlNode(Node):
         self.rtk_install_offset = -90.0    #-90.0(old)  # RTK安装偏移角度
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
-        self.antenna_offset_front = 0.34   # 前向偏移（+：天线在车体前，-：在后）
-        self.antenna_offset_left = -0.2   # 左向偏移（-：天线在车体左，+：在右）
+        self.antenna_offset_front = 0.2517   # 前向偏移（+：天线在车体前，-：在后）
+        self.antenna_offset_left = -0.19625   # 左向偏移（-：天线在车体左，+：在右）
 
         # 新增：出仓点基准缓存与偏移量
         self.base_loading_waypoint = None  # 基准出仓点（首次接收的出仓点），格式：(lon, lat, heading)
@@ -93,12 +93,14 @@ class RTKNavControlNode(Node):
             "lat_offset": 0.0,
             "heading_offset": 0.0 # 航向角偏移量（°）
         }
+        self.laste_state = None  # 保存上一个  "status": "START"状态
         self.offset_calculated = False  # 偏移量是否已计算（避免重复计算）
 
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
         self.current_control_mode = ControlMode.NORMAL
+        self.last_state = None  # 电机状态（用于监听HOLD切换）
 
         # Sensor 
         self.front_left = None # test, None origin
@@ -273,6 +275,10 @@ class RTKNavControlNode(Node):
                     seq, raw_lon, raw_lat, raw_heading = line.split(',')
                     # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
                     # 核心修改：对当前航点应用出仓点偏移修正
+                    # 核心修复：强制转换为浮点数（之前未转换，导致字符串类型）
+                    raw_lon = float(raw_lon.strip())
+                    raw_lat = float(raw_lat.strip())
+                    raw_heading = float(raw_heading.strip())
                     corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
                         raw_lon, raw_lat, raw_heading
                     )
@@ -540,7 +546,7 @@ class RTKNavControlNode(Node):
         )
         return (corrected_lon, corrected_lat, corrected_heading)
     def get_next_path_file(self) -> Optional[str]:
-        """获取下一个路径文件（按文件名时间戳排序）"""
+        """获取下一个路径文件（按文件名序号从小到大排序）"""
         try:
             # 1. 获取目录下所有符合命名规则的路径文件
             file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
@@ -550,13 +556,13 @@ class RTKNavControlNode(Node):
                 self.get_logger().warn("[RTKNav] 路径目录下未找到符合规则的路径文件")
                 return None
             
-            # 2. 按文件名中的时间戳排序（提取YYYYMMDD_HHMMSS部分）
-            def extract_timestamp(filename: str) -> str:
-                match = re.search(r'(\d{8}_\d{6})', filename)
-                return match.group(1) if match else ''
+            # 2. 按文件名最前面的3位数字序号排序（提取如002, 004等）
+            def extract_sequence_number(filename: str) -> int:
+                match = re.search(r'^(\d{3})_', filename)
+                return int(match.group(1)) if match else 0
             
-            all_files.sort(key=extract_timestamp)
-            total_files = len(all_files)  # 总文件数
+            all_files.sort(key=extract_sequence_number)
+            total_files = len(all_files)
             current_file = os.path.basename(self.rtk_path_file)
             
             # 3. 找到当前文件的索引
@@ -564,7 +570,6 @@ class RTKNavControlNode(Node):
                 current_idx = all_files.index(current_file)
             except ValueError:
                 self.get_logger().warn(f"[RTKNav] 当前文件 {current_file} 不在路径目录中, 使用第一个文件")
-                # 首次使用第一个文件, 进度 1/总数量
                 progress_num = 1
                 progress_percent = round((progress_num / total_files) * 100, 1)
                 self.get_logger().info(f"[RTKNav] 路径文件进度：{progress_num}/{total_files}, {progress_percent}%")
@@ -573,7 +578,6 @@ class RTKNavControlNode(Node):
             # 4. 计算并输出进度（当前文件索引+1 为已执行/待执行的序号）
             current_progress = current_idx + 1
             progress_percent = round((current_progress / total_files) * 100, 1)
-            # 更新进度百分比
             self.process_percent = progress_percent
             self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}, {progress_percent}%")
             
@@ -585,7 +589,8 @@ class RTKNavControlNode(Node):
             # 6. 获取下一个文件（非最后一个时）
             next_idx = current_idx + 1
             next_file = all_files[next_idx]
-            self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file}")
+            next_seq = extract_sequence_number(next_file)
+            self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file} (序号: {next_seq:03d})")
             
             return os.path.join(self.path_dir, next_file)
             
@@ -593,58 +598,59 @@ class RTKNavControlNode(Node):
             self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
             return None
     # def get_next_path_file(self) -> Optional[str]:
-    #     """获取下一个路径文件（按文件名时间戳排序）"""
-    #     try:
-    #         # 1. 获取目录下所有符合命名规则的路径文件
-    #         file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
-    #         all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
+        # """获取下一个路径文件（按文件名时间戳排序）"""
+        # try:
+        #     # 1. 获取目录下所有符合命名规则的路径文件
+        #     file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
+        #     all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
             
-    #         if not all_files:
-    #             self.get_logger().warn("[RTKNav] 路径目录下未找到符合规则的路径文件")
-    #             return None
+        #     if not all_files:
+        #         self.get_logger().warn("[RTKNav] 路径目录下未找到符合规则的路径文件")
+        #         return None
             
-    #         # 2. 按文件名中的时间戳排序（提取YYYYMMDD_HHMMSS部分）
-    #         def extract_timestamp(filename: str) -> str:
-    #             match = re.search(r'(\d{8}_\d{6})', filename)
-    #             return match.group(1) if match else ''
+        #     # 2. 按文件名中的时间戳排序（提取YYYYMMDD_HHMMSS部分）
+        #     def extract_timestamp(filename: str) -> str:
+        #         match = re.search(r'(\d{8}_\d{6})', filename)
+        #         return match.group(1) if match else ''
             
-    #         all_files.sort(key=extract_timestamp)
-    #         total_files = len(all_files)  # 总文件数
-    #         current_file = os.path.basename(self.rtk_path_file)
+        #     all_files.sort(key=extract_timestamp)
+        #     total_files = len(all_files)  # 总文件数
+        #     current_file = os.path.basename(self.rtk_path_file)
             
-    #         # 3. 找到当前文件的索引
-    #         try:
-    #             current_idx = all_files.index(current_file)
-    #         except ValueError:
-    #             self.get_logger().warn(f"[RTKNav] 当前文件 {current_file} 不在路径目录中, 使用第一个文件")
-    #             # 首次使用第一个文件, 进度 1/总数量
-    #             progress_num = 1
-    #             progress_percent = round((progress_num / total_files) * 100, 1)
-    #             self.get_logger().info(f"[RTKNav] 路径文件进度：{progress_num}/{total_files}, {progress_percent}%")
-    #             return os.path.join(self.path_dir, all_files[0])
+        #     # 3. 找到当前文件的索引
+        #     try:
+        #         current_idx = all_files.index(current_file)
+        #     except ValueError:
+        #         self.get_logger().warn(f"[RTKNav] 当前文件 {current_file} 不在路径目录中, 使用第一个文件")
+        #         # 首次使用第一个文件, 进度 1/总数量
+        #         progress_num = 1
+        #         progress_percent = round((progress_num / total_files) * 100, 1)
+        #         self.get_logger().info(f"[RTKNav] 路径文件进度：{progress_num}/{total_files}, {progress_percent}%")
+        #         return os.path.join(self.path_dir, all_files[0])
             
-    #         # 4. 计算并输出进度（当前文件索引+1 为已执行/待执行的序号）
-    #         current_progress = current_idx + 1
-    #         progress_percent = round((current_progress / total_files) * 100, 1)
-    #         # 更新进度百分比
-    #         self.process_percent = progress_percent
-    #         self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}, {progress_percent}%")
+        #     # 4. 计算并输出进度（当前文件索引+1 为已执行/待执行的序号）
+        #     current_progress = current_idx + 1
+        #     progress_percent = round((current_progress / total_files) * 100, 1)
+        #     # 更新进度百分比
+        #     self.process_percent = progress_percent
+        #     self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}, {progress_percent}%")
             
-    #         # 5. 最后一个文件时结束循环（不再返回新文件）
-    #         if current_idx >= total_files - 1:
-    #             self.get_logger().info("[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
-    #             return None
+        #     # 5. 最后一个文件时结束循环（不再返回新文件）
+        #     if current_idx >= total_files - 1:
+        #         self.get_logger().info(f"[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
+        #         return None
             
-    #         # 6. 获取下一个文件（非最后一个时）
-    #         next_idx = current_idx + 1
-    #         next_file = all_files[next_idx]
-    #         self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file}")
+        #     # 6. 获取下一个文件（非最后一个时）
+        #     next_idx = current_idx + 1
+        #     next_file = all_files[next_idx]
+        #     self.get_logger().info(f"[RTKNav] 准备切换到下一个路径文件：{next_file}")
             
-    #         return os.path.join(self.path_dir, next_file)
+        #     return os.path.join(self.path_dir, next_file)
             
-    #     except Exception as e:
-    #         self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
-    #         return None
+        # except Exception as e:
+        #     self.get_logger().error(f"[RTKNav] 获取下一个路径文件失败: {e}")
+        #     return None
+    
 
     # ================== 原有RTKNavigator方法 ==================
     def load_rtk_path(self) -> bool:
@@ -664,7 +670,10 @@ class RTKNavControlNode(Node):
             # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
             # return True
                     seq, raw_lon, raw_lat, raw_heading = line.split(',')
-
+                    # 核心修复：转换为浮点数
+                    raw_lon = float(raw_lon.strip())
+                    raw_lat = float(raw_lat.strip())
+                    raw_heading = float(raw_heading.strip())
              # 添加航点偏移修正
                     corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
                         raw_lon, raw_lat, raw_heading
@@ -1380,7 +1389,8 @@ class RTKNavControlNode(Node):
         检查当前控制模式, 若切换为遥控器模式, 暂停导航
         返回：True=保持RTK模式, False=已切换为遥控器模式
         """
-        if self.current_control_mode == ControlMode.REMOTE:
+        # if self.current_control_mode == ControlMode.REMOTE:
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
             self.get_logger().info("[ROSNode] 切换到遥控器控制模式, 暂停RTK导航（保存上下文）")
             # 发布停止速度
             stop_speed = Vector3()
@@ -1842,9 +1852,10 @@ class RTKNavControlNode(Node):
         # 所有航点完成
         self.get_logger().info("[ROSNode] RTK多点导航全部完成")
         self.nav_context["nav_state"] = NavState.COMPLETED
+        self.publish_nav_state(NavState.COMPLETED)
         self.nav_running = False
         self.publish_stop_speed()
-        # self.reset_nav_context()        # reset nav /保留导航状态，支持恢复
+        self.reset_nav_context()        # reset nav /保留导航状态，支持恢复
         yield (0.0, 0.0)
 
     # ================== 原有RTKControlNode核心方法 ==================
@@ -1863,26 +1874,28 @@ class RTKNavControlNode(Node):
         self.nav_state_pub.publish(state_msg)
 
     def state_callback(self, msg: String):
-        """电机状态回调函数：监听控制状态变化，HOLD暂停导航，待测试"""
-        # self.get_logger().info(f"[RTKNav] 收到电机状态: {msg.data}")
-        if msg.data == "HOLD":
-            self.current_control_mode = "REMOTE" # 切换当前控制模式，暂停RTK
-            # self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
-        elif msg.data == "RTK_NAV":
-                self.current_control_mode = ControlMode.RTK_NAV # 恢复RTK导航模式
-                self.get_logger().info("[RTKNav] 电机状态为RUN，恢复导航")
+        """电机状态回调函数：监听控制状态变化，HOLD暂停导航"""
+        if msg.data == "HOLD" and self.last_state != "HOLD":
+            self.current_control_mode = ControlMode.NORMAL
+            self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
+            self.nav_running = False
+            self.publish_stop_speed()
+        elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
+            self.current_control_mode = ControlMode.AUTO_CLEANING
+            self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
+        self.last_state = msg.data
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式, 更新自身状态"""
         previous_mode = self.current_control_mode
         self.current_control_mode = msg.data
         # 切换到RTK模式时, 重置IMU校准
-        # if self.current_control_mode == ControlMode.RTK_NAV and previous_mode != ControlMode.RTK_NAV:
+        # if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
         #     # self.reset_imu_calibration()
         #     # 新增：强制重置导航生成器和运行状态
         #     self.multi_waypoint_generator = None
         #     self.nav_running = False
-        if self.current_control_mode == ControlMode.RTK_NAV and previous_mode != ControlMode.RTK_NAV:
+        if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
             self.multi_waypoint_generator = None
             self.nav_running = False
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
@@ -1891,7 +1904,7 @@ class RTKNavControlNode(Node):
             self.get_logger().info(f"切换到RTK模式，导航状态：{self.nav_context['nav_state']}")
 
         # 切换非RTK模式时, 保存导航状态, 停止导航
-        if self.current_control_mode != ControlMode.RTK_NAV:
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
             if self.multi_waypoint_generator:
                 self.multi_waypoint_generator = None
             self.nav_running = False
@@ -1906,7 +1919,7 @@ class RTKNavControlNode(Node):
         """10Hz定时器回调, 驱动多点导航逻辑"""
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
-        if self.current_control_mode == ControlMode.RTK_NAV:
+        if self.current_control_mode == ControlMode.AUTO_CLEANING:
             # 新增：启动/恢复导航前，强制校验航点有效性
             if not self.waypoints:
                 self.get_logger().error("[ROSNode] RTK模式启动失败：无有效航点数据，请先加载航点")

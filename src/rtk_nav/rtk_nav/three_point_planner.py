@@ -368,6 +368,7 @@ def add_direction_arrows(ax, path_utm, arrow_interval=5):
 class CleaningPathPlanner(Node):
     def __init__(self):
         super().__init__('three_point_planner')
+        self.seq_num = 0
         
         # 保留原参数配置
         # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
@@ -505,7 +506,26 @@ class CleaningPathPlanner(Node):
             return
         
         self.plan_path()
-    
+    def get_next_sequence(self, save_dir):
+        """
+        自动读取文件夹里已有的 001_、002_、003_... 文件
+        返回下一个 3 位序号，例如：005
+        """
+        max_num = 0
+        # 遍历文件夹所有文件
+        for filename in os.listdir(save_dir):
+            # 只匹配 3 位数字开头的文件（和你的正则一致）
+            if filename[:3].isdigit() and filename[3] == '_':
+                try:
+                    num = int(filename[:3])
+                    if num > max_num:
+                        max_num = num
+                except:
+                    continue
+        # 下一个序号 +1，并自动补 0 成 3 位
+        next_num = max_num + 1
+        return f"{next_num:03d}"
+        
     def plan_path(self):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
@@ -526,10 +546,14 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
-            
-            points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
+            # 获取自动序号
+            self.seq_num = self.get_next_sequence(save_dir)
+
+            # 最终文件名（完全符合你的规则）
+            points_filename = os.path.join(save_dir, f"{self.seq_num}_three_path_{timestamp}.txt")
+            # points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
             headings = calculate_heading_angles(path_latlon)
             
             with open(points_filename, "w", encoding="utf-8") as f:
@@ -586,8 +610,8 @@ class CleaningPathPlanner(Node):
             ax.grid(True)
             ax.axis('equal')
             plt.tight_layout()
-            
-            img_filename = os.path.join(save_dir, f'three_path_{timestamp}.png')
+            # 最终文件名（完全符合你的规则）
+            img_filename = os.path.join(save_dir, f"{self.seq_num}_three_path_{timestamp}.png")
             plt.savefig(img_filename, dpi=300)
             self.get_logger().info(f"路径图已保存到 {img_filename}")
             

@@ -25,16 +25,47 @@ def crc16_modbus(data: bytes) -> bytes:
     crc_h = (wcrc >> 8) & 0xFF
     return bytes([crc_l, crc_h])
 
-# -------------------------- 故障码映射表 --------------------------
+# -------------------------- 接收端故障码映射表 --------------------------
 FAULT_CODE_MAP = {
-    0x0000: "无故障",
-    0x0001: "过压故障",
-    0x0002: "欠压故障",
-    0x0003: "过流故障",
-    0x0004: "过热故障",
-    0x0005: "通信故障",
-    0x0006: "充电超时",
-    0x0007: "电池异常",
+    0x00: "无故障",  # 修复 KeyError:0
+    0x01: "预留",
+    0x02: "恒流区输出过流保护",
+    0x03: "恒流区输出欠流保护",
+    0x04: "VRECT过压硬件保护（全程）",
+    0x05: "VRECT欠压软件保护",
+    0x06: "输出过压软件保护",
+    0x07: "电池异常保护，电池电压不在正常区间",
+    0x08: "接收端过温保护",
+    0x09: "接收端满充保护",
+    0x0A: "接收端零距离启动软件保护(开继电器之前)",
+    0x0B: "接收端远距离启动软件保护(开继电器之前)",
+    0x0C: "预留",
+    0x0D: "接收端过温不启动保护",
+    0x0E: "输出过压硬件保护",
+    0x0F: "接收端短路保护",
+    0x10: "接收端VRECT稳压失败保护",
+    0x11: "事中FOD保护",
+    0x12: "接收端自动配对失败",
+    0x13: "接收端远距离启动软件保护",
+    0x14: "拨号无响应保护",
+    0x15: "拨号启动失败保护",
+    0x16: "预充区输出过流保护",
+    0x17: "预充区输出欠流保护",
+    0x18: "VRECT欠压硬件保护(开继电器之前)",
+    0x19: "接收端欠温保护",
+    0x1A: "抛负载保护",
+    0x1B: "电池故障保护（BMS）",
+    0x1C: "电池满充保护（BMS）",
+    0x1D: "空载启动保护",
+    0x1E: "预留",
+    0x1F: "VRECT过压硬件保护(开继电器之后)",
+    0x20: "VRECT欠压硬件保护(开继电器之后)",
+    0x21: "接收端远距离启动软件保护(开继电器之前)",
+    0x22: "接收端欠温不启动",
+    0x23: "进恒压区保护",
+    0x24: "模拟pin配地址失败保护",
+    0x25: "Vrect过压软件保护（全程）",
+    0x26: "接收端模拟PIN未收到地址保护",
 }
 
 # -------------------------- 充电控制节点类（三字节地址模式专属） --------------------------
@@ -132,7 +163,7 @@ class Charging485Node(Node):
                 curr_raw = (resp[5] << 8) | resp[6]
                 volt = volt_raw * 0.01
                 curr = curr_raw * 0.01
-                self.get_logger().info(f"电压电流解析成功 | {volt:.1f}V | {curr:.2f}A")
+                # self.get_logger().info(f"电压电流解析成功 | {volt:.1f}V | {curr:.2f}A")
             else:
                 self.get_logger().warn("电压电流响应-CRC校验失败")
         else:
@@ -147,8 +178,8 @@ class Charging485Node(Node):
         if len(resp) >= 7 and resp[0] == self.slave_addr and resp[1] == 0x03 and resp[2] == 0x02:
             if crc16_modbus(resp[:-2]) == resp[-2:]:
                 fault_code = (resp[3] << 8) | resp[4]
-                fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: 0x{fault_code:04X}")
-                self.get_logger().info(f"故障码解析成功 | 0x{fault_code:04X} | {fault_msg}")
+                fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: {hex(fault_code)}")
+                # self.get_logger().info(f"故障码解析成功 | 0x{fault_code:04X} | {fault_msg}")
             else:
                 self.get_logger().warn("故障码响应-CRC校验失败")
         else:

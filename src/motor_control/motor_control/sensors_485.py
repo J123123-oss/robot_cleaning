@@ -145,7 +145,7 @@ class Sensors_485(Node):
         # 轮询电池温度（4800波特率）
         if current_time - self.last_temp_poll_time >= self.battery_temp_polling_interval:
             if self.safe_serial_write(self.battery_temp_cmd, target_baudrate=self.battery_baudrate):
-                self.get_logger().info("Sent battery temp query command: %s" % ' '.join(format(x, '02x') for x in self.battery_temp_cmd))
+                # self.get_logger().info("Sent battery temp query command: %s" % ' '.join(format(x, '02x') for x in self.battery_temp_cmd))
                 self.last_temp_poll_time = current_time
                 # 电池命令发送后，在IO轮询间隙读取响应
                 self.read_battery_response()
@@ -153,7 +153,7 @@ class Sensors_485(Node):
         # 轮询电池基础参数（4800波特率）
         if current_time - self.last_base_poll_time >= self.battery_base_polling_interval:
             if self.safe_serial_write(self.battery_base_cmd, target_baudrate=self.battery_baudrate):
-                self.get_logger().info("Sent battery base query command: %s" % ' '.join(format(x, '02x') for x in self.battery_base_cmd))
+                # self.get_logger().info("Sent battery base query command: %s" % ' '.join(format(x, '02x') for x in self.battery_base_cmd))
                 self.last_base_poll_time = current_time
                 # 电池命令发送后，在IO轮询间隙读取响应
                 self.read_battery_response()
@@ -178,7 +178,7 @@ class Sensors_485(Node):
                     data = self.ser.read(min(bytes_available, 1024))
                     if data:
                         self.buffer += data
-                        self.get_logger().info(f"Battery raw data: {' '.join(format(x, '02x') for x in data)}")
+                        # self.get_logger().info(f"Battery raw data: {' '.join(format(x, '02x') for x in data)}")
                         
                         # 检查是否已接收到完整帧（至少11字节）
                         if len(self.buffer) >= 11:
@@ -187,7 +187,7 @@ class Sensors_485(Node):
                     time.sleep(0.01)  # 短暂休眠避免CPU占用
             
             if len(self.buffer) >= 11:
-                self.get_logger().info(f"Full battery response received: {len(self.buffer)} bytes")
+                # self.get_logger().info(f"Full battery response received: {len(self.buffer)} bytes")
                 self.process_battery_buffer()
         except Exception as e:
             self.get_logger().error(f"Error reading battery response: {str(e)}")
@@ -289,10 +289,10 @@ class Sensors_485(Node):
             self.get_logger().warn(f"Battery voltage out of range: {battery_data['total_voltage']:.2f}V")
             return None
         
-        self.get_logger().info(f"Parsed battery base: {battery_data['capacity_percent']:.2f}% | "
-                              f"{battery_data['total_current']:.2f}A | {battery_data['total_voltage']:.2f}V | "
-                              f"Temp: {battery_data['temperature']:.1f}℃")
-        self.get_logger().warn("Battery data parsed successfully - will publish to /battery_data topic")
+        # self.get_logger().info(f"Parsed battery base: {battery_data['capacity_percent']:.2f}% | "
+                            #   f"{battery_data['total_current']:.2f}A | {battery_data['total_voltage']:.2f}V | "
+                            #   f"Temp: {battery_data['temperature']:.1f}℃")
+        # self.get_logger().warn("Battery data parsed successfully - will publish to /battery_data topic")
         return battery_data
 
     def parse_battery_temp_response(self, data):
@@ -333,7 +333,7 @@ class Sensors_485(Node):
         temperature = temp_raw * 0.1
         self.latest_temp = temperature  # 更新最新温度值
         
-        self.get_logger().info(f"Parsed battery temp: {temperature:.1f}℃")
+        # self.get_logger().info(f"Parsed battery temp: {temperature:.1f}℃")
         return {'temperature': temperature}
 
     def main_loop(self):

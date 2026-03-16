@@ -43,8 +43,7 @@ def generate_launch_description():
         parameters=[
             {'serial_port': '/dev/laser'},    # 替换为实际串口设备路径
             {'baud_rate': 115200}
-        ],
-        output='screen'
+        ]
     )
 
     # 充电485节点
@@ -57,20 +56,19 @@ def generate_launch_description():
             {'baud_rate': 19200},
             {'slave_addr': 1},
             {'timeout': 0.5}
-        ],
-        output='screen'
+        ]
     )
     RTKNavigator = Node(
         package='rtk_nav',
         executable='rtk_nav',
         name='rtk_nav',
-        output='screen',
+        # output='screen',
         parameters=[
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260302_115230.txt'}
+            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_loading.txt'}
+            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/fullpath_20260306_094901_all.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_20260305_112551.txt'}
-            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_20260305_112551.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260228_153621.txt'}
             
             # 原注释的其他参数可取消注释添加
@@ -108,8 +106,9 @@ def generate_launch_description():
         package="mqtt_ros2",  # ROS2功能包名（替换为你的实际包名）
         executable="mqtt_ros2_bridge",  # 节点可执行文件名（setup.py中配置的console_scripts名称）
         name="mqtt",  # 节点名称 和ROS1的 name="mqtt_ros_bridge" 对应
-        output="screen",  # 日志输出到终端（ROS1的 output="screen"）
-        emulate_tty=True,  # 确保彩色日志、交互正常
+        output='log',  # 不输出终端 ✅,  # 日志输出到终端（ROS1的 output="screen"）
+        arguments=['--ros-args', '--log-level', 'fatal'],  # 关闭所有日志
+        # emulate_tty=True,  # 确保彩色日志、交互正常
         # 传递参数（对应ROS1的 <param>）
         parameters=[
             {

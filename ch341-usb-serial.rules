@@ -1,3 +1,4 @@
 KERNEL=="ttyUSB*", KERNELS=="1-1.2", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="remote_control"
 KERNEL=="ttyS3", SUBSYSTEM=="tty", MODE:="0777", SYMLINK+="WTRTK"
-KERNEL=="ttyUSB*", KERNELS=="1-1.4.1", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="laser"
+KERNEL=="ttyUSB*", KERNELS=="1-1.4.3", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="laser"
+KERNEL=="ttyUSB*", KERNELS=="1-1.4.4", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", SYMLINK+="charging"

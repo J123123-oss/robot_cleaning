@@ -130,8 +130,8 @@ class LaserDistanceNode(Node):
                 with self.mutex:
                     self.laser_distance[0] = distance1
                 # self.get_logger().info(f"激光1距离: {distance1} mm")
-            else:
-                self.get_logger().warn("激光1数据读取失败")
+            # else:
+            #     self.get_logger().warn("激光1数据读取失败")
         
         # 短暂延时，避免两路指令冲突
         time.sleep(0.02)
@@ -143,8 +143,8 @@ class LaserDistanceNode(Node):
                 with self.mutex:
                     self.laser_distance[1] = distance2
                 # self.get_logger().info(f"激光2距离: {distance2} mm")
-            else:
-                self.get_logger().warn("激光2数据读取失败")
+            # else:
+            #     self.get_logger().warn("激光2数据读取失败")
         
         # 发布合并后的距离数据
         self.publish_distance_data()

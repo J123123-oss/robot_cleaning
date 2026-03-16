@@ -40,7 +40,7 @@ class RobotStateKey(Enum):
     RIGHT = "d"
     LOADING = "l"
     UNLOADING = "u"
-    RTK_NAV = "r"
+    AUTO_CLEANING = "r"
     DISABLE = "z"  # 新增：完全失能状态（区别于HOLD的停止但保持使能）
 
 
@@ -48,7 +48,7 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'START
 
 MAX_SPEED = 10.0   # 遥控器最大速度
 MIN_SPEED = -10.0  # 遥控器最小速度
-BRUSH_SPEED = 15.0
+BRUSH_SPEED = 0.0
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.05       # 控制死区
@@ -73,7 +73,7 @@ class MotorControlNode(Node):
         self.brush_speed = 0.0
 
         # UNLOADING parameters
-        self.unloading_forword_threshold = 10.0 # seconds
+        self.unloading_forword_threshold = 30.0 # seconds
         self.unloading_turn_start_time = None
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
@@ -81,7 +81,7 @@ class MotorControlNode(Node):
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_deg = -85.1   #-2.9  #-14.9 #24.3    #-73.15  #-51.59  #-46.65 #83.86  #-130.16   #-146.0  #192.0   #180.0  #90.0  # -123.94 #-157.63 #-179.22 #-72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
+        self.loading_turn_target_deg = 79.44    #-85.1   #-2.9  #-14.9 #24.3    #-73.15  #-51.59  #-46.65 #83.86  #-130.16   #-146.0  #192.0   #180.0  #90.0  # -123.94 #-157.63 #-179.22 #-72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
         self.loading_turn_time = 30.0
         self.loading_phase = None
@@ -116,6 +116,7 @@ class MotorControlNode(Node):
         self.complete_state = False
         self.is_charging = None # 新增：电池是否正在充电
         self.rc_control = False # 新增：是否遥控器控制（优先级最高）
+        self.rc_previous_status = None  # 新增：遥控器接管时上一次显示状态
 
         self.battery_total_voltage = None  # 电池总电压
         self.battery_current = None  # 电池电流
@@ -226,7 +227,7 @@ class MotorControlNode(Node):
 
         self.status_list = [
             "HOLD", "START", "FORWARD", "BACKWARD", "LOADING", "UNLOADING",
-            "LEFT", "RIGHT", "PAUSE", "RTK_NAV","DISABLE"
+            "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
 
@@ -316,13 +317,13 @@ class MotorControlNode(Node):
 
     def timer_callback(self):
         # 检查CAN串口是否正常打开
-        if not self.motor_ctrl.bus:
-            # self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
-            self.motor_ctrl.reconnect_can_bus()
+        # if not self.motor_ctrl.bus:
+        #     # self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
+        #     self.motor_ctrl.reconnect_can_bus()
+        # self.current_control_mode = self.sbus_remote.control_mode
         if self.rc_control:
-            # self.current_control_mode = self.sbus_remote.control_mode
             self.current_control_mode = "REMOTE"
-        elif self.rc_control == False and self.current_control_mode !="RTK_NAV":
+        elif self.rc_control == False and self.current_control_mode !="AUTO_CLEANING":
             self.current_control_mode = "NORMAL"
             # self.get_logger().info(f"{self.current_control_mode}")
         
@@ -381,9 +382,10 @@ class MotorControlNode(Node):
 
                 self.set_motors_speed(left_speed, right_speed)
                 ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)
-                ch6_norm = 1.0 if ch6_norm == 1.0 else 0.0
+                ch6_norm =1.0 if ch6_norm > 0.5 else 0.0  # 阈值判断
                 brush_speed = -ch6_norm * BRUSH_SPEED
-                self.set_brush_speed(brush_speed)
+                # self.get_logger().info(f"[ROSNode] 刷: {brush_speed:.2f}")
+                # self.set_brush_speed(brush_speed)
             except Exception as e:
                 self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
                 self.set_motors_speed(0.0, 0.0)
@@ -411,17 +413,17 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-                self.set_brush_speed(0.0)
+            self.set_brush_speed(0.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
-        elif self.current_control_mode == "RTK_NAV":
+        elif self.current_control_mode == "AUTO_CLEANING":
             left_speed = self.rtk_left_speed 
             right_speed = self.rtk_right_speed 
             self.set_motors_speed(left_speed, right_speed)
             self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
             # start brush
-            self.set_brush_speed(BRUSH_SPEED)
+            # self.set_brush_speed(BRUSH_SPEED)
         state_msg = String()
         state_msg.data = str(self.current_status)
         self.state_pub.publish(state_msg)
@@ -434,8 +436,8 @@ class MotorControlNode(Node):
         if key == 'r':
             # 切换到RTK导航模式（进出仓状态下禁止切换）
             if not self.is_in_bin_process:
-                self.current_control_mode = "RTK_NAV"
-                self.get_logger().info(f"[ROSNode] 控制模式切换：→ RTK_NAV")
+                self.current_control_mode = "AUTO_CLEANING"
+                self.get_logger().info(f"[ROSNode] 控制模式切换：→ AUTO_CLEANING")
             else:
                 self.get_logger().warn("[ROSNode] 正在进出仓，禁止切换到RTK模式")
         elif key == 'n':
@@ -448,7 +450,7 @@ class MotorControlNode(Node):
             self.get_logger().info(f"[ROSNode] 控制模式切换：→ REMOTE")
         # 原有状态切换逻辑（仅非RTK模式生效）
         elif key in STATE_DICT:
-            if self.current_control_mode != "RTK_NAV":
+            if self.current_control_mode != "AUTO_CLEANING":
                 self.switch_state(key)
             else:
                 self.get_logger().warn("[ROSNode] 当前为RTK导航模式，忽略键盘状态指令")
@@ -465,14 +467,15 @@ class MotorControlNode(Node):
     def rtk_nav_status_callback(self, msg: String):
         """订阅RTK导航状态消息（备用）"""
         self.nav_status = msg.data.strip()
-        self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
+        # self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
         if self.nav_status == "COMPLETED" and not self.is_in_bin_process:
-            self.get_logger().info(f"[is_in_bin_process] {self.is_in_bin_process} 导航完成，切换到LOADING状态")
+            self.get_logger().info(f"[RTKNavStatus] RTK导航完成，切换到LOADING状态")
+            self.current_control_mode = "NORMAL"  # 切换回普通模式
             self.switch_state('l')
 
     def io_data_callback(self, msg: UInt8):
         """处理IO数据回调（可根据需要扩展功能）"""
-        if self.current_control_mode != "RTK_NAV" and not self.is_in_bin_process:
+        if self.current_control_mode != "AUTO_CLEANING" and not self.is_in_bin_process:
             self.front_left = (msg.data & 0x01) == 0x01
             self.front_right = (msg.data & 0x02) == 0x02
             self.mid_left = (msg.data & 0x04) == 0x04
@@ -622,9 +625,13 @@ class MotorControlNode(Node):
         # if self.current_control_mode == "REMOTE":
         #     self.get_logger().warn("[ROSNode] 当前为遥控器模式，禁止设置状态")
         #     return
+        # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式
         if new_state == self.current_status:
-            self.get_logger().info(f"[ROSNode] 已处于{new_state}状态，无需切换")
-            return
+            if new_state == "HOLD" and self.current_control_mode == "AUTO_CLEANING":
+                self.get_logger().info(f"[ROSNode] AUTO_CLEANING模式下重复设置HOLD，允许执行")
+            else:
+                self.get_logger().info(f"[ROSNode] 已处于{new_state}状态，无需切换")
+                return
         
         # 核心修改：正在进出仓时，仅响应HOLD指令，其余指令直接忽略并打印日志
         if self.is_in_bin_process:
@@ -665,12 +672,18 @@ class MotorControlNode(Node):
             # 降低状态发布频率至600秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(600.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为60秒")
+                self.state_publish_timer = self.create_timer(10.0, self.publish_state)
+                self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为10秒")
         elif new_state == "HOLD":
+            # HOLD状态时切换到NORMAL模式，以便RTK节点能正确响应暂停
+            if self.current_control_mode == "AUTO_CLEANING":
+                self.current_control_mode = "NORMAL"
+                self.get_logger().info("[ROSNode] HOLD状态：切换控制模式 AUTO_CLEANING -> NORMAL")
+            
             # 停止：失能所有电机
             for motor in self.motor_ctrl.motors:
                 self.motor_ctrl.motor_set_speed(motor["id"], 0.0)
+                self.set_brush_speed(0.0)
                 # self.motor_ctrl.motor_disable(motor["id"])
                 time.sleep(0.01)
             # # 降低状态发布频率至600秒
@@ -688,7 +701,7 @@ class MotorControlNode(Node):
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
                 self.state_publish_timer = self.create_timer(5.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为1秒")
+                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为5秒")
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
@@ -728,6 +741,16 @@ class MotorControlNode(Node):
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("d"))
         elif new_state == "UNLOADING":
+            # 使能电机
+            self.motor_ctrl.initialize_motors()
+            time.sleep(0.001)
+            self.complete_state = False
+            # 恢复状态发布频率至1秒
+            if self.state_publish_timer is not None:
+                self.state_publish_timer.cancel()
+                self.state_publish_timer = self.create_timer(5.0, self.publish_state)
+                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为1秒")
+
             self.complete_state = False
             self.current_status = new_state
             # 初始化出仓阶段（仅初始化，不启动定时器）
@@ -761,8 +784,8 @@ class MotorControlNode(Node):
             self.loading_turn_target_deg = (self.loading_turn_target_deg + 180) % 360 - 180
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.loading_timer = self.create_timer(0.1, self.handle_loading_step)
-        elif new_state == "RTK_NAV":
-            self.current_control_mode = "RTK_NAV"
+        elif new_state == "AUTO_CLEANING":
+            self.current_control_mode = "AUTO_CLEANING"
             self.get_logger().info(f"{self.current_control_mode}")
             self.get_logger().info(f"[ROSNode] 切换到RTK导航模式，等待RTK速度指令")
             # 速度由RTK回调处理
@@ -773,7 +796,7 @@ class MotorControlNode(Node):
         self.state_pub.publish(state_msg)
     def auto_stop(self, key):
         """方向键点按后自动停止，并重置对应标记"""
-        self.switch_state("z")
+        self.switch_state("h")
         # self.mqtt_click_trigger[key] = False
         self.get_logger().info(f"[MQTT_CLICK] {key}动作执行完成，自动停止并重置标记")
         if self.direction_timer:
@@ -807,7 +830,7 @@ class MotorControlNode(Node):
             dock_state_msg = {
                 "status": self.current_status,
                 "complete_state": self.complete_state,
-                "full_charge": True if self.is_charging and self.battery_remaining >= 95 else False,
+                "full_charge": True if self.is_charging and self.charging_v > 54.5 else False,
                 "timestamp_to_dock": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             ros_string_msg = String()
@@ -843,6 +866,9 @@ class MotorControlNode(Node):
             self.get_logger().warn("[ROSNode] 空消息，跳过处理")
             return
 
+        # AUTO_CLEANING模式下只能接收RC_ENABLE和HOLD指令
+        is_rtk_nav_mode = self.current_control_mode == "AUTO_CLEANING"
+        
         try:
             cmd_obj = json.loads(msg_data)
             
@@ -860,15 +886,61 @@ class MotorControlNode(Node):
 
             if command == "GET_STATUS":
                 self.publish_state()
-            if command == "RC_ENABLE":
-                self.rc_control = True
+            elif command == "RC_ENABLE":
+                # AUTO_CLEANING模式下允许RC_ENABLE
+                if is_rtk_nav_mode:
+                    self.get_logger().info("[ROSNode] AUTO_CLEANING模式下允许RC_ENABLE")
+                # 保存当前控制模式，以便禁用时恢复
+                if not self.rc_control:
+                    self.previous_control_mode = self.current_control_mode
+                    self.rc_previous_status = self.current_status
+                    self.rc_control = True
+                    self.current_status = command
+                self.get_logger().info(f"[ROSNode] RC_ENABLE 已启用遥控器控制，保存之前模式: {self.rc_previous_status}")
                 self.publish_state()
-            if command == "RC_DISABLE":
+            elif command == "RC_DISABLE":
+                # 取消手动控制计时器
+                if self.direction_timer:
+                    self.direction_timer.cancel()
+                    self.direction_timer = None
+                # AUTO_CLEANING模式下允许RC_DISABLE
+                if is_rtk_nav_mode:
+                    self.get_logger().info("[ROSNode] AUTO_CLEANING模式下允许RC_DISABLE")
                 self.rc_control = False
+                # 恢复之前的控制模式
+                if hasattr(self, 'previous_control_mode') and self.previous_control_mode:
+                    restore_mode = self.previous_control_mode
+                    self.current_control_mode = restore_mode
+                    self.current_status = self.rc_previous_status
+                    self.get_logger().info(f"[ROSNode] RC_DISABLE 已禁用遥控器控制，恢复之前模式: {self.rc_previous_status}")
+                else:
+                    self.get_logger().info(f"[ROSNode] RC_DISABLE 已禁用遥控器控制")
                 self.publish_state()
-            if command in STATE_DICT:
+            elif command in STATE_DICT:
+                # AUTO_CLEANING模式下只允许HOLD指令
+                if is_rtk_nav_mode and command != "HOLD":
+                    self.get_logger().warn(f"[ROSNode] AUTO_CLEANING模式下拒绝指令: {command}，仅允许HOLD")
+                    return
+                if not self.rc_control and self.current_control_mode == "REMOTE":
+                    self.current_control_mode = "NORMAL"
+                    self.get_logger().info(f"[ROSNode] 状态切换时更新控制模式: REMOTE -> NORMAL")
+                if self.rc_control and command in ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "HOLD"]:
+                    self.get_logger().info(f"[ROSNode] 收到MQTT运动命令 {command}，暂时禁用RC控制")
+                    self.rc_control = False
+                    self.current_control_mode = "NORMAL"
                 self.switch_state(command)
             elif command in STATE_DICT.values():
+                # AUTO_CLEANING模式下只允许HOLD指令
+                if is_rtk_nav_mode and command != "HOLD":
+                    self.get_logger().warn(f"[ROSNode] AUTO_CLEANING模式下拒绝指令: {command}，仅允许HOLD")
+                    return
+                if not self.rc_control and self.current_control_mode == "REMOTE":
+                    self.current_control_mode = "NORMAL"
+                    self.get_logger().info(f"[ROSNode] 状态切换时更新控制模式: REMOTE -> NORMAL")
+                if self.rc_control and command in ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "HOLD"]:
+                    self.get_logger().info(f"[ROSNode] 收到MQTT运动命令 {command}，暂时禁用RC控制")
+                    self.rc_control = False
+                    self.current_control_mode = "NORMAL"
                 key = [k for k, v in STATE_DICT.items() if v == command][0]
                 self.switch_state(key)
             else:
@@ -877,6 +949,10 @@ class MotorControlNode(Node):
         except json.JSONDecodeError as e:
             self.get_logger().warn(f"[ROSNode] 消息不是有效JSON字典，尝试按字符串处理: {msg_data}, 错误: {e}")
             raw_command = msg_data.strip()
+            # AUTO_CLEANING模式下只允许HOLD和RC_ENABLE/RC_DISABLE指令
+            if is_rtk_nav_mode and raw_command not in ["HOLD", "RC_ENABLE", "RC_DISABLE"]:
+                self.get_logger().warn(f"[ROSNode] AUTO_CLEANING模式下拒绝指令: {raw_command}，仅允许HOLD/RC_ENABLE/RC_DISABLE")
+                return
             if raw_command in STATE_DICT:
                 self.switch_state(raw_command)
             elif raw_command in STATE_DICT.values():
@@ -898,8 +974,8 @@ class MotorControlNode(Node):
         robot/<ID>/status 转发到 ROS topic /mqtt_status 并在此处订阅，因此 msg.data
         应该是外部平台下发的 JSON 字符串，其中包含 sensors 字段。
         """
-        self.get_logger().info(f"[ROSNode] 收到机器人状态消息: {msg.data}")
-                # 修复问题3：正确的ROS2消息类型校验
+        # self.get_logger().info(f"[ROSNode] 收到机器人状态消息: {msg.data}")
+        # 修复问题3：正确的ROS2消息类型校验
         if not isinstance(msg, String):
             self.get_logger().error(f"[ROSNode] 无效消息类型：{type(msg)}，仅支持std_msgs/String")
             return
@@ -919,19 +995,21 @@ class MotorControlNode(Node):
                 raise json.JSONDecodeError("Not a JSON dict", msg_data, 0)  # 主动抛错，进入下方字符串处理逻辑
             
             if "sensors" not in cmd_obj:
-                self.get_logger().warn(f"[ROSNode] 未找到sensors字段: {msg_data}")
+                # self.get_logger().warn(f"[ROSNode] 未找到sensors字段: {msg_data}")
                 return
             
             self.dock_sensors = cmd_obj.get("sensors", [])
             self.get_logger().info(f"[ROSNode] 解析到sensors：{self.dock_sensors}")
-
+            if self.dock_sensors == None:
+                self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
+                return
             # 在这里处理传感器数据
             if self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and not self.is_charging: #车体到位未充电
                 self.get_logger().info("[ROSNode] 车体到位")
                 self.start_charge_async()
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
-            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_i < 1.0: #停止充电，重置标志位，传感器归位
+            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_v > 54.5: #停止充电，重置标志位，传感器归位
                 self.get_logger().info("[ROSNode] 充电完成，等待传感器归位")
                 self.stop_charge_async()
             # else:
@@ -1000,44 +1078,46 @@ class MotorControlNode(Node):
                     right_speed = -self.motor_ctrl.BASE_SPEED + correction
                     self.set_motors_speed(left_speed, right_speed)
                 else:
-                    self.get_logger().info("[UNLOADING] 前进阶段完成，进入转向阶段")
-                    self.unloading_phase = "UNLOADING_TURN"
+                    # self.get_logger().info("[UNLOADING] 前进阶段完成，进入转向阶段")
+                    self.get_logger().info("[UNLOADING] 等待RTK")
+                    # self.unloading_phase = "UNLOADING_TURN"
+                    self.unloading_phase = "COMPLETE"  # 直接进入完成阶段，等待GPS固定解（如果需要转向，可以在后续版本添加）
                     self.unloading_turn_start_time = current_time
                     
                     # 修正：目标角度归一化
-                    self.unloading_turn_target_deg = self.imu_yaw_deg + 90
-                    self.unloading_turn_target_deg = (self.unloading_turn_target_deg + 180) % 360 - 180
-                    self.get_logger().info(f"[UNLOADING] 转向目标角设定为{self.unloading_turn_target_deg:.2f}deg")
+                    # self.unloading_turn_target_deg = self.imu_yaw_deg + 90
+                    # self.unloading_turn_target_deg = (self.unloading_turn_target_deg + 180) % 360 - 180
+                    # self.get_logger().info(f"[UNLOADING] 转向目标角设定为{self.unloading_turn_target_deg:.2f}deg")
 
             # ========== 阶段2：转向 ==========
-            elif self.unloading_phase == "UNLOADING_TURN":            
+            # elif self.unloading_phase == "UNLOADING_TURN":            
                 
-                correction = self.get_speed_correction(self.unloading_turn_target_deg)  # 目标航向180度（假设出仓方向为正后方）
-                # 修正：角度差计算（使用归一化后的误差）
-                yaw_diff = self.get_heading_error(self.unloading_turn_target_deg)
-                # 差值小于0，左转；差值大于0，右转，保持方向正确
-                turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
-                # self.motor_ctrl.BASE_SPEED
-                # self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
+            #     correction = self.get_speed_correction(self.unloading_turn_target_deg)  # 目标航向180度（假设出仓方向为正后方）
+            #     # 修正：角度差计算（使用归一化后的误差）
+            #     yaw_diff = self.get_heading_error(self.unloading_turn_target_deg)
+            #     # 差值小于0，左转；差值大于0，右转，保持方向正确
+            #     turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
+            #     # self.motor_ctrl.BASE_SPEED
+            #     # self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
                 
-                left_speed = turn_speed + correction
-                right_speed = turn_speed + correction
-                self.set_motors_speed(left_speed, right_speed)
-                # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
-                if abs(yaw_diff) < self.yaw_diff_min:
-                    self.yaw_stable_count_unloading += 1
-                    self.get_logger().info(f"[UNLOADING] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
-                    if self.yaw_stable_count_unloading >= 3:
-                        self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束（连续3次达标）")
-                        self.unloading_phase = "COMPLETE"
-                        self.set_motors_speed(0.0, 0.0)  # 停止运动
-                        self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
-                else:
-                    self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
-                if current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
-                    self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
-                    self.unloading_phase = "COMPLETE"
-                    self.set_motors_speed(0.0, 0.0)  # 停止运动
+            #     left_speed = turn_speed + correction
+            #     right_speed = turn_speed + correction
+            #     self.set_motors_speed(left_speed, right_speed)
+            #     # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
+            #     if abs(yaw_diff) < self.yaw_diff_min:
+            #         self.yaw_stable_count_unloading += 1
+            #         self.get_logger().info(f"[UNLOADING] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
+            #         if self.yaw_stable_count_unloading >= 3:
+            #             self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束（连续3次达标）")
+            #             self.unloading_phase = "COMPLETE"
+            #             self.set_motors_speed(0.0, 0.0)  # 停止运动
+            #             self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
+            #     else:
+            #         self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
+            #     if current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
+            #         self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
+            #         self.unloading_phase = "COMPLETE"
+            #         self.set_motors_speed(0.0, 0.0)  # 停止运动
             
             # ========== 阶段3：完成 ==========
             elif self.unloading_phase == "COMPLETE":
@@ -1054,9 +1134,19 @@ class MotorControlNode(Node):
                     self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
                     self.unloading_lon = self.current_lon
                     self.unloading_lat = self.current_lat
+                    heading = self.imu_yaw_deg + 90.0 if self.imu_yaw_deg is not None else 0.00
+                    heading = (heading + 360) % 360  # 归一化到0-360度
+                    self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
+                    unloading_gps_msg = Vector3()
+                    unloading_gps_msg.x = self.unloading_lon
+                    unloading_gps_msg.y = self.unloading_lat
+                    unloading_gps_msg.z = heading
+                    self.unloading_gps_pub.publish(unloading_gps_msg)
+                    self.get_logger().info(f"[UNLOADING] 已发布出仓GPS坐标到/unloading_gps话题")
                     self.get_logger().info("[UNLOADING] 出仓流程完成")
                     self.switch_state('h') # 切回HOLD状态，确保电机停止
                     time.sleep(2.0)  # 确保状态切换生效
+                    self.current_control_mode = "AUTO_CLEANING"
                     self.switch_state('r') # RTK导航模式，准备接受RTK速度指令
                     # 清理超时标记
                     if hasattr(self, 'unloading_gps_wait_start'):
@@ -1067,16 +1157,17 @@ class MotorControlNode(Node):
                     self.is_in_bin_process = False  # 重置进出仓标记
                 # 2. 新增：超时兜底（GPS长期无固定解，强制退出）
                 elif elapsed_time > MAX_GPS_WAIT_TIME:
-                    self.get_logger().error(f"[UNLOADING] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，强制完成出仓流程")
-                    # 可选：记录当前非固定解的坐标（或置空）
-                    self.unloading_lon = self.current_lon
-                    self.unloading_lat = self.current_lat
+                    self.get_logger().error(f"[UNLOADING] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，进入DISABLE")
+                    # # 可选：记录当前非固定解的坐标（或置空）
+                    # self.unloading_lon = self.current_lon
+                    # self.unloading_lat = self.current_lat
                     # 清理超时标记+终止定时器
                     delattr(self, 'unloading_gps_wait_start')
                     self.is_in_bin_process = False
-                    self.switch_state('h') # 切回HOLD状态，确保电机停止
+                    self.switch_state('z') # 切回HOLD状态，确保电机停止
                     time.sleep(2.0)  # 确保状态切换生效
-                    self.switch_state('r') # RTK导航模式，准备接受RTK速度指令
+                    # self.current_control_mode = "AUTO_CLEANING"
+                    # self.switch_state('r') # RTK导航模式，准备接受RTK速度指令
                     self.unloading_timer.cancel()
                     self.unloading_timer = None
                 # 3. 未超时+非固定解：继续等待，可选降频打印日志（避免刷屏）
@@ -1087,21 +1178,22 @@ class MotorControlNode(Node):
                     elif self.unloading_phase == "COMPLETE":
                         # get_gps
                         if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
-                            self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
-                            self.unloading_lon = self.current_lon
-                            self.unloading_lat = self.current_lat
+                            self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.unloading_lon:.6f}，纬度{self.unloading_lat:.6f}")
                             heading = self.imu_yaw_deg + 90.0 if self.imu_yaw_deg is not None else 0.00
                             heading = (heading + 360) % 360  # 归一化到0-360度
+                            self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
                             # pub unloading result
                             unloading_gps_msg = Vector3()
                             unloading_gps_msg.x = self.unloading_lon
                             unloading_gps_msg.y = self.unloading_lat
                             unloading_gps_msg.z = heading
                             self.unloading_gps_pub.publish(unloading_gps_msg)
+                            self.get_logger().info(f"[UNLOADING] 已发布出仓GPS坐标到/unloading_gps话题")
                             self.get_logger().info("[UNLOADING] 出仓流程完成")
                             self.is_in_bin_process = False  # 重置进出仓标记
                             self.switch_state('h') # 切回HOLD状态，确保电机停止
                             time.sleep(2.0)  # 确保状态切换生效
+                            self.current_control_mode = "AUTO_CLEANING"
                             self.switch_state('r') # RTK导航模式，准备接受RTK速度指令
                             self.unloading_timer.cancel()
                             self.unloading_timer = None
@@ -1250,11 +1342,12 @@ class MotorControlNode(Node):
                         self.yaw_stable_count = 0  # 误差不达标，计数器清零
                     
                     # 超时逻辑保留
-                    if current_time - self.loading_start_time > self.loading_turn_time:
-                        self.get_logger().warn("[LOADING] 角度调整超时，强制进入后退阶段")
-                        self.loading_phase = "LOADING_BACKWARD"
-                        self.loading_backward_start_time = current_time
-                        self.yaw_stable_count = 0
+                    # if current_time - self.loading_start_time > self.loading_turn_time:
+                    #     self.get_logger().warn("[LOADING] 角度调整超时，进入DISABLE")
+                    #     self.switch_state('z')  # 进入DISABLE状态，人工干预
+                    #     # self.loading_phase = "LOADING_BACKWARD"
+                    #     # self.loading_backward_start_time = current_time
+                    #     self.yaw_stable_count = 0
                 
                 # ========== 阶段2：激光辅助进仓（核心：停止修正+低频日志）==========
                 elif self.loading_phase == "LOADING_BACKWARD":
@@ -1392,13 +1485,14 @@ class MotorControlNode(Node):
                                 if self.straight_loading_time is not None:
                                     elapsed_time = current_time - self.straight_loading_time
                                     if elapsed_time >= 5.0 and self.complete_state == False:
-                                        self.get_logger().info("[LOADING] 进仓完成超时，强制进入完成阶段")
-                                        self.in_full_correction = False
-                                        self.loading_phase = "COMPLETE"
-                                        self.complete_state = True
+                                        # self.get_logger().info("[LOADING] 进仓完成超时，强制进入完成阶段")
+                                        # self.in_full_correction = False
+                                        # self.loading_phase = "COMPLETE"
+                                        # self.complete_state = True
                                         self.last_backward_log_time = 0.0  # 重置日志时间
                                         self.correction_count = 0  # 重置次数
                                         self.straight_loading_time = None
+                                        self.get_logger().info("[LOADING] 进仓未完成，但已持续极近距离超过5秒，进入DISABLE状态，等待人工干预")
                                         self.switch_state('z') # 切回DISABLE状态，确保电机停止
                                 # 步骤8：差值<2mm → 停止
                                 if diff_dis < 2:
@@ -1427,7 +1521,7 @@ class MotorControlNode(Node):
                             # 步骤4：激光距离<1000mm → 进入低速纠偏阶段
                             elif left < 1000 and right < 1000:
                                 # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
-                                # 步骤5：差值≥5mm → 低速旋转对准
+                                # 步骤5：差值≥15mm → 低速旋转对准
                                 if diff_dis >= 5:
                                     self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
                                     if (left - right) < 0:
@@ -1439,22 +1533,22 @@ class MotorControlNode(Node):
                                 # 步骤6：差值<5mm → 低速纠偏直行
                                 else:
                                     self.get_logger().info("[LOADING] 差值<5mm，直行")
-                                    left_speed = -base_speed / 4.0
-                                    right_speed = base_speed / 4.0
+                                    left_speed = -base_speed / 3.0
+                                    right_speed = base_speed / 3.0
                             else:
-                                self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<100mm")
+                                self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
                                 # 差值≥40mm → 中速旋转对准
-                                if diff_dis >= 40:
-                                    self.get_logger().info("[LOADING] 大偏差（>100mm），中速旋转对准")
+                                if diff_dis >= 10:
+                                    self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
                                     if (left - right) < 0:
-                                        left_speed = base_speed / 3.0
-                                        right_speed = base_speed / 3.0
+                                        left_speed = base_speed / 4.0
+                                        right_speed = base_speed / 4.0
                                     else:
-                                        left_speed = -base_speed / 3.0
-                                        right_speed = -base_speed / 3.0
+                                        left_speed = -base_speed / 4.0
+                                        right_speed = -base_speed / 4.0
                                 else:
-                                    left_speed = -base_speed 
-                                    right_speed = base_speed 
+                                    left_speed = -base_speed / 3.0
+                                    right_speed = base_speed / 3.0
                                 
                         
                         # 设置最终电机速度
@@ -1470,10 +1564,14 @@ class MotorControlNode(Node):
                             # 左转寻找目标
                             left_speed = base_speed
                             right_speed = base_speed
-                        else:
+                        elif left > 3000 and right < 3000:
                             # 右转寻找目标
                             left_speed = -base_speed
                             right_speed = -base_speed
+                        else:
+                            # 直行寻找dock
+                            left_speed = -base_speed 
+                            right_speed = base_speed  
                         self.set_motors_speed(left_speed, right_speed)
                 
                 # ========== 阶段3：进仓完成 ==========
@@ -1503,7 +1601,7 @@ class MotorControlNode(Node):
         wheel_speed_msg = Vector3()
         wheel_speed_msg.x = float(left_speed)    # 左轮角速度
         wheel_speed_msg.y = float(right_speed)   # 右轮角速度
-        wheel_speed_msg.z = float(self.brush_speed)     # brush speed
+        # wheel_speed_msg.z = float(self.brush_speed)     # brush speed
         self.speed_pub.publish(wheel_speed_msg)
         
     def set_brush_speed(self, brush_speed: float) -> None:

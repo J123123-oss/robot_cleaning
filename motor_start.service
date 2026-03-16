@@ -7,7 +7,7 @@ After=sysinit.target network.target systemd-modules-load.service
 ConditionPathExists=/sys/class/net/
 
 [Service]
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/bin/sleep 15
 
 User=ztl
 # 脚本绝对路径，务必和你的实际路径一致
