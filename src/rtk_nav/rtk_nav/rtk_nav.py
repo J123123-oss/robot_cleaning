@@ -35,7 +35,7 @@ TURN_SPEED_FAST = 0.8  # 大误差快速转向基准速度
 TURN_SPEED_MID = 0.6   # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8    # 最大修正量
-STRAIGHT_MAX_CORRECTION = 2.5
+STRAIGHT_MAX_CORRECTION = 3.0
 # straight line speed correction factor
 STRAIGHT_PID_SCALE = 1.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
@@ -44,7 +44,7 @@ SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 LOW_DISTANCE = 1.0
 BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
-DISTANCE_INCREASE_THRESHOLD = 0.2  # 距离增大触发阈值（米）
+DISTANCE_INCREASE_THRESHOLD = 0.1  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 2  # 连续增大次数阈值
 
 # 控制模式（与电机节点保持一致）
@@ -428,9 +428,9 @@ class RTKNavControlNode(Node):
         self.mid_right = (msg.data & 0x08) == 0x00
         self.back_left = (msg.data & 0x10) == 0x00
         self.back_right = (msg.data & 0x20) == 0x00
-        # self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
-        # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
-
+        self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
+        self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
+        #开启后传感器误触发，注释
         # if self.mid_left or self.mid_right:
         #     self.is_boundary_triggered = True
         # else:
@@ -549,7 +549,8 @@ class RTKNavControlNode(Node):
         """获取下一个路径文件（按文件名序号从小到大排序）"""
         try:
             # 1. 获取目录下所有符合命名规则的路径文件
-            file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
+            file_pattern = re.compile(r'.*.txt')
+            # file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
             all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
             
             if not all_files:
@@ -1293,14 +1294,12 @@ class RTKNavControlNode(Node):
             else:
                 consecutive_count = 0
             # ========== 新增：距离<LOW_DISTANCE米时线性减速 ==========
+            current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
+            speed_scale = 1.0
             if distance < LOW_DISTANCE:
                 # 线性减速：距离LOW_DISTANCE米时速度=BASE的50%，距离0.1米时速度=BASE的10%
                 speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)  # 0.1~0.5之间动态缩放
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                correction = correction * speed_scale
-                # self.get_logger().info(f"距离小，减速：当前基础速度={current_base_speed:.2f}（原{LINEAR_SPEED_BASE:.2f}）")
-            else:
-                current_base_speed = LINEAR_SPEED_BASE  # 距离≥1米，正常速度
             #  # 1. 先判断距离，决定是否更新实时航向
             # if distance >= 0.3:
             #     # 距离足够远时，正常计算实时航向，并更新缓存
@@ -1327,7 +1326,7 @@ class RTKNavControlNode(Node):
             # correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
             yaw_error = self.get_heading_error(target_heading)
             # 计算修正量（使用真实偏差角）
-            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
+            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE * speed_scale
             # base_speed = LINEAR_SPEED_BASE
             last_left_speed = None
             last_right_speed = None
@@ -1945,7 +1944,7 @@ class RTKNavControlNode(Node):
                     speed_msg = Vector3()
                     speed_msg.x = float(left_speed)
                     speed_msg.y = float(right_speed)
-                    speed_msg.z = 15.0 #brush
+                    speed_msg.z = -15.0 #brush
                     self.motor_speed_pub.publish(speed_msg)
             except StopIteration:
                 # 导航生成器执行完毕（全部航点完成/主动退出）

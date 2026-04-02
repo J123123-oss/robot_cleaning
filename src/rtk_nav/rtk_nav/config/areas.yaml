@@ -1,0 +1,42 @@
+# 区域配置文件
+# 添加/删除区域只需修改此文件，无需修改代码或launch文件
+
+areas:
+  # 区域0
+  - name: "south_4"
+    calib_point_a: {lon: 110.64741299779179, lat: 35.60593376188335}
+    calib_point_b: {lon: 110.64741219706659, lat: 35.60611366491313}
+    calib_point_c: {lon: 110.64726667869006, lat: 35.60611161096633}
+    start_corner: "bottom_right"
+    end_corner_mode: "diagonal"
+
+  # 区域1
+  - name: "south_5"
+    calib_point_a: {lon: 110.64741366306355, lat: 35.60571889444015}
+    calib_point_b: {lon: 110.64741283394737, lat: 35.60589706282963}
+    calib_point_c: {lon: 110.64726808899731, lat: 35.605895621784235}
+    start_corner: "bottom_left"
+    end_corner_mode: "opposite"
+
+  - name: "south_6"
+    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_c: {lon: 110.64726506083483, lat: 35.605683262075296}
+    start_corner: "bottom_left"
+    end_corner_mode: "opposite"
+    
+    - name: "back_6to4"
+    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_c: {lon: 110.64726506083483, lat: 35.605683262075296}
+    start_corner: "bottom_left"
+    end_corner_mode: "opposite"
+
+default:
+  interval: 1.2
+  start_corner: "top_left"
+  swap_wh_select: True
+  edge_distance_lon: 0.1
+  edge_distance_lat: 0.1
+  end_corner_mode: "opposite"
+  headless: False

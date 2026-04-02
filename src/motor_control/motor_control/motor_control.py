@@ -1525,11 +1525,11 @@ class MotorControlNode(Node):
                                 if diff_dis >= 5:
                                     self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
                                     if (left - right) < 0:
-                                        left_speed = base_speed / 4.0
-                                        right_speed = base_speed / 4.0
+                                        left_speed = base_speed / 6.0
+                                        right_speed = base_speed / 6.0
                                     else:
-                                        left_speed = -base_speed / 4.0
-                                        right_speed = -base_speed / 4.0
+                                        left_speed = -base_speed / 6.0
+                                        right_speed = -base_speed / 6.0
                                 # 步骤6：差值<5mm → 低速纠偏直行
                                 else:
                                     self.get_logger().info("[LOADING] 差值<5mm，直行")

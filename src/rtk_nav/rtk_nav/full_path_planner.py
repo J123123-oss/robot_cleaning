@@ -10,6 +10,7 @@ from rclpy.node import Node
 import datetime
 from matplotlib.patches import FancyArrowPatch
 import os
+import yaml
 import numpy as np
 
 # 设置中文字体 + 解决负号显示问题
@@ -215,13 +216,7 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         inner_rot[corner_name] = (e_rot, n_rot)
     inner_corners_utm = list(inner_rot.values())
 
-    # ========== 【核心修改1：删除自动匹配A点逻辑，严格使用传入的start_corner】 ==========
-    # 100% 以外部传入的start_corner作为唯一基准，不再自动替换，支持随时修改
-    target_start_utm = inner_rot[start_corner]
-    print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
-    
-    # ========== 【核心修改2：路径生成方向 严格基于传入的start_corner】 ==========
-    # 从传入的start_corner中解析水平/垂直方向，无任何自动适配
+    # 路径生成方向基于传入的start_corner
     hori_dir = 'left' if 'left' in start_corner else 'right'
     vert_dir = 'top' if 'top' in start_corner else 'bottom'
     
@@ -303,18 +298,109 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
         path_latlon.append((lon, lat))
     
-    # ========== 【核心修改4：修正路径起点 严格基于传入的start_corner】 ==========
-    # 仅用配置的start_corner对应角点做校准，不再关联A点，阈值合理0.5m，避免误交换
-    first_point_dist = math.hypot(path_utm_rot[0][0] - target_start_utm[0], 
-                                  path_utm_rot[0][1] - target_start_utm[1])
-    # if first_point_dist > 0.5:
-    #     path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
-    #     path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
-    #     print(f"路径起点调整：原起点与{start_corner}偏差{first_point_dist:.2f}m，已交换前两点")
-    
-    # 日志优化：打印配置的起始角点+关键参数，方便调试
+    # 路径方向日志
     print(f"路径生成方向：水平={hori_dir}，垂直={vert_dir}")
     print(f"宽度处理：原始宽度={width:.2f}m → 延伸方向={'东向' if width_sign ==1 else '西向'}，内部宽度={inner_width:.2f}m")
+
+    # ========================= 【修复1：根据实际坐标重新确定角点名称】 =========================
+    # 旋转后，原来的top_left/top_right等名称可能不再对应实际位置
+    # 需要根据实际UTM坐标找到真正的四个角
+    
+    # 使用旋转后的实际坐标边界
+    rot_e_list = [inner_rot[c][0] for c in inner_rot]
+    rot_n_list = [inner_rot[c][1] for c in inner_rot]
+    rot_e_min = min(rot_e_list)
+    rot_e_max = max(rot_e_list)
+    rot_n_min = min(rot_n_list)
+    rot_n_max = max(rot_n_list)
+    
+    # 根据旋转后的实际坐标确定真正的角点位置
+    actual_corners = {}
+    for name, (e, n) in inner_rot.items():
+        if n >= (rot_n_max + rot_n_min) / 2:
+            actual_corners['top'] = actual_corners.get('top', []) + [(name, e, n)]
+        else:
+            actual_corners['bottom'] = actual_corners.get('bottom', []) + [(name, e, n)]
+        if e <= (rot_e_max + rot_e_min) / 2:
+            actual_corners['left'] = actual_corners.get('left', []) + [(name, e, n)]
+        else:
+            actual_corners['right'] = actual_corners.get('right', []) + [(name, e, n)]
+    
+    # 确定四个实际角点
+    top_left_name = min(actual_corners['left'], key=lambda x: x[2])[0]
+    top_right_name = min(actual_corners['right'], key=lambda x: x[2])[0]
+    bottom_left_name = max(actual_corners['left'], key=lambda x: x[2])[0]
+    bottom_right_name = max(actual_corners['right'], key=lambda x: x[2])[0]
+    
+    actual_corner_map = {
+        'top_left': inner_rot[top_left_name],
+        'top_right': inner_rot[top_right_name],
+        'bottom_left': inner_rot[bottom_left_name],
+        'bottom_right': inner_rot[bottom_right_name]
+    }
+    
+    print(f"实际角点坐标: top_left={actual_corner_map['top_left']}, top_right={actual_corner_map['top_right']}")
+    print(f"实际角点坐标: bottom_left={actual_corner_map['bottom_left']}, bottom_right={actual_corner_map['bottom_right']}")
+    
+    # 使用实际角点坐标来确定起始点
+    target_start_utm = actual_corner_map[start_corner]
+    print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
+
+    # ========================= 【修复2：使用实际角点坐标计算结束点】 =========================
+    end_corner_mode = param.get('end_corner_mode', 'diagonal') #opposite
+
+    tl = actual_corner_map['top_left']
+    tr = actual_corner_map['top_right']
+    bl = actual_corner_map['bottom_left']
+    br = actual_corner_map['bottom_right']
+
+    start_point = path_utm_rot[0]
+    current_end = path_utm_rot[-1]
+
+    corner_list = [tl, tr, bl, br]
+    start = min(corner_list, key=lambda c: math.hypot(start_point[0]-c[0], start_point[1]-c[1]))
+
+    # 对角/对边映射（基于实际角点位置）
+    corner_name_map = {
+        tuple(tl): 'top_left',
+        tuple(tr): 'top_right',
+        tuple(bl): 'bottom_left',
+        tuple(br): 'bottom_right'
+    }
+    start_name = corner_name_map[tuple(start)]
+    
+    if end_corner_mode == 'diagonal':
+        diagonal_map = {
+            'top_left': actual_corner_map['bottom_right'],
+            'top_right': actual_corner_map['bottom_left'],
+            'bottom_left': actual_corner_map['top_right'],
+            'bottom_right': actual_corner_map['top_left']
+        }
+        target = diagonal_map[start_name]
+    else:
+        opposite_map = {
+            'top_left': actual_corner_map['top_right'],
+            'top_right': actual_corner_map['top_left'],
+            'bottom_left': actual_corner_map['bottom_right'],
+            'bottom_right': actual_corner_map['bottom_left']
+        }
+        target = opposite_map[start_name]
+    
+    print(f"起点名称: {start_name}, 目标结束点: {target}")
+    
+    # 不在目标角 → 沿最后一段反向180°直线返回（不穿墙、不斜线）
+    if math.hypot(current_end[0]-target[0], current_end[1]-target[1]) > 0.5:
+        if len(path_utm_rot) >= 2:
+            p1 = path_utm_rot[-2]
+            p2 = path_utm_rot[-1]
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            back_x = p2[0] - dx
+            back_y = p2[1] - dy
+
+            path_utm_rot.append( (back_x, back_y) )
+            lat, lon = get_latlon_from_utm(back_x, back_y, zone_num, zone_letter)
+            path_latlon.append( (lon, lat) )
     
     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
@@ -341,14 +427,34 @@ class MultiAreaCleaningPathPlanner(Node):
         super().__init__('full_path')
         self.seq_num = 0
         
+        # 声明配置文件路径参数和 headless 参数
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas.yaml')
+        self.declare_parameter('headless', False)
+        
+        # 尝试从 YAML 配置文件加载
+        config_file = self.get_parameter('config_file').value
+        self.get_logger().info(f"尝试加载配置文件: {config_file}")
+        
+        if config_file and isinstance(config_file, str) and os.path.exists(config_file):
+            self.get_logger().info(f"从配置文件加载区域参数: {config_file}")
+            self.all_areas = self._load_areas_from_yaml(config_file)
+            if self.all_areas:
+                self.plan_multi_area_path()
+                return
+        
+        # 如果YAML加载失败或文件不存在，使用launch参数方式
+        self.get_logger().info("YAML配置不可用，使用 launch 参数方式加载区域")
+        self._init_from_launch_params()
+    
+    def _init_from_launch_params(self):
         # 声明多区域参数（支持动态配置）
         self.declare_parameter('area_count', 2)
         self.declare_parameter('default.interval', 1.0)
         self.declare_parameter('default.start_corner', 'top_left')
-        self.declare_parameter('default.swap_wh_select', False) # turn True to invert width / height
+        self.declare_parameter('default.swap_wh_select', False)
         self.declare_parameter('default.edge_distance_lon', 0.5)
         self.declare_parameter('default.edge_distance_lat', 0.5)
-        self.declare_parameter('headless', False)
+        self.declare_parameter('default.end_corner_mode', 'diagonal') # diagonal / opposite
         
         self.area_count = self.get_parameter('area_count').value
         for i in range(self.area_count):
@@ -363,6 +469,7 @@ class MultiAreaCleaningPathPlanner(Node):
             self.declare_parameter(f'area_{i}.swap_wh_select', None)
             self.declare_parameter(f'area_{i}.edge_distance_lon', None)
             self.declare_parameter(f'area_{i}.edge_distance_lat', None)
+            self.declare_parameter(f'area_{i}.end_corner_mode', None)
         
         self.all_areas = self._parse_area_parameters()
         if not self.all_areas:
@@ -380,7 +487,8 @@ class MultiAreaCleaningPathPlanner(Node):
             'start_corner': self.get_parameter('default.start_corner').value,
             'swap_wh_select': self.get_parameter('default.swap_wh_select').value,
             'edge_distance_lon': self.get_parameter('default.edge_distance_lon').value,
-            'edge_distance_lat': self.get_parameter('default.edge_distance_lat').value
+            'edge_distance_lat': self.get_parameter('default.edge_distance_lat').value,
+            'end_corner_mode': self.get_parameter('default.end_corner_mode').value
         }
         
         for i in range(self.area_count):
@@ -428,6 +536,10 @@ class MultiAreaCleaningPathPlanner(Node):
             if area_edge_lat is not None:
                 area_params['edge_distance_lat'] = area_edge_lat
             
+            area_end_corner = self.get_parameter(f'area_{i}.end_corner_mode').value
+            if area_end_corner is not None:
+                area_params['end_corner_mode'] = area_end_corner
+            
             # 封装当前区域参数
             all_areas.append({
                 'index': i,
@@ -437,6 +549,75 @@ class MultiAreaCleaningPathPlanner(Node):
                 'param': area_params
             })
         
+        return all_areas
+
+    def _load_areas_from_yaml(self, config_file):
+        """从 YAML 配置文件加载区域参数"""
+        all_areas = []
+        valid_corners = ['top_left', 'top_right', 'bottom_right', 'bottom_left']
+        
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+        except Exception as e:
+            self.get_logger().error(f"无法读取配置文件 {config_file}: {e}")
+            return []
+        
+        if not config or 'areas' not in config:
+            self.get_logger().error("配置文件缺少 'areas' 键")
+            return []
+        
+        default_params = config.get('default', {})
+        areas_list = config['areas']
+        
+        for i, area in enumerate(areas_list):
+            area_params = default_params.copy()
+            
+            # 获取标定点
+            try:
+                calib_a = (area['calib_point_a']['lon'], area['calib_point_a']['lat'])
+                calib_b = (area['calib_point_b']['lon'], area['calib_point_b']['lat'])
+                calib_c = (area['calib_point_c']['lon'], area['calib_point_c']['lat'])
+            except KeyError as e:
+                self.get_logger().error(f"区域{i}缺少必要的标定点配置: {e}")
+                return []
+            
+            # 校验标定点有效性
+            if calib_a[0] == 0.0 or calib_a[1] == 0.0:
+                self.get_logger().error(f"区域{i}的calib_point_a未配置（经纬度不能为0）")
+                return []
+            
+            # 解析可选参数
+            if 'interval' in area:
+                area_params['interval'] = area['interval']
+            if 'start_corner' in area:
+                corner = area['start_corner']
+                if corner not in valid_corners:
+                    self.get_logger().error(f"区域{i}的start_corner无效: {corner}，必须是{valid_corners}")
+                    return []
+                area_params['start_corner'] = corner
+            if 'swap_wh_select' in area:
+                area_params['swap_wh_select'] = area['swap_wh_select']
+            if 'edge_distance_lon' in area:
+                area_params['edge_distance_lon'] = area['edge_distance_lon']
+            if 'edge_distance_lat' in area:
+                area_params['edge_distance_lat'] = area['edge_distance_lat']
+            if 'end_corner_mode' in area:
+                area_params['end_corner_mode'] = area['end_corner_mode']
+            
+            area_name = area.get('name', f'area_{i}')
+            self.get_logger().info(f"加载区域 {i}: {area_name}")
+            
+            all_areas.append({
+                'index': i,
+                'name': area_name,
+                'calib_point_a': calib_a,
+                'calib_point_b': calib_b,
+                'calib_point_c': calib_c,
+                'param': area_params
+            })
+        
+        self.get_logger().info(f"共加载 {len(all_areas)} 个区域")
         return all_areas
 
     def get_next_sequence(self, save_dir):
@@ -456,13 +637,13 @@ class MultiAreaCleaningPathPlanner(Node):
                 except:
                     continue
         # 下一个序号 +1，并自动补 0 成 3 位
-        next_num = max_num + 1
+        next_num = max_num + 5
         return f"{next_num:03d}"
     
     def plan_multi_area_path(self):
         """生成多区域连续路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+        save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
         os.makedirs(save_dir, exist_ok=True)
         
         merged_path_latlon = []
@@ -535,7 +716,7 @@ class MultiAreaCleaningPathPlanner(Node):
             
             # ---------------------- 保存合并后的路径文件 ----------------------
             self.seq_num = self.get_next_sequence(save_dir)
-            points_filename = os.path.join(save_dir, f"{self.seq_num}_full_path_{timestamp}.txt")
+            points_filename = os.path.join(save_dir, f"{self.seq_num}_ser__south_{timestamp}.txt")
             with open(points_filename, "w", encoding="utf-8") as f:
                 f.write("#序号,经度,纬度,航向角(度)\n")
                 for idx in range(len(merged_path_latlon)):
@@ -618,8 +799,8 @@ class MultiAreaCleaningPathPlanner(Node):
         ax.axis('equal')
         plt.tight_layout()
         
-        # 保存图片
-        img_filename = os.path.join(save_dir, f"{self.seq_num}_full_path_{timestamp}.png")
+                # 保存图片
+        img_filename = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}.png")
         plt.savefig(img_filename, dpi=300, bbox_inches='tight')
         self.get_logger().info(f"多区域路径图已保存到：{img_filename}")
         
