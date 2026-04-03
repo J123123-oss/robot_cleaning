@@ -186,7 +186,7 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     inner_width = inner_e_max - inner_e_min
     inner_height = inner_n_max - inner_n_min
     
-    if inner_width <= 0.1 or inner_height <= 0.1:
+    if inner_width <= 0.3 or inner_height <= 0.3:
         # raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
         # 获取A点和B点的UTM坐标（这里需要根据实际的经纬度转UTM逻辑调整）
         # 假设point_a和point_b是经纬度坐标，先转换为UTM
@@ -428,7 +428,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas.yaml')
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south3-north8.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -541,8 +541,10 @@ class MultiAreaCleaningPathPlanner(Node):
                 area_params['end_corner_mode'] = area_end_corner
             
             # 封装当前区域参数
+            area_name = f'area_{i}'
             all_areas.append({
                 'index': i,
+                'name': area_name,
                 'calib_point_a': calib_a,
                 'calib_point_b': calib_b,
                 'calib_point_c': calib_c,
@@ -653,11 +655,16 @@ class MultiAreaCleaningPathPlanner(Node):
         utm_zone = None            # 假设所有区域在同一UTM zone（实际场景需校验）
         # 新增：存储每个区域的ABC标定点UTM坐标，供绘图使用
         all_calib_points_utm = []
+        # 新增：存储每个区域的路径点数量，用于保存文件时区分区域
+        area_path_counts = []
+        # 新增：存储每个区域的名称
+        area_names = []
         
         try:
             # ---------------------- 循环生成每个区域的路径 ----------------------
             for area in self.all_areas:
                 i = area['index']
+                name = area['name']
                 calib_a = area['calib_point_a']
                 calib_b = area['calib_point_b']
                 calib_c = area['calib_point_c']
@@ -707,6 +714,10 @@ class MultiAreaCleaningPathPlanner(Node):
                 b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
                 c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
                 all_calib_points_utm.append( (a_e,a_n, b_e,b_n, c_e,c_n) )
+                # 记录当前区域的路径点数量
+                area_path_counts.append(len(path_latlon))
+                # 记录当前区域的名称
+                area_names.append(area['name'])
                 
                 self.get_logger().info(f"区域{i}路径生成完成，包含{len(path_latlon)}个点")
             
@@ -714,21 +725,31 @@ class MultiAreaCleaningPathPlanner(Node):
             self.get_logger().info(f"\n所有区域路径合并完成，总点数：{len(merged_path_latlon)}")
             merged_headings = calculate_heading_angles(merged_path_latlon)
             
-            # ---------------------- 保存合并后的路径文件 ----------------------
+            # ---------------------- 保存合并后的路径文件（带区域区分） ----------------------
             self.seq_num = self.get_next_sequence(save_dir)
-            points_filename = os.path.join(save_dir, f"{self.seq_num}_ser__south_{timestamp}.txt")
+            points_filename = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}.txt")
             with open(points_filename, "w", encoding="utf-8") as f:
                 f.write("#序号,经度,纬度,航向角(度)\n")
-                for idx in range(len(merged_path_latlon)):
-                    lon, lat = merged_path_latlon[idx]
-                    heading = merged_headings[idx]
-                    f.write(f"{idx+1},{lon:.8f},{lat:.8f},{heading:.2f}\n")
+                
+                # 按区域写入路径点
+                global_idx = 0
+                for area_idx, (path_count, area_name) in enumerate(zip(area_path_counts, area_names)):
+                    # 写入区域名称注释
+                    f.write(f"#{area_name}\n")
+                    
+                    # 写入当前区域的所有点
+                    for _ in range(path_count):
+                        lon, lat = merged_path_latlon[global_idx]
+                        heading = merged_headings[global_idx]
+                        f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{heading:.2f}\n")
+                        global_idx += 1
+            
             self.get_logger().info(f"多区域路径文件已保存到：{points_filename}")
             
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
-                save_dir, timestamp, all_calib_points_utm
+                save_dir, timestamp, all_calib_points_utm, area_names
             )
         
         except ValueError as e:
@@ -737,7 +758,7 @@ class MultiAreaCleaningPathPlanner(Node):
             self.get_logger().error(f"未知异常：{str(e)}")
 
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
-    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm):
+    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm, area_names):
         """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
         fig, ax = plt.subplots(figsize=(12, 10))
         zone_num, zone_letter = utm_zone
@@ -751,32 +772,33 @@ class MultiAreaCleaningPathPlanner(Node):
         for i, (orig_corners, inner_corners, calib_utm) in enumerate(zip(all_orig_corners, all_inner_corners, all_calib_points_utm)):
             color = hex_colors[i % len(hex_colors)]
             a_e,a_n, b_e,b_n, c_e,c_n = calib_utm
+            area_name = area_names[i] if i < len(area_names) else f'area_{i}'
             
             # 绘制原始矩形边界 - 单独传 color + linestyle 参数，无格式错误
             orig_e = [c[0] for c in orig_corners] + [orig_corners[0][0]]
             orig_n = [c[1] for c in orig_corners] + [orig_corners[0][1]]
-            ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'area{i} - boundary')
+            ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'{i}-{area_name}-boundary')
             
             # 绘制内部矩形边界 - 同上
             inner_e = [c[0] for c in inner_corners] + [inner_corners[0][0]]
             inner_n = [c[1] for c in inner_corners] + [inner_corners[0][1]]
-            ax.plot(inner_e, inner_n, color=color, linestyle=line_styles[1], linewidth=1.5, label=f'area{i} - inner')
+            ax.plot(inner_e, inner_n, color=color, linestyle=line_styles[1], linewidth=1.5, label=f'{i}-{area_name}-inner')
             
             # ✅ 新增：绘制当前区域的A/B/C标定点，样式完全按参考来，带黑色描边+文字标注
             # 只在第一个区域添加label，防止图例重复；后续区域只绘图不添加label
             if i == 0:
-                ax.scatter(a_e, a_n, c='red', s=120, marker='s', label='Calib Point A', edgecolors='black', linewidth=1.5, zorder=6)
-                ax.scatter(b_e, b_n, c='orange', s=120, marker='o', label='Calib Point B', edgecolors='black', linewidth=1.5, zorder=6)
-                ax.scatter(c_e, c_n, c='purple', s=120, marker='^', label='Calib Point C', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(a_e, a_n, c='red', s=60, marker='s', label='Calib Point A', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(b_e, b_n, c='orange', s=60, marker='o', label='Calib Point B', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(c_e, c_n, c='purple', s=60, marker='^', label='Calib Point C', edgecolors='black', linewidth=1.5, zorder=6)
             else:
-                ax.scatter(a_e, a_n, c='red', s=120, marker='s', edgecolors='black', linewidth=1.5, zorder=6)
-                ax.scatter(b_e, b_n, c='orange', s=120, marker='o', edgecolors='black', linewidth=1.5, zorder=6)
-                ax.scatter(c_e, c_n, c='purple', s=120, marker='^', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(a_e, a_n, c='red', s=60, marker='s', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(b_e, b_n, c='orange', s=60, marker='o', edgecolors='black', linewidth=1.5, zorder=6)
+                ax.scatter(c_e, c_n, c='purple', s=60, marker='^', edgecolors='black', linewidth=1.5, zorder=6)
             
             # ✅ 每个标定点都添加文字标注，永不重复
-            ax.annotate(f'Area{i}-A', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
-            ax.annotate(f'Area{i}-B', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
-            ax.annotate(f'Area{i}-C', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+            ax.annotate(f'{i}-A-{area_name}', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+            ax.annotate(f'{i}-B-{area_name}', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+            ax.annotate(f'{i}-C-{area_name}', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
         
         # 绘制合并后的清扫路径
         path_e = [p[0] for p in merged_path_utm]

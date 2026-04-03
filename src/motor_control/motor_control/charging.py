@@ -78,7 +78,8 @@ class Charging485Node(Node):
         self.declare_parameter('slave_addr', 0x01)  # 从机地址出厂默认01
         self.declare_parameter('timeout', 0.5)      # 串口超时时间
         # 三字节地址模式-发射端固定地址（指令要求：addr=[0x10,0x04,0x5D]）
-        self.THREE_BYTE_ADDR = [0x10, 0x04, 0x5D]
+        # self.THREE_BYTE_ADDR = [0x10, 0x04, 0x5D]  # origin
+        self.THREE_BYTE_ADDR = [0x10, 0x04, 0x6B]
 
         # 解析参数
         self.serial_port = self.get_parameter('serial_port').value
@@ -102,7 +103,7 @@ class Charging485Node(Node):
         self.srv_query_fault = self.create_service(Trigger, 'query_fault_code', self._query_fault_code_cb)
 
         # 5. 定时器：1s定时查询（避免串口拥堵，匹配485通信速率）
-        self.timer = self.create_timer(10.0, self._timer_query_data)
+        self.timer = self.create_timer(30.0, self._timer_query_data)
         self.get_logger().info(
             f"充电485节点启动成功【三字节地址模式】\n"
             f"串口：{self.serial_port} | 从机地址：0x{self.slave_addr:02X} | 发射端地址：{[hex(x) for x in self.THREE_BYTE_ADDR]}"
@@ -155,6 +156,7 @@ class Charging485Node(Node):
         """解析电压电流（文档协议：01 03 04 [电压高] [电压低] [电流高] [电流低] CRC）"""
         volt, curr = 0.0, 0.0
         # 校验响应格式：长度≥8 + 从机地址匹配 + 功能码03 + 数据长度04
+        # self.get_logger().info(f"volt_code: {resp}")
         if len(resp) >= 8 and resp[0] == self.slave_addr and resp[1] == 0x03 and resp[2] == 0x04:
             # 校验CRC
             if crc16_modbus(resp[:-2]) == resp[-2:]:
@@ -174,6 +176,7 @@ class Charging485Node(Node):
         """解析故障码（寄存器0x05，2字节数据）"""
         fault_code = 0x0000
         fault_msg = FAULT_CODE_MAP[0x0000]
+        # self.get_logger().info(f"fault_code: {resp}")
         # 校验响应格式：长度≥7 + 从机地址匹配 + 功能码03 + 数据长度02
         if len(resp) >= 7 and resp[0] == self.slave_addr and resp[1] == 0x03 and resp[2] == 0x02:
             if crc16_modbus(resp[:-2]) == resp[-2:]:

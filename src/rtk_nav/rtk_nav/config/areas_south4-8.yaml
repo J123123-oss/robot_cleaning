@@ -1,0 +1,67 @@
+# 区域配置文件
+# 添加/删除区域只需修改此文件，无需修改代码或launch文件
+
+areas:
+  # 线槽左1
+  - name: "south_4"
+    calib_point_a: {lon: 110.64741299779179, lat: 35.60593376188335}
+    calib_point_b: {lon: 110.64741219706659, lat: 35.60611366491313}
+    calib_point_c: {lon: 110.64726667869006, lat: 35.60611161096633}
+    start_corner: "bottom_right"
+    end_corner_mode: "diagonal"
+
+  # 线槽左2
+  - name: "south_5"
+    calib_point_a: {lon: 110.64741366306355, lat: 35.60571889444015}
+    calib_point_b: {lon: 110.64741283394737, lat: 35.60589706282963}
+    calib_point_c: {lon: 110.64726808899731, lat: 35.605895621784235}
+    start_corner: "bottom_left"
+    end_corner_mode: "opposite"
+  # 线槽左3
+  - name: "south_6"
+    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_c: {lon: 110.64726506083483, lat: 35.605683262075296}
+    start_corner: "bottom_left"
+    end_corner_mode: "opposite"
+    
+  # - name: "back_6to4"
+  #   calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+  #   calib_point_b: {lon: 110.64741219706659, lat: 35.60611366491313}
+  #   calib_point_c: {lon: 110.64741690256913, lat: 35.605502653578235}
+  #   swap_wh_select: False
+  #   start_corner: "bottom_left"
+  #   end_corner_mode: "opposite"
+  # 7南侧加长方块
+  - name: "south_7_long_block"
+    calib_point_a: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_b: {lon: 110.64741521205767, lat: 35.605467251897565}
+    calib_point_c: {lon: 110.64726397696438, lat: 35.60546663346924}
+    start_corner: "bottom_left"
+    
+    # 7南侧
+  - name: "south_7"
+    calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
+    calib_point_b: {lon: 110.64775981630326, lat: 35.60542648814111}
+    calib_point_c: {lon: 110.64742387365659, lat: 35.605425789416415}
+    start_corner: "bottom_right"
+    swap_wh_select: False
+    end_corner_mode: "diagonal"
+
+
+  # 8南侧
+  - name: "south_8"
+    calib_point_a: {lon: 110.64776102878216, lat: 35.60507126970284}
+    calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
+    calib_point_c: {lon: 110.64726601331277, lat: 35.605251747104674}
+    swap_wh_select: False
+    start_corner: "bottom_left"
+
+default:
+  interval: 1.2
+  start_corner: "top_left"
+  swap_wh_select: True
+  edge_distance_lon: 0.1
+  edge_distance_lat: 0.1
+  end_corner_mode: "opposite"
+  headless: False
