@@ -902,7 +902,7 @@ class CleaningPathPlanner(Node):
             self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
             self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
             
-            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             # 获取自动序号
             self.seq_num = self.get_next_sequence(save_dir)

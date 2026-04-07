@@ -225,69 +225,55 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
     path_utm_unrot = []
     if default_direction:
-        # 宽 >= 高：垂直分条（上下移动）
-        num_strips = max(1, int(inner_height / interval) + 1)
-        if vert_dir == 'top':
-            n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
-        else:
-            n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
-        # # 强制补充尾点（避免覆盖不全）
-        # if abs(n_values[-1] - inner_n_max) > 1e-3:
-        #     n_values.append(inner_n_max)
-        # num_strips = len(n_values)  # 实际条带数由interval决定
+        n_values = []
+        current_n = inner_n_min
+        while current_n <= inner_n_max + 1e-6:
+            n_values.append(current_n)
+            current_n += interval
+        if abs(n_values[-1] - inner_n_max) > 0.6:
+            n_values.append(inner_n_max)
+        num_strips = len(n_values)
+
+        if vert_dir == 'bottom':
+            n_values = n_values[::-1]
 
         for i, current_n_unrot in enumerate(n_values):
-            if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
+            left_first = (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right')
+
+            if left_first:
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
                 path_utm_unrot.append((inner_e_max, current_n_unrot))
             else:
                 path_utm_unrot.append((inner_e_max, current_n_unrot))
                 path_utm_unrot.append((inner_e_min, current_n_unrot))
-            
-            # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
-            # if i < num_strips - 1:
-            #     current_end = path_utm_unrot[-1]
-            #     next_n = n_values[i+1]
-            #     next_start = (current_end[0], next_n)
-            #     path_utm_unrot.append(next_start)
-        
                 
     else:
-        # 宽 < 高：水平分条（左右移动）
-        num_strips = max(1, int(inner_width / interval) + 1)
-        if hori_dir == 'left':
-            e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
-        else:
-            e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
-                        for i in range(num_strips)]
+        e_values = []
+        current_e = inner_e_min
+        while current_e <= inner_e_max + 1e-6:
+            e_values.append(current_e)
+            current_e += interval
+        if abs(e_values[-1] - inner_e_max) > 0.6:
+            e_values.append(inner_e_max)
+        num_strips = len(e_values)
 
-        # # 强制补充尾点（避免覆盖不全）
-        # if abs(e_values[-1] - inner_e_max) > 1e-3:
-        #     e_values.append(inner_e_max)
-        # num_strips = len(e_values)  # 实际条带数由interval决定
-        
+        if hori_dir == 'right':
+            e_values = e_values[::-1]
+
         for i, current_e_unrot in enumerate(e_values):
-            if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
+            top_first = (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom')
+
+            if top_first:
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
             else:
                 path_utm_unrot.append((current_e_unrot, inner_n_min))
                 path_utm_unrot.append((current_e_unrot, inner_n_max))
-            
-            # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
-            # if i < num_strips - 1:
-            #     current_end = path_utm_unrot[-1]
-            #     next_e = e_values[i+1]
-            #     next_start = (next_e, current_end[1])
-            #     path_utm_unrot.append(next_start)
         # 日志优化：打印实际条带数和间隔
-    # if default_direction:
-    #     print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
-    # else:
-    #     print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
+    if default_direction:
+        print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
+    else:
+        print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
 
     # 9. 旋转路径点（以A点为中心，保留原有逻辑）
     path_utm_rot = []
@@ -347,8 +333,10 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
 
     # ========================= 【修复2：使用实际角点坐标计算结束点】 =========================
-    end_corner_mode = param.get('end_corner_mode', 'diagonal') #opposite
-
+    end_corner_mode = param.get('end_corner_mode', 'diagonal')
+    reverse_end_point = param.get('reverse_end_point', False)  # 新增：控制是否执行反转逻辑
+    print(f"end_corner_mode: {end_corner_mode}")
+    print(f"reverse_end_point: {reverse_end_point}")
     tl = actual_corner_map['top_left']
     tr = actual_corner_map['top_right']
     bl = actual_corner_map['bottom_left']
@@ -379,17 +367,28 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         target = diagonal_map[start_name]
     else:
         opposite_map = {
+            # 'top_left': actual_corner_map['top_right'],
+            # 'top_right': actual_corner_map['top_left'],# swap_wh_select: False  ---bottom_right
+            # 'bottom_left': actual_corner_map['bottom_right'], # swap_wh_select: False ---top_left
+            # 'bottom_right': actual_corner_map['bottom_left']
+        
             'top_left': actual_corner_map['top_right'],
-            'top_right': actual_corner_map['top_left'],
-            'bottom_left': actual_corner_map['bottom_right'],
+            'top_right': actual_corner_map['bottom_right'] if not swap_wh_select else actual_corner_map['top_left'],
+            'bottom_left': actual_corner_map['top_left'] if not swap_wh_select else actual_corner_map['bottom_right'],
             'bottom_right': actual_corner_map['bottom_left']
         }
         target = opposite_map[start_name]
     
     print(f"起点名称: {start_name}, 目标结束点: {target}")
     
-    # 不在目标角 → 沿最后一段反向180°直线返回（不穿墙、不斜线）
-    if math.hypot(current_end[0]-target[0], current_end[1]-target[1]) > 0.5:
+    # 通过reverse_end_point配置来决定是否执行反转逻辑
+    print(f"当前结束点: {current_end}")
+    print(f"目标结束点: {target}")
+    print(f"距离: {math.hypot(current_end[0]-target[0], current_end[1]-target[1])}")
+    print(f"路径点数量: {len(path_utm_rot)}")
+    
+    if reverse_end_point:
+        print("执行反转180度返回逻辑")
         if len(path_utm_rot) >= 2:
             p1 = path_utm_rot[-2]
             p2 = path_utm_rot[-1]
@@ -397,10 +396,15 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
             dy = p2[1] - p1[1]
             back_x = p2[0] - dx
             back_y = p2[1] - dy
+            print(f"最后两个点: {p1}, {p2}")
+            print(f"计算的返回点: {back_x}, {back_y}")
 
             path_utm_rot.append( (back_x, back_y) )
             lat, lon = get_latlon_from_utm(back_x, back_y, zone_num, zone_letter)
             path_latlon.append( (lon, lat) )
+            print(f"添加返回点: ({lon}, {lat})")
+        else:
+            print("路径点数量不足2，无法执行反转逻辑")
     
     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
@@ -428,7 +432,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south3-north8.yaml')
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south4-8.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -455,6 +459,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.declare_parameter('default.edge_distance_lon', 0.5)
         self.declare_parameter('default.edge_distance_lat', 0.5)
         self.declare_parameter('default.end_corner_mode', 'diagonal') # diagonal / opposite
+        self.declare_parameter('default.reverse_end_point', False)  # 新增：控制是否执行反转逻辑
         
         self.area_count = self.get_parameter('area_count').value
         for i in range(self.area_count):
@@ -470,6 +475,8 @@ class MultiAreaCleaningPathPlanner(Node):
             self.declare_parameter(f'area_{i}.edge_distance_lon', None)
             self.declare_parameter(f'area_{i}.edge_distance_lat', None)
             self.declare_parameter(f'area_{i}.end_corner_mode', None)
+            self.declare_parameter(f'area_{i}.reverse_end_point', None)
+            
         
         self.all_areas = self._parse_area_parameters()
         if not self.all_areas:
@@ -488,7 +495,8 @@ class MultiAreaCleaningPathPlanner(Node):
             'swap_wh_select': self.get_parameter('default.swap_wh_select').value,
             'edge_distance_lon': self.get_parameter('default.edge_distance_lon').value,
             'edge_distance_lat': self.get_parameter('default.edge_distance_lat').value,
-            'end_corner_mode': self.get_parameter('default.end_corner_mode').value
+            'end_corner_mode': self.get_parameter('default.end_corner_mode').value,
+            'reverse_end_point': self.get_parameter('default.reverse_end_point').value
         }
         
         for i in range(self.area_count):
@@ -539,6 +547,10 @@ class MultiAreaCleaningPathPlanner(Node):
             area_end_corner = self.get_parameter(f'area_{i}.end_corner_mode').value
             if area_end_corner is not None:
                 area_params['end_corner_mode'] = area_end_corner
+            
+            area_reverse_end_point = self.get_parameter(f'area_{i}.reverse_end_point').value
+            if area_reverse_end_point is not None:
+                area_params['reverse_end_point'] = area_reverse_end_point
             
             # 封装当前区域参数
             area_name = f'area_{i}'
@@ -606,6 +618,8 @@ class MultiAreaCleaningPathPlanner(Node):
                 area_params['edge_distance_lat'] = area['edge_distance_lat']
             if 'end_corner_mode' in area:
                 area_params['end_corner_mode'] = area['end_corner_mode']
+            if 'reverse_end_point' in area:
+                area_params['reverse_end_point'] = area['reverse_end_point']
             
             area_name = area.get('name', f'area_{i}')
             self.get_logger().info(f"加载区域 {i}: {area_name}")
@@ -837,7 +851,8 @@ def main(args=None):
     rclpy.init(args=args)
     node = MultiAreaCleaningPathPlanner()
     try:
-        rclpy.spin(node)
+        # 路径生成在节点初始化时完成，不需要进入事件循环
+        pass
     except KeyboardInterrupt:
         pass
     finally:
