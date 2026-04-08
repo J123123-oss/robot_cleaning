@@ -432,7 +432,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south4-8.yaml')
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/006_north9-1.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -774,7 +774,7 @@ class MultiAreaCleaningPathPlanner(Node):
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
     def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm, area_names):
         """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
-        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = plt.subplots(figsize=(24, 20))
         zone_num, zone_letter = utm_zone
         
         # ✅ 修复BUG1：使用matplotlib支持的【十六进制色值】+ 单独配置线型，放弃错误的fmt格式
@@ -791,7 +791,7 @@ class MultiAreaCleaningPathPlanner(Node):
             # 绘制原始矩形边界 - 单独传 color + linestyle 参数，无格式错误
             orig_e = [c[0] for c in orig_corners] + [orig_corners[0][0]]
             orig_n = [c[1] for c in orig_corners] + [orig_corners[0][1]]
-            ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'{i}-{area_name}-boundary')
+            # ax.plot(orig_e, orig_n, color=color, linestyle=line_styles[0], linewidth=2, label=f'{i}-{area_name}-boundary')
             
             # 绘制内部矩形边界 - 同上
             inner_e = [c[0] for c in inner_corners] + [inner_corners[0][0]]

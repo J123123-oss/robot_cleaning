@@ -1,51 +1,55 @@
 areas:
-  # 6南侧/楼顶测试点zone1
-  - name: "south_6_zone1"
-    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
-    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
-    calib_point_c: {lon: 110.64726506083483, lat: 35.605683262075296}
-    # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
-
-  # 5南侧/zone2
-  - name: "south_5_zone2"
-    calib_point_a: {lon: 110.64741639744143, lat: 35.60571753896705}
-    calib_point_b: {lon: 110.64741549006075, lat: 35.60589856772437}
-    calib_point_c: {lon: 110.64726399997889, lat: 35.605897952775464}
-    # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
-
-  # 4南侧/zone3
-  - name: "south_4_zone3"
-    calib_point_a: {lon: 110.64741564488955, lat: 35.605933355288805}
-    calib_point_b: {lon: 110.6474148272825, lat: 35.60611439364326}
-    calib_point_c: {lon: 110.64726380566727, lat: 35.60611435157266}
-    # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
-
-  # 3南侧/线槽右1
-  - name: "south_3_line_slot_right_1"
-    calib_point_a: {lon: 110.64741463617983, lat: 35.60615249436973}
-    calib_point_b: {lon: 110.64741366522766, lat: 35.60633307194213}
-    calib_point_c: {lon: 110.64726232909501, lat: 35.606332638832356}
-    # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
-
-  # 2南侧/线槽右2
-  - name: "south_2_line_slot_right_2"
-    calib_point_a: {lon: 110.64741349295628, lat: 35.606367917919776}
-    calib_point_b: {lon: 110.64741292415563, lat: 35.60654856111291}
-    calib_point_c: {lon: 110.64726143847402, lat: 35.6065476103026}
-    # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
-
   # 1南侧/线槽右3
-  - name: "south_1_line_slot_right_3"
+  - name: "south_1"
     calib_point_a: {lon: 110.64741278334898, lat: 35.606585031155625}
     calib_point_b: {lon: 110.64741303923405, lat: 35.60676565301766}
     calib_point_c: {lon: 110.64726117316289, lat: 35.606765430837}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
+  # 2南侧/线槽右2
+  - name: "south_2"
+    calib_point_a: {lon: 110.64741349295628, lat: 35.606367917919776}
+    calib_point_b: {lon: 110.64741292415563, lat: 35.60654856111291}
+    calib_point_c: {lon: 110.64726143847402, lat: 35.6065476103026}
+    # start_corner: "bottom_right"
+    
+  # 3南侧/线槽右1
+  - name: "south_3"
+    calib_point_a: {lon: 110.64741463617983, lat: 35.60615249436973}
+    calib_point_b: {lon: 110.64741366522766, lat: 35.60633307194213}
+    calib_point_c: {lon: 110.64726232909501, lat: 35.606332638832356}
+    # start_corner: "bottom_left"
+    
+    # 4南侧/zone3
+  - name: "south_4"
+    calib_point_a: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_b: {lon: 110.6474148272825, lat: 35.60611439364326}
+    calib_point_c: {lon: 110.64726380566727, lat: 35.60611435157266}
+    # start_corner: "bottom_right"
+    
+
+
+  # 5南侧/zone2
+  - name: "south_5"
+    calib_point_a: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_b: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_c: {lon: 110.64726399997889, lat: 35.605897952775464}
+    # start_corner: "bottom_left"
+    
+
+  # 6南侧/楼顶测试点zone1
+  - name: "south_6"
+    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_c: {lon: 110.64726506083483, lat: 35.605683262075296}
+    # start_corner: "bottom_right"
+    
+
+
+
+
+
+
 
   # 7南侧
   - name: "south_7"
@@ -53,7 +57,7 @@ areas:
     calib_point_b: {lon: 110.64775981630326, lat: 35.60542648814111}
     calib_point_c: {lon: 110.64742387365659, lat: 35.605425789416415}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 7南侧加长方块
   - name: "south_7_long_block"
@@ -61,7 +65,7 @@ areas:
     calib_point_b: {lon: 110.64741521205767, lat: 35.605467251897565}
     calib_point_c: {lon: 110.64726397696438, lat: 35.60546663346924}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 8南侧
   - name: "south_8"
@@ -69,7 +73,7 @@ areas:
     calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
     calib_point_c: {lon: 110.64726601331277, lat: 35.605251747104674}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 9南侧
   - name: "south_9"
@@ -77,7 +81,7 @@ areas:
     calib_point_b: {lon: 110.64776114629366, lat: 35.60503614295901}
     calib_point_c: {lon: 110.64726666463734, lat: 35.60503572475744}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 10南侧
   - name: "south_10"
@@ -85,7 +89,7 @@ areas:
     calib_point_b: {lon: 110.64776161073715, lat: 35.6049817500445}
     calib_point_c: {lon: 110.64742660623908, lat: 35.60498207020261}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 10南侧加长方块
   - name: "south_10_long_block"
@@ -93,7 +97,7 @@ areas:
     calib_point_b: {lon: 110.64741799610167, lat: 35.604981450387}
     calib_point_c: {lon: 110.64726701518703, lat: 35.60498111769845}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 11南侧
   - name: "south_11"
@@ -101,7 +105,7 @@ areas:
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_c: {lon: 110.64742686839072, lat: 35.604749034251505}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 11南侧加长方块
   - name: "south_11_long_block"
@@ -109,7 +113,7 @@ areas:
     calib_point_b: {lon: 110.64741883105908, lat: 35.604748695649164}
     calib_point_c: {lon: 110.64726902077777, lat: 35.60474919227829}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 12南侧
   - name: "south_12"
@@ -117,7 +121,7 @@ areas:
     calib_point_b: {lon: 110.64776416327175, lat: 35.60442191035046}
     calib_point_c: {lon: 110.64727006172468, lat: 35.60442127126381}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 13南侧
   - name: "south_13"
@@ -125,7 +129,7 @@ areas:
     calib_point_b: {lon: 110.64776464459975, lat: 35.60426221780848}
     calib_point_c: {lon: 110.64742914791067, lat: 35.60426198461625}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 13南侧加长方块
   - name: "south_13_long_block"
@@ -133,7 +137,7 @@ areas:
     calib_point_b: {lon: 110.64742115468336, lat: 35.60426196801417}
     calib_point_c: {lon: 110.64727076113923, lat: 35.604262094183206}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 14南侧
   - name: "south_14"
@@ -141,7 +145,7 @@ areas:
     calib_point_b: {lon: 110.64776557275421, lat: 35.60404401827957}
     calib_point_c: {lon: 110.64727126713728, lat: 35.60404198676027}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 15南侧
   - name: "south_15"
@@ -149,7 +153,7 @@ areas:
     calib_point_b: {lon: 110.64776678225708, lat: 35.60382802136538}
     calib_point_c: {lon: 110.64743114805798, lat: 35.60382753625176}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 15南侧加长方块
   - name: "south_15_long_block"
@@ -157,7 +161,7 @@ areas:
     calib_point_b: {lon: 110.64742302745503, lat: 35.60382746878024}
     calib_point_c: {lon: 110.64727222743305, lat: 35.60382717417348}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 16南侧
   - name: "south_16"
@@ -165,7 +169,7 @@ areas:
     calib_point_b: {lon: 110.6477676095043, lat: 35.60360864241737}
     calib_point_c: {lon: 110.6472730115645, lat: 35.603607693253174}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 17南侧
   - name: "south_17"
@@ -173,7 +177,7 @@ areas:
     calib_point_b: {lon: 110.64776797468316, lat: 35.60344504040682}
     calib_point_c: {lon: 110.64727375572214, lat: 35.603444069875394}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 18南侧
   - name: "south_18"
@@ -181,7 +185,7 @@ areas:
     calib_point_b: {lon: 110.64777027465526, lat: 35.60326631866077}
     calib_point_c: {lon: 110.6474332515515, lat: 35.60326969801204}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 18南侧加长方块
   - name: "south_18_long_block"
@@ -189,7 +193,7 @@ areas:
     calib_point_b: {lon: 110.64742540106296, lat: 35.603269692175225}
     calib_point_c: {lon: 110.6472743428311, lat: 35.60326831110682}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 19南侧
   - name: "south_19"
@@ -197,7 +201,7 @@ areas:
     calib_point_b: {lon: 110.64776966454107, lat: 35.603101230415184}
     calib_point_c: {lon: 110.6474309438137, lat: 35.603101918359954}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 19南侧加长方块
   - name: "south_19_long_block"
@@ -205,7 +209,7 @@ areas:
     calib_point_b: {lon: 110.64742887576334, lat: 35.60311467136716}
     calib_point_c: {lon: 110.64726080866282, lat: 35.60311302695789}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 20南侧
   - name: "south_20"
@@ -213,7 +217,7 @@ areas:
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
     calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 20南侧加长方块
   - name: "south_20_long_block"
@@ -221,7 +225,7 @@ areas:
     calib_point_b: {lon: 110.64742718555796, lat: 35.60283492029976}
     calib_point_c: {lon: 110.64727659884244, lat: 35.60283444780098}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 21南侧
   - name: "south_21"
@@ -229,7 +233,7 @@ areas:
     calib_point_b: {lon: 110.64777235307753, lat: 35.60255989772949}
     calib_point_c: {lon: 110.64743581917091, lat: 35.60255880384909}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 21南侧加长方块
   - name: "south_21_long_block"
@@ -237,7 +241,7 @@ areas:
     calib_point_b: {lon: 110.64742745040523, lat: 35.6025690612263}
     calib_point_c: {lon: 110.64727644082087, lat: 35.60256836411488}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 22南侧
   - name: "south_22"
@@ -245,7 +249,7 @@ areas:
     calib_point_b: {lon: 110.64777309831817, lat: 35.60240848925073}
     calib_point_c: {lon: 110.64743674068407, lat: 35.60240675086808}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 22南侧加长方块
   - name: "south_22_long_block"
@@ -253,7 +257,7 @@ areas:
     calib_point_b: {lon: 110.64742868463246, lat: 35.602406783823106}
     calib_point_c: {lon: 110.64727723790173, lat: 35.60240587549978}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 23南侧
   - name: "south_23"
@@ -261,7 +265,7 @@ areas:
     calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_c: {lon: 110.647279569684, lat: 35.60218200226331}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 23南侧最小块
   - name: "south_23_small_block"
@@ -269,7 +273,7 @@ areas:
     calib_point_b: {lon: 110.64727207955534, lat: 35.602129950559984}
     calib_point_c: {lon: 110.6472006510195, lat: 35.60212948887804}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 24南侧
   - name: "south_24"
@@ -277,7 +281,7 @@ areas:
     calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
     calib_point_c: {lon: 110.6472005047547, lat: 35.60207628552591}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧1
   - name: "north_1"
@@ -285,7 +289,7 @@ areas:
     calib_point_b: {lon: 110.64693508220195, lat: 35.60658436686629}
     calib_point_c: {lon: 110.64708565086734, lat: 35.60658478270537}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧2
   - name: "north_2"
@@ -293,7 +297,7 @@ areas:
     calib_point_b: {lon: 110.64693530376132, lat: 35.60636748733694}
     calib_point_c: {lon: 110.64708562584958, lat: 35.6063676775536}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧3
   - name: "north_3"
@@ -301,7 +305,7 @@ areas:
     calib_point_b: {lon: 110.64693527005036, lat: 35.60615122321454}
     calib_point_c: {lon: 110.64708567634905, lat: 35.60615116018607}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧4
   - name: "north_4"
@@ -309,7 +313,7 @@ areas:
     calib_point_b: {lon: 110.64693657803969, lat: 35.60593372814788}
     calib_point_c: {lon: 110.64708691059897, lat: 35.60593414670415}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧5
   - name: "north_5"
@@ -317,7 +321,7 @@ areas:
     calib_point_b: {lon: 110.64693783052384, lat: 35.60571878607145}
     calib_point_c: {lon: 110.64708832082803, lat: 35.605719388842466}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧6
   - name: "north_6"
@@ -325,7 +329,7 @@ areas:
     calib_point_b: {lon: 110.6469384370789, lat: 35.605501642713605}
     calib_point_c: {lon: 110.64708885537887, lat: 35.60550196624693}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧7
   - name: "north_7"
@@ -333,7 +337,7 @@ areas:
     calib_point_b: {lon: 110.64693926233181, lat: 35.6052853867204}
     calib_point_c: {lon: 110.64708966997871, lat: 35.60528590028092}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧8
   - name: "north_8"
@@ -341,7 +345,7 @@ areas:
     calib_point_b: {lon: 110.64694032246108, lat: 35.60507031658687}
     calib_point_c: {lon: 110.64709075927466, lat: 35.60507081711438}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧9
   - name: "north_9"
@@ -349,7 +353,7 @@ areas:
     calib_point_b: {lon: 110.64694067249663, lat: 35.604999976240926}
     calib_point_c: {lon: 110.64709121924967, lat: 35.60499992606116}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧10
   - name: "north_10"
@@ -357,7 +361,7 @@ areas:
     calib_point_b: {lon: 110.64659797765286, lat: 35.604848576681206}
     calib_point_c: {lon: 110.6469336597917, lat: 35.60485022402763}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧10加长方块
   - name: "north_10_long_block"
@@ -365,7 +369,7 @@ areas:
     calib_point_b: {lon: 110.64694171379075, lat: 35.6048295989336}
     calib_point_c: {lon: 110.64709309180981, lat: 35.6048304287892}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧11
   - name: "north_11"
@@ -373,7 +377,7 @@ areas:
     calib_point_b: {lon: 110.64659951957887, lat: 35.6045257066004}
     calib_point_c: {lon: 110.64693569975074, lat: 35.604527157037374}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧11加长方块
   - name: "north_11_long_block"
@@ -381,7 +385,7 @@ areas:
     calib_point_b: {lon: 110.64694376600833, lat: 35.604506554695405}
     calib_point_c: {lon: 110.64709493622084, lat: 35.60450723189641}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧12
   - name: "north_12"
@@ -389,7 +393,7 @@ areas:
     calib_point_b: {lon: 110.64660078489712, lat: 35.60429258785293}
     calib_point_c: {lon: 110.64709540771439, lat: 35.6042941194182}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧13
   - name: "north_13"
@@ -397,7 +401,7 @@ areas:
     calib_point_b: {lon: 110.64660046158241, lat: 35.60415146556984}
     calib_point_c: {lon: 110.64693678159196, lat: 35.60415277105775}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧13加长方块
   - name: "north_13_long_block"
@@ -405,7 +409,7 @@ areas:
     calib_point_b: {lon: 110.64694499601983, lat: 35.60413205369464}
     calib_point_c: {lon: 110.64709579671191, lat: 35.60413265747443}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧14
   - name: "north_14"
@@ -413,7 +417,7 @@ areas:
     calib_point_b: {lon: 110.64660097150492, lat: 35.6038620234036}
     calib_point_c: {lon: 110.64709524264127, lat: 35.60386253869787}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧15
   - name: "north_15"
@@ -421,7 +425,7 @@ areas:
     calib_point_b: {lon: 110.64660255426848, lat: 35.60366754778793}
     calib_point_c: {lon: 110.64693833490217, lat: 35.603668373299435}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧15加长方块
   - name: "north_15_long_block"
@@ -429,7 +433,7 @@ areas:
     calib_point_b: {lon: 110.64694684650163, lat: 35.60364793400997}
     calib_point_c: {lon: 110.64709729831193, lat: 35.60364820088346}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧16
   - name: "north_16"
@@ -437,7 +441,7 @@ areas:
     calib_point_b: {lon: 110.64660400469242, lat: 35.603467352248686}
     calib_point_c: {lon: 110.64709801411928, lat: 35.6034684954575}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧17
   - name: "north_17"
@@ -445,7 +449,7 @@ areas:
     calib_point_b: {lon: 110.64660395043171, lat: 35.6033008777465}
     calib_point_c: {lon: 110.64709935652249, lat: 35.60330082515166}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧18
   - name: "north_18"
@@ -453,7 +457,7 @@ areas:
     calib_point_b: {lon: 110.64660377457831, lat: 35.60321094153396}
     calib_point_c: {lon: 110.64693982363194, lat: 35.603211448459945}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧18加长方块
   - name: "north_18_long_block"
@@ -461,7 +465,7 @@ areas:
     calib_point_b: {lon: 110.64694786008697, lat: 35.603190584695646}
     calib_point_c: {lon: 110.64709806492563, lat: 35.603190687780135}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧19
   - name: "north_19"
@@ -469,7 +473,7 @@ areas:
     calib_point_b: {lon: 110.64660561307961, lat: 35.60287015397685}
     calib_point_c: {lon: 110.64710012071782, lat: 35.6028716002269}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧20
   - name: "north_20"
@@ -477,7 +481,7 @@ areas:
     calib_point_b: {lon: 110.64660583999114, lat: 35.60266805527786}
     calib_point_c: {lon: 110.6469415903747, lat: 35.60266851636253}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧20加长方块
   - name: "north_20_long_block"
@@ -485,7 +489,7 @@ areas:
     calib_point_b: {lon: 110.64694928090306, lat: 35.60264779638707}
     calib_point_c: {lon: 110.6471000313889, lat: 35.60264808110836}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧21
   - name: "north_21"
@@ -493,7 +497,7 @@ areas:
     calib_point_b: {lon: 110.64660758597817, lat: 35.602434203751486}
     calib_point_c: {lon: 110.64710216381792, lat: 35.60243622674924}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧22
   - name: "north_22"
@@ -501,7 +505,7 @@ areas:
     calib_point_b: {lon: 110.64660811614381, lat: 35.60229250558312}
     calib_point_c: {lon: 110.6469442829288, lat: 35.602293966166975}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧22加长方块
   - name: "north_22_long_block"
@@ -509,7 +513,7 @@ areas:
     calib_point_b: {lon: 110.6469520873434, lat: 35.60227314556471}
     calib_point_c: {lon: 110.64710292735552, lat: 35.60227421458493}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧23
   - name: "north_23"
@@ -517,7 +521,7 @@ areas:
     calib_point_b: {lon: 110.64660884686268, lat: 35.602113270160785}
     calib_point_c: {lon: 110.64694482886202, lat: 35.60211466948984}
     # start_corner: "bottom_right"
-    # # end_corner_mode: "diagonal"
+    # 
 
   # 北侧23中间加长方块
   - name: "north_23_mid_long_block"
@@ -525,7 +529,7 @@ areas:
     calib_point_b: {lon: 110.64695278398571, lat: 35.602114551770704}
     calib_point_c: {lon: 110.64710355833685, lat: 35.60211513666677}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
 
   # 北侧23最小块
   - name: "north_23_small_block"
@@ -533,7 +537,7 @@ areas:
     calib_point_b: {lon: 110.64711154171316, lat: 35.60211533141042}
     calib_point_c: {lon: 110.6471829228808, lat: 35.602115646247675}
     # start_corner: "bottom_right"
-    # end_corner_mode: "diagonal"
+    
 
   # 北侧24
   - name: "north_24"
@@ -541,7 +545,7 @@ areas:
     calib_point_b: {lon: 110.64660984388259, lat: 35.60192961528979}
     calib_point_c: {lon: 110.64718371063053, lat: 35.601931086848886}
     # start_corner: "bottom_left"
-    # end_corner_mode: "opposite"
+    
     
 default:
   interval: 10
@@ -549,5 +553,5 @@ default:
   swap_wh_select: True
   edge_distance_lon: 0.1
   edge_distance_lat: 0.1
-  end_corner_mode: "opposite"
+  reverse_end_point: False
   headless: False
