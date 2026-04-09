@@ -323,7 +323,7 @@ class CleaningPathPlanner(Node):
             
             # 确保保存目录存在
             # save_dir = os.path.expanduser("/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
-            save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
             os.makedirs(save_dir, exist_ok=True)
             
             # 计算航向角并保存路径点
