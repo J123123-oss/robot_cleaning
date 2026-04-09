@@ -105,6 +105,92 @@ areas:
     calib_point_b: {lon: 110.64776797468316, lat: 35.60344504040682}
     calib_point_c: {lon: 110.64727375572214, lat: 35.603444069875394}
 
+
+  # back_17B-16A   --------------------------------------------------------
+  - name: "back_17B-16A"
+    calib_point_a: {lon: 110.64776797468316, lat: 35.60344504040682}
+    calib_point_b: {lon: 110.64776810603713, lat: 35.60346909433307}
+    calib_point_c: {lon: 110.64776810603713, lat: 35.60346909433307}
+    start_corner: "top_right"
+
+  # back_16B-15A
+  - name: "back_16B-15A"
+    calib_point_a: {lon: 110.6477676095043, lat: 35.60360864241737}
+    calib_point_b: {lon: 110.64776705903036, lat: 35.60371975122639}
+    calib_point_c: {lon: 110.64776705903036, lat: 35.60371975122639}
+    start_corner: "top_right"
+
+  # back_15B-14A
+  - name: "back_15B-14A"
+    calib_point_a: {lon: 110.64776678225708, lat: 35.60382802136538}
+    calib_point_b: {lon: 110.64776723843342, lat: 35.603863009383225}
+    calib_point_c: {lon: 110.64776723843342, lat: 35.603863009383225}
+    start_corner: "top_right"
+
+  # back_14B-13A
+  - name: "back_14B-13A"
+    calib_point_a: {lon: 110.64776557275421, lat: 35.60404401827957}
+    calib_point_b: {lon: 110.64776491482968, lat: 35.60415389596566}
+    calib_point_c: {lon: 110.64776491482968, lat: 35.60415389596566}
+    start_corner: "top_right"
+
+  # back_13B-12A
+  - name: "back_13B-12A"
+    calib_point_a: {lon: 110.64776464459975, lat: 35.60426221780848}
+    calib_point_b: {lon: 110.64776463744738, lat: 35.60429273226822}
+    calib_point_c: {lon: 110.64776463744738, lat: 35.60429273226822}
+    start_corner: "top_right"
+
+  # back_12B-11A
+  - name: "back_12B-11A"
+    calib_point_a: {lon: 110.64776416327175, lat: 35.60442191035046}
+    calib_point_b: {lon: 110.64776313280512, lat: 35.60452749634761}
+    calib_point_c: {lon: 110.64776313280512, lat: 35.60452749634761}
+    start_corner: "top_right"
+
+  # back_11B-10A
+  - name: "back_11B-10A"
+    calib_point_a: {lon: 110.64776265157377, lat: 35.60475014299974}
+    calib_point_b: {lon: 110.64776183179559, lat: 35.604852917286685}
+    calib_point_c: {lon: 110.64776183179559, lat: 35.604852917286685}
+    start_corner: "top_right"
+
+  # back_9A-8B
+  - name: "back_9A-8B"
+    calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
+    calib_point_c: {lon: 110.6477602879233, lat: 35.605252466171876}
+    start_corner: "top_right"
+
+  # back_7A-7bA
+  - name: "back_7A-7bA"
+    calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
+    calib_point_b: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_c: {lon: 110.64741623970805, lat: 35.605286201553355}
+    start_corner: "top_right"
+
+  # back_7bA-6A
+  - name: "back_7bA-6A"
+    calib_point_a: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_b: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_c: {lon: 110.64741690256913, lat: 35.605502653578235}
+    start_corner: "top_right"
+
+  # back_6B-5A
+  - name: "back_6B-5A"
+    calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+    start_corner: "top_right"
+  # back_5B-4A
+  - name: "back_5B-4A"
+    calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+    start_corner: "top_right"
+
+
+
 default:
   interval: 1.2
   start_corner: "top_left"

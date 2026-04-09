@@ -230,7 +230,7 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         while current_n <= inner_n_max + 1e-6:
             n_values.append(current_n)
             current_n += interval
-        if abs(n_values[-1] - inner_n_max) > 0.6:
+        if abs(n_values[-1] - inner_n_max) > 0.4:
             n_values.append(inner_n_max)
         num_strips = len(n_values)
 
@@ -253,7 +253,7 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         while current_e <= inner_e_max + 1e-6:
             e_values.append(current_e)
             current_e += interval
-        if abs(e_values[-1] - inner_e_max) > 0.6:
+        if abs(e_values[-1] - inner_e_max) > 0.4:
             e_values.append(inner_e_max)
         num_strips = len(e_values)
 
@@ -432,7 +432,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/006_north9-1.yaml')
+        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/001_south1-11.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载

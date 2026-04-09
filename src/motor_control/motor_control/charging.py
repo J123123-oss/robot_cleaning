@@ -103,7 +103,7 @@ class Charging485Node(Node):
         self.srv_query_fault = self.create_service(Trigger, 'query_fault_code', self._query_fault_code_cb)
 
         # 5. 定时器：1s定时查询（避免串口拥堵，匹配485通信速率）
-        self.timer = self.create_timer(30.0, self._timer_query_data)
+        self.timer = self.create_timer(5.0, self._timer_query_data)
         self.get_logger().info(
             f"充电485节点启动成功【三字节地址模式】\n"
             f"串口：{self.serial_port} | 从机地址：0x{self.slave_addr:02X} | 发射端地址：{[hex(x) for x in self.THREE_BYTE_ADDR]}"

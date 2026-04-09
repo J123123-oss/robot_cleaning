@@ -16,17 +16,13 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # -------------------------- 全局配置与枚举 --------------------------
 # 新增：信号漂移过滤配置
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
-GPS_CHANGE_THRESHOLD = 0.000005  # GPS坐标突变阈值（°），约0.55米（1°≈111km）
-DISTANCE_CHANGE_THRESHOLD = 0.3  # 距离突变阈值（米），超过则视为异常
-HEADING_SMOOTH_WINDOW = 5  # 航向角滑动平均窗口大小（帧）
-HEADING_CHANGE_THRESHOLD = 30.0  # 航向角突变阈值（°），超过则用历史值替代
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 0.5  # 多点导航角度阈值
 LINEAR_SPEED_BASE = 8.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.15 #起始点距离阈值
+INITIAL_MOVE_TOLERANCE = 0.2 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -44,8 +40,8 @@ SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 LOW_DISTANCE = 1.0
 BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
-DISTANCE_INCREASE_THRESHOLD = 0.1  # 距离增大触发阈值（米）
-DISTANCE_INCREASE_COUNT = 2  # 连续增大次数阈值
+DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
+DISTANCE_INCREASE_COUNT = 1  # 连续增大次数阈值
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -137,6 +133,7 @@ class RTKNavControlNode(Node):
         self.imu_yaw_cache = []
 
         self.last_valid_heading = None  # 存储距离≥0.5m时最后一次计算的航向
+        self.bad_error_counter = 0   #yaw_error绝对值大于15度的次数
 
         # self.is_boundary_triggered = False # test, False origin
         # 定义参数描述：bool类型, 名称：is_boundary_triggered, 默认值：False
@@ -194,7 +191,8 @@ class RTKNavControlNode(Node):
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
         self.unloading_gps_sub = self.create_subscription(Vector3, '/unloading_gps', self.unloading_gps_callback, 10)
-        self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)  # 电机状态
+        self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
+        self.route_change_sub = self.create_subscription(String, "/rtk/route_change", self.route_change_callback, 10)
 
 
         # 定时器（10Hz驱动导航逻辑）
@@ -272,7 +270,11 @@ class RTKNavControlNode(Node):
                     line = line.strip()
                     if not line or line.startswith('#'):
                         continue
-                    seq, raw_lon, raw_lat, raw_heading = line.split(',')
+                    parts = line.split(',')
+                    if len(parts) < 4:
+                        self.get_logger().warn(f"[RTKNav] 航点行格式错误，跳过: {line}")
+                        continue
+                    seq, raw_lon, raw_lat, raw_heading = parts[0], parts[1], parts[2], parts[3]
                     # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
                     # 核心修改：对当前航点应用出仓点偏移修正
                     # 核心修复：强制转换为浮点数（之前未转换，导致字符串类型）
@@ -721,10 +723,7 @@ class RTKNavControlNode(Node):
                 self.nav_context["nav_state"] = NavState.PAUSE
                 self.nav_running = False
                 stop_speed = Vector3()
-                stop_speed.x = 0.0
-                stop_speed.y = 0.0
-                stop_speed.z = 0.0
-                self.motor_speed_pub.publish(stop_speed)
+                self.publish_stop_speed()
         else:
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
                 self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
@@ -1018,6 +1017,12 @@ class RTKNavControlNode(Node):
         # yaw_error = self.get_heading_error(target_heading)
         yaw_error = target_heading
         yaw_error_abs = abs(target_heading)
+
+        # 异常过滤：yaw_error绝对值大于30度视为异常，不处理
+        if yaw_error_abs > 30.0:
+            self.get_logger().warn(f"直线：yaw_error={yaw_error:.2f}°（>{30.0}°），跳过处理")
+            self.last_yaw_error = 0.0
+            return 0.0
 
         # 1. 误差死区优化：缩小死区（从1.0°→0.5°），避免微小误差累积
         if yaw_error_abs < 0.5:
@@ -1736,7 +1741,7 @@ class RTKNavControlNode(Node):
                         speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
                     
-                    # 触发条件：慢速调节（≤30%基础速度）+ 距离连续2帧增大（每帧增大≥0.2m）
+                    # 触发条件：慢速调节（≤30%基础速度）+ 距离连续2帧增大（每帧增大≥0.05m）
                     if current_base_speed <= LINEAR_SPEED_BASE * BACKUP_SPEED_SCALE :
                         if distance_delta > DISTANCE_INCREASE_THRESHOLD:
                             self.distance_increase_count += 1
@@ -1883,6 +1888,29 @@ class RTKNavControlNode(Node):
             self.current_control_mode = ControlMode.AUTO_CLEANING
             self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
         self.last_state = msg.data
+
+    def route_change_callback(self, msg: String):
+        """路径切换回调：接收新路径文件并重新加载"""
+        new_path_file = msg.data.strip()
+        if not new_path_file:
+            self.get_logger().warn("[RTKNav] 收到空路径文件，跳过")
+            return
+        
+        if not os.path.exists(new_path_file):
+            self.get_logger().error(f"[RTKNav] 路径文件不存在: {new_path_file}")
+            return
+        
+        self.get_logger().info(f"[RTKNav] 收到路径切换指令: {new_path_file}")
+        self.cross_file_last_waypoint = None
+        self.waypoints = []
+        self.is_first_file_load = False
+        self.rtk_path_file = new_path_file
+        self.load_waypoints_from_file(self.rtk_path_file)
+        
+        if self.waypoints:
+            self.get_logger().info(f"[RTKNav] 路径切换成功，共 {len(self.waypoints)} 个航点")
+        else:
+            self.get_logger().error(f"[RTKNav] 路径切换失败，无法加载航点")
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式, 更新自身状态"""

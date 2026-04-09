@@ -216,6 +216,7 @@ class MotorControlNode(Node):
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
         self.unloading_gps_pub = self.create_publisher(Vector3, "/unloading_gps", 10)  # 出仓完成时GPS坐标
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
+        self.route_change_pub = self.create_publisher(String, "/rtk/route_change", 10)  # 路径切换话题
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # robot mqtt msg
         self.dock_state_pub = self.create_publisher(String, "/dock_state", 10)  # dock mqtt msg
         self.rc_channels_pub = self.create_publisher(Float32MultiArray, "/rc_channels", 10)
@@ -231,6 +232,7 @@ class MotorControlNode(Node):
             "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
+        self.route_id = None
 
         # 新增：进出仓状态标记（用于优先级判断，解决速度穿插问题）
         self.is_in_bin_process = False  # True=正在进出仓，False=正常状态
@@ -475,6 +477,20 @@ class MotorControlNode(Node):
             self.get_logger().info(f"[RTKNavStatus] RTK导航完成，切换到LOADING状态")
             self.current_control_mode = "NORMAL"  # 切换回普通模式
             self.switch_state('l')
+
+    def handle_route_change(self, route_id: str):
+        """处理路径切换指令"""
+        route_file = f"/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/{route_id}.txt"
+        
+        if not os.path.exists(route_file):
+            self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_file}")
+            return
+        
+        route_msg = String()
+        route_msg.data = route_file
+        self.route_id = route_id
+        self.route_change_pub.publish(route_msg)
+        self.get_logger().info(f"[ROSNode] 已发布路径切换指令: {route_id} -> {route_file}")
 
     def io_data_callback(self, msg: UInt8):
         """处理IO数据回调（可根据需要扩展功能）"""
@@ -820,6 +836,7 @@ class MotorControlNode(Node):
                 "rtk_status": self.rtk_status,
                 "current_lon": self.current_lon if self.current_lon > 0.1 else None,
                 "current_lat": self.current_lat if self.current_lat > 0.1 else None,
+                "route_id": self.route_id if self.route_id is not None else "default",
                 "sensors_status":self.sensors_status,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
@@ -881,7 +898,15 @@ class MotorControlNode(Node):
                 raise json.JSONDecodeError("Not a JSON dict", msg_data, 0)  # 主动抛错，进入下方字符串处理逻辑
             
             if "command" not in cmd_obj:
-                self.get_logger().warn(f"[ROSNode] 未找到command字段: {msg_data}")
+                # 检查是否是路径切换消息 {"route_id": "xxx"}
+                if "route_id" in cmd_obj:
+                    route_id = cmd_obj.get("route_id", "")
+                    if route_id:
+                        self.handle_route_change(route_id)
+                    else:
+                        self.get_logger().warn("[ROSNode] route_id字段为空")
+                else:
+                    self.get_logger().warn(f"[ROSNode] 未找到command字段: {msg_data}")
                 return
             
             command = cmd_obj.get("command", "").strip()
@@ -946,6 +971,12 @@ class MotorControlNode(Node):
                     self.current_control_mode = "NORMAL"
                 key = [k for k, v in STATE_DICT.items() if v == command][0]
                 self.switch_state(key)
+            elif command == "CHANGE_ROUTE":
+                route_id = cmd_obj.get("route_id", "")
+                if route_id:
+                    self.handle_route_change(route_id)
+                else:
+                    self.get_logger().warn("[ROSNode] CHANGE_ROUTE指令缺少route_id字段")
             else:
                 self.get_logger().warn(f"[ROSNode] 不支持的command：{command} (支持: GET_STATUS/键{list(STATE_DICT.keys())}或状态名{list(STATE_DICT.values())})")
                 return
