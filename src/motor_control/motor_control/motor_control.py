@@ -129,6 +129,7 @@ class MotorControlNode(Node):
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
+        self.battery_full_charge = False
 
         # 1. 初始化电机控制模块
         self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
@@ -485,7 +486,9 @@ class MotorControlNode(Node):
         if not os.path.exists(route_file):
             self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_file}")
             return
-        
+        if self.current_status != "DISABLE":
+            self.get_logger().warn(f"[ROSNode] 当前状态不是{self.current_status}，忽略路径切换指令")
+            return
         route_msg = String()
         route_msg.data = route_file
         self.route_id = route_id
@@ -850,7 +853,7 @@ class MotorControlNode(Node):
             dock_state_msg = {
                 "status": self.current_status,
                 "complete_state": self.complete_state,
-                "full_charge": True if self.is_charging and self.charging_v > 54.5 else False,
+                "full_charge": self.battery_full_charge ,
                 "timestamp_to_dock": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             ros_string_msg = String()
@@ -1040,10 +1043,13 @@ class MotorControlNode(Node):
             # 在这里处理传感器数据
             if self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and not self.is_charging: #车体到位未充电
                 self.get_logger().info("[ROSNode] 车体到位")
-                self.start_charge_async()
+                if self.current_status == "DISABLE":
+                    self.get_logger().info("[ROSNode] 电机非使能状态，允许充电")
+                    self.start_charge_async()
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
-            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_v > 54.5: #停止充电，重置标志位，传感器归位
+            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_v >= 54.5 and 1.0 <= self.charging_i <= 1.5: #停止充电，重置标志位，传感器归位
+                self.battery_full_charge = True
                 self.get_logger().info("[ROSNode] 充电完成，等待传感器归位")
                 self.stop_charge_async()
             # else:
@@ -1512,10 +1518,10 @@ class MotorControlNode(Node):
                         else:
                             # 步骤7：激光距离<230mm → 最终对位判断
                             # if left < 230 and right < 230:
-                            if left < 365 and right < 365:
+                            if left < 385 and right < 385:
                                 if not hasattr(self, 'straight_loading_time'):
                                     self.straight_loading_time = current_time
-                                self.get_logger().info("[LOADING] 极近距离（<365mm），判断差值是否<2mm 进行最终对位")
+                                self.get_logger().info("[LOADING] 极近距离（<385mm），判断差值是否<2mm 进行最终对位")
                                 # 定时器：5秒后切换到完成阶段（确保电机停止）
                                 if self.straight_loading_time is not None:
                                     elapsed_time = current_time - self.straight_loading_time
@@ -1539,6 +1545,7 @@ class MotorControlNode(Node):
                                     self.loading_phase = "COMPLETE"
                                     self.complete_state = True
                                     self.is_charging = False  #清除充电状态，衔接后续充电
+                                    self.battery_full_charge = False #清除充电状态，衔接后续充电
                                     self.last_backward_log_time = 0.0  # 重置日志时间
                                     self.correction_count = 0  # 重置次数
                                     self.straight_loading_time = None
@@ -1676,6 +1683,7 @@ class MotorControlNode(Node):
             if resp.success:
                 self.get_logger().info(f"异步启动充电成功: {resp.message}")
                 self.is_charging = True  # 更新充电状态
+                self.battery_full_charge = False
             else:
                 self.get_logger().error(f"异步启动充电失败: {resp.message}")
                 self.is_charging = False  # 确保状态一致

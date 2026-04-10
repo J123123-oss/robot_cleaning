@@ -206,13 +206,18 @@ class Charging485Node(Node):
         msg_fault = Int16()
         msg_fault.data = fault_code
         self.fault_code_pub.publish(msg_fault)
-
-        # 3. 充满自动停止（锂电池48V体系：电压≥54.0V 且 电流≤0.5A，匹配实际充电逻辑）
-        if volt >= 54.0 and curr <= 0.5:
-            self.get_logger().info(f"检测到充电完成 | {volt:.1f}V/{curr:.2f}A，自动停止充电")
+        # 3. 故障码处理（欠流保护）重新充电
+        if fault_code == 0x03:
             fake_req = ChargeControl.Request()
             fake_res = ChargeControl.Response()
-            self._stop_charge_cb(fake_req, fake_res)
+            self._start_charge_cb(fake_req, fake_res)
+            self.get_logger().info(f"检测到欠流保护，重新充电")
+        # # 3. 充满自动停止（锂电池48V体系：电压≥54.5V 且 电流≤1.5A，匹配实际充电逻辑）
+        # if (volt >= 54.5 and 1.0 <= curr <= 1.5):
+        #     self.get_logger().info(f"检测到充电完成 | {volt:.1f}V/{curr:.2f}A，自动停止充电")
+        #     fake_req = ChargeControl.Request()
+        #     fake_res = ChargeControl.Response()
+        #     self._stop_charge_cb(fake_req, fake_res)
 
     # -------------------------- 三字节地址模式-开始充电（核心适配） --------------------------
     def _start_charge_cb(self, req, res):

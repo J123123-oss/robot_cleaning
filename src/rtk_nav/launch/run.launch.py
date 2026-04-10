@@ -66,7 +66,7 @@ def generate_launch_description():
         parameters=[
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/036_ser_4_south.txt'}
+            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/path_south1-11.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/fullpath_20260306_094901_all.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_20260305_112551.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260228_153621.txt'}

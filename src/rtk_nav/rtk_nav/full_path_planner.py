@@ -432,7 +432,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/001_south1-11.yaml')
+        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south4-8.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -774,7 +774,7 @@ class MultiAreaCleaningPathPlanner(Node):
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
     def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm, area_names):
         """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
-        fig, ax = plt.subplots(figsize=(24, 20))
+        fig, ax = plt.subplots(figsize=(12, 10))
         zone_num, zone_letter = utm_zone
         
         # ✅ 修复BUG1：使用matplotlib支持的【十六进制色值】+ 单独配置线型，放弃错误的fmt格式
