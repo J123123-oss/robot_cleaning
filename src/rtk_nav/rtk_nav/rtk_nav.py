@@ -19,7 +19,7 @@ GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
-RTK_HEADING_TOLERANCE = 0.5  # 多点导航角度阈值
+RTK_HEADING_TOLERANCE = 0.2  # 多点导航角度阈值
 LINEAR_SPEED_BASE = 8.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.2 #起始点距离阈值
@@ -551,7 +551,7 @@ class RTKNavControlNode(Node):
         """获取下一个路径文件（按文件名序号从小到大排序）"""
         try:
             # 1. 获取目录下所有符合命名规则的路径文件
-            file_pattern = re.compile(r'.*.txt')
+            file_pattern = re.compile(r'^\d{3}_.*\.txt$')
             # file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
             all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
             
@@ -716,7 +716,7 @@ class RTKNavControlNode(Node):
         is_fixed = (current_gps_status == 4)  # RTK Fixed
         
         if not is_fixed:
-            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED, NavState.INITIAL_MOVE]:
+            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                 # 保存暂停前的状态
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                 self.get_logger().warn(f"[RTK状态] 当前状态：{status_map.get(current_gps_status, '未知')}，非固定解，暂停导航（保存状态：{self.nav_context['pre_pause_state']}）")
@@ -1025,7 +1025,7 @@ class RTKNavControlNode(Node):
             return 0.0
 
         # 1. 误差死区优化：缩小死区（从1.0°→0.5°），避免微小误差累积
-        if yaw_error_abs < 0.5:
+        if yaw_error_abs < 0.2:
             self.last_yaw_error = 0.0
             return 0.0
 

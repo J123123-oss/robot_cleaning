@@ -136,6 +136,9 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     zone_num, zone_letter = utm_zone
     a_e, a_n = start_utm  # A点UTM坐标（固定为旋转中心，保留）
     
+    b_lon, b_lat = point_b
+    b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+    
     lon0, lat0 = base_point
     interval = param['interval']
     edge_lon = param['edge_distance_lon']
@@ -186,28 +189,53 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     inner_width = inner_e_max - inner_e_min
     inner_height = inner_n_max - inner_n_min
     
-    if inner_width <= 0.3 or inner_height <= 0.3:
-        # raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
-        # 获取A点和B点的UTM坐标（这里需要根据实际的经纬度转UTM逻辑调整）
-        # 假设point_a和point_b是经纬度坐标，先转换为UTM
-                # 正确转换A/B点到UTM坐标
-        a_lon, a_lat = point_a
-        b_lon, b_lat = point_b
+    # if inner_width <= 0.1 or inner_height <= 0.1:
+    #     a_lon, a_lat = point_a
+    #     b_lon, b_lat = point_b
         
-        # 经纬度转UTM（使用正确的函数）
-        a_utm_e, a_utm_n, _, _ = get_utm_coords(a_lat, a_lon)
-        b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+    #     a_utm_e, a_utm_n, zone_num, zone_letter = get_utm_coords(a_lat, a_lon)
+    #     b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
         
-        # 生成AB直线路径（UTM坐标）
-        path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
-        # 经纬度路径（保持原格式：(lon, lat)）
-        path_latlon = [point_a, point_b]
+    #     ab_e = b_utm_e - a_utm_e
+    #     ab_n = b_utm_n - a_utm_n
+    #     ab_length = math.hypot(ab_e, ab_n)
         
-        # 关键修复：给inner_corners_utm赋默认值，避免绘图时索引越界
-        # 使用原始矩形角点作为兜底，保证绘图代码能正常运行
-        inner_corners_utm = original_corners_utm.copy()
+    #     if ab_length > 0.1:
+    #         unit_e = ab_e / ab_length
+    #         unit_n = ab_n / ab_length
+            
+    #         offset_e = unit_e * edge_lon
+    #         offset_n = unit_n * edge_lat
+            
+    #         start_e = a_utm_e + offset_e
+    #         start_n = a_utm_n + offset_n
+            
+    #         path_utm_rot = [(start_e, start_n), (b_utm_e, b_utm_n)]
+    #         start_lat, start_lon = get_latlon_from_utm(start_e, start_n, zone_num, zone_letter)
+    #         path_latlon = [(start_lon, start_lat), (b_lon, b_lat)]
+    #     else:
+    #         path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
+    #         path_latlon = [point_a, point_b]
         
-        return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+    #     inner_corners_utm = original_corners_utm.copy()
+        
+    #     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+    
+    c_lon, c_lat = point_c
+    c_utm_e, c_utm_n, _, _ = get_utm_coords(c_lat, c_lon)
+    ac_e = c_utm_e - a_e
+    ac_n = c_utm_n - a_n
+    
+    ab_e = b_utm_e - a_e
+    ab_n = b_utm_n - a_n
+    ab_length = math.hypot(ab_e, ab_n)
+    if ab_length > 0.1:
+        perp_e = -ab_n / ab_length
+        perp_n = ab_e / ab_length
+        ac_perp_length = ac_e * perp_e + ac_n * perp_n
+        is_ac_equal = (abs(ac_perp_length) < 0.1)
+    else:
+        is_ac_equal = False
     
     # 6. 旋转内部矩形角点（以A点为中心，保留）
     inner_rot = {}
@@ -230,7 +258,8 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         while current_n <= inner_n_max + 1e-6:
             n_values.append(current_n)
             current_n += interval
-        if abs(n_values[-1] - inner_n_max) > 0.4:
+        threshold = 0.001 if is_ac_equal else 0.4
+        if abs(n_values[-1] - inner_n_max) > threshold:
             n_values.append(inner_n_max)
         num_strips = len(n_values)
 
@@ -253,7 +282,8 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         while current_e <= inner_e_max + 1e-6:
             e_values.append(current_e)
             current_e += interval
-        if abs(e_values[-1] - inner_e_max) > 0.4:
+        threshold = 0.001 if is_ac_equal else 0.4
+        if abs(e_values[-1] - inner_e_max) > threshold:
             e_values.append(inner_e_max)
         num_strips = len(e_values)
 
@@ -406,6 +436,11 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         else:
             print("路径点数量不足2，无法执行反转逻辑")
     
+    if is_ac_equal:
+        print(f"A=C 检测到，仅返回前两个点")
+        path_utm_rot = path_utm_rot[:2]
+        path_latlon = path_latlon[:2]
+    
     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
 
 def add_direction_arrows(ax, path_utm, arrow_interval=5):
@@ -432,7 +467,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/areas_south4-8.yaml')
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/006_north9-1.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -447,43 +482,7 @@ class MultiAreaCleaningPathPlanner(Node):
                 return
         
         # 如果YAML加载失败或文件不存在，使用launch参数方式
-        self.get_logger().info("YAML配置不可用，使用 launch 参数方式加载区域")
-        self._init_from_launch_params()
-    
-    def _init_from_launch_params(self):
-        # 声明多区域参数（支持动态配置）
-        self.declare_parameter('area_count', 2)
-        self.declare_parameter('default.interval', 1.0)
-        self.declare_parameter('default.start_corner', 'top_left')
-        self.declare_parameter('default.swap_wh_select', False)
-        self.declare_parameter('default.edge_distance_lon', 0.5)
-        self.declare_parameter('default.edge_distance_lat', 0.5)
-        self.declare_parameter('default.end_corner_mode', 'diagonal') # diagonal / opposite
-        self.declare_parameter('default.reverse_end_point', False)  # 新增：控制是否执行反转逻辑
-        
-        self.area_count = self.get_parameter('area_count').value
-        for i in range(self.area_count):
-            self.declare_parameter(f'area_{i}.calib_point_a.lon', 0.0)
-            self.declare_parameter(f'area_{i}.calib_point_a.lat', 0.0)
-            self.declare_parameter(f'area_{i}.calib_point_b.lon', 0.0)
-            self.declare_parameter(f'area_{i}.calib_point_b.lat', 0.0)
-            self.declare_parameter(f'area_{i}.calib_point_c.lon', 0.0)
-            self.declare_parameter(f'area_{i}.calib_point_c.lat', 0.0)
-            self.declare_parameter(f'area_{i}.interval', None)
-            self.declare_parameter(f'area_{i}.start_corner', None)
-            self.declare_parameter(f'area_{i}.swap_wh_select', None)
-            self.declare_parameter(f'area_{i}.edge_distance_lon', None)
-            self.declare_parameter(f'area_{i}.edge_distance_lat', None)
-            self.declare_parameter(f'area_{i}.end_corner_mode', None)
-            self.declare_parameter(f'area_{i}.reverse_end_point', None)
-            
-        
-        self.all_areas = self._parse_area_parameters()
-        if not self.all_areas:
-            self.get_logger().error("区域参数解析失败，退出程序")
-            return
-        
-        self.plan_multi_area_path()
+        self.get_logger().info("YAML配置不可用")
     
     def _parse_area_parameters(self):
         all_areas = []
@@ -659,7 +658,7 @@ class MultiAreaCleaningPathPlanner(Node):
     def plan_multi_area_path(self):
         """生成多区域连续路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+        save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
         os.makedirs(save_dir, exist_ok=True)
         
         merged_path_latlon = []
@@ -774,7 +773,8 @@ class MultiAreaCleaningPathPlanner(Node):
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
     def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm, area_names):
         """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
-        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = plt.subplots(figsize=(24, 20))
+        # fig, ax = plt.subplots(figsize=(12, 10))
         zone_num, zone_letter = utm_zone
         
         # ✅ 修复BUG1：使用matplotlib支持的【十六进制色值】+ 单独配置线型，放弃错误的fmt格式
