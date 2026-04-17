@@ -181,7 +181,6 @@ areas:
     calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
     calib_point_b: {lon: 110.64741623970805, lat: 35.605286201553355}
     calib_point_c: {lon: 110.64776001450005, lat: 35.605286952396405}
-    start_corner: "top_right"
 
   # back_7bA-6A
   - name: "back_7bA-6A"

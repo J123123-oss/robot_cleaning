@@ -33,7 +33,7 @@ TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8    # 最大修正量
 STRAIGHT_MAX_CORRECTION = 3.0
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 1.0
+STRAIGHT_PID_SCALE = 2.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 #近距离减速/REVERSE阈值
@@ -42,6 +42,7 @@ BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
 DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 1  # 连续增大次数阈值
+ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -95,6 +96,7 @@ class RTKNavControlNode(Node):
         self.imu_initialized = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
+        self.integral_yaw = 0.0
         self.current_control_mode = ControlMode.NORMAL
         self.last_state = None  # 电机状态（用于监听HOLD切换）
 
@@ -172,6 +174,8 @@ class RTKNavControlNode(Node):
             "last_distance": 0.0,
             "last_target_heading": 0.0,
             "pre_pause_state": None,
+            "angle_abnormal_count": 0,  # 连续角度异常计数器
+            "is_angle_recalib": False,  # 是否是角度异常后的重新校准
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -991,14 +995,7 @@ class RTKNavControlNode(Node):
     def get_heading_error(self, target_heading: float) -> float:
         """计算当前航向与目标航向的误差（归一化到[-180°, 180°]，单位：度）"""
         heading_error = target_heading - self.imu_yaw
-        # 核心：确保归一化逻辑正确执行（先加180→取模→减180）
-        heading_error = math.fmod(heading_error + 180.0, 360.0)
-        heading_error -= 180.0
-        # 额外处理浮点数精度问题（避免因精度导致的超范围）
-        if heading_error <= -180.0:
-            heading_error += 360.0
-        elif heading_error > 180.0:
-            heading_error -= 360.0
+        heading_error = ((heading_error + 180.0) % 360.0) - 180.0
         return heading_error
     def get_ring_angle_diff(self, angle1: float, angle2: float) -> float:
         """
@@ -1014,43 +1011,57 @@ class RTKNavControlNode(Node):
 
     def straight_get_speed_correction(self, target_heading: float) -> float:
         """计算对称纠正量（优化PID，减少长距离累积偏移）"""
-        # yaw_error = self.get_heading_error(target_heading)
         yaw_error = target_heading
-        yaw_error_abs = abs(target_heading)
+        # 强制归一化误差到[-180°, 180°]，防止边界情况
+        yaw_error = ((yaw_error + 180.0) % 360.0) - 180.0
+        yaw_error_abs = abs(yaw_error)
 
-        # 异常过滤：yaw_error绝对值大于30度视为异常，不处理
+        # 异常过滤：yaw_error绝对值大于30度视为异常，不处理（增大阈值让更多误差能被修正）
         if yaw_error_abs > 30.0:
             self.get_logger().warn(f"直线：yaw_error={yaw_error:.2f}°（>{30.0}°），跳过处理")
             self.last_yaw_error = 0.0
+            self.integral_yaw = 0.0
             return 0.0
 
-        # 1. 误差死区优化：缩小死区（从1.0°→0.5°），避免微小误差累积
-        if yaw_error_abs < 0.2:
+        # # 1. 误差死区：缩小死区，及时响应小误差
+        if yaw_error_abs < 0.1:
             self.last_yaw_error = 0.0
+            self.integral_yaw = 0.0
             return 0.0
 
-        # # 2. KP参数优化：增强小误差修正灵敏度，避免累积
-        if yaw_error_abs > 60:
-            kp = 0.08 *2 #0.04  # 大误差：适度增大，快速转向
-        elif yaw_error_abs > 20:
-            kp = 0.04 *2  #0.02  # 中误差：增大，及时修正
+        # # 2. KP参数优化：大幅增强
+        if yaw_error_abs > 10:
+            kp = 0.15  # 大误差：大幅增强
+        elif yaw_error_abs > 5:
+            kp = 0.15  # 中误差：增强
         else:
-            kp = 0.02 *2  #0.01  # 小误差：大幅增大（原0.005），精准抵消微小偏移
-        # kp = 0.02
-        # 3. KD参数优化：增强阻尼，抑制持续偏向
-        kd = 0.01 * 2  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
+            kp = 0.12  # 小误差：增强
 
-        # 4. 误差差分计算（保持不变）   
+        # 3. KD参数：减小阻尼，避免过度抑制
+        kd = 0.04
+
+        # 4. 积分项：增强积分作用
+        ki = 0.008
+
+        # 5. 误差差分计算
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
-        # 5. 修正量计算：移除负号，避免方向反转（原逻辑可能导致修正方向与误差相反）
-        correction = (kp * yaw_error) + d_term  # 核心修改：将 "-d_term" 改为 "+d_term"
+        # 6. 积分累积（小误差时积分）
+        if yaw_error_abs < 5.0:
+            self.integral_yaw += yaw_error
+        else:
+            self.integral_yaw = 0.0
+        self.integral_yaw = max(min(self.integral_yaw, 30.0), -30.0)
+        i_term = ki * self.integral_yaw
 
-        # 6. 最大修正量限制：保留，但适配新参数（避免过度修正）
+        # 7. PID修正量计算
+        correction = (kp * yaw_error) - d_term + i_term
+
+        # 8. 最大修正量限制
         correction_clamped = -max(min(correction, STRAIGHT_MAX_CORRECTION), -STRAIGHT_MAX_CORRECTION)
 
-        # 日志输出（保持不变，便于调试）
+        # 日志输出
         if abs(yaw_error - self.last_yaw_error) > 0.1:
             self.get_logger().info(f"直线：yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
         
@@ -1062,33 +1073,33 @@ class RTKNavControlNode(Node):
         yaw_error = self.get_heading_error(target_heading)
         yaw_error_abs = abs(yaw_error)
 
-        # 1. 误差死区优化：缩小死区（从1.0°→0.3°），避免微小误差累积
-        if yaw_error_abs < 1.0:
+        # 1. 误差死区：缩小死区，及时响应
+        if yaw_error_abs < 0.1:
             self.last_yaw_error = 0.0
             return 0.0
 
-        # 2. KP参数优化：增强小误差修正灵敏度，避免累积
+        # 2. KP参数优化：增强大误差时的修正能力
         if yaw_error_abs > 60:
-            kp = 0.08  # 大误差：适度增大，快速转向
+            kp = 0.15  # 大误差：大幅增强
         elif yaw_error_abs > 20:
-            kp = 0.02  # 中误差：增大，及时修正
+            kp = 0.10  # 中误差：增强
         else:
-            kp = 0.002  # 小误差：大幅增大（原0.005），精准抵消微小偏移
+            kp = 0.05  # 小误差：精准修正
 
-        # 3. KD参数优化：增强阻尼，抑制持续偏向
-        kd = 0.05  # 原0.01，增大后减少修正量波动，避免反复偏向同一侧
+        # 3. KD参数：增强阻尼
+        kd = 0.08
 
-        # 4. 误差差分计算（保持不变）   
+        # 4. 误差差分计算
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
-        # 5. 修正量计算：移除负号，避免方向反转（原逻辑可能导致修正方向与误差相反）
-        correction = (kp * yaw_error) + d_term  # 核心修改：将 "-d_term" 改为 "+d_term"
+        # 5. 修正量计算
+        correction = (kp * yaw_error) + d_term
 
-        # 6. 最大修正量限制：保留，但适配新参数（避免过度修正）
+        # 6. 最大修正量限制
         correction_clamped = -max(min(correction, MAX_CORRECTION), -MAX_CORRECTION)
 
-        # 日志输出（保持不变，便于调试）
+        # 日志输出
         if abs(yaw_error - self.last_yaw_error) > 0.1:
             self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
         
@@ -1175,27 +1186,8 @@ class RTKNavControlNode(Node):
         bearing_deg = math.fmod(bearing_deg + 360.0, 360.0)
         # 转换到[-180°, 180°]，与IMU航向角格式统一
         raw_bearing = bearing_deg - 360.0 if bearing_deg > 180.0 else bearing_deg
-        # return bearing_deg
-        # smooth_bearing = raw_bearing
-        # if self.heading_cache:
-        #     last_smooth = self.heading_cache[-1]
-        #     # 核心：使用环形角度差计算物理差值，避免-170→170误触发
-        #     angle_diff = self.get_ring_angle_diff(raw_bearing, last_smooth)
-        #     if angle_diff > HEADING_CHANGE_THRESHOLD:
-        #         self.get_logger().warn(f"[航向过滤] 角度突变（原始{raw_bearing:.2f}°，上一帧{last_smooth:.2f}°，物理差{angle_diff:.2f}°），使用历史值")
-        #         smooth_bearing = last_smooth
-        #     else:
-        #         # 正常则加入缓存做滑动平均
-        #         self.heading_cache.append(raw_bearing)
-        #         if len(self.heading_cache) > HEADING_SMOOTH_WINDOW:
-        #             self.heading_cache.pop(0)
-        #         smooth_bearing = sum(self.heading_cache) / len(self.heading_cache)
-        # else:
-        #     # 首次初始化缓存
-        #     self.heading_cache.append(raw_bearing)
-        
-        # # 归一化最终结果，防止浮点误差
-        # smooth_bearing = math.fmod(smooth_bearing + 180.0, 360.0) - 180.0
+        # 强制归一化到[-180°, 180°]，防止边界情况
+        raw_bearing = ((raw_bearing + 180.0) % 360.0) - 180.0
         return raw_bearing
 
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
@@ -1327,11 +1319,30 @@ class RTKNavControlNode(Node):
             # target_heading = real_time_heading # 使用实时朝向角
             target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
             target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
-            # correction = self.straight_get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
-            # correction = self.get_speed_correction(target_heading) * STRAIGHT_PID_SCALE
             yaw_error = self.get_heading_error(target_heading)
+            
+            # 连续角度异常检测
+            yaw_error_abs = abs(yaw_error)
+            if yaw_error_abs > 15.0:
+                self.nav_context["angle_abnormal_count"] = self.nav_context.get("angle_abnormal_count", 0) + 1
+                abnormal_count = self.nav_context["angle_abnormal_count"]
+                self.get_logger().warn(f"[初始移动角度异常] yaw_error={yaw_error:.2f}°（>15.0°），连续异常{abnormal_count}次")
+                
+                if abnormal_count >= ANGLE_ABNORMAL_COUNT:
+                    self.get_logger().warn(f"[初始移动角度异常] 连续{abnormal_count}次角度异常，重置状态为INITIAL_MOVE重新校准")
+                    self.nav_context["angle_abnormal_count"] = 0
+                    self.nav_context["nav_state"] = NavState.INITIAL_MOVE
+                    current_nav_state = NavState.INITIAL_MOVE
+                    yield (0.0, 0.0)
+                    return
+                else:
+                    yield (0.0, 0.0)
+                    continue
+            else:
+                self.nav_context["angle_abnormal_count"] = 0
+            
             # 计算修正量（使用真实偏差角）
-            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE * speed_scale
+            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
             # base_speed = LINEAR_SPEED_BASE
             last_left_speed = None
             last_right_speed = None
@@ -1369,6 +1380,8 @@ class RTKNavControlNode(Node):
             "last_distance": 0.0,
             "last_target_heading": 0.0,
             "pre_pause_state": None,
+            "angle_abnormal_count": 0,
+            "is_angle_recalib": False,
         }
             # 重置后退纠正相关计数器
         self.last_distance_for_backup = 0.0
@@ -1521,7 +1534,9 @@ class RTKNavControlNode(Node):
             
 
             # 关键修复：若航点索引切换（新航点）, 强制重置为WAYPOINT_MOVE状态
-            if self.current_waypoint_idx != last_waypoint_idx:
+            # 但如果当前是航向校准阶段（is_angle_recalib），则不重置状态
+            is_calib_state = self.nav_context.get("nav_state") == NavState.WAYPOINT_CALIB
+            if self.current_waypoint_idx != last_waypoint_idx and not is_calib_state:
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 self.get_logger().info(f"[航点切换] 进入路段{self.current_waypoint_idx - 1}→{self.current_waypoint_idx}")
@@ -1576,24 +1591,42 @@ class RTKNavControlNode(Node):
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration as e:
-                    # 校准完成, 切换到下一个航点
                     calib_result = e.value if hasattr(e, 'value') else False
-                    self.get_logger().info(
-                        f"[ROSNode] 航点{self.current_waypoint_idx}航向校准完成, 结果：{calib_result}"
-                    )
-                    # 更新索引和状态
-                    self.current_waypoint_idx += 1
+                    
+                    is_recalib = self.nav_context.get("is_angle_recalib", False)
+                    
+                    if is_recalib:
+                        # 角度异常后的重新校准：校准完成后继续前往当前航点
+                        self.get_logger().info(
+                            f"[ROSNode] 角度异常重新校准完成，继续前往航点{self.current_waypoint_idx}"
+                        )
+                        self.nav_context["is_angle_recalib"] = False
+                        self.nav_context["calib_generator"] = None
+                        self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
+                        current_nav_state = NavState.WAYPOINT_MOVE
+                    else:
+                        # 正常航点间校准：切换到下一个航点
+                        self.get_logger().info(
+                            f"[ROSNode] 航点{self.current_waypoint_idx}航向校准完成, 结果：{calib_result}"
+                        )
+                        self.current_waypoint_idx += 1
+                        self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
+                        current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["last_distance"] = 0.0  # 重置距离缓存
                     self.nav_context["last_target_heading"] = 0.0  # 重置航向缓存
 
-                    # 关键：主动触发一次“获取新航点”的逻辑（提前校验航点2是否存在）
-                    new_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
-                    if new_waypoint:
-                        self.get_logger().info(f"[ROSNode] 切换到新航点{self.current_waypoint_idx}, 准备进入移动阶段")
-                    else:
-                        self.get_logger().warn(f"[ROSNode] 未获取到航点{self.current_waypoint_idx}")
+                    if not is_recalib:
+                        # 仅在正常航点切换时获取新航点
+                        target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
+                        self.nav_context["target_waypoint"] = target_waypoint
+                        if target_waypoint:
+                            self.get_logger().info(f"[ROSNode] 切换到新航点{self.current_waypoint_idx}, 准备进入移动阶段")
+                        else:
+                            self.get_logger().warn(f"[ROSNode] 未获取到航点{self.current_waypoint_idx}，导航结束")
+                            yield (0.0, 0.0)
+                            return
                     yield (0.0, 0.0)
                 except Exception as e:
                     self.get_logger().error(f"[ROSNav] 航向校准失败：{str(e)}")
@@ -1775,6 +1808,37 @@ class RTKNavControlNode(Node):
                         target_heading = real_time_heading
                         # 计算真实偏差角（IMU当前航向 - 目标航向）
                         yaw_error = self.get_heading_error(target_heading)
+                        
+                        # 连续角度异常检测
+                        yaw_error_abs = abs(yaw_error)
+                        if yaw_error_abs > 15.0:
+                            # 增加角度异常计数器
+                            self.nav_context["angle_abnormal_count"] = self.nav_context.get("angle_abnormal_count", 0) + 1
+                            abnormal_count = self.nav_context["angle_abnormal_count"]
+                            self.get_logger().warn(f"[角度异常] yaw_error={yaw_error:.2f}°（>{15.0}°），连续异常{abnormal_count}次")
+                            
+                            # 连续多次异常，重新进入角度校准阶段
+                            if abnormal_count >= ANGLE_ABNORMAL_COUNT:
+                                self.get_logger().warn(f"[角度异常] 连续{abnormal_count}次角度异常，切换到航向校准阶段")
+                                # 创建校准生成器
+                                # calib_generator = self.calibrate_heading_at_waypoint(target_waypoint[2])
+                                calib_generator = self.calibrate_heading_at_waypoint(real_time_heading)
+                                self.nav_context["calib_generator"] = calib_generator
+                                self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
+                                current_nav_state = NavState.WAYPOINT_CALIB  # 同步更新当前状态变量
+                                self.nav_context["angle_abnormal_count"] = 0  # 重置计数器
+                                self.nav_context["is_angle_recalib"] = True  # 设置重新校准标志
+                                # 返回停止速度，等待切换状态
+                                yield (0.0, 0.0)
+                                continue
+                            else:
+                                # 角度异常但不满足触发条件，仅暂停当前帧，等待下一帧继续判断
+                                yield (0.0, 0.0)
+                                continue
+                        else:
+                            # 角度正常，重置计数器
+                            self.nav_context["angle_abnormal_count"] = 0
+                        
                         # 计算修正量（使用真实偏差角）
                         correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
                         

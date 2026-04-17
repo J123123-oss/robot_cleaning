@@ -467,7 +467,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/006_north9-1.yaml')
+        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/areas.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -658,7 +658,7 @@ class MultiAreaCleaningPathPlanner(Node):
     def plan_multi_area_path(self):
         """生成多区域连续路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+        save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
         os.makedirs(save_dir, exist_ok=True)
         
         merged_path_latlon = []

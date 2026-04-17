@@ -519,7 +519,35 @@ class MotorControlNode(Node):
 
             # self.get_logger().info(f"[IOData] 传感器状态：{self.sensors_status:06b}")
 
+    def voltage_to_soc(self, voltage):
+        """
+        13串三元锂电池 电压 → 电量百分比（非线性插值）
+        :param voltage: 电池总电压 V
+        :return: soc 电量百分比 0~100
+        """
+        # 电压-SOC 对应表（升序排列）
+        volt_table = [37.7, 41.6, 43.5, 45.3, 47.1, 48.3, 49.2, 50.1, 50.9, 51.7, 52.5, 53.5, 54.6]
+        soc_table =  [  0,    0,    5,   10,   20,   30,   40,   50,   60,   70,   80,   90,  100]
 
+        # 越界处理
+        if voltage >= 54.6:
+            return 100
+        if voltage <= 37.7:
+            return 0
+
+        # 非线性插值（找到区间，线性估算）
+        for i in range(len(volt_table)-1):
+            v_low = volt_table[i]
+            v_high = volt_table[i+1]
+            s_low = soc_table[i]
+            s_high = soc_table[i+1]
+
+            if v_low <= voltage <= v_high:
+                # 区间内插值计算
+                soc = s_low + (voltage - v_low) * (s_high - s_low) / (v_high - v_low)
+                return round(soc, 1)
+
+        return 0
     def battery_callback(self, msg):
         """订阅电池数据的回调函数（修正版）"""
         if len(msg.data) < 3:
@@ -538,6 +566,8 @@ class MotorControlNode(Node):
         
         self.charging_v = round(msg.data[0], 2) if msg.data[0] else 0.0  # 充电电压（索引0）
         self.charging_i = round(msg.data[1], 2) if msg.data[1] else 0.0  # 充电电流（索引1）
+        # self.battery_remaining = self.voltage_to_soc(self.charging_v) if self.charging_v > 0 else 0.0  # 电池百分比估计
+
     def charging_fault_code_cb(self, msg: Int16):
         """订阅充电故障代码的回调函数"""
         self.charging_fault = msg.data  # 故障代码（整数）

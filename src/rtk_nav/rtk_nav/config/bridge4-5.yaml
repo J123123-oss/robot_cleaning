@@ -1,0 +1,58 @@
+# 区域配置文件
+# 添加/删除区域只需修改此文件，无需修改代码或launch文件
+
+areas:
+
+ # 线槽左1
+  - name: "south_4"
+    calib_point_a: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_b: {lon: 110.6474148272825, lat: 35.60611439364326}
+    calib_point_c: {lon: 110.64726380566727, lat: 35.60611435157266}
+    start_corner: "top_left"
+    swap_wh_select: True
+
+
+
+  # # 线槽左2
+  - name: "south_5"
+    calib_point_a: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_b: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_c: {lon: 110.64726399997889, lat: 35.605897952775464}
+    start_corner: "top_left"
+    swap_wh_select: True
+  
+
+  # # back_5B-4A
+  # - name: "back_5B-4A"
+  #   calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+  #   calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+  #   calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+  #   start_corner: "top_right"
+
+  # # bridge-4A-5B
+  # - name: "bridge-4A-5B"
+  #   calib_point_a: {lon: 110.64741564488955, lat: 35.605933355288805}
+  #   calib_point_b: {lon: 110.64741549006075, lat: 35.60589856772437}
+  #   calib_point_c: {lon: 110.64741564488955, lat: 35.605933355288805}
+  # back_5B-4A
+  - name: "back_5A-4A"
+    calib_point_a: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_c: {lon: 110.64741639744143, lat: 35.60571753896705}
+    start_corner: "top_right"
+
+  # bridge-4A-5B
+  - name: "bridge-4A-5A"
+    calib_point_a: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_c: {lon: 110.64741564488955, lat: 35.605933355288805}
+
+default:
+  interval: 1.2
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.1
+  edge_distance_lat: 0.1
+  # end_corner_mode: "opposite"
+  reverse_end_point: False  # 新增：控制是否执行反转逻辑
+  headless: False
