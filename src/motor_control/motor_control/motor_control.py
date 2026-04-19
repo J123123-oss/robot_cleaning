@@ -65,6 +65,17 @@ class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
         super().__init__(node_name)
 
+        # 声明RTK路径参数，用于获取route_id
+        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
+        rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.get_logger().info(f"[ROSNode] 获取到rtk_path_file参数: {rtk_path_file}")
+        # 从路径中提取文件名作为route_id
+        if rtk_path_file:
+            self.route_id = os.path.splitext(os.path.basename(rtk_path_file))[0]
+        else:
+            self.route_id = "default"
+        self.get_logger().info(f"[ROSNode] 初始化route_id: {self.route_id}")
+
         # 循环频率：10Hz（兼容原有逻辑，可调整）
         self.rate = self.create_rate(20)
         self.last_yaw_error = 0.0  # 上一次的航向误差
@@ -233,7 +244,6 @@ class MotorControlNode(Node):
             "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
-        self.route_id = None
 
         # 新增：进出仓状态标记（用于优先级判断，解决速度穿插问题）
         self.is_in_bin_process = False  # True=正在进出仓，False=正常状态

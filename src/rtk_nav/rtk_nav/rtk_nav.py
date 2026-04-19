@@ -22,7 +22,7 @@ RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 0.2  # 多点导航角度阈值
 LINEAR_SPEED_BASE = 8.0    # origin 0.0124
 TURN_SPEED = 1.0      # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.2 #起始点距离阈值
+INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -41,7 +41,7 @@ LOW_DISTANCE = 1.0
 BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
 DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
-DISTANCE_INCREASE_COUNT = 1  # 连续增大次数阈值
+DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 
 # 控制模式（与电机节点保持一致）
@@ -136,7 +136,10 @@ class RTKNavControlNode(Node):
 
         self.last_valid_heading = None  # 存储距离≥0.5m时最后一次计算的航向
         self.bad_error_counter = 0   #yaw_error绝对值大于15度的次数
-
+        
+        self.brush_start_idx = None  # 滚刷开启的航点索引
+        self.brush_stop_idx = None    # 滚刷关闭的航点索引
+        self.brush_active = False     # 滚刷是否激活
         # self.is_boundary_triggered = False # test, False origin
         # 定义参数描述：bool类型, 名称：is_boundary_triggered, 默认值：False
         # boundary_param_desc = ParameterDescriptor(
@@ -665,6 +668,8 @@ class RTKNavControlNode(Node):
             self.get_logger().error(f"RTK路径文件不存在：{self.rtk_path_file}")
             return False
 
+
+        
         try:
             with open(self.rtk_path_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()[1:]  # 跳过表头
@@ -672,10 +677,24 @@ class RTKNavControlNode(Node):
                     line = line.strip()
                     if not line:
                         continue
+                    
+                    # 检查是否为注释行（包含#）
+                    if line.startswith('#'):
+                        comment = line[1:].strip().lower()
+                        if 'start' in comment:
+                            # 记录滚刷开启的下一个航点索引
+                            self.brush_start_idx = len(self.waypoints)
+                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
+                        elif 'stop' in comment:
+                            # 记录滚刷关闭的下一个航点索引
+                            self.brush_stop_idx = len(self.waypoints)
+                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
+                        continue
+                    
                     # seq, lon, lat, heading_deg = line.split(',')
                     # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
-            # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
-            # return True
+                    # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
+                    # return True
                     seq, raw_lon, raw_lat, raw_heading = line.split(',')
                     # 核心修复：转换为浮点数
                     raw_lon = float(raw_lon.strip())
@@ -687,6 +706,10 @@ class RTKNavControlNode(Node):
                     )
                     self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
             self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个（已应用出仓点偏移修正）")
+            if self.brush_start_idx is not None:
+                self.get_logger().info(f"[RTKNav] 滚刷开启航点索引: {self.brush_start_idx}")
+            if self.brush_stop_idx is not None:
+                self.get_logger().info(f"[RTKNav] 滚刷关闭航点索引: {self.brush_stop_idx}")
             return True
         except Exception as e:
             self.get_logger().error(f"解析RTK文件失败：{str(e)}")
@@ -992,10 +1015,24 @@ class RTKNavControlNode(Node):
         # return math.fmod(heading_rad + math.pi, 2 * math.pi) - math.pi
         return math.fmod(heading_deg + 180.0, 360.0) - 180.0
 
+    # def get_heading_error(self, target_heading: float) -> float:
+    #     """计算当前航向与目标航向的误差（归一化到[-180°, 180°]，单位：度）"""
+    #     imu_yaw_normalized = ((self.imu_yaw + 180.0) % 360.0) - 180.0
+    #     target_heading_normalized = ((target_heading + 180.0) % 360.0) - 180.0
+    #     heading_error = target_heading_normalized - imu_yaw_normalized
+    #     heading_error = ((heading_error + 180.0) % 360.0) - 180.0
+    #     return heading_error
     def get_heading_error(self, target_heading: float) -> float:
         """计算当前航向与目标航向的误差（归一化到[-180°, 180°]，单位：度）"""
         heading_error = target_heading - self.imu_yaw
-        heading_error = ((heading_error + 180.0) % 360.0) - 180.0
+        # 核心：确保归一化逻辑正确执行（先加180→取模→减180）
+        heading_error = math.fmod(heading_error + 180.0, 360.0)
+        heading_error -= 180.0
+        # 额外处理浮点数精度问题（避免因精度导致的超范围）
+        if heading_error <= -180.0:
+            heading_error += 360.0
+        elif heading_error > 180.0:
+            heading_error -= 360.0
         return heading_error
     def get_ring_angle_diff(self, angle1: float, angle2: float) -> float:
         """
@@ -1316,9 +1353,9 @@ class RTKNavControlNode(Node):
             #             f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
             #         )
             # ========== 实时角度纠偏逻辑 ==========
-            # target_heading = real_time_heading # 使用实时朝向角
-            target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
-            target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
+            target_heading = real_time_heading # 使用实时朝向角
+            # target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
+            # target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
             yaw_error = self.get_heading_error(target_heading)
             
             # 连续角度异常检测
@@ -1333,6 +1370,10 @@ class RTKNavControlNode(Node):
                     self.nav_context["angle_abnormal_count"] = 0
                     self.nav_context["nav_state"] = NavState.INITIAL_MOVE
                     current_nav_state = NavState.INITIAL_MOVE
+                    self.nav_context["nav_state"] = current_nav_state
+                    self.current_waypoint_idx = 0
+                    self.nav_context["target_waypoint"] = None
+                    self.nav_context["calib_generator"] = None
                     yield (0.0, 0.0)
                     return
                 else:
@@ -1343,6 +1384,7 @@ class RTKNavControlNode(Node):
             
             # 计算修正量（使用真实偏差角）
             correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
+            self.get_logger().info(f"yaw_error={yaw_error:.2f}°, correction={correction:.2f}")
             # base_speed = LINEAR_SPEED_BASE
             last_left_speed = None
             last_right_speed = None
@@ -1604,6 +1646,9 @@ class RTKNavControlNode(Node):
                         self.nav_context["calib_generator"] = None
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
+                        self.last_valid_heading = None  # 清空航向缓存，强制重新计算
+                        if hasattr(self, 'heading_history'):
+                            self.heading_history = []  # 清空航向历史
                     else:
                         # 正常航点间校准：切换到下一个航点
                         self.get_logger().info(
@@ -1612,6 +1657,11 @@ class RTKNavControlNode(Node):
                         self.current_waypoint_idx += 1
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
+                        self.last_valid_heading = None  # 清空航向缓存，切换航点后使用实时航向
+                        self.heading_history = []  # 清空航向历史
+                    
+                    # 检查滚刷控制
+                    self.check_and_control_brush()
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["last_distance"] = 0.0  # 重置距离缓存
@@ -1774,15 +1824,16 @@ class RTKNavControlNode(Node):
                         speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
                     
-                    # 触发条件：慢速调节（≤30%基础速度）+ 距离连续2帧增大（每帧增大≥0.05m）
+                    # 触发条件：慢速调节（≤30%基础速度）+ 距离连续多次增大（每帧增大≥阈值m）
+                    self.get_logger().debug(f"[后退检测] 距离={distance:.2f}m, 速度={current_base_speed:.2f}, delta={distance_delta:.3f}m")
                     if current_base_speed <= LINEAR_SPEED_BASE * BACKUP_SPEED_SCALE :
                         if distance_delta > DISTANCE_INCREASE_THRESHOLD:
                             self.distance_increase_count += 1
-                            self.get_logger().warn(f"[距离异常] 慢速调节时距离增大：当前{distance:.2f}m，上一帧{self.last_distance_for_backup:.2f}m，连续增大{self.distance_increase_count}次")
+                            self.get_logger().warn(f"[距离异常] 慢速调节时距离增大：当前{distance:.2f}m，上一帧{self.last_distance_for_backup:.2f}m，增大{distance_delta:.2f}m，连续{self.distance_increase_count}次")
                             if self.distance_increase_count >= DISTANCE_INCREASE_COUNT :
                                 need_backup = True
-                        else:
-                            self.distance_increase_count = 0  # 距离未增大，重置计数器
+                        elif distance_delta < 0:
+                            self.distance_increase_count = 0  # 距离减小，重置计数器
                     
                     # 执行后退纠正（持续0.5秒后退，再重新纠正航向）
                     if need_backup:
@@ -1811,6 +1862,7 @@ class RTKNavControlNode(Node):
                         
                         # 连续角度异常检测
                         yaw_error_abs = abs(yaw_error)
+                        self.get_logger().debug(f"[角度检测] IMU航向={self.imu_yaw:.2f}°, 目标航向={target_heading:.2f}°, 误差={yaw_error:.2f}°")
                         if yaw_error_abs > 15.0:
                             # 增加角度异常计数器
                             self.nav_context["angle_abnormal_count"] = self.nav_context.get("angle_abnormal_count", 0) + 1
@@ -1922,6 +1974,7 @@ class RTKNavControlNode(Node):
         self.nav_context["nav_state"] = NavState.COMPLETED
         self.publish_nav_state(NavState.COMPLETED)
         self.nav_running = False
+        self.brush_active = False  # 导航完成，关闭滚刷
         self.publish_stop_speed()
         self.reset_nav_context()        # reset nav /保留导航状态，支持恢复
         yield (0.0, 0.0)
@@ -1934,6 +1987,26 @@ class RTKNavControlNode(Node):
         stop_speed.y = 0.0
         stop_speed.z = 0.0
         self.motor_speed_pub.publish(stop_speed)
+
+    def publish_brush_speed(self, speed: float):
+        """发布滚刷速度指令（仅更新标志位，不单独发布）"""
+        self.brush_active = (speed < 0)
+        self.get_logger().info(f"[RTKNav] 设置滚刷状态: {'开启' if self.brush_active else '关闭'}")
+
+    def check_and_control_brush(self):
+        """根据当前航点索引控制滚刷开关"""
+        if not hasattr(self, 'brush_start_idx') or not hasattr(self, 'brush_stop_idx'):
+            return
+        
+        idx = self.current_waypoint_idx
+        
+        if self.brush_start_idx is not None and idx >= self.brush_start_idx:
+            self.publish_brush_speed(-15.0)
+            self.brush_start_idx = None
+        
+        if self.brush_stop_idx is not None and idx >= self.brush_stop_idx:
+            self.publish_brush_speed(0.0)
+            self.brush_stop_idx = None
 
     def publish_nav_state(self, state: NavState):
         """发布当前导航状态"""
@@ -1969,6 +2042,8 @@ class RTKNavControlNode(Node):
         self.waypoints = []
         self.is_first_file_load = False
         self.rtk_path_file = new_path_file
+        self.current_waypoint_idx = 0  # 重置航点索引为0
+        self.get_logger().info(f"[RTKNav] 路径切换时重置航点索引为0")
         self.load_waypoints_from_file(self.rtk_path_file)
         
         if self.waypoints:
@@ -2026,6 +2101,7 @@ class RTKNavControlNode(Node):
                 self.multi_waypoint_generator = self.multi_waypoint_nav_generator(resume=resume)
                 self.nav_running = True
                 self.publish_nav_state(self.nav_context["nav_state"])
+                self.brush_active = False  # 启动导航时关闭滚刷
                 self.get_logger().info("[ROSNode] 启动/恢复RTK多点导航")
 
             # 获取多点导航速度并发布
@@ -2036,7 +2112,9 @@ class RTKNavControlNode(Node):
                     speed_msg = Vector3()
                     speed_msg.x = float(left_speed)
                     speed_msg.y = float(right_speed)
-                    speed_msg.z = -15.0 #brush
+                    # 根据滚刷状态设置速度
+                    brush_speed = -15.0 if getattr(self, 'brush_active', False) else 0.0
+                    speed_msg.z = brush_speed
                     self.motor_speed_pub.publish(speed_msg)
             except StopIteration:
                 # 导航生成器执行完毕（全部航点完成/主动退出）
@@ -2044,10 +2122,12 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.COMPLETED)
                 self.multi_waypoint_generator = None
                 self.nav_running = False
+                self.brush_active = False  # 导航完成，关闭滚刷
             except Exception as e:
                 self.get_logger().error(f"[ROSNode] RTK多点导航错误：{str(e)}")
                 # 发布停止指令
                 self.publish_stop_speed()
+                self.brush_active = False  # 异常退出，关闭滚刷
                 # 重置导航状态
                 self.multi_waypoint_generator = None
                 self.nav_running = False
