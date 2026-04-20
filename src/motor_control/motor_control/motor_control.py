@@ -140,7 +140,11 @@ class MotorControlNode(Node):
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
-        self.battery_full_charge = False
+        # self.battery_full_charge = False
+        self.charge_resume_threshold = 90.0  # 恢复充电的电量阈值（百分比）
+        self.is_charge_paused = False  # 充电是否已暂停（充满后暂停）
+        self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
+        self.charge_resume_count = 0  # 恢复充电的次数
 
         # 1. 初始化电机控制模块
         self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
@@ -330,6 +334,21 @@ class MotorControlNode(Node):
         self.imu_yaw_deg = (self.imu_yaw_deg + 180) % 360 - 180
 
     def timer_callback(self):
+        # 检查充电恢复条件：充电已暂停且电量低于阈值时恢复充电
+        if self.is_charge_paused and self.battery_remaining is not None:
+            if self.battery_remaining <= self.charge_resume_threshold:
+                current_time = self.get_clock().now().nanoseconds / 1e9
+                if current_time - self.last_charge_stop_time >= 5.0:
+                    if self.dock_sensors & 0x08 == 8:
+                        self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
+                        self.start_charge_async()
+                        self.is_charge_paused = False
+                        self.charge_resume_count += 1
+                    else:
+                        self.get_logger().info(f"[ROSNode] 车体已离开停机仓，清除充电暂停标志，累计恢复充电{self.charge_resume_count}次")
+                        self.is_charge_paused = False
+                        self.charge_resume_count = 0
+        
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
@@ -734,8 +753,8 @@ class MotorControlNode(Node):
             # 降低状态发布频率至600秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(10.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为10秒")
+                self.state_publish_timer = self.create_timer(3000.0, self.publish_state)
+                self.get_logger().info("[ROSNode] 进入DISABLE状态，状态发布频率改为3000秒")
         elif new_state == "HOLD":
             # HOLD状态时切换到NORMAL模式，以便RTK节点能正确响应暂停
             if self.current_control_mode == "AUTO_CLEANING":
@@ -888,13 +907,14 @@ class MotorControlNode(Node):
                 "charging_i": self.charging_i,
                 "charging_fault": self.charging_fault,
                 "dock_sensors": self.dock_sensors,
+                "resume_charge": self.charge_resume_count,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             dock_state_msg = {
                 "status": self.current_status,
                 "complete_state": self.complete_state,
-                "full_charge": self.battery_full_charge ,
-                "timestamp_to_dock": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                # "full_charge": self.battery_full_charge ,
+                "t": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             ros_string_msg = String()
             ros_string_msg.data = json.dumps(state_msg, ensure_ascii=False)
@@ -902,7 +922,7 @@ class MotorControlNode(Node):
             dock_ros_msg = String()
             dock_ros_msg.data = json.dumps(dock_state_msg, ensure_ascii=False)
             self.dock_state_pub.publish(dock_ros_msg)
-            # self.get_logger().info(f"[ROSNode] 成功发布状态: {ros_string_msg.data}")
+            self.get_logger().info(f"[ROSNode] 成功发布状态: {ros_string_msg.data}")
         except Exception as e:
             error_msg = {
                 "status": "ERROR",
@@ -1089,9 +1109,12 @@ class MotorControlNode(Node):
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
             elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_v >= 54.5 and 1.0 <= self.charging_i <= 1.5: #停止充电，重置标志位，传感器归位
-                self.battery_full_charge = True
-                self.get_logger().info("[ROSNode] 充电完成，等待传感器归位")
+                # self.battery_full_charge = True
+                self.get_logger().info("[ROSNode] 充电完成")
                 self.stop_charge_async()
+                self.is_charge_paused = True  # 标记充电已暂停
+                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9  # 记录停止充电时间戳
+                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
             # else:
             #     self.get_logger().info(f"[ROSNode] 未知传感器状态：{self.dock_sensors}")
 
@@ -1585,7 +1608,7 @@ class MotorControlNode(Node):
                                     self.loading_phase = "COMPLETE"
                                     self.complete_state = True
                                     self.is_charging = False  #清除充电状态，衔接后续充电
-                                    self.battery_full_charge = False #清除充电状态，衔接后续充电
+                                    # self.battery_full_charge = False #清除充电状态，衔接后续充电
                                     self.last_backward_log_time = 0.0  # 重置日志时间
                                     self.correction_count = 0  # 重置次数
                                     self.straight_loading_time = None
@@ -1723,7 +1746,7 @@ class MotorControlNode(Node):
             if resp.success:
                 self.get_logger().info(f"异步启动充电成功: {resp.message}")
                 self.is_charging = True  # 更新充电状态
-                self.battery_full_charge = False
+                # self.battery_full_charge = False
             else:
                 self.get_logger().error(f"异步启动充电失败: {resp.message}")
                 self.is_charging = False  # 确保状态一致

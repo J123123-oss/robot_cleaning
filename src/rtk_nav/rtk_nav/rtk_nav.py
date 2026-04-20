@@ -1371,7 +1371,7 @@ class RTKNavControlNode(Node):
                     self.nav_context["nav_state"] = NavState.INITIAL_MOVE
                     current_nav_state = NavState.INITIAL_MOVE
                     self.nav_context["nav_state"] = current_nav_state
-                    self.current_waypoint_idx = 0
+                    self.nav_context["is_angle_recalib"] = True  # 标记为角度异常重置
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["calib_generator"] = None
                     yield (0.0, 0.0)
@@ -1538,16 +1538,19 @@ class RTKNavControlNode(Node):
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration:
-                    # 新增2：校验航点索引是否有效，防止空航点误判完成
-                    if self.current_waypoint_idx >= len(self.waypoints) and len(self.waypoints) == 0:
-                        self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
-                        self.nav_running = False
-                        self.publish_stop_speed()
-                        self.reset_nav_context()
-                        yield (0.0, 0.0)
-                        return
-                    # 初始移动完成, 切换到第一个航点
-                    self.current_waypoint_idx = 1
+                    is_recalib = self.nav_context.get("is_angle_recalib", False)
+                    if is_recalib:
+                        self.get_logger().info("[ROSNode] 角度异常重置后继续前往航点0")
+                        self.nav_context["is_angle_recalib"] = False  # 重置标志
+                    else:
+                        if self.current_waypoint_idx >= len(self.waypoints) and len(self.waypoints) == 0:
+                            self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
+                            self.nav_running = False
+                            self.publish_stop_speed()
+                            self.reset_nav_context()
+                            yield (0.0, 0.0)
+                            return
+                        self.current_waypoint_idx = 1
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
                     self.get_logger().info("[ROSNode] 初始移动完成, 进入航点导航阶段")
