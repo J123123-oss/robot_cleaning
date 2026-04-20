@@ -89,17 +89,36 @@ areas:
     calib_point_a: {lon: 110.64777328985258, lat: 35.602289317044416}
     calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_c: {lon: 110.64777328985258, lat: 35.602289317044416}
+    
+
   # bridge_23A-24B
   - name: "bridge_23A-24B"
     calib_point_a: {lon: 110.64777457663791, lat: 35.60211783161967}
     calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
     calib_point_c: {lon: 110.64777457663791, lat: 35.60211783161967}
-  # bridge_24A-north24B
-  - name: "bridge_24A-north24B"
+  # bridge_24A-south24D
+  - name: "bridge_24A-south24D"
     calib_point_a: {lon: 110.64777591376827, lat: 35.60192967830139}
-    calib_point_b: {lon: 110.64660984388259, lat: 35.60192961528979}
+    calib_point_b: {lon: 110.64720316, lat: 35.60192661}
     calib_point_c: {lon: 110.64777591376827, lat: 35.60192967830139}
+  # bridge_24A-south24D
+  - name: "bridge_south24D-front1"
+    calib_point_a: {lon: 110.64720316, lat: 35.60192661}
+    calib_point_b: {lon: 110.64720309, lat: 35.60193404}
+    calib_point_c: {lon: 110.64720316, lat: 35.60192661}
+    start_corner: "top_left"
+  # bridge_front1-north24C
+  - name: "bridge_front1-north24C"
+    calib_point_a: {lon: 110.64720309, lat: 35.60193404}
+    calib_point_b: {lon: 110.64660984388259, lat: 35.60192961528979}
+    calib_point_c: {lon: 110.64720309, lat: 35.60193404}
+  # bridge_north24C-north24B
+  - name: "bridge_north24C-north24B"
+    calib_point_a: {lon: 110.64660984388259, lat: 35.60192961528979}
+    calib_point_b: {lon: 110.64660984388259, lat: 35.60192961528979}
+    calib_point_c: {lon: 110.64660984388259, lat: 35.60192961528979}
     start_corner: "top_right" 
+
   # bridge_north24A-north22A
   - name: "bridge_north24A-north22A"
     calib_point_a: {lon: 110.6466094331906, lat: 35.60207900896125}
@@ -312,11 +331,21 @@ areas:
     calib_point_c: {lon: 110.64660776009069, lat: 35.602400693105714}
     start_corner: "top_right"
 
-  # back_north24B-24A,turn left 90
-  - name: "back_north24B-24A"
+  # back_north24B-north24C
+  - name: "back_north24B-north24C"
     calib_point_a: {lon: 110.64660984388259, lat: 35.60192961528979}
-    calib_point_b: {lon: 110.64777591376827, lat: 35.60192967830139}
+    calib_point_b: {lon: 110.64718371063053, lat: 35.601931086848886}
     calib_point_c: {lon: 110.64660984388259, lat: 35.60192961528979}
+    start_corner: "top_right"
+  - name: "front1-south24D"
+    calib_point_a: {lon: 110.64720309, lat: 35.60193404}
+    calib_point_b: {lon: 110.64720316, lat: 35.60192661}
+    calib_point_c: {lon: 110.64720309, lat: 35.60193404}
+    start_corner: "top_right" 
+  - name: "back_south24C-24A"
+    calib_point_a: {lon: 110.64720316, lat: 35.60192661}
+    calib_point_b: {lon: 110.64777591376827, lat: 35.60192967830139}
+    calib_point_c: {lon: 110.64720316, lat: 35.60192661}
     start_corner: "top_right"
 
   # back_24B-23A
