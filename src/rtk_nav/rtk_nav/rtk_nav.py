@@ -20,7 +20,7 @@ GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 0.2  # 多点导航角度阈值
-LINEAR_SPEED_BASE = 8.0    # origin 0.0124
+LINEAR_SPEED_BASE = 10.0   # origin 8.0
 TURN_SPEED = 1.0      # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
@@ -33,7 +33,7 @@ TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8    # 最大修正量
 STRAIGHT_MAX_CORRECTION = 3.0
 # straight line speed correction factor
-STRAIGHT_PID_SCALE = 2.0
+STRAIGHT_PID_SCALE = 2.0  # 2.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 #近距离减速/REVERSE阈值
@@ -116,6 +116,7 @@ class RTKNavControlNode(Node):
 
         # 出仓点（从 /unloading_gps 话题获取）
         self.loading_waypoint = None  # 格式：(lon, lat, heading)
+        self.return_to_loading_added = False  # 出仓点是否已追加标志
 
         # 边界矫正状态机
         self.boundary_correct_state = BoundaryCorrectState.IDLE
@@ -851,14 +852,14 @@ class RTKNavControlNode(Node):
             else:
                 # 没有下一个文件, 返回None表示结束
                 self.get_logger().info("[RTKNav] 没有更多路径文件, 导航结束")
-                if hasattr(self, 'loading_waypoint') and self.loading_waypoint is not None:
+                if hasattr(self, 'loading_waypoint') and self.loading_waypoint is not None and not self.return_to_loading_added:
                     self.get_logger().info(f"[RTKNav] 开始执行返回出仓点：{self.loading_waypoint}")
                     # 将出仓点追加到航点列表末尾
                     self.waypoints.append(self.loading_waypoint)
                     # 手动更新索引，指向新增的出仓点
                     self.current_waypoint_idx = idx
-                    # 重置跨文件缓存，避免干扰
-                    # self.cross_file_last_waypoint = None
+                    # 标记出仓点已追加
+                    self.return_to_loading_added = True
                     self.get_logger().info(f"[RTKNav] 出仓点追加成功，当前航点索引：{self.current_waypoint_idx}，总航点数：{len(self.waypoints)}")
                     # 返回出仓点作为新的目标航点
                     return self.loading_waypoint
@@ -1024,15 +1025,24 @@ class RTKNavControlNode(Node):
     #     return heading_error
     def get_heading_error(self, target_heading: float) -> float:
         """计算当前航向与目标航向的误差（归一化到[-180°, 180°]，单位：度）"""
-        heading_error = target_heading - self.imu_yaw
-        # 核心：确保归一化逻辑正确执行（先加180→取模→减180）
-        heading_error = math.fmod(heading_error + 180.0, 360.0)
-        heading_error -= 180.0
-        # 额外处理浮点数精度问题（避免因精度导致的超范围）
-        if heading_error <= -180.0:
-            heading_error += 360.0
-        elif heading_error > 180.0:
+        # 将两个角度都归一化到 [-180°, 180°) 范围处理环形最短路径
+        imu_normalized = self.imu_yaw % 360.0
+        if imu_normalized >= 180.0:
+            imu_normalized -= 360.0
+        
+        target_normalized = target_heading % 360.0
+        if target_normalized >= 180.0:
+            target_normalized -= 360.0
+        
+        # 计算误差
+        heading_error = target_normalized - imu_normalized
+        
+        # 归一化到 [-180°, 180°]，确保不会超出范围
+        while heading_error > 180.0:
             heading_error -= 360.0
+        while heading_error <= -180.0:
+            heading_error += 360.0
+        
         return heading_error
     def get_ring_angle_diff(self, angle1: float, angle2: float) -> float:
         """
@@ -1332,7 +1342,7 @@ class RTKNavControlNode(Node):
             speed_scale = 1.0
             if distance < LOW_DISTANCE:
                 # 线性减速：距离LOW_DISTANCE米时速度=BASE的50%，距离0.1米时速度=BASE的10%
-                speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)  # 0.1~0.5之间动态缩放
+                speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)  # 0.1~0.5之间动态缩放
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
             #  # 1. 先判断距离，决定是否更新实时航向
             # if distance >= 0.3:
@@ -1357,7 +1367,6 @@ class RTKNavControlNode(Node):
             # target_heading = real_time_heading - last_heading  # 使用实时朝向角与初始旋转完成的朝向角夹角
             # target_heading = (target_heading + 180 ) % 360 - 180 + self.imu_yaw
             yaw_error = self.get_heading_error(target_heading)
-            
             # 连续角度异常检测
             yaw_error_abs = abs(yaw_error)
             if yaw_error_abs > 15.0:
@@ -1425,6 +1434,7 @@ class RTKNavControlNode(Node):
             "angle_abnormal_count": 0,
             "is_angle_recalib": False,
         }
+        self.return_to_loading_added = False  # 重置出仓点追加标志
             # 重置后退纠正相关计数器
         self.last_distance_for_backup = 0.0
         self.distance_increase_count = 0
@@ -1797,13 +1807,13 @@ class RTKNavControlNode(Node):
                             f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
                         )
                 # 初始化航向历史缓存（最多保留5帧，可调整）
-                if not hasattr(self, 'heading_history'):
-                    self.heading_history = []
-                self.heading_history.append(real_time_heading)
-                if len(self.heading_history) > 5:
-                    self.heading_history.pop(0)
-                # 滑动平均平滑（削弱单帧抖动的影响）
-                real_time_heading = sum(self.heading_history) / len(self.heading_history)
+                # if not hasattr(self, 'heading_history'):
+                #     self.heading_history = []
+                # self.heading_history.append(real_time_heading)
+                # if len(self.heading_history) > 5:
+                #     self.heading_history.pop(0)
+                # # 滑动平均平滑（削弱单帧抖动的影响）
+                # real_time_heading = sum(self.heading_history) / len(self.heading_history)
                 self.nav_context["last_target_heading"] = real_time_heading
                 # 计算实时距离
                 # 距离未达标：实时纠偏行驶
@@ -1824,7 +1834,7 @@ class RTKNavControlNode(Node):
                     need_backup = False
                     current_base_speed = LINEAR_SPEED_BASE  # 初始化基础速度
                     if distance < LOW_DISTANCE:
-                        speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)
+                        speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
                     
                     # 触发条件：慢速调节（≤30%基础速度）+ 距离连续多次增大（每帧增大≥阈值m）
@@ -1862,7 +1872,6 @@ class RTKNavControlNode(Node):
                         target_heading = real_time_heading
                         # 计算真实偏差角（IMU当前航向 - 目标航向）
                         yaw_error = self.get_heading_error(target_heading)
-                        
                         # 连续角度异常检测
                         yaw_error_abs = abs(yaw_error)
                         self.get_logger().debug(f"[角度检测] IMU航向={self.imu_yaw:.2f}°, 目标航向={target_heading:.2f}°, 误差={yaw_error:.2f}°")
@@ -1899,9 +1908,9 @@ class RTKNavControlNode(Node):
                         
                         # 近距离线性减速（原有逻辑保留）
                         if distance < LOW_DISTANCE:
-                            speed_scale = max(0.2, distance/LOW_DISTANCE * 0.5)
+                            speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)
                             current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                            correction = correction * speed_scale
+                            # correction = correction * speed_scale
                             # 修正量不随速度缩放，保证近距离纠偏力度
                         else:
                             current_base_speed = LINEAR_SPEED_BASE
@@ -2047,6 +2056,7 @@ class RTKNavControlNode(Node):
         self.rtk_path_file = new_path_file
         self.current_waypoint_idx = 0  # 重置航点索引为0
         self.get_logger().info(f"[RTKNav] 路径切换时重置航点索引为0")
+        self.return_to_loading_added = False  # 重置出仓点追加标志
         self.load_waypoints_from_file(self.rtk_path_file)
         
         if self.waypoints:
