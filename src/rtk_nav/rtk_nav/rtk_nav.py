@@ -1342,7 +1342,7 @@ class RTKNavControlNode(Node):
             speed_scale = 1.0
             if distance < LOW_DISTANCE:
                 # 线性减速：距离LOW_DISTANCE米时速度=BASE的50%，距离0.1米时速度=BASE的10%
-                speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)  # 0.1~0.5之间动态缩放
+                speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)  # 0.1~0.5之间动态缩放
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
             #  # 1. 先判断距离，决定是否更新实时航向
             # if distance >= 0.3:
@@ -1834,7 +1834,7 @@ class RTKNavControlNode(Node):
                     need_backup = False
                     current_base_speed = LINEAR_SPEED_BASE  # 初始化基础速度
                     if distance < LOW_DISTANCE:
-                        speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)
+                        speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
                     
                     # 触发条件：慢速调节（≤30%基础速度）+ 距离连续多次增大（每帧增大≥阈值m）
@@ -1908,7 +1908,7 @@ class RTKNavControlNode(Node):
                         
                         # 近距离线性减速（原有逻辑保留）
                         if distance < LOW_DISTANCE:
-                            speed_scale = max(0.3, distance/LOW_DISTANCE * 0.8)
+                            speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)
                             current_base_speed = LINEAR_SPEED_BASE * speed_scale
                             # correction = correction * speed_scale
                             # 修正量不随速度缩放，保证近距离纠偏力度

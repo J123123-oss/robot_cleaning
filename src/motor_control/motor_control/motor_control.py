@@ -140,8 +140,9 @@ class MotorControlNode(Node):
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
+        self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
-        self.charge_resume_threshold = 90 # 恢复充电的电量阈值（百分比）
+        self.charge_resume_threshold = 98 # 恢复充电的电量阈值（百分比）
         self.is_charge_paused = False  # 充电是否已暂停（充满后暂停）
         self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
         self.charge_resume_count = 0  # 恢复充电的次数
@@ -605,7 +606,16 @@ class MotorControlNode(Node):
 
     def charging_fault_code_cb(self, msg: Int16):
         """订阅充电故障代码的回调函数"""
+        self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
         self.charging_fault = msg.data  # 故障代码（整数）
+        
+        # 检测故障码从非9变为9（满充保护），且车体在位时停止充电
+        if self.charging_fault == 9 and self.last_charging_fault != 9 and self.is_charging and self.dock_sensors & 0x08 == 8:
+            self.get_logger().info("[ROSNode] 检测到故障码9（满充保护），自动停止充电")
+            self.stop_charge_async()
+            self.is_charge_paused = True  # 标记充电已暂停
+            self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9
+            self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
     
     # def laser_callback(self, msg: UInt16MultiArray):
     #     """订阅激光距离数据的回调函数"""
@@ -930,7 +940,7 @@ class MotorControlNode(Node):
             dock_ros_msg = String()
             dock_ros_msg.data = json.dumps(dock_state_msg, ensure_ascii=False)
             self.dock_state_pub.publish(dock_ros_msg)
-            # self.get_logger().info(f"[ROSNode] 成功发布状态: {ros_string_msg.data}")
+            self.get_logger().info(f"[ROSNode] 成功发布状态: {ros_string_msg.data}")
         except Exception as e:
             error_msg = {
                 "status": "ERROR",
@@ -1116,9 +1126,16 @@ class MotorControlNode(Node):
                     self.start_charge_async()
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
-            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_v >= 54.6 and 1.0 <= self.charging_i <= 1.5: #停止充电，重置标志位，传感器归位
+            elif self.dock_sensors & 0x08 == 8 and self.is_charging and (self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6): #停止充电，重置标志位，传感器归位
                 # self.battery_full_charge = True
-                self.get_logger().info("[ROSNode] 充电完成")
+                self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
+                self.stop_charge_async()
+                self.is_charge_paused = True  # 标记充电已暂停
+                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9  # 记录停止充电时间戳
+                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
+            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_fault == 9 and self.last_charging_fault != 9:
+                # 故障码从非9变为9（满充保护）
+                self.get_logger().info("[ROSNode] 充电完成（故障码9-满充保护）")
                 self.stop_charge_async()
                 self.is_charge_paused = True  # 标记充电已暂停
                 self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9  # 记录停止充电时间戳
@@ -1639,11 +1656,11 @@ class MotorControlNode(Node):
                                 if diff_dis >= 5:
                                     self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
                                     if (left - right) < 0:
-                                        left_speed = base_speed / 6.0
-                                        right_speed = base_speed / 6.0
+                                        left_speed = base_speed / 8.0
+                                        right_speed = base_speed / 8.0
                                     else:
-                                        left_speed = -base_speed / 6.0
-                                        right_speed = -base_speed / 6.0
+                                        left_speed = -base_speed / 8.0
+                                        right_speed = -base_speed / 8.0
                                 # 步骤6：差值<5mm → 低速纠偏直行
                                 else:
                                     self.get_logger().info("[LOADING] 差值<5mm，直行")
