@@ -264,6 +264,7 @@ class MotorControlNode(Node):
         self.switch_state('x')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
+        self.charge_resume_timer = self.create_timer(10.0, self.charge_resume_callback)  # 10秒检查一次恢复充电
         self.state_publish_timer = self.create_timer(5.0, self.publish_state)  # 默认5秒发布状态
 
         # add mqtt 
@@ -334,16 +335,32 @@ class MotorControlNode(Node):
         self.last_imu_update_time = time.time()  # 记录最新更新时间
         # 确保角度归一化到[-180, 180]
         self.imu_yaw_deg = (self.imu_yaw_deg + 180) % 360 - 180
-
-    def timer_callback(self):
-        # 检查充电恢复条件：充电已暂停且电量低于阈值时恢复充电
+    def charge_resume_callback(self):
+        # 充电停止条件判断（使用存储的传感器状态）
+        if self.is_charging and self.dock_sensors & 0x08 == 8:
+            # 条件1：电压电流条件
+            if self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6:
+                self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
+                self.stop_charge_async()
+                self.is_charge_paused = True
+                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9
+                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
+            # 条件2：故障码从非9变为9（满充保护）
+            elif self.charging_fault == 9 and self.last_charging_fault != 9:
+                self.get_logger().info("[ROSNode] 充电完成（故障码9-满充保护）")
+                # self.stop_charge_async()
+                self.is_charging = False  # 更新充电状态
+                self.is_charge_paused = True
+                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9
+                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
+        
         if self.is_charge_paused and self.battery_remaining is not None:
             if self.battery_remaining <= self.charge_resume_threshold:
                 current_time = self.get_clock().now().nanoseconds / 1e9
                 if current_time - self.last_charge_stop_time >= 5.0:
                     if self.dock_sensors & 0x08 == 8:
                         if not self.is_charging:
-                            if current_time - self.last_charge_resume_time >= 30.0:  # 防抖：30秒内不重复尝试
+                            if current_time - self.last_charge_resume_time >= 30.0:
                                 self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
                                 self.start_charge_async()
                                 self.last_charge_resume_time = current_time
@@ -355,7 +372,7 @@ class MotorControlNode(Node):
                         self.get_logger().info(f"[ROSNode] 车体已离开停机仓，清除充电暂停标志，累计恢复充电{self.charge_resume_count}次")
                         self.is_charge_paused = False
                         self.charge_resume_count = 0
-        
+    def timer_callback(self):
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
@@ -608,14 +625,6 @@ class MotorControlNode(Node):
         """订阅充电故障代码的回调函数"""
         self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
         self.charging_fault = msg.data  # 故障代码（整数）
-        
-        # 检测故障码从非9变为9（满充保护），且车体在位时停止充电
-        if self.charging_fault == 9 and self.last_charging_fault != 9 and self.is_charging and self.dock_sensors & 0x08 == 8:
-            self.get_logger().info("[ROSNode] 检测到故障码9（满充保护），自动停止充电")
-            self.stop_charge_async()
-            self.is_charge_paused = True  # 标记充电已暂停
-            self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9
-            self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
     
     # def laser_callback(self, msg: UInt16MultiArray):
     #     """订阅激光距离数据的回调函数"""
@@ -1126,23 +1135,8 @@ class MotorControlNode(Node):
                     self.start_charge_async()
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
-            elif self.dock_sensors & 0x08 == 8 and self.is_charging and (self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6): #停止充电，重置标志位，传感器归位
-                # self.battery_full_charge = True
-                self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
-                self.stop_charge_async()
-                self.is_charge_paused = True  # 标记充电已暂停
-                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9  # 记录停止充电时间戳
-                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
-            elif self.dock_sensors & 0x08 == 8 and self.is_charging and self.charging_fault == 9 and self.last_charging_fault != 9:
-                # 故障码从非9变为9（满充保护）
-                self.get_logger().info("[ROSNode] 充电完成（故障码9-满充保护）")
-                self.stop_charge_async()
-                self.is_charge_paused = True  # 标记充电已暂停
-                self.last_charge_stop_time = self.get_clock().now().nanoseconds / 1e9  # 记录停止充电时间戳
-                self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
-            # else:
-            #     self.get_logger().info(f"[ROSNode] 未知传感器状态：{self.dock_sensors}")
-
+            # 充电停止逻辑已移至 timer_callback 中统一处理
+            
             self.dock_last_sensors = self.dock_sensors
         except json.JSONDecodeError as e:
             self.get_logger().warn(f"[ROSNode] 消息不是有效JSON字典，尝试按字符串处理: {msg_data}, 错误: {e}")
@@ -1606,10 +1600,10 @@ class MotorControlNode(Node):
                         else:
                             # 步骤7：激光距离<230mm → 最终对位判断
                             # if left < 230 and right < 230:
-                            if left < 385 and right < 385:
+                            if left < 375 and right < 375:
                                 if not hasattr(self, 'straight_loading_time'):
                                     self.straight_loading_time = current_time
-                                self.get_logger().info("[LOADING] 极近距离（<385mm），判断差值是否<2mm 进行最终对位")
+                                self.get_logger().info("[LOADING] 极近距离（<375mm），判断差值是否<2mm 进行最终对位")
                                 # 定时器：5秒后切换到完成阶段（确保电机停止）
                                 if self.straight_loading_time is not None:
                                     elapsed_time = current_time - self.straight_loading_time
@@ -1772,15 +1766,13 @@ class MotorControlNode(Node):
                 self.get_logger().info(f"异步启动充电成功: {resp.message}")
                 self.is_charging = True  # 更新充电状态
                 self.is_charge_paused = False  # 充电成功启动，清除暂停标志
-                # self.battery_full_charge = False
+                self.last_charging_fault = 0  # 重置故障码状态，避免假充判断错误
             else:
                 self.get_logger().error(f"异步启动充电失败: {resp.message}")
                 self.is_charging = False  # 确保状态一致
-                # 保持 is_charge_paused = True，以便下次重试恢复充电
         except Exception as e:
             self.get_logger().error(f"异步启动充电异常: {str(e)}")
             self.is_charging = False
-            # 保持 is_charge_paused = True，以便下次重试恢复充电
 
     def stop_charge_async(self):
         """异步调用停止充电服务"""
@@ -1798,9 +1790,12 @@ class MotorControlNode(Node):
                 self.is_charging = False  # 更新充电状态
             else:
                 self.get_logger().error(f"异步停止充电失败: {resp.message}")
+                self.is_charging = True  # 更新充电状态
+
         except Exception as e:
             self.get_logger().error(f"异步停止充电异常: {str(e)}")
-
+            self.is_charging = True  # 更新充电状态
+            
 # -------------------------- 主函数入口 --------------------------
 def main(args=None):
     rclpy.init(args=args)
