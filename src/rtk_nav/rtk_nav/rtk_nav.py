@@ -37,7 +37,7 @@ STRAIGHT_PID_SCALE = 2.0  # 2.0
 SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
 
 #近距离减速/REVERSE阈值
-LOW_DISTANCE = 1.0
+LOW_DISTANCE = 1.3
 BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
 DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
@@ -276,12 +276,25 @@ class RTKNavControlNode(Node):
                 lines = f.readlines()[1:]  # 跳过表头
                 for line in lines:
                     line = line.strip()
-                    if not line or line.startswith('#'):
+                    if not line:
                         continue
+                    
+                    # 检查是否为注释行（包含#）
+                    if line.startswith('#'):
+                        comment = line[1:].strip().lower()
+                        if 'start' in comment:
+                            self.brush_start_idx = len(self.waypoints)
+                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
+                        elif 'stop' in comment:
+                            self.brush_stop_idx = len(self.waypoints)
+                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
+                        continue
+                    
                     parts = line.split(',')
                     if len(parts) < 4:
                         self.get_logger().warn(f"[RTKNav] 航点行格式错误，跳过: {line}")
                         continue
+                    
                     seq, raw_lon, raw_lat, raw_heading = parts[0], parts[1], parts[2], parts[3]
                     # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
                     # 核心修改：对当前航点应用出仓点偏移修正
@@ -701,7 +714,7 @@ class RTKNavControlNode(Node):
                     raw_lon = float(raw_lon.strip())
                     raw_lat = float(raw_lat.strip())
                     raw_heading = float(raw_heading.strip())
-             # 添加航点偏移修正
+                    # 添加航点偏移修正
                     corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
                         raw_lon, raw_lat, raw_heading
                     )
@@ -747,6 +760,7 @@ class RTKNavControlNode(Node):
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                 # 保存暂停前的状态
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
                 self.get_logger().warn(f"[RTK状态] 当前状态：{status_map.get(current_gps_status, '未知')}，非固定解，暂停导航（保存状态：{self.nav_context['pre_pause_state']}）")
                 self.nav_context["nav_state"] = NavState.PAUSE
                 self.nav_running = False
@@ -756,6 +770,11 @@ class RTKNavControlNode(Node):
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
                 self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
+                self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
+                if self.brush_active:
+                    self.publish_brush_speed(15.0)
+                else:
+                    self.publish_brush_speed(0.0)
                 self.nav_running = True
         
         # self.current_gps = (msg.longitude, msg.latitude)
@@ -1342,7 +1361,7 @@ class RTKNavControlNode(Node):
             speed_scale = 1.0
             if distance < LOW_DISTANCE:
                 # 线性减速：距离LOW_DISTANCE米时速度=BASE的50%，距离0.1米时速度=BASE的10%
-                speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)  # 0.1~0.5之间动态缩放
+                speed_scale = max(0.2, distance/LOW_DISTANCE * 0.7)  # 0.1~0.5之间动态缩放
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
             #  # 1. 先判断距离，决定是否更新实时航向
             # if distance >= 0.3:
@@ -1433,8 +1452,10 @@ class RTKNavControlNode(Node):
             "pre_pause_state": None,
             "angle_abnormal_count": 0,
             "is_angle_recalib": False,
+            "brush_active": False,  # 滚刷是否激活
         }
         self.return_to_loading_added = False  # 重置出仓点追加标志
+        self.brush_active = False  # 重置滚刷状态
             # 重置后退纠正相关计数器
         self.last_distance_for_backup = 0.0
         self.distance_increase_count = 0
@@ -1504,6 +1525,9 @@ class RTKNavControlNode(Node):
                     # 重新创建校准生成器（重置超时计时和误差计算）
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                     self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+            
+            # 恢复导航时检查滚刷控制（处理暂停恢复场景）
+            self.check_and_control_brush()
 
             # 新增：强制更新一次到目标航点的距离
             if self.nav_context["target_waypoint"]:
@@ -1519,6 +1543,9 @@ class RTKNavControlNode(Node):
                 self.nav_context["calib_generator"] = None
             else:
                 current_nav_state = self.nav_context["nav_state"]
+        
+        # 首次启动导航时也检查滚刷控制
+        self.check_and_control_brush()
         if self.is_boundary_triggered:
             self.get_logger().info("boundary_triggered!!!")
             self.get_logger().warn("boundary_triggered!!!")
@@ -1834,7 +1861,7 @@ class RTKNavControlNode(Node):
                     need_backup = False
                     current_base_speed = LINEAR_SPEED_BASE  # 初始化基础速度
                     if distance < LOW_DISTANCE:
-                        speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)
+                        speed_scale = max(0.2, distance/LOW_DISTANCE * 0.7)
                         current_base_speed = LINEAR_SPEED_BASE * speed_scale
                     
                     # 触发条件：慢速调节（≤30%基础速度）+ 距离连续多次增大（每帧增大≥阈值m）
@@ -1908,7 +1935,7 @@ class RTKNavControlNode(Node):
                         
                         # 近距离线性减速（原有逻辑保留）
                         if distance < LOW_DISTANCE:
-                            speed_scale = max(0.2, distance/LOW_DISTANCE * 0.6)
+                            speed_scale = max(0.2, distance/LOW_DISTANCE * 0.7)
                             current_base_speed = LINEAR_SPEED_BASE * speed_scale
                             # correction = correction * speed_scale
                             # 修正量不随速度缩放，保证近距离纠偏力度
@@ -2002,7 +2029,7 @@ class RTKNavControlNode(Node):
 
     def publish_brush_speed(self, speed: float):
         """发布滚刷速度指令（仅更新标志位，不单独发布）"""
-        self.brush_active = (speed < 0)
+        self.brush_active = (speed > 0)
         self.get_logger().info(f"[RTKNav] 设置滚刷状态: {'开启' if self.brush_active else '关闭'}")
 
     def check_and_control_brush(self):
@@ -2012,11 +2039,11 @@ class RTKNavControlNode(Node):
         
         idx = self.current_waypoint_idx
         
-        if self.brush_start_idx is not None and idx >= self.brush_start_idx:
-            self.publish_brush_speed(-15.0)
+        if self.brush_start_idx is not None and idx >= self.brush_start_idx and not self.brush_active:
+            self.publish_brush_speed(15.0)
             self.brush_start_idx = None
         
-        if self.brush_stop_idx is not None and idx >= self.brush_stop_idx:
+        if self.brush_stop_idx is not None and idx >= self.brush_stop_idx and self.brush_active:
             self.publish_brush_speed(0.0)
             self.brush_stop_idx = None
 
@@ -2032,10 +2059,18 @@ class RTKNavControlNode(Node):
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
             self.nav_running = False
+            if hasattr(self, 'nav_context'):
+                self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
             self.publish_stop_speed()
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
             self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
+            if hasattr(self, 'nav_context'):
+                self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
+                if self.brush_active:
+                    self.publish_brush_speed(15.0)
+                else:
+                    self.publish_brush_speed(0.0)
         self.last_state = msg.data
 
     def route_change_callback(self, msg: String):
@@ -2057,6 +2092,9 @@ class RTKNavControlNode(Node):
         self.current_waypoint_idx = 0  # 重置航点索引为0
         self.get_logger().info(f"[RTKNav] 路径切换时重置航点索引为0")
         self.return_to_loading_added = False  # 重置出仓点追加标志
+        self.brush_start_idx = None  # 重置滚刷开启索引
+        self.brush_stop_idx = None   # 重置滚刷关闭索引
+        self.brush_active = False    # 重置滚刷状态
         self.load_waypoints_from_file(self.rtk_path_file)
         
         if self.waypoints:
@@ -2114,7 +2152,6 @@ class RTKNavControlNode(Node):
                 self.multi_waypoint_generator = self.multi_waypoint_nav_generator(resume=resume)
                 self.nav_running = True
                 self.publish_nav_state(self.nav_context["nav_state"])
-                self.brush_active = False  # 启动导航时关闭滚刷
                 self.get_logger().info("[ROSNode] 启动/恢复RTK多点导航")
 
             # 获取多点导航速度并发布
@@ -2126,7 +2163,7 @@ class RTKNavControlNode(Node):
                     speed_msg.x = float(left_speed)
                     speed_msg.y = float(right_speed)
                     # 根据滚刷状态设置速度
-                    brush_speed = -15.0 if getattr(self, 'brush_active', False) else 0.0
+                    brush_speed = 15.0 if getattr(self, 'brush_active', False) else 0.0
                     speed_msg.z = brush_speed
                     self.motor_speed_pub.publish(speed_msg)
             except StopIteration:
