@@ -178,9 +178,20 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
     
     lon0, lat0 = base_point
     interval = param['interval']
-    edge_lon = param['edge_distance_lon']
-    edge_lat = param['edge_distance_lat']
+    edge_lon_raw = param['edge_distance_lon']
+    edge_lat_raw = param['edge_distance_lat']
     rotation_rad = degrees_to_radians(rotation_deg)
+    
+    # 处理单值或数组形式的边缘缩进
+    if isinstance(edge_lon_raw, (list, tuple)):
+        edge_lon_left, edge_lon_right = edge_lon_raw
+    else:
+        edge_lon_left = edge_lon_right = edge_lon_raw
+
+    if isinstance(edge_lat_raw, (list, tuple)):
+        edge_lat_top, edge_lat_bottom = edge_lat_raw
+    else:
+        edge_lat_top = edge_lat_bottom = edge_lat_raw
     
     # 核心保留：统一旋转中心为A点（无论宽度正负）
     e0, n0 = a_e, a_n
@@ -204,16 +215,13 @@ def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, star
         orig_rot[corner_name] = (e_rot, n_rot)
     original_corners_utm = list(orig_rot.values())
     
-    # 4. 生成未旋转的内部矩形角点（统一逻辑，适配宽度正负，保留）
+    # 4. 生成未旋转的内部矩形角点（支持上下/左右不同缩进）
     inner_unrot = {}
-    inner_top_right_e = e0 + width_sign * (width_abs - edge_lon)
-    inner_top_left_e = e0 + width_sign * edge_lon
-
     inner_unrot = {
-        'top_left': (inner_top_left_e, n0 - edge_lat),
-        'top_right': (inner_top_right_e, n0 - edge_lat),
-        'bottom_right': (inner_top_right_e, n0 - height + edge_lat),
-        'bottom_left': (inner_top_left_e, n0 - height + edge_lat)
+        'top_left': (e0 + width_sign * edge_lon_left, n0 - edge_lat_top),
+        'top_right': (e0 + width_sign * (width_abs - edge_lon_right), n0 - edge_lat_top),
+        'bottom_right': (e0 + width_sign * (width_abs - edge_lon_right), n0 - height + edge_lat_bottom),
+        'bottom_left': (e0 + width_sign * edge_lon_left, n0 - height + edge_lat_bottom)
     }
     
     # 5. 安全检查：内部区域有效性（统一计算逻辑，保留）
