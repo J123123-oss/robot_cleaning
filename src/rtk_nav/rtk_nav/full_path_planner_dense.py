@@ -504,7 +504,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/001_south1-11.yaml')
+        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/000_south1-7.yaml')
         self.declare_parameter('headless', False)
         
         # 尝试从 YAML 配置文件加载
@@ -785,7 +785,7 @@ class MultiAreaCleaningPathPlanner(Node):
             
             # ---------------------- 保存合并后的路径文件（带区域区分） ----------------------
             self.seq_num = self.get_next_sequence(save_dir)
-            # points_filename = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}.txt")
+            # points_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.txt")
             # with open(points_filename, "w", encoding="utf-8") as f:
             #     f.write("#序号,经度,纬度,航向角(度)\n")
                 
@@ -806,46 +806,63 @@ class MultiAreaCleaningPathPlanner(Node):
             
             # ---------------------- 保存密集点路径文件 ----------------------
             dense_spacing = 15.0  # 密集点间隔（米）
-            dense_utm = generate_dense_from_utm(merged_path_utm, dense_spacing)
             
             dense_latlon = []
-            for e, n in dense_utm:
-                lat, lon = get_latlon_from_utm(e, n, utm_zone[0], utm_zone[1])
-                dense_latlon.append((lon, lat))
+            dense_area_names = []
             
+            # 为每个区域单独生成密集点
+            for area_idx, (start_idx, end_idx, area_name) in enumerate(area_index_ranges):
+                area_path_utm = merged_path_utm[start_idx:end_idx + 1]
+                
+                # 生成当前区域的密集点
+                area_dense_utm = generate_dense_from_utm(area_path_utm, dense_spacing)
+                
+                # 转换UTM到经纬度，记录密集点对应的区域名称
+                for e, n in area_dense_utm:
+                    lat, lon = get_latlon_from_utm(e, n, utm_zone[0], utm_zone[1])
+                    dense_latlon.append((lon, lat))
+                    dense_area_names.append(area_name)
+                
+                # 处理区域衔接处：使用generate_dense_from_utm每隔dense_spacing补充中间点
+                if area_idx < len(area_index_ranges) - 1:
+                    next_start_idx = area_index_ranges[area_idx + 1][0]
+                    if end_idx < len(merged_path_utm) and next_start_idx < len(merged_path_utm):
+                        bridge_utm = [merged_path_utm[end_idx], merged_path_utm[next_start_idx]]
+                        bridge_dense_utm = generate_dense_from_utm(bridge_utm, dense_spacing)
+                        for e, n in bridge_dense_utm[1:-1]:
+                            lat, lon = get_latlon_from_utm(e, n, utm_zone[0], utm_zone[1])
+                            dense_latlon.append((lon, lat))
+                            dense_area_names.append(f"{area_name}_mid")
+            
+            # 重新计算航向角（基于完整的密集点路径）
             dense_headings = calculate_heading_angles(dense_latlon)
             
-            dense_filename = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}_dense.txt")
+            dense_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}_dense.txt")
             with open(dense_filename, "w", encoding="utf-8") as f:
                 f.write("序号,经度,纬度,航向角(度)\n")
                 
-                # 按区域写入路径点（与原文件保持一致）
-                global_idx = 0
-                for area_idx, (path_count, area_name) in enumerate(zip(area_path_counts, area_names)):
-                    # 写入区域名称注释
-                    # f.write(f"#{area_name}\n")
-                    
-                    # 写入当前区域的所有密集点
-                    # 计算当前区域对应的密集点数量（按比例）
-                    dense_per_point = len(dense_latlon) / len(merged_path_latlon) if len(merged_path_latlon) > 0 else 1
-                    dense_count = int(path_count * dense_per_point)
-                    if area_idx == len(area_path_counts) - 1:
-                        dense_count = len(dense_latlon) - global_idx
-                    
-                    for _ in range(dense_count):
-                        if global_idx >= len(dense_latlon):
-                            break
-                        lon, lat = dense_latlon[global_idx]
-                        hdg = dense_headings[global_idx]
-                        f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{hdg:.2f}\n")
-                        global_idx += 1
+                # 按区域写入路径点
+                current_area_name = None
+                for global_idx, ((lon, lat), hdg, area_name) in enumerate(zip(dense_latlon, dense_headings, dense_area_names)):
+                    # 当区域名称变化时，写入区域注释
+                    if area_name != current_area_name:
+                        f.write(f"#{area_name}\n")
+                        current_area_name = area_name
+                    # f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{hdg:.2f},{area_name}\n")
+                    f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{hdg:.2f}\n")
             
             self.get_logger().info(f"密集点路径文件已保存到：{dense_filename}，共{len(dense_latlon)}个点")
+            
+            # 生成合并的密集点用于绘图
+            all_dense_utm = []
+            for lon, lat in dense_latlon:
+                e, n, _, _ = get_utm_coords(lat, lon)
+                all_dense_utm.append((e, n))
             
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
-                save_dir, timestamp, all_calib_points_utm, area_names, dense_utm, area_index_ranges
+                save_dir, timestamp, all_calib_points_utm, area_names, all_dense_utm, area_index_ranges
             )
         
         except ValueError as e:
@@ -929,7 +946,7 @@ class MultiAreaCleaningPathPlanner(Node):
         plt.tight_layout()
         
         # 保存原图片（不带密集点）
-        # img_filename = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}.png")
+        # img_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.png")
         # plt.savefig(img_filename, dpi=300, bbox_inches='tight')
         # self.get_logger().info(f"多区域路径图已保存到：{img_filename}")
         
@@ -939,7 +956,7 @@ class MultiAreaCleaningPathPlanner(Node):
             dense_n = [p[1] for p in dense_utm]
             ax.scatter(dense_e, dense_n, c='blue', s=10, label='dense points', alpha=0.6)
             ax.set_title(f'planner area counter {len(all_orig_corners)} | point counter {len(merged_path_utm)} | dense point counter {len(dense_utm)}')
-            img_filename_dense = os.path.join(save_dir, f"{self.seq_num}_ser_south_{timestamp}_dense.png")
+            img_filename_dense = os.path.join(save_dir, f"{self.seq_num}_{timestamp}_dense.png")
             plt.savefig(img_filename_dense, dpi=300, bbox_inches='tight')
             self.get_logger().info(f"密集点路径图已保存到：{img_filename_dense}")
         
