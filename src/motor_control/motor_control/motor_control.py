@@ -81,7 +81,9 @@ class MotorControlNode(Node):
         self.last_yaw_error = 0.0  # 上一次的航向误差
         # MQTT点按方向定时器
         self.direction_timer = None
-        self.brush_speed = 0.0
+        self.brush_speed = 0.0  # 滚刷速度
+        self.current_left_speed = 0.0  # 当前左轮速度
+        self.current_right_speed = 0.0  # 当前右轮速度
 
         # UNLOADING parameters
         self.unloading_forword_threshold = 20.0 # seconds
@@ -143,7 +145,7 @@ class MotorControlNode(Node):
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
         self.charge_resume_threshold = 98 # 恢复充电的电量阈值（百分比）
-        self.is_charge_paused = False  # 充电是否已暂停（充满后暂停）
+        self.is_charge_paused = True  # 充电是否已暂停（充满后暂停）
         self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
         self.charge_resume_count = 0  # 恢复充电的次数
         self.last_charge_resume_time = 0.0  # 上次尝试恢复充电的时间戳
@@ -623,12 +625,14 @@ class MotorControlNode(Node):
 
     def charging_fault_code_cb(self, msg: Int16):
         """订阅充电故障代码的回调函数"""
-        self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
         self.charging_fault = msg.data  # 故障代码（整数）
         # 补充中途故障后切换状态：
-        if self.charging_fault == 0x05:
+        if self.charging_fault != 0x00 and self.charging_fault != self.last_charging_fault:
+            self.get_logger().info(f"故障码更新为{self.charging_fault}，设置充电暂停")
             self.is_charging = False
+            self.is_charge_paused = True
             self.dock_last_sensors = 0
+        self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
     
     # def laser_callback(self, msg: UInt16MultiArray):
     #     """订阅激光距离数据的回调函数"""
@@ -930,6 +934,12 @@ class MotorControlNode(Node):
                 "current_lon": self.current_lon if self.current_lon > 0.1 else None,
                 "current_lat": self.current_lat if self.current_lat > 0.1 else None,
                 "route_id": self.route_id if self.route_id is not None else "default",
+                # "uuid": "163e4ac9-18a9-4e08-9301-36ca08e07581",
+                "acceleration": {
+                    "x": self.current_left_speed,
+                    "y": self.current_right_speed,
+                    "z": self.brush_speed
+                },
                 "sensors_status":self.sensors_status,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
@@ -1721,6 +1731,10 @@ class MotorControlNode(Node):
 
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
         """设置双电机速度（完全保留原有功能）"""
+        # 保存当前速度值
+        self.current_left_speed = float(left_speed)
+        self.current_right_speed = float(right_speed)
+        
         # 左电机（ID=1）
         self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[0]["id"], left_speed)
         # 右电机（ID=2）

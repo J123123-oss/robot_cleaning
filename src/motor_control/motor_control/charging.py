@@ -96,6 +96,9 @@ class Charging485Node(Node):
         self.volt_curr_pub = self.create_publisher(Float32MultiArray, 'charging_volt_curr', 10)
         self.fault_code_pub = self.create_publisher(Int16, 'charging_fault_code', 10)
 
+        # 故障码状态
+        self.last_fault_code = None  # 上一次的故障码
+
         # 4. ROS2 服务创建（启停充电/查询数据）
         self.srv_start_charge = self.create_service(ChargeControl, 'start_charging', self._start_charge_cb)
         self.srv_stop_charge = self.create_service(ChargeControl, 'stop_charging', self._stop_charge_cb)
@@ -182,7 +185,9 @@ class Charging485Node(Node):
             if crc16_modbus(resp[:-2]) == resp[-2:]:
                 fault_code = (resp[3] << 8) | resp[4]
                 fault_msg = FAULT_CODE_MAP.get(fault_code, f"未定义故障码: {hex(fault_code)}")
-                # self.get_logger().info(f"故障码解析成功 | 0x{fault_code:04X} | {fault_msg}")
+                if fault_code != self.last_fault_code:
+                    self.get_logger().info(f"故障码变化 | 0x{fault_code:04X} | {fault_msg}")
+                    self.last_fault_code = fault_code
             else:
                 self.get_logger().warn("故障码响应-CRC校验失败")
         else:
@@ -207,11 +212,11 @@ class Charging485Node(Node):
         msg_fault.data = fault_code
         self.fault_code_pub.publish(msg_fault)
         # 3. 故障码处理（欠流保护）重新充电
-        if fault_code == 0x03:
-            fake_req = ChargeControl.Request()
-            fake_res = ChargeControl.Response()
-            self._start_charge_cb(fake_req, fake_res)
-            self.get_logger().info(f"检测到欠流保护，重新充电")
+        # if fault_code == 0x02 or fault_code == 0x03 or fault_code == 0x06:
+        #     fake_req = ChargeControl.Request()
+        #     fake_res = ChargeControl.Response()
+        #     self._start_charge_cb(fake_req, fake_res)
+        #     self.get_logger().info(f"检测到故障码{fault_code}，重新充电")
         # # 3. 充满自动停止（锂电池48V体系：电压≥54.5V 且 电流≤1.5A，匹配实际充电逻辑）
         # if (volt >= 54.5 and 1.0 <= curr <= 1.5):
         #     self.get_logger().info(f"检测到充电完成 | {volt:.1f}V/{curr:.2f}A，自动停止充电")
