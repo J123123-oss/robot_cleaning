@@ -506,17 +506,18 @@ class RTKNavControlNode(Node):
             self.get_logger().info(
                 f"[RTKNav] 计算出仓点偏移量：经度{lon_offset:.6f}°, 纬度{lat_offset:.6f}°, 航向{heading_offset:.2f}°"
             )
-            # 在unloading_gps_callback的偏移量计算后添加
-        max_offset_deg = 0.00001  # 最大允许偏移（约1米）
-        if abs(lon_offset) > max_offset_deg or abs(lat_offset) > max_offset_deg:
-            self.get_logger().warn(f"[RTKNav] 出仓点偏移过大（超过{max_offset_deg}°），请检查出仓点准确性")
-            self.waypoint_offset = {
-                "lon_offset": 0.0,
-                "lat_offset": 0.0,
-                "heading_offset": 0.0
-            }
-            self.offset_calculated = False
-            self.get_logger().info("[RTKNav] 已重置偏移量，后续航点将不进行修正")
+            # 在偏移量计算后检查是否过大
+            max_offset_deg = 0.00001  # 最大允许偏移（约1米）
+            if abs(lon_offset) > max_offset_deg or abs(lat_offset) > max_offset_deg:
+                self.get_logger().warn(f"[RTKNav] 出仓点偏移过大（超过{max_offset_deg}°），请检查出仓点准确性")
+                self.waypoint_offset = {
+                    "lon_offset": 0.0,
+                    "lat_offset": 0.0,
+                    "heading_offset": 0.0
+                }
+                self.offset_calculated = False
+                self.get_logger().info("[RTKNav] 已重置偏移量，后续航点将不进行修正")
+    
     def correct_waypoint_by_offset(self, raw_lon: float, raw_lat: float, raw_heading: float) -> Tuple[float, float, float]:
         """
         根据出仓点偏移量，修正航点的经纬度和航向角
@@ -2095,6 +2096,8 @@ class RTKNavControlNode(Node):
         self.brush_start_idx = None  # 重置滚刷开启索引
         self.brush_stop_idx = None   # 重置滚刷关闭索引
         self.brush_active = False    # 重置滚刷状态
+        self.nav_context["nav_state"] = NavState.IDLE  # 重置导航状态为IDLE
+        self.nav_context["pre_pause_state"] = None  # 重置暂停状态
         self.load_waypoints_from_file(self.rtk_path_file)
         
         if self.waypoints:
