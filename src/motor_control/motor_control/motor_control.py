@@ -48,7 +48,7 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'START
 
 MAX_SPEED = 12.0   # 遥控器最大速度
 MIN_SPEED = -12.0  # 遥控器最小速度
-BRUSH_SPEED = -18.0
+BRUSH_SPEED = -8.0
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
@@ -339,7 +339,7 @@ class MotorControlNode(Node):
         self.imu_yaw_deg = (self.imu_yaw_deg + 180) % 360 - 180
     def charge_resume_callback(self):
         # 充电停止条件判断（使用存储的传感器状态）
-        if self.is_charging and self.dock_sensors & 0x08 == 8:
+        if self.is_charging and ((self.dock_sensors & 0x08) or (self.dock_sensors & 0x04)):
             # 条件1：电压电流条件
             if self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6:
                 self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
@@ -360,13 +360,12 @@ class MotorControlNode(Node):
             if self.battery_remaining <= self.charge_resume_threshold:
                 current_time = self.get_clock().now().nanoseconds / 1e9
                 if current_time - self.last_charge_stop_time >= 5.0:
-                    if self.dock_sensors & 0x08 == 8:
+                    if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):
                         if not self.is_charging:
                             if current_time - self.last_charge_resume_time >= 30.0:
                                 self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
                                 self.start_charge_async()
                                 self.last_charge_resume_time = current_time
-                                self.charge_resume_count += 1
                         else:
                             self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
                             self.is_charge_paused = False
@@ -1142,7 +1141,12 @@ class MotorControlNode(Node):
                 self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
                 return
             # 在这里处理传感器数据
-            if self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and not self.is_charging: #车体到位未充电
+            # 检测 0x08 或 0x04 脉冲上升沿（0→1）
+            dock_ok = (self.dock_sensors & 0x08) and not (self.dock_last_sensors & 0x08) or \
+                      (self.dock_sensors & 0x04) and not (self.dock_last_sensors & 0x04)
+
+            if dock_ok and not self.is_charging:
+            # if (self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and self.dock_last_sensors & 0x04 != 5) and not self.is_charging: #车体到位未充电
                 self.get_logger().info("[ROSNode] 车体到位")
                 if self.current_status == "DISABLE":
                     self.get_logger().info("[ROSNode] 电机非使能状态，允许充电")
@@ -1178,10 +1182,10 @@ class MotorControlNode(Node):
         if self.bin_process_paused:
             return
         # 补充dock中传感器复位后再响应
-        if self.dock_sensors & 0x08 == 0x08:  # dock中左侧传感器被触发（有物体）
+        if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
             self.get_logger().warn("[ROSNode] 拒绝进入出仓状态，仓内限位传感器触发！！！")
             return
-        elif self.dock_sensors & 0x02 == 0x02:  # dock中归位
+        elif (self.dock_sensors & 0x02):  # dock中归位
              # ========== 新增：归位后首次初始化出仓流程 ==========
             if self.unloading_phase is None:
                 self.get_logger().info("[UNLOADING] 检测到dock归位，初始化出仓流程")
@@ -1415,10 +1419,10 @@ class MotorControlNode(Node):
         """进仓分步处理（核心修复：目标一致+稳定判定+后退停修正+频率正常）"""
         if self.bin_process_paused:
             return
-        if self.dock_sensors & 0x08 == 0x08:  # dock中左侧传感器被触发（有物体）
+        if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
                 self.get_logger().warn("[ROSNode] 拒绝进入进仓状态，仓内限位传感器触发！！！")
                 return
-        elif self.dock_sensors & 0x02 == 0x02:  # dock中归位
+        elif self.dock_sensors & 0x02:  # dock中归位
             # 归位后首次初始化进仓流程
             if self.loading_phase is None:
                 self.get_logger().info("[LOADING] 检测到dock归位，初始化进仓流程")
@@ -1664,11 +1668,11 @@ class MotorControlNode(Node):
                                 if diff_dis >= 5:
                                     self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
                                     if (left - right) < 0:
-                                        left_speed = base_speed / 8.0
-                                        right_speed = base_speed / 8.0
+                                        left_speed = base_speed / 4.0
+                                        right_speed = base_speed / 4.0
                                     else:
-                                        left_speed = -base_speed / 8.0
-                                        right_speed = -base_speed / 8.0
+                                        left_speed = -base_speed / 4.0
+                                        right_speed = -base_speed / 4.0
                                 # 步骤6：差值<5mm → 低速纠偏直行
                                 else:
                                     self.get_logger().info("[LOADING] 差值<5mm，直行")
@@ -1782,6 +1786,7 @@ class MotorControlNode(Node):
             resp = future.result()
             if resp.success:
                 self.get_logger().info(f"异步启动充电成功: {resp.message}")
+                self.charge_resume_count += 1
                 self.is_charging = True  # 更新充电状态
                 self.is_charge_paused = False  # 充电成功启动，清除暂停标志
                 self.last_charging_fault = 0  # 重置故障码状态，避免假充判断错误
