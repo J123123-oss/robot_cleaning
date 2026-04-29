@@ -17,6 +17,9 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # 新增：信号漂移过滤配置
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
+# 滚刷速度
+RTK_BRUSH_SPEED = 8.0  # 负数表示正常运行速度，与前进反方向
+
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 0.2  # 多点导航角度阈值
@@ -285,6 +288,8 @@ class RTKNavControlNode(Node):
                         if 'start' in comment:
                             self.brush_start_idx = len(self.waypoints)
                             self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
+                            if self.brush_start_idx == 0:
+                                self.brush_active = True
                         elif 'stop' in comment:
                             self.brush_stop_idx = len(self.waypoints)
                             self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
@@ -700,6 +705,8 @@ class RTKNavControlNode(Node):
                             # 记录滚刷开启的下一个航点索引
                             self.brush_start_idx = len(self.waypoints)
                             self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
+                            if self.brush_start_idx == 0:
+                                self.brush_active = True
                         elif 'stop' in comment:
                             # 记录滚刷关闭的下一个航点索引
                             self.brush_stop_idx = len(self.waypoints)
@@ -773,7 +780,7 @@ class RTKNavControlNode(Node):
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
                 self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
                 if self.brush_active:
-                    self.publish_brush_speed(15.0)
+                    self.publish_brush_speed(RTK_BRUSH_SPEED)
                 else:
                     self.publish_brush_speed(0.0)
                 self.nav_running = True
@@ -1167,8 +1174,8 @@ class RTKNavControlNode(Node):
         correction_clamped = -max(min(correction, MAX_CORRECTION), -MAX_CORRECTION)
 
         # 日志输出
-        if abs(yaw_error - self.last_yaw_error) > 0.1:
-            self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        # if abs(yaw_error - self.last_yaw_error) > 0.1:
+            # self.get_logger().info(f"yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
         
         self.last_yaw_error = yaw_error
         return correction_clamped
@@ -1546,6 +1553,7 @@ class RTKNavControlNode(Node):
                 current_nav_state = self.nav_context["nav_state"]
         
         # 首次启动导航时也检查滚刷控制
+        self.publish_nav_state(current_nav_state)
         self.check_and_control_brush()
         if self.is_boundary_triggered:
             self.get_logger().info("boundary_triggered!!!")
@@ -2030,7 +2038,7 @@ class RTKNavControlNode(Node):
 
     def publish_brush_speed(self, speed: float):
         """发布滚刷速度指令（仅更新标志位，不单独发布）"""
-        self.brush_active = (speed > 0)
+        self.brush_active = (speed != 0)
         self.get_logger().info(f"[RTKNav] 设置滚刷状态: {'开启' if self.brush_active else '关闭'}")
 
     def check_and_control_brush(self):
@@ -2041,7 +2049,7 @@ class RTKNavControlNode(Node):
         idx = self.current_waypoint_idx
         
         if self.brush_start_idx is not None and idx >= self.brush_start_idx and not self.brush_active:
-            self.publish_brush_speed(15.0)
+            self.publish_brush_speed(RTK_BRUSH_SPEED)
             self.brush_start_idx = None
         
         if self.brush_stop_idx is not None and idx >= self.brush_stop_idx and self.brush_active:
@@ -2069,7 +2077,7 @@ class RTKNavControlNode(Node):
             if hasattr(self, 'nav_context'):
                 self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
                 if self.brush_active:
-                    self.publish_brush_speed(15.0)
+                    self.publish_brush_speed(RTK_BRUSH_SPEED)
                 else:
                     self.publish_brush_speed(0.0)
         self.last_state = msg.data
@@ -2098,7 +2106,12 @@ class RTKNavControlNode(Node):
         self.brush_active = False    # 重置滚刷状态
         self.nav_context["nav_state"] = NavState.IDLE  # 重置导航状态为IDLE
         self.nav_context["pre_pause_state"] = None  # 重置暂停状态
+        self.publish_nav_state(self.nav_context["nav_state"])
         self.load_waypoints_from_file(self.rtk_path_file)
+        
+        # 同步滚刷状态到nav_context（加载路径后会更新brush_active）
+        if hasattr(self, 'nav_context'):
+            self.nav_context["brush_active"] = self.brush_active
         
         if self.waypoints:
             self.get_logger().info(f"[RTKNav] 路径切换成功，共 {len(self.waypoints)} 个航点")
@@ -2166,7 +2179,7 @@ class RTKNavControlNode(Node):
                     speed_msg.x = float(left_speed)
                     speed_msg.y = float(right_speed)
                     # 根据滚刷状态设置速度
-                    brush_speed = 15.0 if getattr(self, 'brush_active', False) else 0.0
+                    brush_speed = RTK_BRUSH_SPEED if getattr(self, 'brush_active', False) else 0.0
                     speed_msg.z = brush_speed
                     self.motor_speed_pub.publish(speed_msg)
             except StopIteration:
