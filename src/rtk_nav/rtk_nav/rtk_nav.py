@@ -301,18 +301,18 @@ class RTKNavControlNode(Node):
                         continue
                     
                     seq, raw_lon, raw_lat, raw_heading = parts[0], parts[1], parts[2], parts[3]
-                    # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
-                    # 核心修改：对当前航点应用出仓点偏移修正
-                    # 核心修复：强制转换为浮点数（之前未转换，导致字符串类型）
-                    raw_lon = float(raw_lon.strip())
-                    raw_lat = float(raw_lat.strip())
-                    raw_heading = float(raw_heading.strip())
-                    corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
-                        raw_lon, raw_lat, raw_heading
-                    )
+                    self.waypoints.append((float(raw_lon), float(raw_lat), float(raw_heading)))
+                    # # 核心修改：对当前航点应用出仓点偏移修正
+                    # # 核心修复：强制转换为浮点数（之前未转换，导致字符串类型）
+                    # raw_lon = float(raw_lon.strip())
+                    # raw_lat = float(raw_lat.strip())
+                    # raw_heading = float(raw_heading.strip())
+                    # corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
+                    #     raw_lon, raw_lat, raw_heading
+                    # )
                     
-                    # 替换原有逻辑：添加修正后的航点
-                    self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
+                    # # 替换原有逻辑：添加修正后的航点
+                    # self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
             
             # 验证航点有效性
             if not self.waypoints:
@@ -482,46 +482,46 @@ class RTKNavControlNode(Node):
         self.loading_waypoint = current_loading
         self.get_logger().info(f"[RTKNav] 收到出仓GPS坐标: 经度={loading_lon:.6f}, 纬度={loading_lat:.6f}, 航向={loading_heading:.2f}°")
         
-        # 步骤1：首次接收出仓点，缓存为基准点（不计算偏移）
-        if self.base_loading_waypoint is None:
-            self.base_loading_waypoint = current_loading
-            self.get_logger().info(f"[RTKNav] 缓存基准出仓点：{self.base_loading_waypoint}")
-            self.offset_calculated = False
-            return
+        # # 步骤1：首次接收出仓点，缓存为基准点（不计算偏移）
+        # if self.base_loading_waypoint is None:
+        #     self.base_loading_waypoint = current_loading
+        #     self.get_logger().info(f"[RTKNav] 缓存基准出仓点：{self.base_loading_waypoint}")
+        #     self.offset_calculated = False
+        #     return
         
-        # 步骤2：非首次接收，计算当前出仓点与基准点的偏移量
-        if not self.offset_calculated:
-            base_lon, base_lat, base_heading = self.base_loading_waypoint
+        # # 步骤2：非首次接收，计算当前出仓点与基准点的偏移量
+        # if not self.offset_calculated:
+        #     base_lon, base_lat, base_heading = self.base_loading_waypoint
             
-            # 2.1 计算经纬度偏移（直接差值，单位：°）
-            lon_offset = loading_lon - base_lon
-            lat_offset = loading_lat - base_lat
+        #     # 2.1 计算经纬度偏移（直接差值，单位：°）
+        #     lon_offset = loading_lon - base_lon
+        #     lat_offset = loading_lat - base_lat
             
-            # 2.2 计算航向角偏移（归一化到[-180°, 180°]）
-            heading_offset = loading_heading - base_heading
-            heading_offset = math.fmod(heading_offset + 180.0, 360.0) - 180.0
+        #     # 2.2 计算航向角偏移（归一化到[-180°, 180°]）
+        #     heading_offset = loading_heading - base_heading
+        #     heading_offset = math.fmod(heading_offset + 180.0, 360.0) - 180.0
             
-            # 2.3 保存偏移量
-            self.waypoint_offset = {
-                "lon_offset": lon_offset,
-                "lat_offset": lat_offset,
-                "heading_offset": heading_offset
-            }
-            self.offset_calculated = True
-            self.get_logger().info(
-                f"[RTKNav] 计算出仓点偏移量：经度{lon_offset:.6f}°, 纬度{lat_offset:.6f}°, 航向{heading_offset:.2f}°"
-            )
-            # 在偏移量计算后检查是否过大
-            max_offset_deg = 0.00001  # 最大允许偏移（约1米）
-            if abs(lon_offset) > max_offset_deg or abs(lat_offset) > max_offset_deg:
-                self.get_logger().warn(f"[RTKNav] 出仓点偏移过大（超过{max_offset_deg}°），请检查出仓点准确性")
-                self.waypoint_offset = {
-                    "lon_offset": 0.0,
-                    "lat_offset": 0.0,
-                    "heading_offset": 0.0
-                }
-                self.offset_calculated = False
-                self.get_logger().info("[RTKNav] 已重置偏移量，后续航点将不进行修正")
+        #     # 2.3 保存偏移量
+        #     self.waypoint_offset = {
+        #         "lon_offset": lon_offset,
+        #         "lat_offset": lat_offset,
+        #         "heading_offset": heading_offset
+        #     }
+        #     self.offset_calculated = True
+        #     self.get_logger().info(
+        #         f"[RTKNav] 计算出仓点偏移量：经度{lon_offset:.6f}°, 纬度{lat_offset:.6f}°, 航向{heading_offset:.2f}°"
+        #     )
+        #     # 在偏移量计算后检查是否过大
+        #     max_offset_deg = 0.00001  # 最大允许偏移（约1米）
+        #     if abs(lon_offset) > max_offset_deg or abs(lat_offset) > max_offset_deg or abs(heading_offset) > 1.0:
+        #         self.get_logger().warn(f"[RTKNav] 出仓点偏移过大（超过{max_offset_deg}°），请检查出仓点准确性")
+        #         self.waypoint_offset = {
+        #             "lon_offset": 0.0,
+        #             "lat_offset": 0.0,
+        #             "heading_offset": 0.0
+        #         }
+        #         self.offset_calculated = False
+        #         self.get_logger().info("[RTKNav] 已重置偏移量，后续航点将不进行修正")
     
     def correct_waypoint_by_offset(self, raw_lon: float, raw_lat: float, raw_heading: float) -> Tuple[float, float, float]:
         """
@@ -713,21 +713,21 @@ class RTKNavControlNode(Node):
                             self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
                         continue
                     
-                    # seq, lon, lat, heading_deg = line.split(',')
-                    # self.waypoints.append((float(lon), float(lat), float(heading_deg)))
-                    # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
+                    seq, lon, lat, heading_deg = line.split(',')
+                    self.waypoints.append((float(lon), float(lat), float(heading_deg)))
+                    self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
                     # return True
-                    seq, raw_lon, raw_lat, raw_heading = line.split(',')
-                    # 核心修复：转换为浮点数
-                    raw_lon = float(raw_lon.strip())
-                    raw_lat = float(raw_lat.strip())
-                    raw_heading = float(raw_heading.strip())
-                    # 添加航点偏移修正
-                    corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
-                        raw_lon, raw_lat, raw_heading
-                    )
-                    self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
-            self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个（已应用出仓点偏移修正）")
+                    # seq, raw_lon, raw_lat, raw_heading = line.split(',')
+                    # # 核心修复：转换为浮点数
+                    # raw_lon = float(raw_lon.strip())
+                    # raw_lat = float(raw_lat.strip())
+                    # raw_heading = float(raw_heading.strip())
+                    # # 添加航点偏移修正
+                    # corrected_lon, corrected_lat, corrected_heading = self.correct_waypoint_by_offset(
+                    #     raw_lon, raw_lat, raw_heading
+                    # )
+                    # self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
+            # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
             if self.brush_start_idx is not None:
                 self.get_logger().info(f"[RTKNav] 滚刷开启航点索引: {self.brush_start_idx}")
             if self.brush_stop_idx is not None:
