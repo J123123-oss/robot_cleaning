@@ -181,8 +181,8 @@ areas:
 
   # 18南侧
   - name: "south_18"
-    calib_point_a: {lon: 110.64776916894797, lat: 35.603203699047135}
-    calib_point_b: {lon: 110.64777027465526, lat: 35.60326631866077}
+    calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
+    calib_point_b: {lon: 110.64776922016449, lat: 35.60327065277348}
     calib_point_c: {lon: 110.6474332515515, lat: 35.60326969801204}
     # start_corner: "bottom_right"
     

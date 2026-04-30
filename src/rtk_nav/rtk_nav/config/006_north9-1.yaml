@@ -64,13 +64,13 @@ areas:
   # bridge_17A-18B
   - name: "bridge_17A-18B"
     calib_point_a: {lon: 110.64776897053187, lat: 35.603305884061356}
-    calib_point_b: {lon: 110.64777027465526, lat: 35.60326631866077}
+    calib_point_b: {lon: 110.64776922016449, lat: 35.60327065277348}
     calib_point_c: {lon: 110.64776897053187, lat: 35.603305884061356}
   # bridge_18A-19B
   - name: "bridge_18A-19B"
-    calib_point_a: {lon: 110.64776916894797, lat: 35.603203699047135}
+    calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
     calib_point_b: {lon: 110.64776966454107, lat: 35.603101230415184}
-    calib_point_c: {lon: 110.64776916894797, lat: 35.603203699047135}
+    calib_point_c: {lon: 110.64776956203357, lat: 35.60320371639688}
   # bridge_19A-20B
   - name: "bridge_19A-20B"
     calib_point_a: {lon: 110.6477703763593, lat: 35.602868395349155}
@@ -422,15 +422,15 @@ areas:
   # back_19B-18A
   - name: "back_19B-18A"
     calib_point_a: {lon: 110.64776966454107, lat: 35.603101230415184}
-    calib_point_b: {lon: 110.64776916894797, lat: 35.603203699047135}
+    calib_point_b: {lon: 110.64776956203357, lat: 35.60320371639688}
     calib_point_c: {lon: 110.64776966454107, lat: 35.603101230415184}
     start_corner: "top_right"
 
   # back_18B-17A
   - name: "back_18B-17A"
-    calib_point_a: {lon: 110.64777027465526, lat: 35.60326631866077}
+    calib_point_a: {lon: 110.64776922016449, lat: 35.60327065277348}
     calib_point_b: {lon: 110.64776897053187, lat: 35.603305884061356}
-    calib_point_c: {lon: 110.64777027465526, lat: 35.60326631866077}
+    calib_point_c: {lon: 110.64776922016449, lat: 35.60327065277348}
     start_corner: "top_right"
 
   # back_17B-16A
