@@ -881,7 +881,7 @@ class MotorControlNode(Node):
             # self.unloading_phase = "UNLOADING_FORWARD"  # 第一阶段：前进
             # self.unloading_start_time = time.time()
             # # 修正：降低定时器频率到100ms，匹配IMU更新频率
-            self.unloading_timer = self.create_timer(0.1, self.handle_unloading_step)
+            self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
             self.current_status = new_state
             # 初始化进仓阶段（仅初始化，不启动定时器）
@@ -898,7 +898,7 @@ class MotorControlNode(Node):
             # 修正：目标角度归一化
             self.loading_turn_target_deg = (self.loading_turn_target_deg + 180) % 360 - 180
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
-            self.loading_timer = self.create_timer(0.1, self.handle_loading_step)
+            self.loading_timer = self.create_timer(0.05, self.handle_loading_step)
         elif new_state == "AUTO_CLEANING":
             self.current_control_mode = "AUTO_CLEANING"
             self.get_logger().info(f"{self.current_control_mode}")
@@ -1668,16 +1668,16 @@ class MotorControlNode(Node):
                                 if diff_dis >= 5:
                                     self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
                                     if (left - right) < 0:
-                                        left_speed = base_speed / 4.0
-                                        right_speed = base_speed / 4.0
+                                        left_speed = base_speed / 10.0
+                                        right_speed = base_speed / 10.0
                                     else:
-                                        left_speed = -base_speed / 4.0
-                                        right_speed = -base_speed / 4.0
+                                        left_speed = -base_speed / 10.0
+                                        right_speed = -base_speed / 10.0
                                 # 步骤6：差值<5mm → 低速纠偏直行
                                 else:
                                     self.get_logger().info("[LOADING] 差值<5mm，直行")
-                                    left_speed = -base_speed / 3.0
-                                    right_speed = base_speed / 3.0
+                                    left_speed = -base_speed / 1.5
+                                    right_speed = base_speed / 1.5
                             else:
                                 # self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
                                 # 差值≥40mm → 中速旋转对准
@@ -1690,8 +1690,8 @@ class MotorControlNode(Node):
                                         left_speed = -base_speed / 4.0
                                         right_speed = -base_speed / 4.0
                                 else:
-                                    left_speed = -base_speed / 3.0
-                                    right_speed = base_speed / 3.0
+                                    left_speed = -base_speed
+                                    right_speed = base_speed
                                 
                         
                         # 设置最终电机速度
