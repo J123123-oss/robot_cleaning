@@ -86,7 +86,7 @@ class MotorControlNode(Node):
         self.current_right_speed = 0.0  # 当前右轮速度
 
         # UNLOADING parameters
-        self.unloading_forword_threshold = 20.0 # seconds
+        self.unloading_forword_threshold = 22.0 # seconds
         self.unloading_turn_start_time = None
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
@@ -94,7 +94,7 @@ class MotorControlNode(Node):
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_deg = 89.04    #-85.1   #-2.9  #-14.9 #24.3    #-73.15  #-51.59  #-46.65 #83.86  #-130.16   #-146.0  #192.0   #180.0  #90.0  # -123.94 #-157.63 #-179.22 #-72.33 #-89.76    #-153.05 #-159.63  # 进仓转向目标角
+        self.loading_turn_target_deg = 89.04    # 进仓转向目标角
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
         self.loading_turn_time = 30.0
         self.loading_phase = None
@@ -266,7 +266,7 @@ class MotorControlNode(Node):
         self.switch_state('x')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
-        self.charge_resume_timer = self.create_timer(10.0, self.charge_resume_callback)  # 10秒检查一次恢复充电
+        self.charge_resume_timer = self.create_timer(30.0, self.charge_resume_callback)  # 30秒检查一次恢复充电
         self.state_publish_timer = self.create_timer(5.0, self.publish_state)  # 默认5秒发布状态
 
         # add mqtt 
@@ -359,10 +359,10 @@ class MotorControlNode(Node):
         if self.is_charge_paused and self.battery_remaining is not None:
             if self.battery_remaining <= self.charge_resume_threshold:
                 current_time = self.get_clock().now().nanoseconds / 1e9
-                if current_time - self.last_charge_stop_time >= 5.0:
+                if current_time - self.last_charge_stop_time >= 60.0:
                     if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):
                         if not self.is_charging:
-                            if current_time - self.last_charge_resume_time >= 30.0:
+                            if current_time - self.last_charge_resume_time >= 360.0:
                                 self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
                                 self.start_charge_async()
                                 self.last_charge_resume_time = current_time
@@ -864,7 +864,7 @@ class MotorControlNode(Node):
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
                 self.state_publish_timer = self.create_timer(5.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为1秒")
+                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为5秒")
 
             self.complete_state = False
             self.current_status = new_state
@@ -1275,7 +1275,7 @@ class MotorControlNode(Node):
                     self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
                     self.unloading_lon = self.current_lon
                     self.unloading_lat = self.current_lat
-                    heading = self.imu_yaw_deg + 90.0 if self.imu_yaw_deg is not None else 0.00
+                    heading = self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00
                     heading = (heading + 360) % 360  # 归一化到0-360度
                     self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
                     unloading_gps_msg = Vector3()
@@ -1320,7 +1320,7 @@ class MotorControlNode(Node):
                         # get_gps
                         if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
                             self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.unloading_lon:.6f}，纬度{self.unloading_lat:.6f}")
-                            heading = self.imu_yaw_deg + 90.0 if self.imu_yaw_deg is not None else 0.00
+                            heading = self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00
                             heading = (heading + 360) % 360  # 归一化到0-360度
                             self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
                             # pub unloading result
