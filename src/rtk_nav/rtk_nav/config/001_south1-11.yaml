@@ -29,7 +29,7 @@ areas:
     edge_distance_lon: 0.0
     edge_distance_lat: 0.0
 
-  # 1南侧/线槽右3     -----------------------------------------------------
+  # # 1南侧/线槽右3     -----------------------------------------------------
   - name: "south_1"
     calib_point_a: {lon: 110.64741278334898, lat: 35.606585031155625}
     calib_point_b: {lon: 110.64741303923405, lat: 35.60676565301766}
@@ -168,7 +168,6 @@ areas:
     calib_point_c: {lon: 110.64726701518703, lat: 35.60498111769845}
     start_corner: "top_right"
     swap_wh_select: True
-    reverse_end_point: True
   # [右，左]
     edge_distance_lon: [0.15, 0.5]   
     # [下，上]  
@@ -257,7 +256,7 @@ areas:
 
 
 default:
-  interval: 1.2
+  interval: 1.0
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.1

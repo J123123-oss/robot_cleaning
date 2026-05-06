@@ -128,7 +128,6 @@ areas:
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
     calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
     start_corner: "top_right"
-    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1]   
     edge_distance_lat: [0.3, 0.3]
   # bridge_20-21b
@@ -350,7 +349,7 @@ areas:
     start_corner: "top_right"
 
 default:
-  interval: 1.2
+  interval: 1.0
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.1

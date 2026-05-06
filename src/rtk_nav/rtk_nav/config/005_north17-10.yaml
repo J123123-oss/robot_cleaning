@@ -171,7 +171,6 @@ areas:
     calib_point_b: {lon: 110.64660400469242, lat: 35.603467352248686}
     calib_point_c: {lon: 110.64709801411928, lat: 35.6034684954575}
     start_corner: "top_left"
-    reverse_end_point: True
     edge_distance_lon: [0.15, 0.5] 
     edge_distance_lat: 0.3
 
@@ -196,6 +195,7 @@ areas:
     calib_point_b: {lon: 110.64660255426848, lat: 35.60366754778793}
     calib_point_c: {lon: 110.64693833490217, lat: 35.603668373299435}
     start_corner: "top_right"
+    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.3
   # 北侧14
@@ -513,7 +513,7 @@ areas:
 
 
 default:
-  interval: 1.2
+  interval: 1.0
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.1

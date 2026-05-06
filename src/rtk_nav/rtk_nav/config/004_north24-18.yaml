@@ -176,6 +176,7 @@ areas:
     calib_point_b: {lon: 110.64660811614381, lat: 35.60229250558312}
     calib_point_c: {lon: 110.6469442829288, lat: 35.602293966166975}
     start_corner: "top_right"
+    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.3
   # bridge_21-22b
@@ -215,7 +216,6 @@ areas:
     calib_point_b: {lon: 110.64660583999114, lat: 35.60266805527786}
     calib_point_c: {lon: 110.6469415903747, lat: 35.60266851636253}
     start_corner: "top_right"
-    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.3
   # 北侧19
@@ -250,7 +250,6 @@ areas:
     calib_point_b: {lon: 110.64660377457831, lat: 35.60321094153396}
     calib_point_c: {lon: 110.64693982363194, lat: 35.603211448459945}
     start_corner: "top_right"
-    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.3
 
@@ -434,7 +433,7 @@ areas:
     start_corner: "top_right"
 
 default:
-  interval: 1.2
+  interval: 1.0
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.1

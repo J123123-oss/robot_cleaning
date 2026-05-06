@@ -103,6 +103,11 @@ areas:
     calib_point_c: {lon: 110.6472730115645, lat: 35.603607693253174}
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3] 
+  # bridge_16A-17upB
+  - name: "bridge_16A-17upB"
+    calib_point_a: {lon: 110.64776810603713, lat: 35.60346909433307}
+    calib_point_b: {lon: 110.64776689, lat: 35.60344233}
+    calib_point_c: {lon: 110.64776810603713, lat: 35.60346909433307}
   # 17南侧
   - name: "south_17_up"
     calib_point_a: {lon: 110.6474252497039, lat: 35.60330511443972}
@@ -206,7 +211,7 @@ areas:
     start_corner: "top_right"
 
 default:
-  interval: 1.2
+  interval: 1.0
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.1
