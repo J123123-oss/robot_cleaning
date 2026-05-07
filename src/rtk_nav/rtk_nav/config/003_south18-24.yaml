@@ -88,14 +88,14 @@ areas:
   - name: "bridge_18-19b"
     calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
     calib_point_b: {lon: 110.6477703763593, lat: 35.602868395349155}
-    calib_point_c: {lon: 110.64776956203357, lat: 35.60320371639688}
+    calib_point_c: {lon: 110.64776956203357, lat: 35.60311019544255}
 
 
   # 19南侧加长方块
   - name: "south_19_long_block"
-    calib_point_a: {lon: 110.64742681507089, lat: 35.60286720038175}
-    calib_point_b: {lon: 110.64742887576334, lat: 35.60311467136716}
-    calib_point_c: {lon: 110.64726080866282, lat: 35.60311302695789}
+    calib_point_a: {lon: 110.64742706559392, lat: 35.60286741056806}
+    calib_point_b: {lon: 110.64742587033007, lat: 35.60311039971046}
+    calib_point_c: {lon: 110.64727525351053, lat: 35.60311302695789}
     start_corner: "top_right"
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
