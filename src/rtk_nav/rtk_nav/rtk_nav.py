@@ -18,22 +18,22 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
 # 滚刷速度
-RTK_BRUSH_SPEED = 8.0  # 负数表示正常运行速度，与前进反方向
+RTK_BRUSH_SPEED = 18.0 #18.0  # 负数表示正常运行速度，与前进反方向
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
-RTK_HEADING_TOLERANCE = 0.2  # 多点导航角度阈值
+RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = 10.0   # origin 8.0
-TURN_SPEED = 1.0      # origin 0.1
+TURN_SPEED = 1.0 *2     # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
-TURN_SPEED_FAST = 0.8  # 大误差快速转向基准速度
-TURN_SPEED_MID = 0.6   # 中误差中等转向基准速度
-TURN_SPEED_SLOW = 0.1  # 小误差慢速转向基准速度（防超调）
-MAX_CORRECTION = 0.8    # 最大修正量
+TURN_SPEED_FAST = 0.8 *2 # 大误差快速转向基准速度
+TURN_SPEED_MID = 0.6 *2  # 中误差中等转向基准速度
+TURN_SPEED_SLOW = 0.1 *4 # 小误差慢速转向基准速度（防超调）
+MAX_CORRECTION = 0.8 *2   # 最大修正量
 STRAIGHT_MAX_CORRECTION = 3.0
 # straight line speed correction factor
 STRAIGHT_PID_SCALE = 2.0  # 2.0
@@ -715,7 +715,7 @@ class RTKNavControlNode(Node):
                     
                     seq, lon, lat, heading_deg = line.split(',')
                     self.waypoints.append((float(lon), float(lat), float(heading_deg)))
-                    self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
+                    # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
                     # return True
                     # seq, raw_lon, raw_lat, raw_heading = line.split(',')
                     # # 核心修复：转换为浮点数

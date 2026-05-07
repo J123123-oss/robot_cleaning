@@ -48,7 +48,7 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'START
 
 MAX_SPEED = 12.0   # 遥控器最大速度
 MIN_SPEED = -12.0  # 遥控器最小速度
-BRUSH_SPEED = -8.0
+BRUSH_SPEED = -18.0
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
