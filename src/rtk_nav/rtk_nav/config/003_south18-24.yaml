@@ -107,8 +107,8 @@ areas:
     start_corner: "bottom_right"
     reverse_end_point: True
     edge_distance_lon: [0.15, 0.1]   
-    edge_distance_lat: [0.3, 0.3]
- # bridge_19-20b
+    edge_distance_lat: [0.3, 0.1]
+#  # bridge_19-20b
   - name: "bridge_19-20b"
     calib_point_a: {lon: 110.64776966454107, lat: 35.603101230415184}
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
@@ -128,8 +128,9 @@ areas:
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
     calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
     start_corner: "top_right"
+    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1]   
-    edge_distance_lat: [0.3, 0.3]
+    edge_distance_lat: [0.1, 0.3]
   # bridge_20-21b
   - name: "bridge_20-21b"
     calib_point_a: {lon: 110.64777166295664, lat: 35.602665661235534}
@@ -197,7 +198,7 @@ areas:
     calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_c: {lon: 110.647279569684, lat: 35.60218200226331}
     start_corner: "bottom_right"
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
  # bridge_23-24b
   - name: "bridge_23-24b"
