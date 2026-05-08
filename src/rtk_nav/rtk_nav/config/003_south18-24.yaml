@@ -1,0 +1,358 @@
+# 区域配置文件
+# 添加/删除区域只需修改此文件，无需修改代码或launch文件
+
+areas:
+  # bridge_5B-6B
+  - name: "bridge_5B-6B"
+    calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_b: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+  # bridge_6A-7bA
+  - name: "bridge_6A-7bA"
+    calib_point_a: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_b: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_c: {lon: 110.64741690256913, lat: 35.605502653578235}
+  # bridge_7bA-7A
+  - name: "bridge_7bA-7A"
+    calib_point_a: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_b: {lon: 110.64776001450005, lat: 35.605286952396405}
+    calib_point_c: {lon: 110.64741623970805, lat: 35.605286201553355}
+    start_corner: "top_right"
+  # [右，左]
+    edge_distance_lon: [0.3, 0.3]  
+  # bridge_8B-9A
+  - name: "bridge_8B-9A"
+    calib_point_a: {lon: 110.6477602879233, lat: 35.605252466171876}
+    calib_point_b: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_c: {lon: 110.6477602879233, lat: 35.605252466171876}
+  # bridge_10A-11B
+  - name: "bridge_10A-11B"
+    calib_point_a: {lon: 110.64776183179559, lat: 35.604852917286685}
+    calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
+    calib_point_c: {lon: 110.64776183179559, lat: 35.604852917286685}
+  # bridge_11A-12B
+  - name: "bridge_11A-12B"
+    calib_point_a: {lon: 110.64776313280512, lat: 35.60452749634761}
+    calib_point_b: {lon: 110.64776416327175, lat: 35.60442191035046}
+    calib_point_c: {lon: 110.64776313280512, lat: 35.60452749634761}
+  # bridge_12A-13B
+  - name: "bridge_12A-13B"
+    calib_point_a: {lon: 110.64776463744738, lat: 35.60429273226822}
+    calib_point_b: {lon: 110.64776464459975, lat: 35.60426221780848}
+    calib_point_c: {lon: 110.64776463744738, lat: 35.60429273226822}
+  # bridge_13A-14B
+  - name: "bridge_13A-14B"
+    calib_point_a: {lon: 110.64776491482968, lat: 35.60415389596566}
+    calib_point_b: {lon: 110.64776557275421, lat: 35.60404401827957}
+    calib_point_c: {lon: 110.64776491482968, lat: 35.60415389596566}
+  # bridge_14A-15B
+  - name: "bridge_14A-15B"
+    calib_point_a: {lon: 110.64776723843342, lat: 35.603863009383225}
+    calib_point_b: {lon: 110.64776678225708, lat: 35.60382802136538}
+    calib_point_c: {lon: 110.64776723843342, lat: 35.603863009383225}
+  # bridge_15A-16B
+  - name: "bridge_15A-16B"
+    calib_point_a: {lon: 110.64776705903036, lat: 35.60371975122639}
+    calib_point_b: {lon: 110.6477676095043, lat: 35.60360864241737}
+    calib_point_c: {lon: 110.64776705903036, lat: 35.60371975122639}
+  # bridge_16A-17B
+  - name: "bridge_16A-17B"
+    calib_point_a: {lon: 110.64776810603713, lat: 35.60346909433307}
+    calib_point_b: {lon: 110.64776797468316, lat: 35.60344504040682}
+    calib_point_c: {lon: 110.64776810603713, lat: 35.60346909433307}
+  # bridge_17A-18B
+  - name: "bridge_17A-18B"
+    calib_point_a: {lon: 110.64776897053187, lat: 35.603305884061356}
+    calib_point_b: {lon: 110.64776922016449, lat: 35.60327065277348}
+    calib_point_c: {lon: 110.64776897053187, lat: 35.603305884061356}
+
+
+
+  # 18南侧加长方块  ------------------------------------------------------
+  - name: "south_18_long_block"
+    calib_point_a: {lon: 110.64742563166243, lat: 35.60319254527348}
+    calib_point_b: {lon: 110.64742540106296, lat: 35.603269692175225}
+    calib_point_c: {lon: 110.6472743428311, lat: 35.60326831110682}
+    swap_wh_select: True
+    start_corner: "bottom_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+  # 18南侧
+  - name: "south_18"
+    calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
+    calib_point_b: {lon: 110.64776922016449, lat: 35.60327065277348}
+    calib_point_c: {lon: 110.6474332515515, lat: 35.60326969801204}
+    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lat: [0.3, 0.3]  
+
+  - name: "bridge_18-19b"
+    calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
+    calib_point_b: {lon: 110.6477703763593, lat: 35.602868395349155}
+    calib_point_c: {lon: 110.64776956203357, lat: 35.60311019544255}
+
+
+  # 19南侧加长方块
+  - name: "south_19_long_block"
+    calib_point_a: {lon: 110.64742706559392, lat: 35.60286741056806}
+    calib_point_b: {lon: 110.64742587033007, lat: 35.60311039971046}
+    calib_point_c: {lon: 110.64727525351053, lat: 35.60311302695789}
+    start_corner: "top_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+  # 19南侧
+  - name: "south_19"
+    calib_point_a: {lon: 110.6477703763593, lat: 35.602868395349155}
+    calib_point_b: {lon: 110.64776966454107, lat: 35.603101230415184}
+    calib_point_c: {lon: 110.6474309438137, lat: 35.603101918359954}
+    start_corner: "bottom_right"
+    reverse_end_point: True
+    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lat: [0.3, 0.1]
+#  # bridge_19-20b
+  - name: "bridge_19-20b"
+    calib_point_a: {lon: 110.64776966454107, lat: 35.603101230415184}
+    calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
+    calib_point_c: {lon: 110.64776966454107, lat: 35.603101230415184}
+
+  # 20南侧加长方块
+  - name: "south_20_long_block"
+    calib_point_a: {lon: 110.64742843779285, lat: 35.60265380108701}
+    calib_point_b: {lon: 110.64742718555796, lat: 35.60283492029976}
+    calib_point_c: {lon: 110.64727659884244, lat: 35.60283444780098}
+    start_corner: "bottom_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+  # 20南侧
+  - name: "south_20"
+    calib_point_a: {lon: 110.64777166295664, lat: 35.602665661235534}
+    calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
+    calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
+    start_corner: "top_right"
+    reverse_end_point: True
+    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lat: [0.1, 0.3]
+  # bridge_20-21b
+  - name: "bridge_20-21b"
+    calib_point_a: {lon: 110.64777166295664, lat: 35.602665661235534}
+    calib_point_b: {lon: 110.64777253579807, lat: 35.60244104011207}
+    calib_point_c: {lon: 110.64777166295664, lat: 35.602665661235534}
+    
+  # 21南侧加长方块
+  - name: "south_21_long_block"
+    calib_point_a: {lon: 110.64742833232991, lat: 35.60244005332984}
+    calib_point_b: {lon: 110.64742745040523, lat: 35.6025690612263}
+    calib_point_c: {lon: 110.64727644082087, lat: 35.60256836411488}
+    start_corner: "top_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+
+  # 21南侧
+  - name: "south_21"
+    calib_point_a: {lon: 110.64777253579807, lat: 35.60244104011207}
+    calib_point_b: {lon: 110.64777235307753, lat: 35.60255989772949}
+    calib_point_c: {lon: 110.64743581917091, lat: 35.60255880384909}
+    start_corner: "bottom_right"
+    reverse_end_point: True
+    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lat: [0.3, 0.3]
+ # bridge_21-22b
+  - name: "bridge_21-22b"
+    calib_point_a: {lon: 110.64777235307753, lat: 35.60255989772949}
+    calib_point_b: {lon: 110.64777309831817, lat: 35.60240848925073}
+    calib_point_c: {lon: 110.64777235307753, lat: 35.60255989772949}
+
+  # 22南侧加长方块
+  - name: "south_22_long_block"
+    calib_point_a: {lon: 110.64742962574496, lat: 35.602277601960715}
+    calib_point_b: {lon: 110.64742868463246, lat: 35.602406783823106}
+    calib_point_c: {lon: 110.64727723790173, lat: 35.60240587549978}
+    start_corner: "bottom_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+  # 22南侧
+  - name: "south_22"
+    calib_point_a: {lon: 110.64777328985258, lat: 35.602289317044416}
+    calib_point_b: {lon: 110.64777309831817, lat: 35.60240848925073}
+    calib_point_c: {lon: 110.64743674068407, lat: 35.60240675086808}
+    start_corner: "top_right"
+    reverse_end_point: True
+    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lat: [0.3, 0.3]
+ # bridge_22-23b
+  - name: "bridge_22-23b"
+    calib_point_a: {lon: 110.64777328985258, lat: 35.602289317044416}
+    calib_point_b: {lon: 110.64777457663791, lat: 35.60211783161967}
+    calib_point_c: {lon: 110.64777328985258, lat: 35.602289317044416}
+
+  # 23南侧最小块
+  - name: "south_23_small_block"
+    calib_point_a: {lon: 110.64727199480592, lat: 35.60211544701447}
+    calib_point_b: {lon: 110.64727207955534, lat: 35.602129950559984}
+    calib_point_c: {lon: 110.6472006510195, lat: 35.60212948887804}
+    start_corner: "bottom_left"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+  # 23南侧
+  - name: "south_23"
+    calib_point_a: {lon: 110.64777457663791, lat: 35.60211783161967}
+    calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
+    calib_point_c: {lon: 110.647279569684, lat: 35.60218200226331}
+    start_corner: "bottom_right"
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+ # bridge_23-24b
+  - name: "bridge_23-24b"
+    calib_point_a: {lon: 110.64777398498698, lat: 35.602184783694824}
+    calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
+    calib_point_c: {lon: 110.64777398498698, lat: 35.602184783694824}
+
+  # 24南侧
+  - name: "south_24"
+    calib_point_a: {lon: 110.64777591376827, lat: 35.60192967830139}
+    calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
+    calib_point_c: {lon: 110.6472005047547, lat: 35.60207628552591}
+    reverse_end_point: True
+    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lat: [0.3, 0.3]
+
+
+
+  # back_24B-23A   --------------------------------------------
+  - name: "back_24B-23A"
+    calib_point_a: {lon: 110.64777435841093, lat: 35.602079561345256}
+    calib_point_b: {lon: 110.64777457663791, lat: 35.60211783161967}
+    calib_point_c: {lon: 110.64777435841093, lat: 35.602079561345256}
+    start_corner: "top_right"
+
+  # back_23B-22A
+  - name: "back_23B-22A"
+    calib_point_a: {lon: 110.64777398498698, lat: 35.602184783694824}
+    calib_point_b: {lon: 110.64777328985258, lat: 35.602289317044416}
+    calib_point_c: {lon: 110.64777398498698, lat: 35.602184783694824}
+    start_corner: "top_right"
+
+  # back_22B-21A
+  - name: "back_22B-21A"
+    calib_point_a: {lon: 110.64777309831817, lat: 35.60240848925073}
+    calib_point_b: {lon: 110.64777253579807, lat: 35.60244104011207}
+    calib_point_c: {lon: 110.64777309831817, lat: 35.60240848925073}
+    start_corner: "top_right"
+
+  # back_21B-20A
+  - name: "back_21B-20A"
+    calib_point_a: {lon: 110.64777235307753, lat: 35.60255989772949}
+    calib_point_b: {lon: 110.64777166295664, lat: 35.602665661235534}
+    calib_point_c: {lon: 110.64777235307753, lat: 35.60255989772949}
+    start_corner: "top_right"
+
+  # back_20B-19A
+  - name: "back_20B-19A"
+    calib_point_a: {lon: 110.64777090237833, lat: 35.60283616232081}
+    calib_point_b: {lon: 110.6477703763593, lat: 35.602868395349155}
+    calib_point_c: {lon: 110.64777090237833, lat: 35.60283616232081}
+    start_corner: "top_right"
+
+  # back_19B-18A
+  - name: "back_19B-18A"
+    calib_point_a: {lon: 110.64776966454107, lat: 35.603101230415184}
+    calib_point_b: {lon: 110.64776956203357, lat: 35.60320371639688}
+    calib_point_c: {lon: 110.64776966454107, lat: 35.603101230415184}
+    start_corner: "top_right"
+
+  # back_18B-17A
+  - name: "back_18B-17A"
+    calib_point_a: {lon: 110.64776922016449, lat: 35.60327065277348}
+    calib_point_b: {lon: 110.64776897053187, lat: 35.603305884061356}
+    calib_point_c: {lon: 110.64776922016449, lat: 35.60327065277348}
+    start_corner: "top_right"
+
+  # back_17B-16A
+  - name: "back_17B-16A"
+    calib_point_a: {lon: 110.64776797468316, lat: 35.60344504040682}
+    calib_point_b: {lon: 110.64776810603713, lat: 35.60346909433307}
+    calib_point_c: {lon: 110.64776797468316, lat: 35.60344504040682}
+    start_corner: "top_right"
+
+  # back_16B-15A
+  - name: "back_16B-15A"
+    calib_point_a: {lon: 110.6477676095043, lat: 35.60360864241737}
+    calib_point_b: {lon: 110.64776705903036, lat: 35.60371975122639}
+    calib_point_c: {lon: 110.6477676095043, lat: 35.60360864241737}
+    start_corner: "top_right"
+
+  # back_15B-14A
+  - name: "back_15B-14A"
+    calib_point_a: {lon: 110.64776678225708, lat: 35.60382802136538}
+    calib_point_b: {lon: 110.64776723843342, lat: 35.603863009383225}
+    calib_point_c: {lon: 110.64776678225708, lat: 35.60382802136538}
+    start_corner: "top_right"
+
+  # back_14B-13A
+  - name: "back_14B-13A"
+    calib_point_a: {lon: 110.64776557275421, lat: 35.60404401827957}
+    calib_point_b: {lon: 110.64776491482968, lat: 35.60415389596566}
+    calib_point_c: {lon: 110.64776557275421, lat: 35.60404401827957}
+    start_corner: "top_right"
+
+  # back_13B-12A
+  - name: "back_13B-12A"
+    calib_point_a: {lon: 110.64776464459975, lat: 35.60426221780848}
+    calib_point_b: {lon: 110.64776463744738, lat: 35.60429273226822}
+    calib_point_c: {lon: 110.64776464459975, lat: 35.60426221780848}
+    start_corner: "top_right"
+
+  # back_12B-11A
+  - name: "back_12B-11A"
+    calib_point_a: {lon: 110.64776416327175, lat: 35.60442191035046}
+    calib_point_b: {lon: 110.64776313280512, lat: 35.60452749634761}
+    calib_point_c: {lon: 110.64776416327175, lat: 35.60442191035046}
+    start_corner: "top_right"
+
+  # back_11B-10A
+  - name: "back_11B-10A"
+    calib_point_a: {lon: 110.64776265157377, lat: 35.60475014299974}
+    calib_point_b: {lon: 110.64776183179559, lat: 35.604852917286685}
+    calib_point_c: {lon: 110.64776265157377, lat: 35.60475014299974}
+    start_corner: "top_right"
+
+  # back_9A-8B
+  - name: "back_9A-8B"
+    calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
+    calib_point_c: {lon: 110.6477609856752, lat: 35.60500043052129}
+    start_corner: "top_right"
+
+  # back_7A-7bA
+  - name: "back_7A-7bA"
+    calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
+    calib_point_b: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_c: {lon: 110.64776001450005, lat: 35.605286952396405}
+  # [右，左]
+    edge_distance_lon: [0.3, 0.3]  
+  # back_7bA-6A
+  - name: "back_7bA-6A"
+    calib_point_a: {lon: 110.64741623970805, lat: 35.605286201553355}
+    calib_point_b: {lon: 110.64741690256913, lat: 35.605502653578235}
+    calib_point_c: {lon: 110.64741623970805, lat: 35.605286201553355}
+    start_corner: "top_right"
+
+  # back_6B-5A
+  - name: "back_6B-5A"
+    calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_c: {lon: 110.64741642174106, lat: 35.60568374013546}
+    start_corner: "top_right"
+  # back_5B-4A
+  - name: "back_5B-4A"
+    calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+    start_corner: "top_right"
+
+default:
+  interval: 1.0
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.1
+  edge_distance_lat: 0.1
+  headless: False

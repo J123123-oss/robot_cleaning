@@ -1,0 +1,20 @@
+data: "$GNGGA,,,,,,0,,,,,,,,*78\r\n$GNGGA,,,,,,0,,,,,,,,*78\r\n$GNGNS,,,,,,NNNNN,,,,,,,V*67\r\
+  \n$GNGLL,,,,,,V,N*7A\r\n$GPGSA,,1,,,,,,,,,,,,,,,,*73\r\n$GNRMC,,V,,,,,,,,,,N,V*37\r\
+  \n$GPGST,,,,,,,,*57\r\n#UNIHEADINGA,97,GPS,UNKNOWN,1,606000,0,0,18,1;INSUFFICIENT_OBS,NONE,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,\"\
+  \",0,0,0,0,0,00,0,0*88e89fb9\r\n$GNGBS,,,,,,,,,,*5F\r\n$GPGSV,1,1,00,,,,,*55\r\n"
+---
+data: "$command,GNGGA,,,,,,0,,,,,,,,,response: PARSING FAILD GRAMMAR ERROR,,,,,0,,,,,,,,*17\r\
+  \n$command,GNGGA,,,,,,0,,,,,,,,,response: PARSING FAILD GRAMMAR ERROR,,,,,0,,,,,,,,*17\r\
+  \n$command,GNGNS,,,,,,NNNNN,,,,,,,V,response: PARSING FAILD NO MATCHING FUNC  GNGNS*74\r\
+  \n$command,GNGLL,,,,,,V,N,response: PARSING FAILD NO MATCHING FUNC  GNGLL*74\r\n\
+  $command,GPGSA,,1,,,,,,,,,,,,,,,,,response: PARSING FAILD GRAMMAR ERROR,1,,,,,,,,,,,,,,,,*1D\r\
+  \n$command,GNRMC,,V,,,,,,,,,,N,V,response: PARSING FAILD GRAMMAR ERROR,V,,,,,,,,,,N,V*0A\r\
+  \n$command,GPGST,,,,,,,,,response: PARSING FAILD GRAMMAR ERROR,,,,,,,*08\r\n$command,GNGBS,,,,,,,,,,,response:\
+  \ PARSING FAILD NO MATCHING FUNC  GNGBS*40\r\n$command,GPGSV,1,1,00,,,,,,response:\
+  \ PARSING FAILD GRAMMAR ERROR,1,1,00,,,,,*26\r\n"
+---
+data: "$GNGGA,,,,,,0,,,,,,,,*78\r\n$GNGGA,,,,,,0,,,,,,,,*78\r\n$GNGNS,,,,,,NNNNN,,,,,,,V*67\r\
+  \n$GNGLL,,,,,,V,N*7A\r\n$GPGSA,,1,,,,,,,,,,,,,,,,*73\r\n$GNRMC,,V,,,,,,,,,,N,V*37\r\
+  \n$GPGST,,,,,,,,*57\r\n#UNIHEADINGA,97,GPS,UNKNOWN,1,607000,0,0,18,1;INSUFFICIENT_OBS,NONE,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,\"\
+  \",0,0,0,0,0,00,0,0*fd5d3aa8\r\n$GNGBS,,,,,,,,,,*5F\r\n$GPGSV,1,1,00,,,,,*55\r\n"
+---

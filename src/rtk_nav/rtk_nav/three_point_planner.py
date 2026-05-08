@@ -1,0 +1,998 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import math
+import matplotlib
+import matplotlib.pyplot as plt
+import utm
+import rclpy
+from rclpy.node import Node
+import datetime
+from matplotlib.patches import FancyArrowPatch
+import os
+import numpy as np
+
+matplotlib.rcParams['axes.unicode_minus'] = False
+
+def degrees_to_radians(degrees):
+    return degrees * math.pi / 180.0
+
+def radians_to_degrees(radians):
+    return radians * 180.0 / math.pi
+
+def get_utm_coords(lat, lon):
+    return utm.from_latlon(lat, lon)
+
+def get_latlon_from_utm(easting, northing, zone_number, zone_letter):
+    return utm.to_latlon(easting, northing, zone_number, zone_letter)
+
+def calculate_heading_angles(path_latlon):
+    headings = []
+    if len(path_latlon) <= 1:
+        return [0.0] * len(path_latlon)
+    
+    for i in range(len(path_latlon) - 1):
+        lon1, lat1 = path_latlon[i]
+        lon2, lat2 = path_latlon[i+1]
+        
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lon_rad = math.radians(lon2 - lon1)
+        
+        y = math.sin(delta_lon_rad) * math.cos(lat2_rad)
+        x = math.cos(lat1_rad) * math.sin(lat2_rad) - \
+            math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon_rad)
+        heading_rad = math.atan2(y, x)
+        heading_deg = math.degrees(heading_rad)
+        heading_deg = (heading_deg + 360) % 360
+        headings.append(heading_deg)
+    
+    if len(path_latlon) >= 2:
+        lon1, lat1 = path_latlon[-1]
+        lon2, lat2 = path_latlon[-2]
+        
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lon_rad = math.radians(lon2 - lon1)
+        
+        y = math.sin(delta_lon_rad) * math.cos(lat2_rad)
+        x = math.cos(lat1_rad) * math.sin(lat2_rad) - \
+            math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon_rad)
+        heading_rad = math.atan2(y, x)
+        heading_deg = math.degrees(heading_rad)
+        heading_deg = (heading_deg + 180) % 360
+        headings.append(heading_deg)
+    
+    return headings
+
+def rotate_point(e, n, e0, n0, rotation_rad):
+    """核心修改1：改为顺时针旋转，适配地理坐标系习惯"""
+    e_trans = e - e0
+    n_trans = n - n0
+    
+    # 顺时针旋转矩阵（原代码是逆时针，导致方向相反）
+    # 旋转矩阵（顺时针旋转，适配地理坐标系习惯）
+    # e_rot_trans = e_trans * math.cos(rotation_rad) - n_trans * math.sin(rotation_rad)
+    # n_rot_trans = e_trans * math.sin(rotation_rad) + n_trans * math.cos(rotation_rad)
+    # 逆时针旋转（如需逆时针旋转，使用以下公式）
+    e_rot_trans = e_trans * math.cos(rotation_rad) + n_trans * math.sin(rotation_rad)  # θ为逆时针旋转角
+    n_rot_trans = -e_trans * math.sin(rotation_rad) + n_trans * math.cos(rotation_rad)
+    e_rot = e_rot_trans + e0
+    n_rot = n_rot_trans + n0
+    return e_rot, n_rot
+
+def calculate_region_from_3points(point_a, point_b, point_c):
+    """向量计算保留原逻辑（已确认正确）"""
+    a_lon, a_lat = point_a
+    b_lon, b_lat = point_b
+    c_lon, c_lat = point_c
+    
+    a_e, a_n, zone_num, zone_letter = get_utm_coords(a_lat, a_lon)
+    b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
+    c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
+    
+    # AB向量（原计算正确，保留）
+    ab_e = b_e - a_e
+    ab_n = b_n - a_n
+    ab_length = math.hypot(ab_e, ab_n)
+    
+    ab_unit_e = ab_e / ab_length
+    ab_unit_n = ab_n / ab_length
+    perp_e = -ab_unit_n
+    perp_n = ab_unit_e
+    
+    # AC向量（原计算正确，保留）
+    ac_e = c_e - a_e
+    ac_n = c_n - a_n
+    ac_perp_length = ac_e * perp_e + ac_n * perp_n
+    
+    height = ab_length
+    width_origin = ac_perp_length
+    
+    # 旋转角度（基于AB向量，原计算正确）
+    angle_rad = math.atan2(ab_e, ab_n)
+    angle_rad = angle_rad - math.pi
+    rotation_deg = radians_to_degrees(angle_rad)
+    
+    # 基准点计算（保留原逻辑，不影响方向）
+    top_left_e = a_e + perp_e * width_origin
+    top_left_n = a_n + perp_n * width_origin
+    top_left_lat, top_left_lon = get_latlon_from_utm(top_left_e, top_left_n, zone_num, zone_letter)
+    base_point = (top_left_lon, top_left_lat)
+    
+    width = abs(width_origin)
+    print("计算区域参数：base_point={}, width={:.2f}m, height={:.2f}m, rotation_deg={:.2f}°".format(
+        base_point, width_origin, height, rotation_deg
+    ))
+    
+    return base_point, width_origin, height, rotation_deg, (a_e, a_n), (zone_num, zone_letter)
+
+# def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, start_corner, param):
+#     """
+#     最终修正版：
+#     1. 严格以传入的start_corner作为唯一基准，控制路径生成方向+起始点，支持随时修改生效
+#     2. 保留正负宽度统一适配逻辑、A点为旋转中心、边界固定的全部原有逻辑
+#     3. 修复轨迹斜线跳转BUG，改为90度垂直转向衔接，无斜线跨区域
+#     4. 路径起始点完全由start_corner决定，不再强制关联A点
+#     """
+    # # 1. 从3个点计算区域参数（保留原逻辑）
+    # base_point, width, height, rotation_deg, start_utm, utm_zone = calculate_region_from_3points(
+    #     point_a, point_b, point_c
+    # )
+    # zone_num, zone_letter = utm_zone
+    # a_e, a_n = start_utm  # A点UTM坐标（固定为旋转中心，保留）
+    
+    # lon0, lat0 = base_point
+    # interval = param['interval']
+    # edge_lon = param['edge_distance_lon']
+    # edge_lat = param['edge_distance_lat']
+    # rotation_rad = degrees_to_radians(rotation_deg)
+    
+    # # 核心保留：统一旋转中心为A点（无论宽度正负）
+    # e0, n0 = a_e, a_n
+    
+    # # 2. 生成未旋转的原始矩形四个角点（适配宽度正负，保留）
+    # orig_unrot = {}
+    # width_sign = 1 if width >= 0 else -1
+    # width_abs = abs(width)
+    
+    # orig_unrot = {
+    #     'top_left': (e0, n0),
+    #     'top_right': (e0 + width_sign * width_abs, n0),
+    #     'bottom_right': (e0 + width_sign * width_abs, n0 - height),
+    #     'bottom_left': (e0, n0 - height)
+    # }
+    
+    # # 3. 旋转原始矩形角点（以A点为中心，保留）
+    # orig_rot = {}
+    # for corner_name, (e, n) in orig_unrot.items():
+    #     e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
+    #     orig_rot[corner_name] = (e_rot, n_rot)
+    # original_corners_utm = list(orig_rot.values())
+    
+    # # 4. 生成未旋转的内部矩形角点（统一逻辑，适配宽度正负，保留）
+    # inner_unrot = {}
+    # inner_top_right_e = e0 + width_sign * (width_abs - edge_lon)
+    # inner_top_left_e = e0 + width_sign * edge_lon
+
+    # inner_unrot = {
+    #     'top_left': (inner_top_left_e, n0 - edge_lat),
+    #     'top_right': (inner_top_right_e, n0 - edge_lat),
+    #     'bottom_right': (inner_top_right_e, n0 - height + edge_lat),
+    #     'bottom_left': (inner_top_left_e, n0 - height + edge_lat)
+    # }
+    
+    # # 5. 安全检查：内部区域有效性（统一计算逻辑，保留）
+    # inner_e_list = [inner_unrot[corner][0] for corner in inner_unrot]
+    # inner_n_list = [inner_unrot[corner][1] for corner in inner_unrot]
+    # inner_e_min = min(inner_e_list)
+    # inner_e_max = max(inner_e_list)
+    # inner_n_min = min(inner_n_list)
+    # inner_n_max = max(inner_n_list)
+    # # default swap_wh_select=False 
+    # inner_width = inner_e_max - inner_e_min
+    # inner_height = inner_n_max - inner_n_min
+    
+    # if inner_width <= 0.1 or inner_height <= 0.1:
+    #     # raise ValueError(f"内部区域无效！宽度:{inner_width:.2f}m, 高度:{inner_height:.2f}m")
+    #     # 获取A点和B点的UTM坐标（这里需要根据实际的经纬度转UTM逻辑调整）
+    #     # 假设point_a和point_b是经纬度坐标，先转换为UTM
+    #             # 正确转换A/B点到UTM坐标
+    #     a_lon, a_lat = point_a
+    #     b_lon, b_lat = point_b
+        
+    #     # 经纬度转UTM（使用正确的函数）
+    #     a_utm_e, a_utm_n, _, _ = get_utm_coords(a_lat, a_lon)
+    #     b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+        
+    #     # 生成AB直线路径（UTM坐标）
+    #     path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
+    #     # 经纬度路径（保持原格式：(lon, lat)）
+    #     path_latlon = [point_a, point_b]
+        
+    #     # 关键修复：给inner_corners_utm赋默认值，避免绘图时索引越界
+    #     # 使用原始矩形角点作为兜底，保证绘图代码能正常运行
+    #     inner_corners_utm = original_corners_utm.copy()
+        
+    #     return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+    
+    # # 6. 旋转内部矩形角点（以A点为中心，保留）
+    # inner_rot = {}
+    # for corner_name, (e, n) in inner_unrot.items():
+    #     e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
+    #     inner_rot[corner_name] = (e_rot, n_rot)
+    # inner_corners_utm = list(inner_rot.values())
+
+    # # ========== 【核心修改1：删除自动匹配A点逻辑，严格使用传入的start_corner】 ==========
+    # # 100% 以外部传入的start_corner作为唯一基准，不再自动替换，支持随时修改
+    # target_start_utm = inner_rot[start_corner]
+    # print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
+    
+    # # ========== 【核心修改2：路径生成方向 严格基于传入的start_corner】 ==========
+    # # 从传入的start_corner中解析水平/垂直方向，无任何自动适配
+    # hori_dir = 'left' if 'left' in start_corner else 'right'
+    # vert_dir = 'top' if 'top' in start_corner else 'bottom'
+    
+    # # # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 保留原有逻辑】
+    # # swap_wh_select = param['swap_wh_select']
+    # # default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
+    # # path_utm_unrot = []
+    # # if default_direction:
+    # #     # 宽 >= 高：垂直分条（上下移动）
+    # #     num_strips = max(1, int(inner_height / interval) + 1)
+    # #     if vert_dir == 'top':
+    # #         n_values = [inner_n_max - (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    # #                     for i in range(num_strips)]
+    # #     else:
+    # #         n_values = [inner_n_min + (inner_height) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    # #                     for i in range(num_strips)]
+        
+    # #     for i, current_n_unrot in enumerate(n_values):
+    # #         if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
+    # #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+    # #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    # #         else:
+    # #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    # #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+            
+    # #         # ✅ 关键修复：条带衔接逻辑，走完当前条带后垂直90度移动到同侧下一条起点，无斜线
+    # #         # if i < num_strips - 1:
+    # #         #     current_end = path_utm_unrot[-1]
+    # #         #     next_n = n_values[i+1]
+    # #         #     next_start = (current_end[0], next_n)
+    # #         #     path_utm_unrot.append(next_start)
+                
+    # # else:
+    # #     # 宽 < 高：水平分条（左右移动）
+    # #     num_strips = max(1, int(inner_width / interval) + 1)
+    # #     if hori_dir == 'left':
+    # #         e_values = [inner_e_min + (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    # #                     for i in range(num_strips)]
+    # #     else:
+    # #         e_values = [inner_e_max - (inner_width) * (i / (num_strips - 1) if num_strips > 1 else 0) 
+    # #                     for i in range(num_strips)]
+        
+    # #     for i, current_e_unrot in enumerate(e_values):
+    # #         if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    # #         else:
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+            
+    # #         # ✅ 关键修复：条带衔接逻辑，走完当前条带后水平90度移动到同侧下一条起点，无斜线
+    # #         # if i < num_strips - 1:
+    # #         #     current_end = path_utm_unrot[-1]
+    # #         #     next_e = e_values[i+1]
+    # #         #     next_start = (next_e, current_end[1])
+    # #         #     path_utm_unrot.append(next_start)
+    # # 8. 生成未旋转的内部路径【核心修复3：轨迹斜线跳转BUG + 修复间隔无效问题】
+    # swap_wh_select = param['swap_wh_select']
+    # default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
+    # path_utm_unrot = []
+    # # if default_direction:
+    # #     # 宽 >= 高：垂直分条（上下移动）- 按实际interval步进
+    # #     # 从inner_n_min到inner_n_max，按interval步进，强制包含首尾
+    # #     n_values = []
+    # #     current_n = inner_n_min
+    # #     # 步进生成条带位置（严格按interval）
+    # #     while current_n <= inner_n_max + 1e-6:  # 加微小值避免浮点误差漏尾点
+    # #         n_values.append(current_n)
+    # #         current_n += interval
+    # #     # 若最后一个点与inner_n_max偏差过大，强制补充（确保覆盖完整区域）
+    # #     if abs(n_values[-1] - inner_n_max) > 0.6:
+    # #         n_values.append(inner_n_max)
+    # #     num_strips = len(n_values)  # 实际条带数由interval决定
+        
+    # #     for i, current_n_unrot in enumerate(n_values):
+    # #         if (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right'):
+    # #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+    # #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    # #         else:
+    # #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    # #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+                
+    # # else:
+    # #     # 宽 < 高：水平分条（左右移动）- 按实际interval步进
+    # #     # 从inner_e_min到inner_e_max，按interval步进，强制包含首尾
+    # #     e_values = []
+    # #     current_e = inner_e_min
+    # #     while current_e <= inner_e_max + 1e-6:
+    # #         e_values.append(current_e)
+    # #         current_e += interval
+    # #     # 强制补充尾点（避免覆盖不全）
+    # #     if abs(e_values[-1] - inner_e_max) > 0.6:
+    # #         e_values.append(inner_e_max)
+    # #     num_strips = len(e_values)  # 实际条带数由interval决定
+        
+    # #     for i, current_e_unrot in enumerate(e_values):
+    # #         if (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom'):
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    # #         else:
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    # #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    # # ===================== 【修复：start_corner 真正控制起始边与方向】 =====================
+    # if default_direction:
+    #     # 垂直分条（上下扫）
+    #     n_values = []
+    #     current_n = inner_n_min
+    #     while current_n <= inner_n_max + 1e-6:
+    #         n_values.append(current_n)
+    #         current_n += interval
+    #     if abs(n_values[-1] - inner_n_max) > 0.6:
+    #         n_values.append(inner_n_max)
+    #     num_strips = len(n_values)
+
+    #     # ↓↓↓ 核心修复：根据 vert_dir 决定从上往下还是从下往上扫
+    #     if vert_dir == 'bottom':
+    #         n_values = n_values[::-1]
+
+    #     for i, current_n_unrot in enumerate(n_values):
+    #         left_first = (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right')
+
+    #         if left_first:
+    #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+    #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    #         else:
+    #             path_utm_unrot.append((inner_e_max, current_n_unrot))
+    #             path_utm_unrot.append((inner_e_min, current_n_unrot))
+
+    # else:
+    #     # 水平分条（左右扫）
+    #     e_values = []
+    #     current_e = inner_e_min
+    #     while current_e <= inner_e_max + 1e-6:
+    #         e_values.append(current_e)
+    #         current_e += interval
+    #     if abs(e_values[-1] - inner_e_max) > 0.6:
+    #         e_values.append(inner_e_max)
+    #     num_strips = len(e_values)
+
+    #     # ↓↓↓ 核心修复：根据 hori_dir 决定从左往右还是从右往左扫
+    #     if hori_dir == 'right':
+    #         e_values = e_values[::-1]
+
+    #     for i, current_e_unrot in enumerate(e_values):
+    #         top_first = (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom')
+
+    #         if top_first:
+    #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    #         else:
+    #             path_utm_unrot.append((current_e_unrot, inner_n_min))
+    #             path_utm_unrot.append((current_e_unrot, inner_n_max))
+    #     # 日志优化：打印实际条带数和间隔
+    # if default_direction:
+    #     print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
+    # else:
+    #     print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
+    # # 9. 旋转路径点（以A点为中心，保留原有逻辑）
+    # path_utm_rot = []
+    # path_latlon = []
+    # for (e_unrot, n_unrot) in path_utm_unrot:
+    #     e_rot, n_rot = rotate_point(e_unrot, n_unrot, e0, n0, rotation_rad)
+    #     path_utm_rot.append((e_rot, n_rot))
+    #     lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
+    #     path_latlon.append((lon, lat))
+    
+    # # ========== 【核心修改4：修正路径起点 严格基于传入的start_corner】 ==========
+    # # 仅用配置的start_corner对应角点做校准，不再关联A点，阈值合理0.5m，避免误交换
+    # first_point_dist = math.hypot(path_utm_rot[0][0] - target_start_utm[0], 
+    #                               path_utm_rot[0][1] - target_start_utm[1])
+    # # if first_point_dist > 0.5:
+    # #     path_utm_rot[0], path_utm_rot[1] = path_utm_rot[1], path_utm_rot[0]
+    # #     path_latlon[0], path_latlon[1] = path_latlon[1], path_latlon[0]
+    # #     print(f"路径起点调整：原起点与{start_corner}偏差{first_point_dist:.2f}m，已交换前两点")
+    
+    # # 日志优化：打印配置的起始角点+关键参数，方便调试
+    # print(f"路径生成方向：水平={hori_dir}，垂直={vert_dir}")
+    # print(f"宽度处理：原始宽度={width:.2f}m → 延伸方向={'东向' if width_sign ==1 else '西向'}，内部宽度={inner_width:.2f}m")
+    
+    # return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+def generate_cleaning_path_with_rotation_3points(point_a, point_b, point_c, start_corner, param):
+    """
+    最终修正版：
+    1. 严格以传入的start_corner作为唯一基准，控制路径生成方向+起始点，支持随时修改生效
+    2. 保留正负宽度统一适配逻辑、A点为旋转中心、边界固定的全部原有逻辑
+    3. 修复轨迹斜线跳转BUG，改为90度垂直转向衔接，无斜线跨区域
+    4. 路径起始点完全由start_corner决定，不再强制关联A点
+    """
+    base_point, width, height, rotation_deg, start_utm, utm_zone = calculate_region_from_3points(
+        point_a, point_b, point_c
+    )
+    zone_num, zone_letter = utm_zone
+    a_e, a_n = start_utm
+    
+    lon0, lat0 = base_point
+    interval = param['interval']
+    edge_lon = param['edge_distance_lon']
+    edge_lat = param['edge_distance_lat']
+    rotation_rad = degrees_to_radians(rotation_deg)
+    
+    e0, n0 = a_e, a_n
+    
+    orig_unrot = {}
+    width_sign = 1 if width >= 0 else -1
+    width_abs = abs(width)
+    
+    orig_unrot = {
+        'top_left': (e0, n0),
+        'top_right': (e0 + width_sign * width_abs, n0),
+        'bottom_right': (e0 + width_sign * width_abs, n0 - height),
+        'bottom_left': (e0, n0 - height)
+    }
+    
+    orig_rot = {}
+    for corner_name, (e, n) in orig_unrot.items():
+        e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
+        orig_rot[corner_name] = (e_rot, n_rot)
+    original_corners_utm = list(orig_rot.values())
+    
+    inner_unrot = {}
+    inner_top_right_e = e0 + width_sign * (width_abs - edge_lon)
+    inner_top_left_e = e0 + width_sign * edge_lon
+
+    inner_unrot = {
+        'top_left': (inner_top_left_e, n0 - edge_lat),
+        'top_right': (inner_top_right_e, n0 - edge_lat),
+        'bottom_right': (inner_top_right_e, n0 - height + edge_lat),
+        'bottom_left': (inner_top_left_e, n0 - height + edge_lat)
+    }
+    
+    inner_e_list = [inner_unrot[corner][0] for corner in inner_unrot]
+    inner_n_list = [inner_unrot[corner][1] for corner in inner_unrot]
+    inner_e_min = min(inner_e_list)
+    inner_e_max = max(inner_e_list)
+    inner_n_min = min(inner_n_list)
+    inner_n_max = max(inner_n_list)
+    inner_width = inner_e_max - inner_e_min
+    inner_height = inner_n_max - inner_n_min
+    
+    if inner_width <= 0.1 or inner_height <= 0.1:
+        a_lon, a_lat = point_a
+        b_lon, b_lat = point_b
+        
+        a_utm_e, a_utm_n, _, _ = get_utm_coords(a_lat, a_lon)
+        b_utm_e, b_utm_n, _, _ = get_utm_coords(b_lat, b_lon)
+        
+        path_utm_rot = [(a_utm_e, a_utm_n), (b_utm_e, b_utm_n)]
+        path_latlon = [point_a, point_b]
+        
+        inner_corners_utm = original_corners_utm.copy()
+        
+        return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+    
+    inner_rot = {}
+    for corner_name, (e, n) in inner_unrot.items():
+        e_rot, n_rot = rotate_point(e, n, e0, n0, rotation_rad)
+        inner_rot[corner_name] = (e_rot, n_rot)
+    inner_corners_utm = list(inner_rot.values())
+
+    # ========================= 【修复1：根据实际坐标重新确定角点名称】 =========================
+    # 旋转后，原来的top_left/top_right等名称可能不再对应实际位置
+    # 需要根据实际UTM坐标找到真正的四个角
+    
+    # 使用旋转后的实际坐标边界
+    rot_e_list = [inner_rot[c][0] for c in inner_rot]
+    rot_n_list = [inner_rot[c][1] for c in inner_rot]
+    rot_e_min = min(rot_e_list)
+    rot_e_max = max(rot_e_list)
+    rot_n_min = min(rot_n_list)
+    rot_n_max = max(rot_n_list)
+    
+    # 根据旋转后的实际坐标确定真正的角点位置
+    actual_corners = {}
+    for name, (e, n) in inner_rot.items():
+        if n >= (rot_n_max + rot_n_min) / 2:
+            actual_corners['top'] = actual_corners.get('top', []) + [(name, e, n)]
+        else:
+            actual_corners['bottom'] = actual_corners.get('bottom', []) + [(name, e, n)]
+        if e <= (rot_e_max + rot_e_min) / 2:
+            actual_corners['left'] = actual_corners.get('left', []) + [(name, e, n)]
+        else:
+            actual_corners['right'] = actual_corners.get('right', []) + [(name, e, n)]
+    
+    # 确定四个实际角点
+    top_left_name = min(actual_corners['left'], key=lambda x: x[2])[0]
+    top_right_name = min(actual_corners['right'], key=lambda x: x[2])[0]
+    bottom_left_name = max(actual_corners['left'], key=lambda x: x[2])[0]
+    bottom_right_name = max(actual_corners['right'], key=lambda x: x[2])[0]
+    
+    actual_corner_map = {
+        'top_left': inner_rot[top_left_name],
+        'top_right': inner_rot[top_right_name],
+        'bottom_left': inner_rot[bottom_left_name],
+        'bottom_right': inner_rot[bottom_right_name]
+    }
+    
+    print(f"实际角点坐标: top_left={actual_corner_map['top_left']}, top_right={actual_corner_map['top_right']}")
+    print(f"实际角点坐标: bottom_left={actual_corner_map['bottom_left']}, bottom_right={actual_corner_map['bottom_right']}")
+    
+    # 使用实际角点坐标来确定起始点
+    target_start_utm = actual_corner_map[start_corner]
+    print(f"配置起始角点: {start_corner}，目标起始点UTM坐标: {target_start_utm}")
+    
+    hori_dir = 'left' if 'left' in start_corner else 'right'
+    vert_dir = 'top' if 'top' in start_corner else 'bottom'
+    
+    swap_wh_select = param['swap_wh_select']
+    default_direction= inner_width >= inner_height if not swap_wh_select else inner_width <= inner_height
+    path_utm_unrot = []
+    
+    if default_direction:
+        n_values = []
+        current_n = inner_n_min
+        while current_n <= inner_n_max + 1e-6:
+            n_values.append(current_n)
+            current_n += interval
+        if abs(n_values[-1] - inner_n_max) > 0.6:
+            n_values.append(inner_n_max)
+        num_strips = len(n_values)
+
+        if vert_dir == 'bottom':
+            n_values = n_values[::-1]
+
+        for i, current_n_unrot in enumerate(n_values):
+            left_first = (i % 2 == 0 and hori_dir == 'left') or (i % 2 == 1 and hori_dir == 'right')
+
+            if left_first:
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
+            else:
+                path_utm_unrot.append((inner_e_max, current_n_unrot))
+                path_utm_unrot.append((inner_e_min, current_n_unrot))
+                
+    else:
+        e_values = []
+        current_e = inner_e_min
+        while current_e <= inner_e_max + 1e-6:
+            e_values.append(current_e)
+            current_e += interval
+        if abs(e_values[-1] - inner_e_max) > 0.6:
+            e_values.append(inner_e_max)
+        num_strips = len(e_values)
+
+        if hori_dir == 'right':
+            e_values = e_values[::-1]
+
+        for i, current_e_unrot in enumerate(e_values):
+            top_first = (i % 2 == 0 and vert_dir == 'top') or (i % 2 == 1 and vert_dir == 'bottom')
+
+            if top_first:
+                path_utm_unrot.append((current_e_unrot, inner_n_max))
+                path_utm_unrot.append((current_e_unrot, inner_n_min))
+            else:
+                path_utm_unrot.append((current_e_unrot, inner_n_min))
+                path_utm_unrot.append((current_e_unrot, inner_n_max))
+    
+    path_utm_rot = []
+    path_latlon = []
+    for (e_unrot, n_unrot) in path_utm_unrot:
+        e_rot, n_rot = rotate_point(e_unrot, n_unrot, e0, n0, rotation_rad)
+        path_utm_rot.append((e_rot, n_rot))
+        lat, lon = get_latlon_from_utm(e_rot, n_rot, zone_num, zone_letter)
+        path_latlon.append((lon, lat))
+    
+    if default_direction:
+        print(f"垂直分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(n_values[i+1]-n_values[i],2) for i in range(len(n_values)-1)]}m")
+    else:
+        print(f"水平分条：实际条带数={num_strips}，设置interval={interval}m，实际间隔：{[round(e_values[i+1]-e_values[i],2) for i in range(len(e_values)-1)]}m")
+    
+    print(f"路径生成方向：水平={hori_dir}，垂直={vert_dir}")
+    print(f"宽度处理：原始宽度={width:.2f}m → 延伸方向={'东向' if width_sign ==1 else '西向'}，内部宽度={inner_width:.2f}m")
+
+    # ========================= 【修复2：使用实际角点坐标计算结束点】 =========================
+    end_corner_mode = param.get('end_corner_mode', 'diagonal')
+
+    tl = actual_corner_map['top_left']
+    tr = actual_corner_map['top_right']
+    bl = actual_corner_map['bottom_left']
+    br = actual_corner_map['bottom_right']
+
+    start_point = path_utm_rot[0]
+    current_end = path_utm_rot[-1]
+
+    corner_list = [tl, tr, bl, br]
+    start = min(corner_list, key=lambda c: math.hypot(start_point[0]-c[0], start_point[1]-c[1]))
+
+    # 对角/对边映射（基于实际角点位置）
+    corner_name_map = {
+        tuple(tl): 'top_left',
+        tuple(tr): 'top_right',
+        tuple(bl): 'bottom_left',
+        tuple(br): 'bottom_right'
+    }
+    start_name = corner_name_map[tuple(start)]
+    
+    if end_corner_mode == 'diagonal':
+        diagonal_map = {
+            'top_left': actual_corner_map['bottom_right'],
+            'top_right': actual_corner_map['bottom_left'],
+            'bottom_left': actual_corner_map['top_right'],
+            'bottom_right': actual_corner_map['top_left']
+        }
+        target = diagonal_map[start_name]
+    else:
+        opposite_map = {
+            'top_left': actual_corner_map['top_right'],
+            'top_right': actual_corner_map['top_left'],
+            'bottom_left': actual_corner_map['bottom_right'],
+            'bottom_right': actual_corner_map['bottom_left']
+        }
+        target = opposite_map[start_name]
+    
+    print(f"起点名称: {start_name}, 目标结束点: {target}")
+    
+    # 不在目标角 → 沿最后一段反向180°直线返回（不穿墙、不斜线）
+    if math.hypot(current_end[0]-target[0], current_end[1]-target[1]) > 0.5:
+        if len(path_utm_rot) >= 2:
+            p1 = path_utm_rot[-2]
+            p2 = path_utm_rot[-1]
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            back_x = p2[0] - dx
+            back_y = p2[1] - dy
+
+            path_utm_rot.append( (back_x, back_y) )
+            lat, lon = get_latlon_from_utm(back_x, back_y, zone_num, zone_letter)
+            path_latlon.append( (lon, lat) )
+    # ==========================================================================================
+    # ======================================================================================
+
+    return path_latlon, path_utm_rot, original_corners_utm, inner_corners_utm, utm_zone
+
+def add_direction_arrows(ax, path_utm, arrow_interval=5):
+    for i in range(0, len(path_utm) - arrow_interval, arrow_interval):
+        x1, y1 = path_utm[i]
+        x2, y2 = path_utm[i + arrow_interval]
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.sqrt(dx**2 + dy**2)
+        
+        arrow = FancyArrowPatch(
+            (x1, y1), (x2, y2),
+            arrowstyle='->',
+            mutation_scale=15,
+            color='blue',
+            linewidth=1.5,
+            alpha=0.7
+        )
+        ax.add_patch(arrow)
+
+class CleaningPathPlanner(Node):
+    def __init__(self):
+        super().__init__('three_point_planner')
+        self.seq_num = 0
+        
+        # 保留原参数配置
+        # 声明参数（ROS 2参数需要先声明）120.0711247716332,30.320803806689252
+
+        # 120.07113330166666,30.321393565666668
+        # 120.07104722000001,30.321617500000002
+        # 120.07112942683334
+
+
+        # A:120.07149470883333,30.32131817333333
+        # B:120.07142615983334,30.32123303533333
+        # C:120.07151235049999,30.321311033166662
+
+        # A:120.07129427383333,30.321726006333332
+        # B:120.07130059466665,30.321665768833334
+        # C:120.07132923066665,30.321670159499998
+
+
+        # A:120.07132581616666,30.32166686516667
+        # B:120.07129290400002,30.32166478383333
+        # C:120.07130780466666,30.321725207
+
+        # self.declare_parameter('calib_point_c.lon', 120.07132581616666)
+        # self.declare_parameter('calib_point_c.lat', 30.32166686516667)
+        # self.declare_parameter('calib_point_b.lon', 120.07129290400002)
+        # self.declare_parameter('calib_point_b.lat', 30.32166478383333)
+        # self.declare_parameter('calib_point_a.lon', 120.07130780466666)
+        # self.declare_parameter('calib_point_a.lat', 30.321725207)
+        
+        #0228
+        # self.declare_parameter('calib_point_c.lon', 120.07129173099999)
+        # self.declare_parameter('calib_point_c.lat', 30.32169645933333)
+        # self.declare_parameter('calib_point_b.lon', 120.07130450300001)
+        # self.declare_parameter('calib_point_b.lat', 30.321713478999996)
+        # self.declare_parameter('calib_point_a.lon', 120.07133788016667)
+        # self.declare_parameter('calib_point_a.lat', 30.32168400516667)
+        #0228 test2
+        # self.declare_parameter('calib_point_c.lon', 120.07129158983335)
+        # self.declare_parameter('calib_point_c.lat', 30.32169783066667)
+        # self.declare_parameter('calib_point_b.lon', 120.07130318850001)
+        # self.declare_parameter('calib_point_b.lat', 30.321713963833336)
+        # self.declare_parameter('calib_point_a.lon', 120.07133778466665)
+        # self.declare_parameter('calib_point_a.lat', 30.32168391916667)
+
+
+        #0302 
+        # self.declare_parameter('calib_point_c.lon', 120.07130777966994)
+        # self.declare_parameter('calib_point_c.lat', 30.321773908232736)
+        # self.declare_parameter('calib_point_b.lon', 120.07133322093847)
+        # self.declare_parameter('calib_point_b.lat', 30.321770802576992)
+        # self.declare_parameter('calib_point_a.lon', 120.07130344034744)
+        # self.declare_parameter('calib_point_a.lat', 30.321628654625364)
+
+        #0305  zone1 
+        # self.declare_parameter('calib_point_c.lon', 120.06777757640111)
+        # self.declare_parameter('calib_point_c.lat', 30.321156259517213)
+        # self.declare_parameter('calib_point_b.lon', 120.06775856573414)
+        # self.declare_parameter('calib_point_b.lat', 30.3212176674988)
+        # self.declare_parameter('calib_point_a.lon', 120.06789529325282)
+        # self.declare_parameter('calib_point_a.lat', 30.321251006540763)
+
+        #0305  zone2
+        # self.declare_parameter('calib_point_c.lon', 120.06761198560712)
+        # self.declare_parameter('calib_point_c.lat', 30.321116435931167)
+        # self.declare_parameter('calib_point_b.lon', 120.06758377060459)
+        # self.declare_parameter('calib_point_b.lat', 30.32120704408408)
+        # self.declare_parameter('calib_point_a.lon', 120.06770772485666)
+        # self.declare_parameter('calib_point_a.lat', 30.321238340495807)
+
+        # #0305  zone3
+        # self.declare_parameter('calib_point_c.lon', 120.06744037236592)
+        # self.declare_parameter('calib_point_c.lat', 30.321138440383812)
+        # self.declare_parameter('calib_point_b.lon', 120.0674618551937)
+        # self.declare_parameter('calib_point_b.lat', 30.321077905589622)
+        # self.declare_parameter('calib_point_a.lon', 120.06757631066615)
+        # self.declare_parameter('calib_point_a.lat', 30.32110629748197)
+
+        # #0325 test zone1
+        # self.declare_parameter('calib_point_c.lon', 110.64727087795347)
+        # self.declare_parameter('calib_point_c.lat', 35.60567931743239)
+        # self.declare_parameter('calib_point_b.lon', 110.64741460706827)
+        # self.declare_parameter('calib_point_b.lat', 35.60567926437616)
+        # self.declare_parameter('calib_point_a.lon', 110.64741514964045)
+        # self.declare_parameter('calib_point_a.lat', 35.60550152445487)
+        # #0331 south-5-zone2
+        # self.declare_parameter('calib_point_c.lon', 110.64726399997889)
+        # self.declare_parameter('calib_point_c.lat', 35.605897952775464)
+        # self.declare_parameter('calib_point_b.lon', 110.64741549006075)
+        # self.declare_parameter('calib_point_b.lat', 35.60589856772437)
+        # self.declare_parameter('calib_point_a.lon', 110.64741639744143)
+        # self.declare_parameter('calib_point_a.lat', 35.60571753896705)
+        #0331 south-4-zone3
+        # self.declare_parameter('calib_point_c.lon', 110.64726380566727)
+        # self.declare_parameter('calib_point_c.lat', 35.60611435157266)
+        # self.declare_parameter('calib_point_b.lon', 110.6474148272825)
+        # self.declare_parameter('calib_point_b.lat', 35.60611439364326)
+        # self.declare_parameter('calib_point_a.lon', 110.64741564488955)
+        # self.declare_parameter('calib_point_a.lat', 35.605933355288805)
+
+        #0329 north-serial_1
+        self.declare_parameter('calib_point_c.lon', 110.64708565086734)
+        self.declare_parameter('calib_point_c.lat', 35.60658478270537)
+        self.declare_parameter('calib_point_b.lon', 110.64693508220195)
+        self.declare_parameter('calib_point_b.lat', 35.60658436686629)
+        self.declare_parameter('calib_point_a.lon', 110.64693440485303)
+        self.declare_parameter('calib_point_a.lat', 35.60676540037184)
+
+
+
+
+
+        # self.declare_parameter('calib_point_c.lon', 120.07149470883333)
+        # self.declare_parameter('calib_point_c.lat', 30.32131817333333)
+        # self.declare_parameter('calib_point_b.lon', 120.07142615983334)
+        # self.declare_parameter('calib_point_b.lat', 30.32123303533333)
+        # self.declare_parameter('calib_point_a.lon', 120.07151235049999)
+        # self.declare_parameter('calib_point_a.lat', 30.321311033166662)
+        # self.declare_parameter('calib_point_a.lon', 120.06893303174934)  # 第一个点 = start_corner
+        # self.declare_parameter('calib_point_a.lat', 30.320515493992254)  # 120.06908157229124,30.320549326045818
+        # self.declare_parameter('calib_point_b.lon', 120.0689008658952)   #120.06934719266512,30.319875087155783,up mirror:120.0689008658952,30.32109457743618
+        # self.declare_parameter('calib_point_b.lat', 30.32109457743618)
+        # self.declare_parameter('calib_point_c.lon', 120.06908157229124)
+        # self.declare_parameter('calib_point_c.lat', 30.320549326045818)#120.06893303174934,30.320515493992254,miorror:120.0692708938497,30.320612377146574
+
+        # self.declare_parameter('calib_point_a.lon', 120.06891577325935)#120.06891577325935,30.320537691107706
+        # self.declare_parameter('calib_point_a.lat', 30.320537691107706)
+        # self.declare_parameter('calib_point_b.lon', 120.0691364728377)#120.0691364728377,30.319852150388023
+        # self.declare_parameter('calib_point_b.lat', 30.319852150388023)
+        # self.declare_parameter('calib_point_c.lon', 120.06873704947856)#120.06873704947856,30.320508473942272
+        # self.declare_parameter('calib_point_c.lat', 30.320508473942272)
+
+
+        #南侧，起始点为top_right,起始点为c，后续连接图中起始点应为top_left，对应图b
+        self.declare_parameter('interval', 6.0)
+        self.declare_parameter('start_corner', 'bottom_left')
+        self.declare_parameter('swap_wh_select', True)
+        self.declare_parameter('edge_distance_lon', 0.0)
+        self.declare_parameter('edge_distance_lat', 0.0)
+        self.declare_parameter('headless', True)
+        self.declare_parameter('end_corner_mode', 'opposite') #diagonal / opposite
+
+        #serial_1
+        # self.declare_parameter('interval', 1.3)
+        # self.declare_parameter('start_corner', 'top_right')
+        # self.declare_parameter('swap_wh_select', True)
+        # self.declare_parameter('edge_distance_lon', 0.2)
+        # self.declare_parameter('edge_distance_lat', 0.2)
+        # self.declare_parameter('headless', True) 
+        self.param = {
+            'calib_point_a': (
+                self.get_parameter('calib_point_a.lon').value,
+                self.get_parameter('calib_point_a.lat').value
+            ),
+            'calib_point_b': (
+                self.get_parameter('calib_point_b.lon').value,
+                self.get_parameter('calib_point_b.lat').value
+            ),
+            'calib_point_c': (
+                self.get_parameter('calib_point_c.lon').value,
+                self.get_parameter('calib_point_c.lat').value
+            ),
+            'interval': self.get_parameter('interval').value,
+            'start_corner': self.get_parameter('start_corner').value,
+            'swap_wh_select': self.get_parameter('swap_wh_select').value,
+            'edge_distance_lon': self.get_parameter('edge_distance_lon').value,
+            'edge_distance_lat': self.get_parameter('edge_distance_lat').value,
+            'end_corner_mode': self.get_parameter('end_corner_mode').value,
+            'headless': self.get_parameter('headless').value
+        }
+        
+        valid_corners = ['top_left', 'top_right', 'bottom_right', 'bottom_left']
+        if self.param['start_corner'] not in valid_corners:
+            self.get_logger().error(
+                f"无效的start_corner: {self.param['start_corner']}，必须是 {valid_corners}"
+            )
+            return
+        
+        self.plan_path()
+    def get_next_sequence(self, save_dir):
+        """
+        自动读取文件夹里已有的 001_、002_、003_... 文件
+        返回下一个 3 位序号，例如：005
+        """
+        max_num = 15
+        # 遍历文件夹所有文件
+        for filename in os.listdir(save_dir):
+            # 只匹配 3 位数字开头的文件（和你的正则一致）
+            if filename[:3].isdigit() and filename[3] == '_':
+                try:
+                    num = int(filename[:3])
+                    if num > max_num:
+                        max_num = num
+                except:
+                    continue
+        # 下一个序号 +5，并自动补 0 成 3 位
+        next_num = max_num + 5
+        return f"{next_num:03d}"
+        
+    def plan_path(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        try:
+            path_latlon, path_utm, original_corners_utm, inner_corners_utm, utm_zone = generate_cleaning_path_with_rotation_3points(
+                self.param['calib_point_a'], 
+                self.param['calib_point_b'], 
+                self.param['calib_point_c'], 
+                self.param['start_corner'],
+                self.param
+            )
+            zone_num, zone_letter = utm_zone
+            
+            self.get_logger().info("参数配置:")
+            self.get_logger().info(f"  路径间隔: {self.param['interval']}米")
+            self.get_logger().info(f"  起始点: {self.param['start_corner']}")
+            self.get_logger().info(f"  结束点模式: {self.param['end_corner_mode']} (diagonal=对角, opposite=对边)"),
+            self.get_logger().info(f"  经度方向边缘距离: {self.param['edge_distance_lon']}米")
+            self.get_logger().info(f"  纬度方向边缘距离: {self.param['edge_distance_lat']}米")
+            self.get_logger().info(f"\n生成的路径点数量: {len(path_latlon)}")
+            
+            save_dir = os.path.expanduser("/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+            os.makedirs(save_dir, exist_ok=True)
+            # 获取自动序号
+            self.seq_num = self.get_next_sequence(save_dir)
+
+            # 最终文件名（完全符合你的规则）
+            points_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.txt")
+            # points_filename = os.path.join(save_dir, f"three_path_{timestamp}.txt")
+            headings = calculate_heading_angles(path_latlon)
+            
+            with open(points_filename, "w", encoding="utf-8") as f:
+                f.write("#序号,经度,纬度,航向角(度)\n")
+                for i in range(len(path_latlon)):
+                    lon, lat = path_latlon[i]
+                    heading = headings[i]
+                    f.write(f"{i+1},{lon:.8f},{lat:.8f},{heading:.2f}\n")
+            self.get_logger().info(f"所有路径点及航向角已保存到 {points_filename} 文件")
+            
+            # 绘制图表（不变）
+            fig, ax = plt.subplots(figsize=(10, 8))
+            
+            orig_e = [corner[0] for corner in original_corners_utm] + [original_corners_utm[0][0]]
+            orig_n = [corner[1] for corner in original_corners_utm] + [original_corners_utm[0][1]]
+            ax.plot(orig_e, orig_n, 'b-', label='origin')
+            
+            inner_e = [corner[0] for corner in inner_corners_utm] + [inner_corners_utm[0][0]]
+            inner_n = [corner[1] for corner in inner_corners_utm] + [inner_corners_utm[0][1]]
+            ax.plot(inner_e, inner_n, 'g--', label='inner')
+            
+            a_lon, a_lat = self.param['calib_point_a']
+            b_lon, b_lat = self.param['calib_point_b']
+            c_lon, c_lat = self.param['calib_point_c']
+            a_e, a_n, _, _ = get_utm_coords(a_lat, a_lon)
+            b_e, b_n, _, _ = get_utm_coords(b_lat, b_lon)
+            c_e, c_n, _, _ = get_utm_coords(c_lat, c_lon)
+            
+            ax.scatter(a_e, a_n, c='red', s=120, marker='s', label='Calib Point A', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point A', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+            ax.scatter(b_e, b_n, c='orange', s=120, marker='o', label='Calib Point B', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point B', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+            ax.scatter(c_e, c_n, c='purple', s=120, marker='^', label='Calib Point C', edgecolors='black', linewidth=1.5)
+            ax.annotate('Point C', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
+            
+            path_e = [p[0] for p in path_utm]
+            path_n = [p[1] for p in path_utm]
+            ax.plot(path_e, path_n, 'r-', linewidth=1, label='cleaning path')
+            
+            add_direction_arrows(ax, path_utm, arrow_interval=1)
+            
+            ax.scatter(path_e[0], path_n[0], c='green', s=100, marker='o', label='start')
+            ax.scatter(path_e[-1], path_n[-1], c='purple', s=100, marker='x', label='end')
+            #手动修改结束点为-2，修改结束点位置
+            # ax.scatter(path_e[-2], path_n[-2], c='purple', s=100, marker='x', label='end')
+            
+            ax.set_xlabel(f'UTM east m - zone {zone_num}{zone_letter}')
+            ax.set_ylabel(f'UTM north m - zone {zone_num}{zone_letter}')
+            ax.set_title(
+                f'robot cleaning path planner\n'
+                f'path interval: {self.param["interval"]}m'
+            )
+            ax.legend()
+            ax.grid(True)
+            ax.axis('equal')
+            plt.tight_layout()
+            # 最终文件名（完全符合你的规则）
+            img_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.png")
+            plt.savefig(img_filename, dpi=300)
+            self.get_logger().info(f"路径图已保存到 {img_filename}")
+            
+            if not self.param['headless']:
+                plt.show()
+            
+        except ValueError as e:
+            self.get_logger().error(f"错误: {e}")
+        except Exception as e:
+            self.get_logger().error(f"发生异常: {str(e)}")
+            import traceback
+            self.get_logger().error(f"异常详情:\n{traceback.format_exc()}")
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CleaningPathPlanner()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()

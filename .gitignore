@@ -1,0 +1,5 @@
+# 忽略 devel 和 build 文件夹
+devel/
+build/
+install/
+log/
