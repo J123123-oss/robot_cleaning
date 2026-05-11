@@ -1703,24 +1703,24 @@ class MotorControlNode(Node):
                             # 步骤4：激光距离<1000mm → 进入低速纠偏阶段
                             elif left < 1000 and right < 1000:
                                 # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
-                                # 步骤5：差值≥15mm → 低速旋转对准
-                                if diff_dis >= 5:
-                                    self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
+                                # 步骤5：差值≥10mm → 低速旋转对准
+                                if diff_dis >= 10:
+                                    self.get_logger().info("[LOADING] 中等偏差（>10mm），低速旋转对准")
                                     if (left - right) < 0:
                                         left_speed = base_speed / 10.0
                                         right_speed = base_speed / 10.0
                                     else:
                                         left_speed = -base_speed / 10.0
                                         right_speed = -base_speed / 10.0
-                                # 步骤6：差值<5mm → 低速纠偏直行
+                                # 步骤6：差值<10mm → 低速纠偏直行
                                 else:
-                                    self.get_logger().info("[LOADING] 差值<5mm，直行")
+                                    self.get_logger().info("[LOADING] 差值<10mm，直行")
                                     left_speed = -base_speed / 1.5
                                     right_speed = base_speed / 1.5
                             else:
                                 # self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
                                 # 差值≥40mm → 中速旋转对准
-                                if diff_dis >= 10:
+                                if diff_dis >= 20:
                                     self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
                                     if (left - right) < 0:
                                         left_speed = base_speed / 4.0
