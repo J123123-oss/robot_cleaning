@@ -207,7 +207,7 @@ class CanMotorDriver(Node):
     # 【新增】解析故障帧 0x15006301 ~ 0x15006303
     # -------------------------------------------------------------------------
     def parse_motor_fault(self, can_id: int, data: bytes):
-        motor_id = can_id & 0xFF
+        motor_id = (can_id >> 8) & 0xFF
         fault = data[0]
 
         for motor in self.motors:
@@ -304,7 +304,11 @@ class CanMotorDriver(Node):
         """初始化所有电机"""
         self.get_logger().info("Initializing motors...")
         time.sleep(3.0)  # 等待CAN接口就绪，与jifeng系统保持一致
-        
+        # 清除故障启动：仅使能电机，不运动
+        self.motor_clear_fault(1)
+        self.motor_clear_fault(2)
+        self.motor_clear_fault(3)
+        self.get_logger().warn(f"发送清除故障指令！")
         # 初始化左轮电机 (ID=1)
         self.get_logger().info("Initializing left wheel motor (ID=1)...")
         self.motor_set_mode(1, 2)  # 设置速度模式
