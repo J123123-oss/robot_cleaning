@@ -153,6 +153,7 @@ areas:
     calib_point_b: {lon: 110.64660884686268, lat: 35.602113270160785}
     calib_point_c: {lon: 110.64694482886202, lat: 35.60211466948984}
     start_corner: "top_right"
+    reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.1
   # bridge_23-22b
@@ -179,12 +180,6 @@ areas:
     reverse_end_point: True
     edge_distance_lon: [0.15, 0.1] 
     edge_distance_lat: 0.3
-  # bridge_21-22b
-  - name: "bridge_21-22b"
-    calib_point_a: {lon: 110.64660679996989, lat: 35.60256285679127}
-    calib_point_b: {lon: 110.64660776009069, lat: 35.602400693105714}
-    calib_point_c: {lon: 110.64660679996989, lat: 35.60256285679127}
-    start_corner: "top_right"
 
   # 北侧21
   - name: "north_21"

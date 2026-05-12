@@ -142,6 +142,7 @@ class MotorControlNode(Node):
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
+        self.motor_fault_codes = [0, 0, 0]  # 三路电机故障码
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
         self.charge_resume_threshold = 98 # 恢复充电的电量阈值（百分比）
@@ -229,6 +230,12 @@ class MotorControlNode(Node):
             Int16,
             "charging_fault_code",
             self.charging_fault_code_cb,
+            10
+        )
+        self.motor_fault_subscription = self.create_subscription(
+            Float32MultiArray,
+            "motor_fault_codes",
+            self.motor_fault_callback,
             10
         )
         # 4. ROS2 发布器
@@ -632,6 +639,33 @@ class MotorControlNode(Node):
             self.is_charge_paused = True
             self.dock_last_sensors = 0
         self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
+
+    def motor_fault_callback(self, msg: Float32MultiArray):
+        """订阅电机故障码数组的回调函数"""
+        if len(msg.data) < 3:
+            self.get_logger().warn("电机故障码数据不完整!")
+            return
+
+        self.motor_fault_codes = [int(msg.data[0]), int(msg.data[1]), int(msg.data[2])]
+        
+        fault_codes = self.motor_fault_codes
+        has_fault = False
+        fault_str = ""
+        for i, code in enumerate(fault_codes):
+            if code != 0:
+                has_fault = True
+                motor_name = ["左轮", "右轮", "前毛刷"][i]
+                fault_str += f"{motor_name}:0x{code:02X}; "
+        
+        if has_fault:
+            self.get_logger().warn(f"[MotorControl] 电机故障: {fault_str}")
+            self.motor_ctrl.motor_clear_fault(1)
+            self.motor_ctrl.motor_clear_fault(2)
+            self.motor_ctrl.motor_clear_fault(3)
+            self.get_logger().warn(f"发送清除故障指令！")
+
+        # else:
+        #     self.get_logger().debug("[MotorControl] 电机状态正常")
     
     # def laser_callback(self, msg: UInt16MultiArray):
     #     """订阅激光距离数据的回调函数"""
@@ -808,7 +842,11 @@ class MotorControlNode(Node):
             #     self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为60秒")
 
         elif new_state == "START":
-            # 启动：仅使能电机，不运动
+            # 清除故障启动：仅使能电机，不运动
+            self.motor_ctrl.motor_clear_fault(1)
+            self.motor_ctrl.motor_clear_fault(2)
+            self.motor_ctrl.motor_clear_fault(3)
+            self.get_logger().warn(f"发送清除故障指令！")
             self.motor_ctrl.initialize_motors()
             time.sleep(0.001)
             self.complete_state = False
@@ -946,6 +984,7 @@ class MotorControlNode(Node):
                 "charging_v": self.charging_v,
                 "charging_i": self.charging_i,
                 "charging_fault": self.charging_fault,
+                "motor_fault": self.motor_fault_codes,
                 "dock_sensors": self.dock_sensors,
                 "resume_charge": self.charge_resume_count,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
@@ -1664,24 +1703,24 @@ class MotorControlNode(Node):
                             # 步骤4：激光距离<1000mm → 进入低速纠偏阶段
                             elif left < 1000 and right < 1000:
                                 # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
-                                # 步骤5：差值≥15mm → 低速旋转对准
-                                if diff_dis >= 5:
-                                    self.get_logger().info("[LOADING] 中等偏差（>5mm），低速旋转对准")
+                                # 步骤5：差值≥10mm → 低速旋转对准
+                                if diff_dis >= 10:
+                                    self.get_logger().info("[LOADING] 中等偏差（>10mm），低速旋转对准")
                                     if (left - right) < 0:
                                         left_speed = base_speed / 10.0
                                         right_speed = base_speed / 10.0
                                     else:
                                         left_speed = -base_speed / 10.0
                                         right_speed = -base_speed / 10.0
-                                # 步骤6：差值<5mm → 低速纠偏直行
+                                # 步骤6：差值<10mm → 低速纠偏直行
                                 else:
-                                    self.get_logger().info("[LOADING] 差值<5mm，直行")
+                                    self.get_logger().info("[LOADING] 差值<10mm，直行")
                                     left_speed = -base_speed / 1.5
                                     right_speed = base_speed / 1.5
                             else:
                                 # self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
                                 # 差值≥40mm → 中速旋转对准
-                                if diff_dis >= 10:
+                                if diff_dis >= 20:
                                     self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
                                     if (left - right) < 0:
                                         left_speed = base_speed / 4.0
