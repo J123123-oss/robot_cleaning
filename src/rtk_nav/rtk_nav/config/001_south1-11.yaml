@@ -158,7 +158,6 @@ areas:
     calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
     calib_point_b: {lon: 110.64776161073715, lat: 35.6049817500445}
     calib_point_c: {lon: 110.6477609856752, lat: 35.60500043052129}
-    # start_corner: "top_right"
     swap_wh_select: True
 
   # 10南侧加长方块
@@ -184,10 +183,9 @@ areas:
     edge_distance_lat: [0.3, 0.3]  
   # bridge_10-11b   
   - name: "bridge_10-11b"
-    calib_point_a: {lon: 110.64776161073715, lat: 35.6049817500445}
+    calib_point_a: {lon: 110.64776183179559, lat: 35.604852917286685}
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
-    calib_point_c: {lon: 110.64776161073715, lat: 35.6049817500445}
-    start_corner: "top_right"
+    calib_point_c: {lon: 110.64776183179559, lat: 35.604852917286685}
     swap_wh_select: True
 
   # 11南侧加长方块

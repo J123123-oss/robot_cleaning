@@ -266,7 +266,7 @@ areas:
     calib_point_c: {lon: 110.64693569975074, lat: 35.604527157037374}
     start_corner: "top_right"
     edge_distance_lon: [0.15, 0.1] 
-    edge_distance_lat: 0.3
+    edge_distance_lat: 0.5
     # bridge_11-10b
   - name: "bridge_11-10b"
     calib_point_a: {lon: 110.64659802238118, lat: 35.60474804837432}
@@ -289,7 +289,7 @@ areas:
     calib_point_c: {lon: 110.6469336597917, lat: 35.60485022402763}
     start_corner: "top_right"
     edge_distance_lon: [0.15, 0.1] 
-    edge_distance_lat: 0.3
+    edge_distance_lat: [0.5, 0.3]
 
   # back_10A-11A    ------------------------------------------------------------
   - name: "back_10A-11A"
