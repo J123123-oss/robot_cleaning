@@ -7,7 +7,7 @@ def generate_launch_description():
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan"),  # 默认值
+        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_new"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
@@ -19,7 +19,7 @@ def generate_launch_description():
         output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
-            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/cleaning_path_20251226_155005.txt'}
+            {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/path_north9-1.txt'}
             # 原注释的其他参数可在此处取消注释添加，格式同上
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt'}
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/道路4.txt'}
@@ -31,7 +31,7 @@ def generate_launch_description():
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
-            {'port': '/dev/ttyS4'},
+            {'port': '/dev/ttyS2'},
             {'baud': 9600}
         ]
     )
@@ -52,9 +52,9 @@ def generate_launch_description():
         executable='charging',
         name='charging_485_node',
         parameters=[
-            {'serial_port': '/dev/charging'},    # 替换为实际串口设备路径
-            {'baud_rate': 19200},
-            {'slave_addr': 1},
+            {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
+            {'slave_addr': 2},
+            {'battery_addr': 1},
             {'timeout': 0.5}
         ]
     )
@@ -67,7 +67,7 @@ def generate_launch_description():
             # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt'}
-            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_back11-6.txt'}
+            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/path_north9-1.txt'}
             
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/fullpath_20260306_094901_all.txt'}
             # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_20260305_112551.txt'}
@@ -99,7 +99,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'port': '/dev/WTRTK'},
-            {'baud': 460800}
+            {'baud': 230400}
         ]
     )
 

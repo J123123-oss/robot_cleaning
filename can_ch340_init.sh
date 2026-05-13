@@ -21,7 +21,7 @@ for i in {1..100}; do
     GW=$(ip route show default dev wwan0 2>/dev/null | awk '{print $3}')
     if [ -n "$GW" ]; then
         ip route del default dev wwan0 2>/dev/null
-        ip route add default via $GW dev wwan0 metric 200
+        ip route add default via $GW dev wwan0 metric 800
         break
     fi
     sleep 1

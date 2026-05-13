@@ -123,9 +123,9 @@ class LaserDistanceNode(Node):
 
     def read_laser_data(self):
         """读取两路激光传感器数据"""
-        # 读取第一路激光数据（0x01指令,修改为03）
-        if self.send_laser_command(0x03):
-            distance1 = self.read_serial_response(0x03)
+        # 读取第一路激光数据（0x01指令）
+        if self.send_laser_command(0x01):
+            distance1 = self.read_serial_response(0x01)
             if distance1 is not None:
                 with self.mutex:
                     self.laser_distance[0] = distance1
