@@ -99,10 +99,7 @@ class SBUSRemoteController(Node):
             return False
 
     def _start_parse_thread(self):
-        """启动解析线程"""
-        if not self.serial_init_flag:
-            self.get_logger().error("❌ 串口未初始化，无法启动解析线程")
-            return
+        """启动解析线程（即使串口初始化失败也要启动，以便后续自动重连）"""
         self.running = True
         self.parse_thread = threading.Thread(
             target=self._parse_remote_control_data,
@@ -110,7 +107,10 @@ class SBUSRemoteController(Node):
             daemon=True
         )
         self.parse_thread.start()
-        self.get_logger().info("✅ 遥控器数据解析线程已启动")
+        if self.serial_init_flag:
+            self.get_logger().info("✅ 遥控器数据解析线程已启动")
+        else:
+            self.get_logger().warn("⚠️ 遥控器数据解析线程已启动（串口未初始化，将自动重试连接）")
 
     def _update_control_mode(self, ch6_value: int):
         """CH6三档开关切换控制模式"""
