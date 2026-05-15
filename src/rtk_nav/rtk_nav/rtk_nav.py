@@ -18,21 +18,21 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
 # 滚刷速度
-RTK_BRUSH_SPEED = 18.0 #18.0  # 负数表示正常运行速度，与前进反方向
+RTK_BRUSH_SPEED = -18.0 #18.0  # 负数表示正常运行速度，与前进反方向
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = 10.0   # origin 8.0
-TURN_SPEED = 1.0 *2     # origin 0.1
+# TURN_SPEED = 1.0 *2     # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
-TURN_SPEED_FAST = 0.8 *2 # 大误差快速转向基准速度
-TURN_SPEED_MID = 0.6 *2  # 中误差中等转向基准速度
-TURN_SPEED_SLOW = 0.1 *4 # 小误差慢速转向基准速度（防超调）
+TURN_SPEED_FAST = 0.8 # 大误差快速转向基准速度
+TURN_SPEED_MID = 0.5  # 中误差中等转向基准速度
+TURN_SPEED_SLOW = 0.2 # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 0.8 *2   # 最大修正量
 STRAIGHT_MAX_CORRECTION = 3.0
 # straight line speed correction factor
@@ -80,11 +80,11 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = -90.0    #-90.0(old)  # RTK安装偏移角度
+        self.rtk_install_offset = 90 #-90.0    #-90.0(old)  # RTK安装偏移角度
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.2517   # 前向偏移（+：天线在车体前，-：在后）
-        self.antenna_offset_left = -0.19625   # 左向偏移（-：天线在车体左，+：在右）
+        self.antenna_offset_left = 0.19625  #old -0.19625   # 左向偏移（-：天线在车体左，+：在右）
 
         # 新增：出仓点基准缓存与偏移量
         self.base_loading_waypoint = None  # 基准出仓点（首次接收的出仓点），格式：(lon, lat, heading)
@@ -841,10 +841,10 @@ class RTKNavControlNode(Node):
         # 发布车体中心GPS
         car_gps_msg = NavSatFix()
         car_gps_msg.header = msg.header
-        car_gps_msg.status = msg.status
+        car_gps_msg.status = msg.fix_status
         car_gps_msg.latitude = car_lat
         car_gps_msg.longitude = car_lon
-        car_gps_msg.altitude = msg.altitude  # 高度可根据实际偏移调整
+        car_gps_msg.altitude = msg.ins_altitude  # 使用WTRTK的ins_altitude字段
         self.car_center_gps_pub.publish(car_gps_msg)
 
         self.current_lat = car_lat
@@ -861,6 +861,97 @@ class RTKNavControlNode(Node):
         imu_msg= Float32()
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
+        
+        if not hasattr(self, 'last_gps_status'):
+            self.last_gps_status = -1
+        
+        fix_status = msg.fix_status
+        
+        if fix_status < 0:
+            self.get_logger().warn("GPS信号无效")
+            self.last_gps_status = -1
+            return
+        
+        status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
+        if fix_status in status_map and fix_status != self.last_gps_status:
+            self.get_logger().info(f"GPS状态：{status_map[fix_status]}")
+            self.last_gps_status = fix_status
+        
+        is_fixed = (fix_status == 4)
+        if not is_fixed:
+            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                self.nav_context["brush_active"] = self.brush_active
+                self.get_logger().warn(f"[RTK状态] 当前状态：{status_map.get(fix_status, '未知')}，非固定解，暂停导航（保存状态：{self.nav_context['pre_pause_state']}）")
+                self.nav_context["nav_state"] = NavState.PAUSE
+                self.nav_running = False
+                stop_speed = Vector3()
+                self.publish_stop_speed()
+        else:
+            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
+                self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
+                self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
+                self.brush_active = self.nav_context.get("brush_active", False)
+                if self.brush_active:
+                    self.publish_brush_speed(RTK_BRUSH_SPEED)
+                else:
+                    self.publish_brush_speed(0.0)
+                self.nav_running = True
+        
+        raw_lon = msg.ins_longitude
+        raw_lat = msg.ins_latitude
+        
+        if self.current_gps and self.current_gps != [0.0, 0.0]:
+            lon_diff = abs(raw_lon - self.current_gps[0])
+            lat_diff = abs(raw_lat - self.current_gps[1])
+        
+        self.gps_cache.append((raw_lon, raw_lat))
+        if len(self.gps_cache) > GPS_SMOOTH_WINDOW:
+            self.gps_cache.pop(0)
+        smooth_lon = sum([x[0] for x in self.gps_cache]) / len(self.gps_cache)
+        smooth_lat = sum([x[1] for x in self.gps_cache]) / len(self.gps_cache)
+        
+        self.current_gps = (smooth_lon, smooth_lat)
+        self.current_lon = smooth_lon
+        self.current_lat = smooth_lat
+        self.get_logger().debug(f"当前天线坐标：经度={smooth_lon:.6f}, 纬度={smooth_lat:.6f}")
+    
+        EARTH_RADIUS = 6378137.0       # 地球半径（米），WGS84椭球长半轴
+        # 1. 将航向角转换为弧度（注意：imu_yaw是车体朝向，需确认角度定义：0°为北，顺时针增加）
+        heading_rad = math.radians(self.imu_yaw)
+        
+        # 2. 计算天线相对于车体中心的北向（N）、东向（E）偏移量（米）
+        # 车体朝向为heading_rad，天线在前则北向偏移为正，在左则东向偏移为负（根据坐标系调整）
+        # 核心公式：
+        # 北向偏移 = 前向偏移 * cos(航向角) - 左向偏移 * sin(航向角)
+        # 东向偏移 = 前向偏移 * sin(航向角) + 左向偏移 * cos(航向角)
+        delta_n = self.antenna_offset_front * math.cos(heading_rad) - self.antenna_offset_left * math.sin(heading_rad)
+        delta_e = self.antenna_offset_front * math.sin(heading_rad) + self.antenna_offset_left * math.cos(heading_rad)
+        
+        # 3. 将米级偏移转换为经纬度偏移（弧度）
+        # 纬度偏移：delta_lat = delta_n / 地球半径
+        # 经度偏移：delta_lon = delta_e / (地球半径 * cos(纬度弧度))
+        lat_rad = math.radians(self.current_lat)
+        delta_lat_rad = delta_n / EARTH_RADIUS
+        delta_lon_rad = delta_e / (EARTH_RADIUS * math.cos(lat_rad))
+        
+        # 4. 转换为角度并计算车体中心坐标（天线坐标 - 偏移量 = 车体中心坐标）
+        car_lat = self.current_lat - math.degrees(delta_lat_rad)
+        car_lon = self.current_lon - math.degrees(delta_lon_rad)
+
+        # 发布车体中心GPS
+        car_gps_msg = NavSatFix()
+        car_gps_msg.header = msg.header
+        car_gps_msg.status = msg.fix_status
+        car_gps_msg.latitude = car_lat
+        car_gps_msg.longitude = car_lon
+        car_gps_msg.altitude = msg.ins_altitude  # 使用WTRTK的ins_altitude字段
+        self.car_center_gps_pub.publish(car_gps_msg)
+
+        self.current_lat = car_lat
+        self.current_lon = car_lon
+        self.current_gps = (car_lon, car_lat)
+        self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
         """获取当前目标航点（含航向角）, 到达最后一个航点时自动切换路径文件"""
@@ -1136,8 +1227,8 @@ class RTKNavControlNode(Node):
         correction_clamped = -max(min(correction, STRAIGHT_MAX_CORRECTION), -STRAIGHT_MAX_CORRECTION)
 
         # 日志输出
-        if abs(yaw_error - self.last_yaw_error) > 0.1:
-            self.get_logger().info(f"直线：yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        # if abs(yaw_error - self.last_yaw_error) > 0.1:
+        #     self.get_logger().info(f"直线：yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
         
         self.last_yaw_error = yaw_error
         return correction_clamped
@@ -1185,17 +1276,17 @@ class RTKNavControlNode(Node):
         分级自适应转向基准速度（核心：大误差快，小误差慢）
         无需减小PID参数，通过基准速度分级实现快慢切换
         """
-        if yaw_error_abs > 30:
-            return TURN_SPEED_FAST  # type: ignore # 大误差（>30°）：快速转向
-        elif yaw_error_abs > 5:
+        if yaw_error_abs > 45:
+            return TURN_SPEED_FAST  # type: ignore # 大误差（>45°）：快速转向
+        elif yaw_error_abs > 20:
             return TURN_SPEED_MID   # 中误差（5°~30°）：中等速度
         else:
             return TURN_SPEED_SLOW  # 小误差（<5°）：慢速转向，防止超调
         
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
-        # self.get_logger().info(
-            # f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+        self.get_logger().info(
+            f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
 
         while rclpy.ok():
             start_time = self.get_clock().now()
@@ -1323,6 +1414,9 @@ class RTKNavControlNode(Node):
         consecutive_threshold = 5
         consecutive_count = 0
         
+        last_left_speed = None
+        last_right_speed = None
+        
         while rclpy.ok():
             # 实时获取当前RTK位置和目标航点经纬度
             current_lon, current_lat = self.current_gps
@@ -1420,10 +1514,8 @@ class RTKNavControlNode(Node):
             
             # 计算修正量（使用真实偏差角）
             correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
-            self.get_logger().info(f"yaw_error={yaw_error:.2f}°, correction={correction:.2f}")
+            # self.get_logger().info(f"yaw_error={yaw_error:.2f}°, correction={correction:.2f}")
             # base_speed = LINEAR_SPEED_BASE
-            last_left_speed = None
-            last_right_speed = None
             left_speed = -current_base_speed + correction
             right_speed = current_base_speed + correction
             if left_speed != last_left_speed or right_speed != last_right_speed:
@@ -1555,6 +1647,11 @@ class RTKNavControlNode(Node):
         # 首次启动导航时也检查滚刷控制
         self.publish_nav_state(current_nav_state)
         self.check_and_control_brush()
+
+        # 初始化左右轮速度记录（用于日志限流）
+        last_left_speed = None
+        last_right_speed = None
+        last_current_base_speed = None
         if self.is_boundary_triggered:
             self.get_logger().info("boundary_triggered!!!")
             self.get_logger().warn("boundary_triggered!!!")
@@ -1824,24 +1921,24 @@ class RTKNavControlNode(Node):
                 #     self.get_logger().info(f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{target_heading_fixed:.2f}°")
                 # else:
                 #     self.last_valid_heading = real_time_heading  # 缓存有效航向
-                # 1. 先判断距离，决定是否更新实时航向
-                if distance >= 0.3:
-                    # 距离足够远时，正常计算实时航向，并更新缓存
-                    real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                    self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
-                else:
-                    # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
-                    if self.last_valid_heading is not None:
-                        real_time_heading = self.last_valid_heading  # 复用之前的航向
-                        self.get_logger().info(
-                            f"[近距离固定航向] 距离{distance:.2f}m < 0.5m，固定目标航向为{real_time_heading:.2f}°"
-                        )
-                    else:
-                        # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
-                        real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                        self.get_logger().warning(
-                            f"[航向缓存异常] 距离{distance:.2f}m < 0.5m但无有效航向缓存，临时使用实时计算航向{real_time_heading:.2f}°"
-                        )
+                # # 1. 先判断距离，决定是否更新实时航向
+                # if distance >= 1.3:
+                #     # 距离足够远时，正常计算实时航向，并更新缓存
+                #     real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                #     self.last_valid_heading = real_time_heading  # 缓存最新的有效航向
+                # else:
+                #     # 距离<0.5m时，使用缓存的最后一次有效航向（不再实时计算）
+                #     if self.last_valid_heading is not None:
+                #         real_time_heading = self.last_valid_heading  # 复用之前的航向
+                #         self.get_logger().info(
+                #             f"[近距离固定航向] 距离{distance:.2f}m < 1.3m，固定目标航向为{real_time_heading:.2f}°"
+                #         )
+                #     else:
+                #         # 极端情况：首次进入近距离就无缓存，降级使用实时计算（避免程序报错）
+                #         real_time_heading = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                #         self.get_logger().warning(
+                #             f"[航向缓存异常] 距离{distance:.2f}m < 1.3m但无有效航向缓存，实时航向{real_time_heading:.2f}°"
+                #         )
                 # 初始化航向历史缓存（最多保留5帧，可调整）
                 # if not hasattr(self, 'heading_history'):
                 #     self.heading_history = []
@@ -1946,21 +2043,22 @@ class RTKNavControlNode(Node):
                         if distance < LOW_DISTANCE:
                             speed_scale = max(0.2, distance/LOW_DISTANCE * 0.7)
                             current_base_speed = LINEAR_SPEED_BASE * speed_scale
-                            # correction = correction * speed_scale
+                            correction = self.straight_get_speed_correction(yaw_error) * STRAIGHT_PID_SCALE
+                            correction = correction * speed_scale
                             # 修正量不随速度缩放，保证近距离纠偏力度
                         else:
                             current_base_speed = LINEAR_SPEED_BASE
                         
                         # 计算左右轮速度（原有逻辑保留）
-                        last_left_speed = None
-                        last_right_speed = None
                         left_speed = -current_base_speed + correction
                         right_speed = current_base_speed + correction
                         
-                        if left_speed != last_left_speed or right_speed != last_right_speed:
-                            self.get_logger().debug(f"正常纠偏：base_speed={current_base_speed:.2f}, correction={correction:.2f}, left_speed={left_speed:.2f}, right_speed={right_speed:.2f}")
+                        # if left_speed != last_left_speed or right_speed != last_right_speed:
+                        if current_base_speed != last_current_base_speed:
+                            self.get_logger().info(f"base_speed={current_base_speed:.2f}, correction={correction:.2f}, left_speed={left_speed:.2f}, right_speed={right_speed:.2f}")
                         last_left_speed = left_speed
                         last_right_speed = right_speed
+                        last_current_base_speed = current_base_speed
                         
                         # 边界触发优先（原有逻辑保留）
                         if self.is_boundary_triggered or self.boundary_correct_locked:
@@ -2009,8 +2107,8 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                 
                 # 打印日志（简化，只输出关键信息）
-                if (abs(self.nav_context["last_distance"] - distance) > 0.1 or
-                    abs(self.nav_context["last_target_heading"] - real_time_heading) > 0.1):
+                if (abs(self.nav_context["last_distance"] - distance) > 2.0 or
+                    abs(self.nav_context["last_target_heading"] - real_time_heading) > 3.0):
                     self.nav_context["last_distance"] = distance
                     self.nav_context["last_target_heading"] = real_time_heading
                     # 日志输出真实偏差：IMU航向、目标路径航向、偏差角
