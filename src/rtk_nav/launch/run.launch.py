@@ -4,10 +4,13 @@ from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
+    # 全局路径配置
+    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/south4-south6.txt'
+
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_new"),  # 默认值
+        default_value=TextSubstitution(text="HEJIN_Huaxinyuan"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
@@ -19,10 +22,7 @@ def generate_launch_description():
         output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
-            {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/path_north9-1.txt'}
-            # 原注释的其他参数可在此处取消注释添加，格式同上
-            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt'}
-            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/cleaning_path/道路4.txt'}
+            {'rtk_path_file': rtk_path_file}
         ]
     )
     sensors_485_node = Node(
@@ -53,8 +53,8 @@ def generate_launch_description():
         name='charging_485_node',
         parameters=[
             {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
-            {'slave_addr': 2},
-            {'battery_addr': 1},
+            {'slave_addr': 1},
+            {'battery_addr': 11},
             {'timeout': 0.5}
         ]
     )
@@ -64,17 +64,7 @@ def generate_launch_description():
         name='rtk_nav',
         # output='screen',
         parameters=[
-            # {'rtk_path_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/top_left.txt'}
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt'}
-            {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/path_north9-1.txt'}
-            
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/fullpath_20260306_094901_all.txt'}
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_20260305_112551.txt'}
-            # {'rtk_path_file': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260228_153621.txt'}
-            
-            # 原注释的其他参数可取消注释添加
-            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtkmsgs/直线往返1.txt'}
+            {'rtk_path_file': rtk_path_file}
         ]
     )
     # RTK录制的消息解析节点（原ROS1中未注释的节点）
