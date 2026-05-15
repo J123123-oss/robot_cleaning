@@ -74,9 +74,9 @@ class Charging485Node(Node):
 
         self.declare_parameter('serial_port', '/dev/ttyS4')
         self.declare_parameter('charge_baud_rate', 19200)
-        self.declare_parameter('battery_baud_rate', 4800)
-        self.declare_parameter('slave_addr', 0x02)
-        self.declare_parameter('battery_addr', 0x01)
+        self.declare_parameter('battery_baud_rate', 9600)
+        self.declare_parameter('slave_addr', 0x01)
+        self.declare_parameter('battery_addr', 0x0B)
         self.declare_parameter('timeout', 0.5)
         self.declare_parameter('battery_timeout', 0.2)
         self.declare_parameter('battery_base_poll_interval', 10.0)
@@ -106,11 +106,10 @@ class Charging485Node(Node):
         self.last_battery_base_poll = 0.0
         self.last_battery_temp_poll = 0.0
 
-        # self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 A1") # addr =0B
-        # self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 B1") # addr =0B
-        self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 0B") # addr =01
-        self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 1B") # addr =01
-
+        self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 A1")
+        self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 B1")
+        # self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 0B")
+        # self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 1B")
         self.volt_curr_pub = self.create_publisher(Float32MultiArray, 'charging_volt_curr', 10)
         self.fault_code_pub = self.create_publisher(Int16, 'charging_fault_code', 10)
         self.battery_pub = self.create_publisher(Float32MultiArray, '/battery_data', 10)

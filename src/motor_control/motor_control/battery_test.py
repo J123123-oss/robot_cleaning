@@ -18,14 +18,15 @@ class BatteryParser(Node):
         
         # 参数配置
         self.declare_parameter('serial_port', '/dev/ttyS4')
-        self.declare_parameter('baudrate', 9600)
+        self.declare_parameter('baudrate', 19200)
         
         self.port = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baudrate = self.get_parameter('baudrate').get_parameter_value().integer_value
         
         # 电池相关配置（更新为新指令：0B 04 00 00 00 03 B0 A1）
-        self.battery_cmd = bytes.fromhex("0B 04 00 00 00 03 B0 A1")
+        # self.battery_cmd = bytes.fromhex("0B 04 00 00 00 03 B0 A1")
         # self.battery_cmd = bytes.fromhex("01 04 00 00 00 03 B0 0B")
+        self.battery_cmd = bytes.fromhex("01 06 00 10 01 90 89 F3")  #修改无线充电流为4A
         self.battery_polling_interval = 1.0 # 电池查询间隔
         self.last_battery_poll_time = 0
         
