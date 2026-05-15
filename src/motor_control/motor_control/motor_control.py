@@ -84,7 +84,7 @@ class MotorControlNode(Node):
         self.brush_speed = 0.0  # 滚刷速度
         self.current_left_speed = 0.0  # 当前左轮速度
         self.current_right_speed = 0.0  # 当前右轮速度
-
+        self.mqtt_control_speed = 10.0  # MQTT控制速度
         # UNLOADING parameters
         self.unloading_forword_threshold = 22.0 # seconds
         self.unloading_turn_start_time = None
@@ -145,7 +145,7 @@ class MotorControlNode(Node):
         self.motor_fault_codes = [0, 0, 0]  # 三路电机故障码
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
-        self.charge_resume_threshold = 98 # 恢复充电的电量阈值（百分比）
+        self.charge_resume_threshold = 90   #old:98 # 恢复充电的电量阈值（百分比）
         self.is_charge_paused = True  # 充电是否已暂停（充满后暂停）
         self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
         self.charge_resume_count = 0  # 恢复充电的次数
@@ -460,20 +460,20 @@ class MotorControlNode(Node):
         elif self.current_control_mode == "NORMAL":
             # 按当前状态赋值速度
             if self.current_status == "FORWARD":
-                left_speed = -self.motor_ctrl.BASE_SPEED
-                right_speed = self.motor_ctrl.BASE_SPEED
+                left_speed = -self.mqtt_control_speed
+                right_speed = self.mqtt_control_speed
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "BACKWARD":
-                left_speed = self.motor_ctrl.BASE_SPEED
-                right_speed = -self.motor_ctrl.BASE_SPEED
+                left_speed = self.mqtt_control_speed
+                right_speed = -self.mqtt_control_speed
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
-                left_speed = self.motor_ctrl.BASE_SPEED
-                right_speed = self.motor_ctrl.BASE_SPEED
+                left_speed = self.mqtt_control_speed
+                right_speed = self.mqtt_control_speed
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "RIGHT":
-                left_speed = -self.motor_ctrl.BASE_SPEED
-                right_speed = -self.motor_ctrl.BASE_SPEED
+                left_speed = -self.mqtt_control_speed
+                right_speed = -self.mqtt_control_speed
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
@@ -842,11 +842,7 @@ class MotorControlNode(Node):
             #     self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为60秒")
 
         elif new_state == "START":
-            # 清除故障启动：仅使能电机，不运动
-            self.motor_ctrl.motor_clear_fault(1)
-            self.motor_ctrl.motor_clear_fault(2)
-            self.motor_ctrl.motor_clear_fault(3)
-            self.get_logger().warn(f"发送清除故障指令！")
+            
             self.motor_ctrl.initialize_motors()
             time.sleep(0.001)
             self.complete_state = False
@@ -858,8 +854,8 @@ class MotorControlNode(Node):
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
-            left_speed = -self.motor_ctrl.BASE_SPEED
-            right_speed = self.motor_ctrl.BASE_SPEED
+            left_speed = -self.mqtt_control_speed
+            right_speed = self.mqtt_control_speed
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -868,8 +864,8 @@ class MotorControlNode(Node):
 
         elif new_state == "BACKWARD":
             # 后退：双电机反转
-            left_speed = self.motor_ctrl.BASE_SPEED
-            right_speed = -self.motor_ctrl.BASE_SPEED
+            left_speed = self.mqtt_control_speed
+            right_speed = -self.mqtt_control_speed
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -877,8 +873,8 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("s"))
         elif new_state == "LEFT":
             # 左转
-            left_speed = self.motor_ctrl.BASE_SPEED
-            right_speed = self.motor_ctrl.BASE_SPEED
+            left_speed = self.mqtt_control_speed
+            right_speed = self.mqtt_control_speed
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -886,8 +882,8 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("a"))
         elif new_state == "RIGHT":
             # 右转
-            left_speed = -self.motor_ctrl.BASE_SPEED
-            right_speed = -self.motor_ctrl.BASE_SPEED
+            left_speed = -self.mqtt_control_speed
+            right_speed = -self.mqtt_control_speed
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
