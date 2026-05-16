@@ -274,7 +274,7 @@ class MotorControlNode(Node):
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
         self.charge_resume_timer = self.create_timer(30.0, self.charge_resume_callback)  # 30秒检查一次恢复充电
-        self.state_publish_timer = self.create_timer(30.0, self.publish_state)  # 默认5秒发布状态
+        self.state_publish_timer = self.create_timer(1800.0, self.publish_state)  # 默认5秒发布状态
 
         # add mqtt 
         self.main_board = True # 主控板状态MQTT
