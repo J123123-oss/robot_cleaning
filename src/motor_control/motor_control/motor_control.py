@@ -269,12 +269,12 @@ class MotorControlNode(Node):
         # 确保IMU航向默认值存在
         self.imu_yaw_deg = None
 
-        # 初始化电机（进入START状态）
-        self.switch_state('x')
+        # 初始化电机（进入START状态）>>DISABLE
+        self.switch_state('z')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
         self.charge_resume_timer = self.create_timer(30.0, self.charge_resume_callback)  # 30秒检查一次恢复充电
-        self.state_publish_timer = self.create_timer(5.0, self.publish_state)  # 默认5秒发布状态
+        self.state_publish_timer = self.create_timer(30.0, self.publish_state)  # 默认5秒发布状态
 
         # add mqtt 
         self.main_board = True # 主控板状态MQTT
@@ -385,7 +385,7 @@ class MotorControlNode(Node):
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
             self.motor_ctrl.reconnect_can_bus()
-        self.current_control_mode = self.sbus_remote.control_mode
+        # self.current_control_mode = self.sbus_remote.control_mode
         if self.rc_control:
             self.current_control_mode = "REMOTE"
         elif self.rc_control == False and self.current_control_mode not in ["AUTO_CLEANING", "REMOTE"]:

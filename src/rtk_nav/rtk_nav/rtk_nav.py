@@ -7,7 +7,7 @@ import time
 import rclpy
 import re
 from rclpy.node import Node
-from sensor_msgs.msg import NavSatFix
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
 from std_msgs.msg import String, UInt8, Float32       # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
@@ -198,7 +198,7 @@ class RTKNavControlNode(Node):
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
 
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
-        self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
+        # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
         self.unloading_gps_sub = self.create_subscription(Vector3, '/unloading_gps', self.unloading_gps_callback, 10)
@@ -742,117 +742,6 @@ class RTKNavControlNode(Node):
         self.offset_calculated = False
         self.get_logger().info("[RTKNav] 已重置基准出仓点，下次接收将重新缓存")
 
-    def gps_callback(self, msg: NavSatFix) -> None:
-        # 初始化上一状态变量（首次调用时创建）
-        if not hasattr(self, 'last_gps_status'):
-            self.last_gps_status = -1
-            
-        if msg.status.status < 0:
-            self.get_logger().warn("GPS信号无效")
-            # 更新上一状态为无效
-            self.last_gps_status = -1
-            return
-        
-        status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
-        # 仅当状态改变时才打印日志
-        if msg.status.status in status_map and msg.status.status != self.last_gps_status:
-            self.get_logger().info(f"GPS状态：{status_map[msg.status.status]}")
-            # 更新上一状态为当前状态
-            self.last_gps_status = msg.status.status
-        
-        # ========== RTK非固定解时暂停导航 ==========
-        current_gps_status = msg.status.status
-        is_fixed = (current_gps_status == 4)  # RTK Fixed
-        
-        if not is_fixed:
-            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
-                # 保存暂停前的状态
-                self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
-                self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
-                self.get_logger().warn(f"[RTK状态] 当前状态：{status_map.get(current_gps_status, '未知')}，非固定解，暂停导航（保存状态：{self.nav_context['pre_pause_state']}）")
-                self.nav_context["nav_state"] = NavState.PAUSE
-                self.nav_running = False
-                stop_speed = Vector3()
-                self.publish_stop_speed()
-        else:
-            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
-                self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
-                self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
-                self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
-                if self.brush_active:
-                    self.publish_brush_speed(RTK_BRUSH_SPEED)
-                else:
-                    self.publish_brush_speed(0.0)
-                self.nav_running = True
-        
-        # self.current_gps = (msg.longitude, msg.latitude)
-        # self.current_lon = msg.longitude
-        # self.current_lat = msg.latitude
-            # ========== 新增：经纬度过滤逻辑 ==========
-        raw_lon = msg.longitude
-        raw_lat = msg.latitude
-        
-        # 1. 突变检测：与上一个有效坐标的差值超过阈值则视为异常
-        if self.current_gps and self.current_gps != [0.0, 0.0]:
-            lon_diff = abs(raw_lon - self.current_gps[0])
-            lat_diff = abs(raw_lat - self.current_gps[1])
-            # if lon_diff > GPS_CHANGE_THRESHOLD or lat_diff > GPS_CHANGE_THRESHOLD:
-            #     self.get_logger().warn(f"[GPS过滤] 坐标突变（lon_diff={lon_diff:.6f}, lat_diff={lat_diff:.6f}），使用历史平滑值")
-            #     # 异常时不更新坐标，直接返回
-            #     return
-        
-        # 2. 滑动平均平滑：保留最近N帧坐标取平均
-        self.gps_cache.append((raw_lon, raw_lat))
-        if len(self.gps_cache) > GPS_SMOOTH_WINDOW:
-            self.gps_cache.pop(0)
-        # 计算平滑后的经纬度
-        smooth_lon = sum([x[0] for x in self.gps_cache]) / len(self.gps_cache)
-        smooth_lat = sum([x[1] for x in self.gps_cache]) / len(self.gps_cache)
-        
-        # 更新当前GPS坐标（使用过滤后的值）
-        self.current_gps = (smooth_lon, smooth_lat)
-        self.current_lon = smooth_lon
-        self.current_lat = smooth_lat
-        self.get_logger().debug(f"当前天线坐标：经度={smooth_lon:.6f}, 纬度={smooth_lat:.6f}")
-
-        EARTH_RADIUS = 6378137.0       # 地球半径（米），WGS84椭球长半轴
-        # 1. 将航向角转换为弧度（注意：imu_yaw是车体朝向，需确认角度定义：0°为北，顺时针增加）
-        heading_rad = math.radians(self.imu_yaw)
-        
-        # 2. 计算天线相对于车体中心的北向（N）、东向（E）偏移量（米）
-        # 车体朝向为heading_rad，天线在前则北向偏移为正，在左则东向偏移为负（根据坐标系调整）
-        # 核心公式：
-        # 北向偏移 = 前向偏移 * cos(航向角) - 左向偏移 * sin(航向角)
-        # 东向偏移 = 前向偏移 * sin(航向角) + 左向偏移 * cos(航向角)
-        delta_n = self.antenna_offset_front * math.cos(heading_rad) - self.antenna_offset_left * math.sin(heading_rad)
-        delta_e = self.antenna_offset_front * math.sin(heading_rad) + self.antenna_offset_left * math.cos(heading_rad)
-        
-        # 3. 将米级偏移转换为经纬度偏移（弧度）
-        # 纬度偏移：delta_lat = delta_n / 地球半径
-        # 经度偏移：delta_lon = delta_e / (地球半径 * cos(纬度弧度))
-        lat_rad = math.radians(self.current_lat)
-        delta_lat_rad = delta_n / EARTH_RADIUS
-        delta_lon_rad = delta_e / (EARTH_RADIUS * math.cos(lat_rad))
-        
-        # 4. 转换为角度并计算车体中心坐标（天线坐标 - 偏移量 = 车体中心坐标）
-        car_lat = self.current_lat - math.degrees(delta_lat_rad)
-        car_lon = self.current_lon - math.degrees(delta_lon_rad)
-
-        # 发布车体中心GPS
-        car_gps_msg = NavSatFix()
-        car_gps_msg.header = msg.header
-        car_gps_msg.status = msg.fix_status
-        car_gps_msg.latitude = car_lat
-        car_gps_msg.longitude = car_lon
-        car_gps_msg.altitude = msg.ins_altitude  # 使用WTRTK的ins_altitude字段
-        self.car_center_gps_pub.publish(car_gps_msg)
-
-        self.current_lat = car_lat
-        self.current_lon = car_lon
-        self.current_gps = (car_lon, car_lat)
-        self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
-
-
     def heading_callback(self, msg: WTRTK) -> None:
         ins_heading_deg = msg.ins_heading
         self.imu_yaw = ins_heading_deg  + self.rtk_install_offset # + x degree
@@ -942,7 +831,8 @@ class RTKNavControlNode(Node):
         # 发布车体中心GPS
         car_gps_msg = NavSatFix()
         car_gps_msg.header = msg.header
-        car_gps_msg.status = msg.fix_status
+        car_gps_msg.status.status = msg.fix_status
+        car_gps_msg.status.service = NavSatStatus.SERVICE_GPS
         car_gps_msg.latitude = car_lat
         car_gps_msg.longitude = car_lon
         car_gps_msg.altitude = msg.ins_altitude  # 使用WTRTK的ins_altitude字段
