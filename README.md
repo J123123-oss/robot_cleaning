@@ -177,12 +177,14 @@ graph TD
 ### 关键参数
 ```mermaid
 graph LR
-    P1[RTK_WAYPOINT_TOLERANCE=0.1m] --> P1D[到达航点距离阈值]
+    P1[RTK_WAYPOINT_TOLERANCE=0.15m] --> P1D[到达航点距离阈值]
     P2[INITIAL_MOVE_TOLERANCE=0.1m] --> P2D[初始移动到达阈值]
-    P3[LINEAR_SPEED_BASE=10.0] --> P3D[基础行驶速度]
-    P4[LOW_DISTANCE=1.3m] --> P4D[减速触发距离]
-    P5[STANLEY_K=2.0] --> P5D[横向误差增益]
-    P6[MAX_CORRECTION=1.6] --> P6D[最大差速修正]
+    P3[LINEAR_SPEED_BASE=10.0] --> P3D[基础行驶速度（约0.35-0.4m/s）]
+    P4[LOW_DISTANCE=1.5m] --> P4D[减速触发距离]
+    P5[STANLEY_K_BASE=0.4] --> P5D[自适应K基础增益]
+    P6[MAX_CORRECTION=2.0] --> P6D[最大差速修正]
     P7[RTK_HEADING_TOLERANCE=1.0°] --> P7D[航向校准精度]
-    P8[GPS_SMOOTH_WINDOW=5帧] --> P8D[GPS滑动平均窗口]
+    P8[STANLEY_MIN_SPEED=0.3] --> P8D[最小速度阈值]
+    P9[STANLEY_MAX_K=2.0] --> P9D[K值上限]
+    P10[MAX_LATERAL_ERROR=0.5m] --> P10D[横向误差上限]
 ```
