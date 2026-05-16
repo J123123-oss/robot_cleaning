@@ -82,13 +82,16 @@ areas:
     calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
     calib_point_b: {lon: 110.64776922016449, lat: 35.60327065277348}
     calib_point_c: {lon: 110.6474332515515, lat: 35.60326969801204}
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.3, 0.3]  
-
-  - name: "bridge_18-19b"
+  
+  # bridge_18-19B
+  - name: "bridge_18-19B"
     calib_point_a: {lon: 110.64776956203357, lat: 35.60320371639688}
     calib_point_b: {lon: 110.6477703763593, lat: 35.602868395349155}
     calib_point_c: {lon: 110.64776956203357, lat: 35.60311019544255}
+    edge_distance_lat: 0.0
+
 
 
   # 19南侧加长方块
@@ -106,10 +109,11 @@ areas:
     calib_point_c: {lon: 110.6474309438137, lat: 35.603101918359954}
     start_corner: "bottom_right"
     reverse_end_point: True
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.3, 0.1]
-#  # bridge_19-20b
-  - name: "bridge_19-20b"
+
+  #  # bridge_19-20B
+  - name: "bridge_19-20B"
     calib_point_a: {lon: 110.64776966454107, lat: 35.603101230415184}
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
     calib_point_c: {lon: 110.64776966454107, lat: 35.603101230415184}
@@ -129,14 +133,15 @@ areas:
     calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
     start_corner: "top_right"
     reverse_end_point: True
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.1, 0.3]
-  # bridge_20-21b
-  - name: "bridge_20-21b"
+
+  # bridge_20-21B
+  - name: "bridge_20-21B"
     calib_point_a: {lon: 110.64777166295664, lat: 35.602665661235534}
     calib_point_b: {lon: 110.64777253579807, lat: 35.60244104011207}
     calib_point_c: {lon: 110.64777166295664, lat: 35.602665661235534}
-    
+
   # 21南侧加长方块
   - name: "south_21_long_block"
     calib_point_a: {lon: 110.64742833232991, lat: 35.60244005332984}
@@ -153,10 +158,11 @@ areas:
     calib_point_c: {lon: 110.64743581917091, lat: 35.60255880384909}
     start_corner: "bottom_right"
     reverse_end_point: True
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.3, 0.3]
- # bridge_21-22b
-  - name: "bridge_21-22b"
+  
+  # bridge_21-22B
+  - name: "bridge_21-22B"
     calib_point_a: {lon: 110.64777235307753, lat: 35.60255989772949}
     calib_point_b: {lon: 110.64777309831817, lat: 35.60240848925073}
     calib_point_c: {lon: 110.64777235307753, lat: 35.60255989772949}
@@ -176,10 +182,11 @@ areas:
     calib_point_c: {lon: 110.64743674068407, lat: 35.60240675086808}
     start_corner: "top_right"
     reverse_end_point: True
-    edge_distance_lon: [0.15, 0.1]   
+    edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.3, 0.3]
- # bridge_22-23b
-  - name: "bridge_22-23b"
+  
+  # bridge_22-23B
+  - name: "bridge_22-23B"
     calib_point_a: {lon: 110.64777328985258, lat: 35.602289317044416}
     calib_point_b: {lon: 110.64777457663791, lat: 35.60211783161967}
     calib_point_c: {lon: 110.64777328985258, lat: 35.602289317044416}
@@ -198,10 +205,10 @@ areas:
     calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_c: {lon: 110.647279569684, lat: 35.60218200226331}
     start_corner: "bottom_right"
-    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lon: [0.3, 0.5]   
     edge_distance_lat: [0.3, 0.3]
- # bridge_23-24b
-  - name: "bridge_23-24b"
+  # bridge_23-24B
+  - name: "bridge_23-24B"
     calib_point_a: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
     calib_point_c: {lon: 110.64777398498698, lat: 35.602184783694824}
@@ -212,7 +219,7 @@ areas:
     calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
     calib_point_c: {lon: 110.6472005047547, lat: 35.60207628552591}
     reverse_end_point: True
-    edge_distance_lon: [0.15, 0.5]   
+    edge_distance_lon: [0.3, 0.5]   
     edge_distance_lat: [0.3, 0.3]
 
 
