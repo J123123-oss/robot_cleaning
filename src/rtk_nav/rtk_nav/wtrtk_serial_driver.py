@@ -266,64 +266,64 @@ class WTRTKSerialDriver(Node):
         
         return fix_msg
 
-def read_serial(self):
-    """持续读取串口数据并解析 - 处理所有帧"""
-    while rclpy.ok():
-        if not self.ser or not self.ser.is_open:
-            self.get_logger().warn("Serial port closed, reconnecting...")
-            if not self.connect_serial():
-                time.sleep(0.5)
-                continue
-        
-        try:
-            data = self.ser.read(1024)
-            if data:
-                self.buffer += data.decode('utf-8', errors='replace')
-                if len(self.buffer) > self.buffer_max_len:
-                    self.buffer = self.buffer[-self.buffer_max_len:]
-                
-                while True:
-                    gngga_idx = self.buffer.find('$GNGGA')
-                    wtrtk_idx = self.buffer.find('$WTRTK')
+    def read_serial(self):
+        """持续读取串口数据并解析 - 处理所有帧"""
+        while rclpy.ok():
+            if not self.ser or not self.ser.is_open:
+                self.get_logger().warn("Serial port closed, reconnecting...")
+                if not self.connect_serial():
+                    time.sleep(0.5)
+                    continue
+            
+            try:
+                data = self.ser.read(1024)
+                if data:
+                    self.buffer += data.decode('utf-8', errors='replace')
+                    if len(self.buffer) > self.buffer_max_len:
+                        self.buffer = self.buffer[-self.buffer_max_len:]
                     
-                    if gngga_idx == -1 and wtrtk_idx == -1:
-                        self.buffer = ""
-                        break
-                    
-                    if gngga_idx != -1 and wtrtk_idx != -1:
-                        if gngga_idx < wtrtk_idx:
+                    while True:
+                        gngga_idx = self.buffer.find('$GNGGA')
+                        wtrtk_idx = self.buffer.find('$WTRTK')
+                        
+                        if gngga_idx == -1 and wtrtk_idx == -1:
+                            self.buffer = ""
+                            break
+                        
+                        if gngga_idx != -1 and wtrtk_idx != -1:
+                            if gngga_idx < wtrtk_idx:
+                                target_start = gngga_idx
+                                frame_type = "GNGGA"
+                            else:
+                                target_start = wtrtk_idx
+                                frame_type = "WTRTK"
+                        elif gngga_idx != -1:
                             target_start = gngga_idx
                             frame_type = "GNGGA"
                         else:
                             target_start = wtrtk_idx
                             frame_type = "WTRTK"
-                    elif gngga_idx != -1:
-                        target_start = gngga_idx
-                        frame_type = "GNGGA"
-                    else:
-                        target_start = wtrtk_idx
-                        frame_type = "WTRTK"
-                    
-                    end_idx = self.buffer.find('\r\n', target_start)
-                    if end_idx == -1:
-                        self.buffer = self.buffer[target_start:]
-                        break
-                    
-                    frame = self.buffer[:end_idx]
-                    self.buffer = self.buffer[end_idx + 2:]
-                    
-                    # 实时发布：WTRTK解析成功 → 立即发布
-                    if frame_type == "WTRTK":
-                        parsed_wtrtk = self.parse_wtrtk(frame)
-                        if parsed_wtrtk:
-                            # 立刻发布 wtrtk_data
-                            self.wtrtk_pub.publish(parsed_wtrtk)
-        
-        except Exception as e:
-            self.get_logger().error(f"Serial read error: {str(e)}")
-            if self.ser:
-                self.ser.close()
-            time.sleep(0.1)
+                        
+                        end_idx = self.buffer.find('\r\n', target_start)
+                        if end_idx == -1:
+                            self.buffer = self.buffer[target_start:]
+                            break
+                        
+                        frame = self.buffer[:end_idx]
+                        self.buffer = self.buffer[end_idx + 2:]
+                        
+                        # 实时发布：WTRTK解析成功 → 立即发布
+                        if frame_type == "WTRTK":
+                            parsed_wtrtk = self.parse_wtrtk(frame)
+                            if parsed_wtrtk:
+                                # 立刻发布 wtrtk_data
+                                self.wtrtk_pub.publish(parsed_wtrtk)
+            
+            except Exception as e:
+                self.get_logger().error(f"Serial read error: {str(e)}")
+                if self.ser:
+                    self.ser.close()
+                time.sleep(0.1)
 
 
 def main(args=None):

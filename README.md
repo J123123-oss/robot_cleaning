@@ -37,118 +37,152 @@ ros2 service call /query_volt_curr std_srvs/srv/Trigger "{}"
 ### 实时订阅故障码话题
 ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 
-```mermaid
-graph TD
-    A[开机使能 START] --> B[遥控器]
-    A -->a[键盘]
-    a --> C
-    A -->b[MQTT]
-    b --> C
-    B --> C[出仓 UNLOADING]
-    C --> D[定时直行]
-    D --> d
-    d[转向] --> E[RTK起始点]
-    E{角度满足?}
-    E -- 是 --> F[切换控制模式]
-    c[记录IMU朝向]-->d
-    G --> e[重置IMU]
-    F --> G[RTK导航开始]
-    E -- 否 --> W[超时不满足]
-    W --> d
-    e --> H[区域1]
-    H[区域1] --> I{超声波检测边缘触发?}
-    I -- 是 --> J[退回组件] --> K[到达下一个点]
-    I -- 否 --> L{角度小于阈值}
-    L -->|是/否 都实时检测超声波| I{超声波检测边缘触发?}
-    L -- 是 --> f{距离小于阈值}
-    f -->|是/否 都实时检测超声波| I{超声波检测边缘触发?}
-    f -- 是 --> K[到达下一个点]
-    K --> M[......] --> N[区域2]
-    N --> O[......]
-    O --> P[RTK返回中转点]
-    P --> Q[区域n-1]
-    Q --> R[区域n]
-    R --> S[RTK结束]
-    S --> T[进仓LOADING]
-    T --> U[转向，后退进仓]
-    U --> V[停止STOP]
 
-```
-### 出仓结束后返回:
-```mermaid
-graph TD
-    A[RTK多点导航全部完成] --> B{订阅出仓点GPS}
-    B --> D[添加最后一个文件末尾索引
-    使用multi_waypoint_nav_generator]
-    D -->F
-```
-## 激光对正原逻辑
-### 激光对正旧：
-激光距离<3000mm:
-    if 差值>1000mm: 执行「偏转→后退2s→反向偏转检查」流程
-        if 差值<10mm: 直行 下一步
-    else 差值≤1000mm → 中等速度纠偏直行
-        if 激光距离<530mm → 最终对位判断
-            if 差值<2: 结束
-        if 激光距离<1000mm
-            差值≥5mm → 低速旋转对准
-            差值<5mm 直行 下一步
-        if 中距离（≥1000mm），判断差值是否<100mm
-            差值>100mm：中速旋转对准
-            差值<100mm：直行 下一步
-激光距离>3000mm:
-    旋转寻找
+## RTK导航流程图
 
-### 激光对正修改版
+### 主状态机
 ```mermaid
 graph TD
-    A[进仓LOADING阶段] --> B{激光距离<3000mm?}
-    %% 激光超出有效区分支
-    B -- 否 --> C[旋转寻找目标（低速）]
-    C --> D{寻找超时>10s?}
-    D -- 是 --> E[后退重新定位（base/5）]
-    D -- 否 --> C
-    E --> B
-    %% 激光有效区分支
-    B -- 是 --> F{差值>1000mm?}
-    
-    %% 大幅差值闭环调整（粗调）
-    F -- 是 --> G[调整阶段：偏转对准（3s，base/4）]
-    G --> H{偏转超时?}
-    H -- 是 --> I[调整阶段：后退2s（base/5）]
-    I --> J{后退完成?}
-    J -- 是 --> K[重新读取激光值]
-    K --> L[调整阶段：反向偏转检查（2s，base/6）]
-    L --> M{检查超时?}
-    M -- 是 --> N{差值仍>1000mm?}
-    N -- 是 --> G
-    N -- 否 --> O[进入中等差值纠偏]
-    M -- 否 --> L
-    J -- 否 --> I
-    H -- 否 --> G
-    
-    %% 中等差值分级精调
-    F -- 否 --> O
-    O --> P{激光距离≥1000mm?}
-    %% 中距离（≥1000mm）
-    P -- 是 --> Q{差值>100mm?}
-    Q -- 是 --> R[中速旋转对准（base/3）]
-    Q -- 否 --> S[直行（base/3）→下一步]
-    R --> O
-    S --> O
-    %% 近距离（<1000mm）
-    P -- 否 --> T{激光距离≥330mm?}
-    T -- 是 --> U{差值≥5mm?}
-    U -- 是 --> V[低速旋转对准（base/4）]
-    U -- 否 --> W[直行（base/4）→下一步]
-    V --> O
-    W --> O
-    %% 极近距离（<330mm）终调
-    T -- 否 --> X{差值<1mm?}
-    X -- 否 --> Y[最终微调（base/20）+重置稳定计数]
-    Y --> O
-    X -- 是 --> Z{连续3次达标?}
-    Z -- 否 --> AA[小幅直行（base/10）+稳定计数+1]
-    AA --> O
-    Z -- 是 --> AB[停止→进仓完成（COMPLETE）]
+    subgraph 外部事件中断
+        GPS_NONFIX["GPS非固定解"] --> PAUSE["PAUSE暂停导航"]
+        PAUSE --> GPS_FIX["GPS恢复固定解"] --> RESUME["恢复pre_pause_state"]
+        HOLD["电机状态HOLD"] --> STOP_NAV["强制停止导航"]
+        MODE_SWITCH["控制模式切换"] --> STOP_NAV
+        ROUTE_CHANGE["路径切换/rtk/route_change"] --> RELOAD["重新加载航点文件"]
+        RELOAD --> RESET_IDX["重置航点索引为0"]
+    end
+```
+
+```mermaid
+graph TD
+    subgraph 定时器驱动 10Hz
+        TIMER["rtk_timer_callback"] --> CHECK_MODE{"控制模式==AUTO_CLEANING?"}
+        CHECK_MODE -- 否 --> IDLE_RESET["重置生成器"]
+        CHECK_MODE -- 是 --> CHECK_WAYPOINTS{"有航点数据?"}
+        CHECK_WAYPOINTS -- 否 --> ERROR_EXIT["报错退出"]
+        CHECK_WAYPOINTS -- 是 --> CHECK_GENERATOR{"生成器存在?"}
+        CHECK_GENERATOR -- 否 --> CREATE_GEN["创建multi_waypoint_nav_generator"]
+        CREATE_GEN --> RUN_GEN["resume判断: IDLE->首次 / 其他->恢复"]
+        CHECK_GENERATOR -- 是 --> NEXT_STEP["next()获取速度"]
+        NEXT_STEP --> PUB_SPEED["发布motor_speed"]
+    end
+```
+### 导航状态机 
+```mermaid
+graph TD
+    subgraph 导航状态机 
+        IDLE["IDLE"] --> INIT_MOVE["INITIAL_MOVE"]
+        INIT_MOVE --> MOVE_FIRST["初始点->第一个航点"]
+        MOVE_FIRST --> STANLEY1["Stanley控制器直线行驶"]
+        STANLEY1 --> CHECK_DIST1{"距离<0.1m 连续5帧?"}
+        CHECK_DIST1 -- 否 --> STANLEY1
+        CHECK_DIST1 -- 是 --> CALIB1["WAYPOINT_CALIB 航向校准"]
+        CALIB1 --> TURN1["原地旋转至目标heading"]
+        TURN1 --> CHECK_ANGLE1{"角度误差<1度?"}
+        CHECK_ANGLE1 -- 否 --> TURN1
+        CHECK_ANGLE1 -- 是 --> NEXT_WP["current_waypoint_idx++"]
+
+        NEXT_WP --> WP_MOVE["WAYPOINT_MOVE"]
+        WP_MOVE --> GET_TARGET["获取目标航点"]
+        GET_TARGET --> CHECK_LAST{"到达最后一个航点?"}
+        CHECK_LAST -- 是 --> SWITCH_FILE["自动切换下一路径文件"]
+        SWITCH_FILE --> CHECK_NEXT{"有下一文件?"}
+        CHECK_NEXT -- 是 --> RESET_IDX2["重置索引=0, 返回新文件首航点"]
+        RESET_IDX2 --> WP_MOVE
+        CHECK_NEXT -- 否 --> CHECK_LOADING{"有出仓点?"}
+        CHECK_LOADING -- 是 --> APPEND_LOADING["追加出仓点到航点列表"]
+        APPEND_LOADING --> WP_MOVE
+        CHECK_LOADING -- 否 --> COMPLETED["COMPLETED 导航完成"]
+
+        CHECK_LAST -- 否 --> STANLEY2["Stanley控制器直线行驶"]
+        STANLEY2 --> CHECK_DIST2{"距离<0.1m?"}
+        CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.3m?"}
+        CHECK_LOW -- 是 --> SLOW_DOWN["线性减速 speed_scale=0.2~0.7"]
+        SLOW_DOWN --> STANLEY2
+        CHECK_LOW -- 否 --> STANLEY2
+        CHECK_DIST2 -- 是 --> CALIB2["WAYPOINT_CALIB 航向校准"]
+        CALIB2 --> TURN2["原地旋转至目标heading"]
+        TURN2 --> CHECK_ANGLE2{"角度误差<1度?"}
+        CHECK_ANGLE2 -- 否 --> TURN2
+        CHECK_ANGLE2 -- 是 --> NEXT_WP
+    end
+```
+### 边界矫正状态机
+```mermaid
+graph TD
+    subgraph 边界矫正状态机
+        SENSOR_TRIG["传感器触发 front/mid"] --> TURNING["TURNING 偏转1.0s"]
+        TURNING --> BACKING["BACKING 后退4.0s"]
+        BACKING --> RETURNING["RETURNING 反向偏转退回2.0s"]
+        RETURNING --> IDLE_BC["IDLE 恢复正常导航"]
+    end
+```
+
+### Stanley控制器流程
+```mermaid
+graph TD
+    INPUT["输入: current_pos, current_heading, path_start, path_end, path_direction, velocity"] --> STEP1
+
+    subgraph STEP1["计算横向误差"]
+        UTM1["UTM坐标转换: 当前位置/起点/终点"] --> CROSS["向量叉积 AP x AB"]
+        CROSS --> LATERAL["lateral_error = cross / |AB|"]
+        LATERAL --> SIGN["正=偏左 负=偏右"]
+    end
+
+    STEP1 --> STEP2
+    subgraph STEP2["计算航向误差"]
+        HEADING_ERR["heading_error = path_direction - current_heading"]
+        HEADING_ERR --> NORMALIZE["归一化到-180度~180度"]
+    end
+
+    STEP2 --> STEP3
+    subgraph STEP3["Stanley控制律"]
+        K["K = STANLEY_K = 2.0"] --> STEERING
+        V["velocity"] --> STEERING
+        LE["lateral_error"] --> STEERING
+        HE["heading_error"] --> STEERING
+        STEERING["total_steering = heading_error + atan(K * lateral_error / velocity)"]
+        STEERING --> CLAMP["clamp -45度~45度"]
+    end
+
+    STEP3 --> STEP4
+    subgraph STEP4["差速分配"]
+        FACTOR["steering_factor = clamped / 45度"] --> DIFF["speed_diff = factor * MAX_CORRECTION"]
+        DIFF --> LEFT["left = -velocity - speed_diff"]
+        DIFF --> RIGHT["right = velocity + speed_diff"]
+    end
+
+    STEP4 --> OUTPUT["输出: left_speed, right_speed"]
+```
+
+### 航点切换与跨文件处理
+```mermaid
+graph TD
+    WP_SWITCH["航点索引切换"] --> CHECK_CALIB{"当前是校准状态?"}
+    CHECK_CALIB -- 是 --> KEEP_CALIB["保持WAYPOINT_CALIB状态"]
+    CHECK_CALIB -- 否 --> RESET_MOVE["重置为WAYPOINT_MOVE"]
+
+    RESET_MOVE --> CHECK_CROSS{"current_waypoint_idx==0 且有跨文件缓存?"}
+    CHECK_CROSS -- 是 --> USE_CROSS["last_waypoint_cache = cross_file_last_waypoint"]
+    CHECK_CROSS -- 否 --> CHECK_SAME{"idx-1 >= 0?"}
+    CHECK_SAME -- 是 --> USE_SAME["last_waypoint_cache = waypoints[idx-1]"]
+    CHECK_SAME -- 否 --> NO_CACHE["无上一个航点缓存"]
+
+    USE_CROSS --> INIT_STANLEY["初始化Stanley路径参数"]
+    USE_SAME --> INIT_STANLEY
+    INIT_STANLEY --> CALC_BEARING["calculate_path_bearing 预计算路径方向"]
+    CALC_BEARING --> SAVE_PATH["保存 stanley_path_start, stanley_path_direction"]
+```
+
+### 关键参数
+```mermaid
+graph LR
+    P1[RTK_WAYPOINT_TOLERANCE=0.1m] --> P1D[到达航点距离阈值]
+    P2[INITIAL_MOVE_TOLERANCE=0.1m] --> P2D[初始移动到达阈值]
+    P3[LINEAR_SPEED_BASE=10.0] --> P3D[基础行驶速度]
+    P4[LOW_DISTANCE=1.3m] --> P4D[减速触发距离]
+    P5[STANLEY_K=2.0] --> P5D[横向误差增益]
+    P6[MAX_CORRECTION=1.6] --> P6D[最大差速修正]
+    P7[RTK_HEADING_TOLERANCE=1.0°] --> P7D[航向校准精度]
+    P8[GPS_SMOOTH_WINDOW=5帧] --> P8D[GPS滑动平均窗口]
 ```
