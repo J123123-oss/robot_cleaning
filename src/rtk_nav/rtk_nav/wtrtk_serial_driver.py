@@ -34,8 +34,7 @@ class WTRTKSerialDriver(Node):
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
-        self.timer = self.create_timer(0.05, self.publish_latest_data)
-        
+
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()
         
@@ -267,73 +266,65 @@ class WTRTKSerialDriver(Node):
         
         return fix_msg
 
-    def read_serial(self):
-        """持续读取串口数据并解析 - 处理所有帧"""
-        while rclpy.ok():
-            if not self.ser or not self.ser.is_open:
-                self.get_logger().warn("Serial port closed, reconnecting...")
-                if not self.connect_serial():
-                    time.sleep(0.5)
-                    continue
-            
-            try:
-                data = self.ser.read(1024)
-                if data:
-                    self.buffer += data.decode('utf-8', errors='replace')
-                    if len(self.buffer) > self.buffer_max_len:
-                        self.buffer = self.buffer[-self.buffer_max_len:]
+def read_serial(self):
+    """持续读取串口数据并解析 - 处理所有帧"""
+    while rclpy.ok():
+        if not self.ser or not self.ser.is_open:
+            self.get_logger().warn("Serial port closed, reconnecting...")
+            if not self.connect_serial():
+                time.sleep(0.5)
+                continue
+        
+        try:
+            data = self.ser.read(1024)
+            if data:
+                self.buffer += data.decode('utf-8', errors='replace')
+                if len(self.buffer) > self.buffer_max_len:
+                    self.buffer = self.buffer[-self.buffer_max_len:]
+                
+                while True:
+                    gngga_idx = self.buffer.find('$GNGGA')
+                    wtrtk_idx = self.buffer.find('$WTRTK')
                     
-                    while True:
-                        gngga_idx = self.buffer.find('$GNGGA')
-                        wtrtk_idx = self.buffer.find('$WTRTK')
-                        
-                        if gngga_idx == -1 and wtrtk_idx == -1:
-                            self.buffer = ""
-                            break
-                        
-                        if gngga_idx != -1 and wtrtk_idx != -1:
-                            if gngga_idx < wtrtk_idx:
-                                target_start = gngga_idx
-                                frame_type = "GNGGA"
-                            else:
-                                target_start = wtrtk_idx
-                                frame_type = "WTRTK"
-                        elif gngga_idx != -1:
+                    if gngga_idx == -1 and wtrtk_idx == -1:
+                        self.buffer = ""
+                        break
+                    
+                    if gngga_idx != -1 and wtrtk_idx != -1:
+                        if gngga_idx < wtrtk_idx:
                             target_start = gngga_idx
                             frame_type = "GNGGA"
                         else:
                             target_start = wtrtk_idx
                             frame_type = "WTRTK"
-                        
-                        end_idx = self.buffer.find('\r\n', target_start)
-                        if end_idx == -1:
-                            self.buffer = self.buffer[target_start:]
-                            break
-                        
-                        frame = self.buffer[:end_idx]
-                        self.buffer = self.buffer[end_idx + 2:]
-                        
-                        if frame_type == "GNGGA":
-                            parsed_fix = self.parse_gngga(frame)
-                            if parsed_fix:
-                                self.latest_fix = parsed_fix
-                        elif frame_type == "WTRTK":
-                            parsed_wtrtk = self.parse_wtrtk(frame)
-                            if parsed_wtrtk:
-                                self.latest_wtrtk = parsed_wtrtk
-                                self.latest_fix = self.create_fix_from_wtrtk(parsed_wtrtk)
-            
-            except Exception as e:
-                self.get_logger().error(f"Serial read error: {str(e)}")
-                if self.ser:
-                    self.ser.close()
-                time.sleep(0.1)
-    def publish_latest_data(self):
-        """定时器触发，每秒发布一次最新解析的数据"""
-        if self.latest_fix:
-            self.fix_pub.publish(self.latest_fix)
-        if self.latest_wtrtk:
-            self.wtrtk_pub.publish(self.latest_wtrtk)
+                    elif gngga_idx != -1:
+                        target_start = gngga_idx
+                        frame_type = "GNGGA"
+                    else:
+                        target_start = wtrtk_idx
+                        frame_type = "WTRTK"
+                    
+                    end_idx = self.buffer.find('\r\n', target_start)
+                    if end_idx == -1:
+                        self.buffer = self.buffer[target_start:]
+                        break
+                    
+                    frame = self.buffer[:end_idx]
+                    self.buffer = self.buffer[end_idx + 2:]
+                    
+                    # 实时发布：WTRTK解析成功 → 立即发布
+                    if frame_type == "WTRTK":
+                        parsed_wtrtk = self.parse_wtrtk(frame)
+                        if parsed_wtrtk:
+                            # 立刻发布 wtrtk_data
+                            self.wtrtk_pub.publish(parsed_wtrtk)
+        
+        except Exception as e:
+            self.get_logger().error(f"Serial read error: {str(e)}")
+            if self.ser:
+                self.ser.close()
+            time.sleep(0.1)
+
 
 def main(args=None):
     rclpy.init(args=args)
