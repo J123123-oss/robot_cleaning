@@ -48,7 +48,7 @@ DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
-STANLEY_MIN_SPEED = 0.25  # 最小速度阈值（真实 m/s ≈ 电机指令 6.7），防除零 + 防止低速时横向纠偏过激
+STANLEY_MIN_SPEED = 0.10  # 最小速度阈值（真实 m/s ≈ 电机指令 2.7），防止除零 + 低速适度限幅
 STANLEY_K_BASE = 0.5  # 基础增益（自适应K用）
 STANLEY_MAX_K = 2.0  # K值上限
 MAX_LATERAL_ERROR = 0.2  # 横向误差上限（米），防止低速时横向纠偏压过航向纠偏
