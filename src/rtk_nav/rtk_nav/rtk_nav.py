@@ -1400,9 +1400,7 @@ class RTKNavControlNode(Node):
         last_right_speed = None
 
         path_start = (init_lon, init_lat)
-        path_end = (first_lon, first_lat)
-        path_direction = self.calculate_path_bearing(init_lon, init_lat, first_lon, first_lat)
-        self.get_logger().info(f"[Stanley] 初始路径方向：{path_direction:.2f}°")
+        self.get_logger().info(f"[Stanley] 初始路径起点：({init_lon:.6f}, {init_lat:.6f}) → ({first_lon:.6f}, {first_lat:.6f})")
 
         while rclpy.ok():
             current_lon, current_lat = self.current_gps
@@ -1443,6 +1441,8 @@ class RTKNavControlNode(Node):
             else:
                 current_base_speed = LINEAR_SPEED_BASE
 
+            path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
+
             left_speed, right_speed = self.stanley_steering_control(
                 current_pos=current_pos,
                 current_heading=self.imu_yaw,
@@ -1454,7 +1454,12 @@ class RTKNavControlNode(Node):
             )
 
             if left_speed != last_left_speed or right_speed != last_right_speed:
-                self.get_logger().info(f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}")
+                lateral_err = self.calculate_lateral_error(current_pos, path_start, (target_lon, target_lat))
+                heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                self.get_logger().info(
+                    f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}, "
+                    f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°"
+                )
             last_left_speed = left_speed
             last_right_speed = right_speed
 
@@ -1864,10 +1869,7 @@ class RTKNavControlNode(Node):
                         path_start_lon, path_start_lat = current_lon, current_lat
 
                     self.stanley_path_start = (path_start_lon, path_start_lat)
-                    self.stanley_path_direction = self.calculate_path_bearing(
-                        path_start_lon, path_start_lat, target_lon, target_lat
-                    )
-                    self.get_logger().info(f"[Stanley] 航点{self.current_waypoint_idx}路径方向：{self.stanley_path_direction:.2f}°")
+                    self.get_logger().info(f"[Stanley] 航点{self.current_waypoint_idx}路径起点：({path_start_lon:.6f}, {path_start_lat:.6f})")
 
                 if distance < LOW_DISTANCE:
                     speed_scale = max(0.2, distance / LOW_DISTANCE * 0.7)
@@ -1875,12 +1877,14 @@ class RTKNavControlNode(Node):
                 else:
                     current_base_speed = LINEAR_SPEED_BASE
 
+                path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+
                 left_speed, right_speed = self.stanley_steering_control(
                     current_pos=current_pos,
                     current_heading=self.imu_yaw,
                     path_start=self.stanley_path_start,
                     path_end=(target_lon, target_lat),
-                    path_direction=self.stanley_path_direction,
+                    path_direction=path_direction,
                     velocity=current_base_speed,
                     distance_to_target=distance
                 )
