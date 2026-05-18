@@ -48,10 +48,10 @@ DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
-STANLEY_MIN_SPEED = 0.05  # 最小速度阈值（电机指令 10 ≈ 0.375 m/s，此处为真实速度 m/s），防止除零
+STANLEY_MIN_SPEED = 0.25  # 最小速度阈值（真实 m/s ≈ 电机指令 6.7），防除零 + 防止低速时横向纠偏过激
 STANLEY_K_BASE = 0.5  # 基础增益（自适应K用）
 STANLEY_MAX_K = 2.0  # K值上限
-MAX_LATERAL_ERROR = 0.3  # 横向误差上限（米）
+MAX_LATERAL_ERROR = 0.2  # 横向误差上限（米），防止低速时横向纠偏压过航向纠偏
 SPEED_CMD_TO_MPS = 0.0375  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
 
@@ -1117,12 +1117,12 @@ class RTKNavControlNode(Node):
         目标：使稳态横向误差与速度无关
 
         公式：
-        - 短距离 (<2m): K = 1.0 (快速响应)
+        - 短距离 (<2m): K = 0.6 (防低速时横向纠偏过度)
         - 中等距离 (2-5m): K = 0.6 (平衡)
         - 长距离 (>=5m): K = STANLEY_K_BASE * max(1.0, velocity / 5.0)
         """
         if distance_to_target < 2.0:
-            return 1.0
+            return 0.6
         elif distance_to_target < 5.0:
             return 0.6
         else:
