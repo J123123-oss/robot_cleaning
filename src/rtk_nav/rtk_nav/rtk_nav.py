@@ -21,7 +21,7 @@ GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 RTK_BRUSH_SPEED = -18.0 #18.0  # 负数表示正常运行速度，与前进反方向
 
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.15 # 多点导航距离阈值
+RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = 10.0   # origin 8.0
 # TURN_SPEED = 1.0 *2     # origin 0.1
@@ -1150,6 +1150,11 @@ class RTKNavControlNode(Node):
         total_steering_clamped = max(min(total_steering, 45.0), -45.0)
         steering_factor = total_steering_clamped / 45.0
         speed_diff = -steering_factor * STRAIGHT_MAX_CORRECTION
+        self.get_logger().info(
+            f"[Stanley-DBG] hdg_err={heading_error:.1f}°, lat_err={lateral_error:.3f}m, "
+            f"st_corr={steering_correction:.1f}°, total={total_steering:.1f}°, "
+            f"real_v={real_velocity:.3f}m/s, k={k:.2f}, path_dir={path_direction:.1f}°, imu={current_heading:.1f}°"
+        )
         left_speed = -velocity + speed_diff
         right_speed = velocity + speed_diff
         left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
@@ -1894,7 +1899,12 @@ class RTKNavControlNode(Node):
 
                 if abs(self.nav_context["last_distance"] - distance) > 0.5:
                     self.nav_context["last_distance"] = distance
-                    self.get_logger().info(f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}")
+                    lateral_err = self.calculate_lateral_error(current_pos, self.stanley_path_start, (target_lon, target_lat))
+                    heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                    self.get_logger().info(
+                        f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}, "
+                        f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°, imu={self.imu_yaw:.1f}°"
+                    )
 
                 yield (left_speed, right_speed)
         # 所有航点完成
