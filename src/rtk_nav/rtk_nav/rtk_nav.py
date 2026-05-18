@@ -30,14 +30,14 @@ RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
-TURN_SPEED_FAST = 0.8 # 大误差快速转向基准速度
-TURN_SPEED_MID = 0.5  # 中误差中等转向基准速度
+TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
+TURN_SPEED_MID = 0.7  # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.2 # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 2.0   # 车体停止后，旋转调整最大修正量
 STRAIGHT_MAX_CORRECTION = 3.0 # 直线运行最大纠正量
 # straight line speed correction factor
 STRAIGHT_PID_SCALE = 2.0  # 2.0
-SPEED_LIMIT = 1.5 * LINEAR_SPEED_BASE
+SPEED_LIMIT = 1.3 * LINEAR_SPEED_BASE
 
 #近距离减速/REVERSE阈值
 LOW_DISTANCE = 1.5
@@ -48,10 +48,11 @@ DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
-STANLEY_MIN_SPEED = 0.3  # 最小速度阈值，防止除零
-STANLEY_K_BASE = 0.4  # 基础增益（自适应K用）
+STANLEY_MIN_SPEED = 0.05  # 最小速度阈值（电机指令 10 ≈ 0.375 m/s，此处为真实速度 m/s），防止除零
+STANLEY_K_BASE = 0.5  # 基础增益（自适应K用）
 STANLEY_MAX_K = 2.0  # K值上限
-MAX_LATERAL_ERROR = 0.15  # 横向误差上限（米）
+MAX_LATERAL_ERROR = 0.3  # 横向误差上限（米）
+SPEED_CMD_TO_MPS = 0.0375  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
 
 # 控制模式（与电机节点保持一致）
@@ -1137,17 +1138,19 @@ class RTKNavControlNode(Node):
         """
         Stanley控制器计算左右轮速度
         使用自适应K值和横向误差限幅
+        velocity: 电机指令值（非真实速度 m/s）
         """
         lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
         lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
         heading_error = self.normalize_angle(path_direction - current_heading)
-        k = self.get_adaptive_stanley_k(velocity, distance_to_target)
-        steering_correction = math.degrees(math.atan(k * lateral_error / max(velocity, STANLEY_MIN_SPEED)))
+        real_velocity = velocity * SPEED_CMD_TO_MPS
+        k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
+        steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
         total_steering = heading_error + steering_correction
         total_steering_clamped = max(min(total_steering, 45.0), -45.0)
         steering_factor = total_steering_clamped / 45.0
-        speed_diff = steering_factor * STRAIGHT_MAX_CORRECTION
-        left_speed = -velocity - speed_diff
+        speed_diff = -steering_factor * STRAIGHT_MAX_CORRECTION
+        left_speed = -velocity + speed_diff
         right_speed = velocity + speed_diff
         left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
         right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
@@ -1451,7 +1454,7 @@ class RTKNavControlNode(Node):
             )
 
             if left_speed != last_left_speed or right_speed != last_right_speed:
-                self.get_logger().debug(f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}")
+                self.get_logger().info(f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}")
             last_left_speed = left_speed
             last_right_speed = right_speed
 
@@ -1619,6 +1622,7 @@ class RTKNavControlNode(Node):
                         self.current_waypoint_idx = 1
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
+                    self.stanley_path_start = None
                     self.get_logger().info("[ROSNode] 初始移动完成, 进入航点导航阶段")
                     break
                 except Exception as e:
@@ -1650,6 +1654,7 @@ class RTKNavControlNode(Node):
             if self.current_waypoint_idx != last_waypoint_idx and not is_calib_state:
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
+                self.stanley_path_start = None
                 self.get_logger().info(f"[航点切换] 进入路段{self.current_waypoint_idx - 1}→{self.current_waypoint_idx}")
                 
                 # 核心修正：处理「新文件第一个航点（索引0）+ 跨文件缓存」的场景
@@ -1726,6 +1731,9 @@ class RTKNavControlNode(Node):
                         self.current_waypoint_idx += 1
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
+                        self.stanley_path_start = None
+                        if self.current_waypoint_idx - 1 >= 0 and len(self.waypoints) > self.current_waypoint_idx - 1:
+                            self.last_waypoint_cache = self.waypoints[self.current_waypoint_idx - 1]
                         self.last_valid_heading = None  # 清空航向缓存，切换航点后使用实时航向
                         self.heading_history = []  # 清空航向历史
                     
@@ -1880,9 +1888,9 @@ class RTKNavControlNode(Node):
                 if self.is_boundary_triggered or self.boundary_correct_locked:
                     left_speed, right_speed = self.get_boundary_correct_speed()
 
-                if abs(self.nav_context["last_distance"] - distance) > 1.0:
+                if abs(self.nav_context["last_distance"] - distance) > 0.5:
                     self.nav_context["last_distance"] = distance
-                    self.get_logger().debug(f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}")
+                    self.get_logger().info(f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}")
 
                 yield (left_speed, right_speed)
         # 所有航点完成
