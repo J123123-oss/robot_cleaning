@@ -21,11 +21,11 @@ GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 RTK_BRUSH_SPEED = -18.0 #18.0  # 负数表示正常运行速度，与前进反方向
 
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.1 # 多点导航距离阈值
+RTK_WAYPOINT_TOLERANCE = 0.2 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = 10.0   # origin 8.0
 # TURN_SPEED = 1.0 *2     # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
+INITIAL_MOVE_TOLERANCE = 0.2 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -34,7 +34,7 @@ TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 0.7  # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.2 # 小误差慢速转向基准速度（防超调）
 MAX_CORRECTION = 2.0   # 车体停止后，旋转调整最大修正量
-STRAIGHT_MAX_CORRECTION = 3.0 # 直线运行最大纠正量
+# STRAIGHT_MAX_CORRECTION = 3.0 # 直线运行最大纠正量
 # straight line speed correction factor
 STRAIGHT_PID_SCALE = 2.0  # 2.0
 SPEED_LIMIT = 1.3 * LINEAR_SPEED_BASE
@@ -48,10 +48,11 @@ DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
-STANLEY_MIN_SPEED = 0.067  # 最小速度阈值（真实 m/s ≈ 电机指令 2.7），防止除零 + 低速适度限幅
-STANLEY_K_BASE = 0.5  # 基础增益（自适应K用）
-STANLEY_MAX_K = 2.0  # K值上限
-MAX_LATERAL_ERROR = 5.0  # 横向误差上限（米），STANLEY_MIN_SPEED 已限低速，此处仅防极端值
+STANLEY_MIN_SPEED = 0.15
+STANLEY_K_BASE = 0.5
+STANLEY_MAX_K = 1.0
+MAX_LATERAL_ERROR = 1.0
+STRAIGHT_MAX_CORRECTION = 1.0
 SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
 
@@ -1125,22 +1126,10 @@ class RTKNavControlNode(Node):
         ap_dy = cy - ay
         return (ap_dx * dx + ap_dy * dy) / len_sq
 
-    def get_adaptive_stanley_k(self, velocity: float, distance_to_target: float) -> float:
-        """
-        根据当前速度和到目标航点距离自适应调整Stanley K值
-        目标：使稳态横向误差与速度无关
-
-        公式：
-        - 短距离 (<2m): K = 0.6 (防低速时横向纠偏过度)
-        - 中等距离 (2-5m): K = 0.6 (平衡)
-        - 长距离 (>=5m): K = STANLEY_K_BASE * max(1.0, velocity / 5.0)
-        """
-        if distance_to_target < 2.0:
-            return 0.6
-        elif distance_to_target < 5.0:
-            return 0.6
-        else:
-            return STANLEY_K_BASE * max(1.0, velocity / 5.0)
+    def get_adaptive_stanley_k(self, velocity, distance_to_target):
+        if distance_to_target < 1.5:
+            return 0.20
+        return 0.25
 
     def stanley_steering_control(self, current_pos: Tuple[float, float],
                                  current_heading: float,
@@ -1160,10 +1149,12 @@ class RTKNavControlNode(Node):
         real_velocity = velocity * SPEED_CMD_TO_MPS
         k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
         steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
-        total_steering = heading_error + steering_correction
+        total_steering = steering_correction - heading_error
+        # if abs(heading_error) > 20.0:
+        #     total_steering = heading_error * 0.5 + steering_correction * 0.5
         total_steering_clamped = max(min(total_steering, 45.0), -45.0)
         steering_factor = total_steering_clamped / 45.0
-        speed_diff = -steering_factor * STRAIGHT_MAX_CORRECTION
+        speed_diff = steering_factor * STRAIGHT_MAX_CORRECTION
         if not hasattr(self, '_stanley_log_counter'):
             self._stanley_log_counter = 0
         self._stanley_log_counter += 1
