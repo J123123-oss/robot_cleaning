@@ -21,11 +21,11 @@ GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 RTK_BRUSH_SPEED = -18.0 #18.0  # 负数表示正常运行速度，与前进反方向
 
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.2 # 多点导航距离阈值
+RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = 10.0   # origin 8.0
 # TURN_SPEED = 1.0 *2     # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.2 #起始点距离阈值
+INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -46,6 +46,7 @@ BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
 DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
+HEADING_ABNORMAL_THRESHOLD = 15.0  # 航向异常阈值（度），连续超限后重新校准
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
 STANLEY_MIN_SPEED = 0.15
@@ -1127,8 +1128,8 @@ class RTKNavControlNode(Node):
         return (ap_dx * dx + ap_dy * dy) / len_sq
 
     def get_adaptive_stanley_k(self, velocity, distance_to_target):
-        if distance_to_target < 1.5:
-            return 0.20
+        if distance_to_target < 1.3:
+            return 0.26
         return 0.25
 
     def stanley_steering_control(self, current_pos: Tuple[float, float],
@@ -1278,6 +1279,17 @@ class RTKNavControlNode(Node):
             return TURN_SPEED_MID   # 中误差（5°~30°）：中等速度
         else:
             return TURN_SPEED_SLOW  # 小误差（<5°）：慢速转向，防止超调
+
+    def start_heading_recalibration(self, path_direction: float, heading_error: float, reason: str) -> None:
+        """进入航向重新校准，校准目标使用当前有效路径方向。"""
+        self.get_logger().warn(
+            f"[Stanley] {reason}：hdg_err={heading_error:.1f}°，"
+            f"阈值={HEADING_ABNORMAL_THRESHOLD:.1f}°，重新校准到路径方向{path_direction:.1f}°"
+        )
+        self.nav_context["angle_abnormal_count"] = 0
+        self.nav_context["is_angle_recalib"] = True
+        self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(path_direction)
+        self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
         
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
@@ -1589,6 +1601,21 @@ class RTKNavControlNode(Node):
             if self.nav_context["target_waypoint"]:
                 distance = self.calc_distance_to_waypoint(self.nav_context["target_waypoint"])
                 self.nav_context["last_distance"] = distance
+
+                if current_nav_state == NavState.WAYPOINT_MOVE and self.current_gps:
+                    target_lon, target_lat, _ = self.nav_context["target_waypoint"]
+                    current_lon, current_lat = self.current_gps
+                    if hasattr(self, 'stanley_path_direction') and self.stanley_path_direction is not None:
+                        path_direction = self.stanley_path_direction
+                    else:
+                        path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+
+                    heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                    if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
+                        self.start_heading_recalibration(path_direction, heading_err, "恢复导航时航向异常")
+                        current_nav_state = NavState.WAYPOINT_CALIB
+                    else:
+                        self.nav_context["angle_abnormal_count"] = 0
         else:
             # 只有导航状态为IDLE时, 才重新初始化初始移动（解决重复进入第一个航点）
             if self.nav_context["nav_state"] == NavState.IDLE:
@@ -1764,6 +1791,7 @@ class RTKNavControlNode(Node):
                     
                     # 检查滚刷控制
                     self.check_and_control_brush()
+                    self.nav_context["angle_abnormal_count"] = 0
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["last_distance"] = 0.0  # 重置距离缓存
@@ -1872,6 +1900,7 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(
                         f"[ROSNode] 已到达航点{self.current_waypoint_idx}距离阈值（{distance:.2f}m ≤ {RTK_WAYPOINT_TOLERANCE}m）"
                     )
+                    self.nav_context["angle_abnormal_count"] = 0
                     calib_target_heading = self.get_path_heading(target_waypoint)
                     calib_generator = self.calibrate_heading_at_waypoint(calib_target_heading)
                     self.nav_context["calib_generator"] = calib_generator
@@ -1911,6 +1940,22 @@ class RTKNavControlNode(Node):
                 else:
                     path_direction = self.stanley_path_direction
 
+                heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
+                    self.nav_context["angle_abnormal_count"] += 1
+                else:
+                    self.nav_context["angle_abnormal_count"] = 0
+
+                if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
+                    self.start_heading_recalibration(
+                        path_direction,
+                        heading_err,
+                        f"航向异常持续{self.nav_context['angle_abnormal_count']}帧"
+                    )
+                    current_nav_state = NavState.WAYPOINT_CALIB
+                    yield (0.0, 0.0)
+                    continue
+
                 left_speed, right_speed = self.stanley_steering_control(
                     current_pos=current_pos,
                     current_heading=self.imu_yaw,
@@ -1927,7 +1972,6 @@ class RTKNavControlNode(Node):
                 if abs(self.nav_context["last_distance"] - distance) > 0.5:
                     self.nav_context["last_distance"] = distance
                     lateral_err = self.calculate_lateral_error(current_pos, self.stanley_path_start, path_end)
-                    heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                     self.get_logger().info(
                         f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}, "
                         f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°, imu={self.imu_yaw:.1f}°, t={t:.3f}"

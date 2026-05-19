@@ -95,8 +95,11 @@ graph TD
         CHECK_LOADING -- 否 --> COMPLETED["COMPLETED 导航完成"]
 
         CHECK_LAST -- 否 --> STANLEY2["Stanley控制器直线行驶"]
-        STANLEY2 --> CHECK_DIST2{"距离<0.1m?"}
-        CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.3m?"}
+        STANLEY2 --> CHECK_HEADING{"航向误差>15度 连续5帧?"}
+        CHECK_HEADING -- 是 --> RECALIB["WAYPOINT_CALIB 重新校准到当前路径方向"]
+        RECALIB --> STANLEY2
+        CHECK_HEADING -- 否 --> CHECK_DIST2{"距离<0.1m?"}
+        CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.5m?"}
         CHECK_LOW -- 是 --> SLOW_DOWN["线性减速 speed_scale=0.2~0.7"]
         SLOW_DOWN --> STANLEY2
         CHECK_LOW -- 否 --> STANLEY2
@@ -137,23 +140,30 @@ graph TD
 
     STEP2 --> STEP3
     subgraph STEP3["Stanley控制律"]
-        K["K = STANLEY_K = 2.0"] --> STEERING
+        K["K自适应: 距离<1.3m取0.26, 其他取0.25"] --> STEERING
         V["velocity"] --> STEERING
         LE["lateral_error"] --> STEERING
         HE["heading_error"] --> STEERING
-        STEERING["total_steering = heading_error + atan(K * lateral_error / velocity)"]
+        STEERING["total_steering = atan(K * lateral_error / velocity) - heading_error"]
         STEERING --> CLAMP["clamp -45度~45度"]
     end
 
     STEP3 --> STEP4
     subgraph STEP4["差速分配"]
-        FACTOR["steering_factor = clamped / 45度"] --> DIFF["speed_diff = factor * MAX_CORRECTION"]
-        DIFF --> LEFT["left = -velocity - speed_diff"]
+        FACTOR["steering_factor = clamped / 45度"] --> DIFF["speed_diff = factor * STRAIGHT_MAX_CORRECTION"]
+        DIFF --> LEFT["left = -velocity + speed_diff"]
         DIFF --> RIGHT["right = velocity + speed_diff"]
     end
 
     STEP4 --> OUTPUT["输出: left_speed, right_speed"]
 ```
+
+### 航向异常保护
+
+- 恢复导航时，如果当前车体航向与目标航段方向偏差超过15度，先进入`WAYPOINT_CALIB`重新校准，再继续当前航点。
+- 导航行驶中，如果航向误差超过15度并连续保持5帧，判定为异常航向，重新校准到当前路径方向。
+- 单帧跳变只累计一次，下一帧恢复到阈值内会清零计数，避免RTK/IMU瞬时抖动导致误判。
+- 异常重校准完成后不推进航点索引，继续前往当前航点；正常到达航点后的校准仍会推进到下一个航点。
 
 ### 航点切换与跨文件处理
 ```mermaid
@@ -177,14 +187,14 @@ graph TD
 ### 关键参数
 ```mermaid
 graph LR
-    P1[RTK_WAYPOINT_TOLERANCE=0.15m] --> P1D[到达航点距离阈值]
+    P1[RTK_WAYPOINT_TOLERANCE=0.10m] --> P1D[到达航点距离阈值]
     P2[INITIAL_MOVE_TOLERANCE=0.1m] --> P2D[初始移动到达阈值]
     P3[LINEAR_SPEED_BASE=10.0] --> P3D[基础行驶速度（约0.35-0.4m/s）]
     P4[LOW_DISTANCE=1.5m] --> P4D[减速触发距离]
-    P5[STANLEY_K_BASE=0.4] --> P5D[自适应K基础增益]
-    P6[MAX_CORRECTION=2.0] --> P6D[最大差速修正]
+    P5[Stanley K=0.26/0.25] --> P5D[距离<1.3m取0.26，否则0.25]
+    P6[STRAIGHT_MAX_CORRECTION=1.0] --> P6D[直线最大差速修正]
     P7[RTK_HEADING_TOLERANCE=1.0°] --> P7D[航向校准精度]
-    P8[STANLEY_MIN_SPEED=0.3] --> P8D[最小速度阈值]
-    P9[STANLEY_MAX_K=2.0] --> P9D[K值上限]
-    P10[MAX_LATERAL_ERROR=0.5m] --> P10D[横向误差上限]
+    P8[STANLEY_MIN_SPEED=0.15] --> P8D[Stanley计算最小速度阈值]
+    P9[MAX_LATERAL_ERROR=1.0m] --> P9D[横向误差上限]
+    P10[HEADING_ABNORMAL_THRESHOLD=15°] --> P10D[连续5帧触发航向重校准]
 ```
