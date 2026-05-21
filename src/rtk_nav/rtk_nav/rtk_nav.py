@@ -53,7 +53,7 @@ STANLEY_MIN_SPEED = 0.15
 STANLEY_K_BASE = 0.5
 STANLEY_MAX_K = 1.0
 MAX_LATERAL_ERROR = 1.0
-STRAIGHT_MAX_CORRECTION = 1.0
+STRAIGHT_MAX_CORRECTION = 1.5
 SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
 
@@ -1129,8 +1129,8 @@ class RTKNavControlNode(Node):
 
     def get_adaptive_stanley_k(self, velocity, distance_to_target):
         if distance_to_target < 1.3:
-            return 0.26
-        return 0.25
+            return 0.42
+        return 0.45
 
     def stanley_steering_control(self, current_pos: Tuple[float, float],
                                  current_heading: float,
@@ -1150,6 +1150,8 @@ class RTKNavControlNode(Node):
         real_velocity = velocity * SPEED_CMD_TO_MPS
         k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
         steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
+        if heading_error * steering_correction > 0 and abs(heading_error) > 4.0:
+            steering_correction *= 0.5
         total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5

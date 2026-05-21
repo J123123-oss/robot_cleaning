@@ -54,6 +54,8 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **修复**: STANLEY_MIN_SPEED 0.05→0.25，MAX_LATERAL_ERROR 0.3→0.2，近距K 1.0→0.6
 - **二次修正** (a1b4900): STANLEY_MIN_SPEED 0.25→0.10，因低速段电机指令~2.0 (real_velocity≈0.075) 低于 0.25 地面，压制纠偏 3.3x
 - **近期修正** (bfa045d): 到达阈值收紧为 0.10m，初始移动阈值收紧为 0.10m；近距K调整为距离<1.3m取0.26，其他取0.25；当前 `STANLEY_MIN_SPEED=0.15`、`MAX_LATERAL_ERROR=1.0`
+- **起步横偏修正**: 最新日志中起步段 `lat_err≈0.08m` 但差速修正偏弱，同时接近航点时 `hdg_err≈5~6°` 与横向项有抵消；将常规K提升到0.45，近距K提升到0.42，`STRAIGHT_MAX_CORRECTION` 提升到1.5
+- **航向优先抑制**: 起步横偏回收变快后，短段仍可能出现 `st_corr` 与 `hdg_err` 同向并把车体航向推到 >5°；当 `abs(hdg_err)>4°` 且横向项同向时，将横向修正减半，优先把车头拉回路径方向
 - **效果**: 低速段横向项保留足够拉回能力，同时避免接近航点时横向纠偏完全压过航向项
 
 ### 8. 航向异常保护（b1d106c）
@@ -77,13 +79,14 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 | STANLEY_MIN_SPEED | 0.3 (电机指令) | 0.15 (Stanley计算最小速度) |
 | MAX_LATERAL_ERROR | 0.15 m | 1.0 m |
 | SPEED_CMD_TO_MPS | — | 0.0345 |
-| 短距 K (<1.3m) | 1.0 | 0.26 |
-| 常规 K (≥1.3m) | 0.4×v/5 | 0.25 |
-| STRAIGHT_MAX_CORRECTION | 3.0 | 1.0 |
+| 短距 K (<1.3m) | 1.0 | 0.42 |
+| 常规 K (≥1.3m) | 0.4×v/5 | 0.45 |
+| STRAIGHT_MAX_CORRECTION | 3.0 | 1.5 |
 | SPEED_LIMIT | 1.5×BASE | 1.3×BASE |
 | RTK_WAYPOINT_TOLERANCE | 0.2 m | 0.10 m |
 | INITIAL_MOVE_TOLERANCE | 0.2 m | 0.10 m |
 | HEADING_ABNORMAL_THRESHOLD | — | 15.0° 连续5帧 |
+| 航向优先抑制 | — | `abs(hdg_err)>4°` 且横向项同向时横向修正减半 |
 
 ## 待验证项
 - [ ] 初始移动完成后日志应进入 `航点1路径`，不应再出现 `航点0路径：(点0) → (点0), 方向=0.0°`
@@ -91,3 +94,5 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - [ ] 航向异常重校准完成后应继续当前航点，不能误推进或误回退索引
 - [ ] `SPEED_CMD_TO_MPS` 系数是否匹配实际车速（当前 10→0.345）
 - [ ] 横向偏差 > 0.1m 时，Stanley 是否有效拉回路径
+- [ ] 起步段 `lat_err≈0.08m` 时应在 1~2m 内明显回收，不再需要 4~5m
+- [ ] 横偏回收过程中 `hdg_err` 不应持续超过 5°
