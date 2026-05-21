@@ -1659,19 +1659,19 @@ class RTKNavControlNode(Node):
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration:
-                    is_recalib = self.nav_context.get("is_angle_recalib", False)
-                    if is_recalib:
-                        self.get_logger().info("[ROSNode] 角度异常重置后继续前往航点0")
-                        self.nav_context["is_angle_recalib"] = False  # 重置标志
-                    else:
-                        if self.current_waypoint_idx >= len(self.waypoints) and len(self.waypoints) == 0:
-                            self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
-                            self.nav_running = False
-                            self.publish_stop_speed()
-                            self.reset_nav_context()
-                            yield (0.0, 0.0)
-                            return
-                        self.current_waypoint_idx = 1
+                    if len(self.waypoints) == 0:
+                        self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
+                        self.nav_running = False
+                        self.publish_stop_speed()
+                        self.reset_nav_context()
+                        yield (0.0, 0.0)
+                        return
+                    # 初始移动已经完成航点0的距离到达和最终航向校准，后续必须进入航点1。
+                    # 避免历史 is_angle_recalib 标志残留导致继续导航到航点0，生成零长度Stanley路径。
+                    if self.nav_context.get("is_angle_recalib", False):
+                        self.get_logger().warn("[ROSNode] 初始移动完成时发现残留角度异常标志，已清除并切换到航点1")
+                        self.nav_context["is_angle_recalib"] = False
+                    self.current_waypoint_idx = 1
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
                     self.stanley_path_start = None
