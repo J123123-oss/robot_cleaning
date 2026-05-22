@@ -105,3 +105,11 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **保护动作**: 超过 1 秒未收到 `/wtrtk_data` 时立即 `publish_stop_speed()`，保存 `pre_pause_state` 和滚刷状态，将导航状态置为 `PAUSE`，并发布 `/rtk/nav_state`；断流期间每 2 秒重复停车并打印保持停车日志。
 - **恢复动作**: 重新收到 `/wtrtk_data` 后清除超时标志；若恢复消息为 `RTK Fixed`，沿用原有固定解恢复逻辑自动回到暂停前状态。
 - **验证**: 已使用 bundled Python 执行 `python -B -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py`，语法检查通过。
+
+## 2026-05-22 固定进仓 loading_gps
+
+- **问题**: LOADING 的 RTK 返航点使用 UNLOADING 完成后发布的实时 `/unloading_gps`。实际出仓点可能存在小幅漂移，导致 RTK 清扫结束后的进仓导航不是固定点位。
+- **修复**: `rtk_nav.py` 新增固定 `loading_gps` 参数和 `BUILTIN_LOADING_GPS` 默认值，节点启动时加载为 `loading_waypoint`；`/unloading_gps` 回调只记录日志，不再覆盖进仓航点。
+- **配置**: `run.launch.py` 新增 `loading_gps = [0.0, 0.0, 0.0]` 并传入 `rtk_nav`，现场标定后填写 `[经度, 纬度, 航向角]`。
+- **保留逻辑**: RTK 导航遍历完所有路径文件后，仍在 `get_target_waypoint()` 中追加到最后一个航点；继续使用 `return_to_loading_added` 保证每轮任务只追加一次。
+- **验证**: 已使用 bundled Python 执行 `py_compile` 检查 `src/rtk_nav/rtk_nav/rtk_nav.py` 和 `src/rtk_nav/launch/run.launch.py`，语法通过。

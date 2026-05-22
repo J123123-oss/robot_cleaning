@@ -58,6 +58,10 @@ MAX_LATERAL_ERROR = 1.0
 STRAIGHT_MAX_CORRECTION = 1.5
 SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
+# 固定进仓RTK航点: (lon, lat, heading)。
+# 填入现场标定的固定进仓点后，RTK导航结束会把该点追加到最后一个航点，且每轮任务只追加一次。
+BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
+
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -129,8 +133,9 @@ class RTKNavControlNode(Node):
         # 新增：跨文件缓存（保存上一个文件的最后一个航点，用于计算跨文件偏角）
         self.cross_file_last_waypoint = None  # 格式：(lon, lat, heading)
 
-        # 出仓点（从 /unloading_gps 话题获取）
-        self.loading_waypoint = None  # 格式：(lon, lat, heading)
+        # 固定进仓点（不再跟随每次出仓完成时的实时/unloading_gps漂移）
+        self.declare_parameter("loading_gps", list(BUILTIN_LOADING_GPS))
+        self.loading_waypoint = self.load_builtin_loading_gps()  # 格式：(lon, lat, heading)
         self.return_to_loading_added = False  # 出仓点是否已追加标志
 
         # 边界矫正状态机
@@ -489,13 +494,31 @@ class RTKNavControlNode(Node):
     #     heading = msg.z
     #     self.loading_waypoint = (loading_lon, loading_lat, heading)
     #     self.get_logger().info(f"[RTKNav] 收到出仓GPS坐标: 经度={loading_lon}, 纬度={loading_lat}")
+    def load_builtin_loading_gps(self) -> Optional[Tuple[float, float, float]]:
+        loading_gps = self.get_parameter("loading_gps").value
+        if not isinstance(loading_gps, (list, tuple)) or len(loading_gps) != 3:
+            self.get_logger().error("[RTKNav] loading_gps参数格式错误，应为[lon, lat, heading]，将不追加固定进仓点")
+            return None
+
+        try:
+            lon, lat, heading = (float(loading_gps[0]), float(loading_gps[1]), float(loading_gps[2]))
+        except (TypeError, ValueError):
+            self.get_logger().error("[RTKNav] loading_gps参数无法转换为浮点数，将不追加固定进仓点")
+            return None
+
+        if lon == 0.0 and lat == 0.0:
+            self.get_logger().warn("[RTKNav] loading_gps尚未配置，导航结束后不会追加固定进仓点")
+            return None
+
+        heading = heading % 360.0
+        self.get_logger().info(f"[RTKNav] 已加载固定进仓GPS: 经度={lon:.6f}, 纬度={lat:.6f}, 航向={heading:.2f}°")
+        return (lon, lat, heading)
+
     def unloading_gps_callback(self, msg: Vector3):
-        loading_lon = msg.x
-        loading_lat = msg.y
-        loading_heading = msg.z
-        current_loading = (loading_lon, loading_lat, loading_heading)
-        self.loading_waypoint = current_loading
-        self.get_logger().info(f"[RTKNav] 收到出仓GPS坐标: 经度={loading_lon:.6f}, 纬度={loading_lat:.6f}, 航向={loading_heading:.2f}°")
+        self.get_logger().info(
+            f"[RTKNav] 收到出仓GPS坐标但不再作为进仓航点: 经度={msg.x:.6f}, 纬度={msg.y:.6f}, 航向={msg.z:.2f}°；"
+            f"固定进仓点={self.loading_waypoint}"
+        )
         
         # # 步骤1：首次接收出仓点，缓存为基准点（不计算偏移）
         # if self.base_loading_waypoint is None:
