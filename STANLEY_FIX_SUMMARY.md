@@ -96,3 +96,12 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - [ ] 横向偏差 > 0.1m 时，Stanley 是否有效拉回路径
 - [ ] 起步段 `lat_err≈0.08m` 时应在 1~2m 内明显回收，不再需要 4~5m
 - [ ] 横偏回收过程中 `hdg_err` 不应持续超过 5°
+
+## 2026-05-22 RTK 数据超时保护
+
+- **问题**: `wtrtk_serial_driver` 串口掉线并重连时，`/wtrtk_data` 可能完全停止输出；原导航逻辑只在收到新的非固定解消息时暂停，断流时会继续使用最后一次缓存的 `current_gps` 和 `imu_yaw` 执行 Stanley 控制。
+- **现场证据**: `wtrtk_check.log` 中 `ch341` 反复出现 `USB disconnect` / 重新 attach，`lsof /dev/WTRTK` 显示仅 `wtrtk_serial_driver` 占用串口，基本排除多进程抢占，倾向于 USB/串口链路掉线。
+- **修复**: 新增 `RTK_DATA_TIMEOUT=1.0` 和 `RTK_TIMEOUT_LOG_INTERVAL=2.0`；`heading_callback()` 每次收到 `/wtrtk_data` 记录时间；`rtk_timer_callback()` 在 AUTO_CLEANING 模式下优先检查超时。
+- **保护动作**: 超过 1 秒未收到 `/wtrtk_data` 时立即 `publish_stop_speed()`，保存 `pre_pause_state` 和滚刷状态，将导航状态置为 `PAUSE`，并发布 `/rtk/nav_state`；断流期间每 2 秒重复停车并打印保持停车日志。
+- **恢复动作**: 重新收到 `/wtrtk_data` 后清除超时标志；若恢复消息为 `RTK Fixed`，沿用原有固定解恢复逻辑自动回到暂停前状态。
+- **验证**: 已使用 bundled Python 执行 `python -B -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py`，语法检查通过。

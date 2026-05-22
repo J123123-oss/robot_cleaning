@@ -27,6 +27,8 @@ LINEAR_SPEED_BASE = 10.0   # origin 8.0
 # TURN_SPEED = 1.0 *2     # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
+RTK_DATA_TIMEOUT = 1.0
+RTK_TIMEOUT_LOG_INTERVAL = 2.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 
@@ -199,6 +201,9 @@ class RTKNavControlNode(Node):
         self.rate = self.create_rate(10)  # 10Hz, origin 4
         self.nav_generator: Optional[Generator] = None
         self.nav_running = False
+        self.last_wtrtk_time = time.monotonic()
+        self.rtk_data_timed_out = False
+        self.last_rtk_timeout_log_time = 0.0
         self.multi_waypoint_generator = None  # 多点导航生成器
 
         # ROS2发布器/订阅器
@@ -752,7 +757,43 @@ class RTKNavControlNode(Node):
         self.offset_calculated = False
         self.get_logger().info("[RTKNav] 已重置基准出仓点，下次接收将重新缓存")
 
+    def handle_rtk_data_timeout(self) -> bool:
+        if self.last_wtrtk_time is None:
+            return False
+
+        now = time.monotonic()
+        elapsed = now - self.last_wtrtk_time
+        if elapsed <= RTK_DATA_TIMEOUT:
+            return False
+
+        if not self.rtk_data_timed_out:
+            if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                self.nav_context["brush_active"] = self.brush_active
+                self.nav_context["nav_state"] = NavState.PAUSE
+                self.publish_nav_state(NavState.PAUSE)
+            self.nav_running = False
+            self.rtk_data_timed_out = True
+            self.publish_stop_speed()
+            self.get_logger().warn(
+                f"[RTK数据超时] {elapsed:.2f}s未收到/wtrtk_data，已停车并暂停导航"
+            )
+            self.last_rtk_timeout_log_time = now
+        elif now - self.last_rtk_timeout_log_time >= RTK_TIMEOUT_LOG_INTERVAL:
+            self.publish_stop_speed()
+            self.get_logger().warn(
+                f"[RTK数据超时] 仍未收到/wtrtk_data，已持续{elapsed:.2f}s，保持停车"
+            )
+            self.last_rtk_timeout_log_time = now
+
+        return True
+
     def heading_callback(self, msg: WTRTK) -> None:
+        self.last_wtrtk_time = time.monotonic()
+        if self.rtk_data_timed_out:
+            self.get_logger().info("[RTK数据恢复] 已重新收到/wtrtk_data")
+            self.rtk_data_timed_out = False
+
         ins_heading_deg = msg.ins_heading
         self.imu_yaw = ins_heading_deg  + self.rtk_install_offset # + x degree
         self.imu_yaw = math.fmod(self.imu_yaw + 180.0, 360.0) - 180.0
@@ -2116,6 +2157,9 @@ class RTKNavControlNode(Node):
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            if self.handle_rtk_data_timeout():
+                return
+
             # 新增：启动/恢复导航前，强制校验航点有效性
             if not self.waypoints:
                 self.get_logger().error("[ROSNode] RTK模式启动失败：无有效航点数据，请先加载航点")
