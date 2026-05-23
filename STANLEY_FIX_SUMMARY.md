@@ -113,3 +113,12 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **配置**: `run.launch.py` 新增 `loading_gps = [0.0, 0.0, 0.0]` 并传入 `rtk_nav`，现场标定后填写 `[经度, 纬度, 航向角]`。
 - **保留逻辑**: RTK 导航遍历完所有路径文件后，仍在 `get_target_waypoint()` 中追加到最后一个航点；继续使用 `return_to_loading_added` 保证每轮任务只追加一次。
 - **验证**: 已使用 bundled Python 执行 `py_compile` 检查 `src/rtk_nav/rtk_nav/rtk_nav.py` 和 `src/rtk_nav/launch/run.launch.py`，语法通过。
+
+## 2026-05-23 导航状态、区域和错误上报整理
+
+- **清扫区域上报**: `load_waypoints_from_file()` 解析路径文件中的普通注释行作为区域名，按航点同步保存到 `waypoint_areas`；新增 `/rtk/cleaning_area` 发布器，`rtk_timer_callback()` 周期性发布当前航点所在区域，路径切换时清空并重新发布。
+- **RTK error 上报**: 新增 `/rtk/error_status` (`Int16`) 和 `update_rtk_error_status()`；AUTO_CLEANING 下 RTK 非固定解发布 `ERROR_RTK_NOT_FIXED`，数据断流发布 `ERROR_RTK_TIMEOUT`，恢复固定解或退出 AUTO_CLEANING 后清零。
+- **边界触发防抖框架**: 增加 `BOUNDARY_TRIGGER_CONFIRM_FRAMES` / `BOUNDARY_CLEAR_CONFIRM_FRAMES` 以及 `update_boundary_trigger_state()`，用于连续帧确认边界触发、首次触发立即停车、纠偏完成后清理锁定和计数。
+- **当前边界触发状态**: `io_data_rtk_callback()` 中 `raw_boundary_trigger` 计算、边界变化日志和 `update_boundary_trigger_state(raw_boundary_trigger)` 调用目前仍处于注释状态；因此边界防抖框架已保留在代码中，但不会实际触发纠偏接管。
+- **传感器状态整理**: IO 位解析改为显式 `int(...) << bit` 组合，保留 `sensors_status` 原始位图，避免原先布尔位运算可读性差。
+- **导航完成收尾**: `COMPLETED` 收尾路径补齐停止 generator、停车、重置导航上下文并发布 `IDLE`；单航点路径在航点0完成后仍推进索引，让原有 `get_target_waypoint()` 追加固定进仓点逻辑继续生效。

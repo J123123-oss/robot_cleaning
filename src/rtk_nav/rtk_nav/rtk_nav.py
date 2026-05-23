@@ -9,7 +9,7 @@ import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
-from std_msgs.msg import String, UInt8, Float32       # 用于发布控制模式和导航状态
+from std_msgs.msg import String, UInt8, Float32, Int16       # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
 
@@ -62,6 +62,11 @@ SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系
 # 填入现场标定的固定进仓点后，RTK导航结束会把该点追加到最后一个航点，且每轮任务只追加一次。
 BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
 
+BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
+BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
+ERROR_RTK_NOT_FIXED = 4
+ERROR_RTK_TIMEOUT = 8
+
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -91,7 +96,10 @@ class RTKNavControlNode(Node):
         self.process_percent = 0.0  # 路径文件处理进度百分比
         # ================== 原有RTKNavigator属性 ==================
         self.waypoints: List[Tuple[float, float, float]] = []
+        self.waypoint_areas: List[str] = []
         self.current_waypoint_idx = 0
+        self.current_cleaning_area = ""
+        self.last_published_cleaning_area = None
         self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
         self.current_lon = 0.0
         self.current_lat = 0.0
@@ -146,6 +154,10 @@ class RTKNavControlNode(Node):
         self.BOUNDARY_TURN_DURATION = 1.0    # 偏转持续时间（秒）
         self.BOUNDARY_BACK_DURATION = 4.0    # 后退持续时间（秒）
         self.BOUNDARY_RETURN_DURATION = 1.0  # 反向偏转退回持续时间（秒）
+        self.boundary_active_count = 0
+        self.boundary_clear_count = 0
+        self.boundary_last_raw_trigger = False
+        self.boundary_stop_published = False
 
         self.gps_cache = []
         # 距离历史缓存（用于异常检测）
@@ -170,7 +182,7 @@ class RTKNavControlNode(Node):
         # 声明参数 + 绑定到类成员变量
         # self.declare_parameter('is_boundary_triggered', True, boundary_param_desc)
         # 读取初始值（程序启动时的默认值）
-        self.is_boundary_triggered = None
+        self.is_boundary_triggered = False
         # self.get_parameter('is_boundary_triggered').value
 
         # ========== ✅ 必须添加：参数回调函数, 监听参数修改事件 ==========
@@ -208,12 +220,15 @@ class RTKNavControlNode(Node):
         self.nav_running = False
         self.last_wtrtk_time = time.monotonic()
         self.rtk_data_timed_out = False
+        self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
         self.multi_waypoint_generator = None  # 多点导航生成器
 
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
+        self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
+        self.rtk_error_pub = self.create_publisher(Int16, "/rtk/error_status", 10)
         self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
 
@@ -293,7 +308,9 @@ class RTKNavControlNode(Node):
             
             # ================== 第三步：重置当前文件航点数据（原有逻辑）==================
             self.waypoints = []
+            self.waypoint_areas = []
             self.current_waypoint_idx = 0
+            current_area = ""
             
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()[1:]  # 跳过表头
@@ -313,6 +330,8 @@ class RTKNavControlNode(Node):
                         elif 'stop' in comment:
                             self.brush_stop_idx = len(self.waypoints)
                             self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
+                        elif comment:
+                            current_area = line[1:].strip()
                         continue
                     
                     parts = line.split(',')
@@ -322,6 +341,7 @@ class RTKNavControlNode(Node):
                     
                     seq, raw_lon, raw_lat, raw_heading = parts[0], parts[1], parts[2], parts[3]
                     self.waypoints.append((float(raw_lon), float(raw_lat), float(raw_heading)))
+                    self.waypoint_areas.append(current_area)
                     # # 核心修改：对当前航点应用出仓点偏移修正
                     # # 核心修复：强制转换为浮点数（之前未转换，导致字符串类型）
                     # raw_lon = float(raw_lon.strip())
@@ -361,6 +381,7 @@ class RTKNavControlNode(Node):
             # 原有日志和返回逻辑
             self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点（第一个航点已就绪）")
             self.rtk_path_file = file_path
+            self.update_cleaning_area(force=True)
             return True
             
         except Exception as e:
@@ -458,10 +479,55 @@ class RTKNavControlNode(Node):
                 self.boundary_correct_start_time = None
                 self.boundary_correct_direction = None
                 self.boundary_correct_locked = False  # 解除锁定
+                self.is_boundary_triggered = False
+                self.boundary_active_count = 0
+                self.boundary_clear_count = 0
+                self.boundary_stop_published = False
                 self.get_logger().info("[RTKNav] 边界矫正完成，恢复正常 [解锁]")
 
         self.get_logger().info(f"[RTKNav] 边界矫正状态: {self.boundary_correct_state}, 速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
         return (left_speed, right_speed)
+
+    def update_boundary_trigger_state(self, raw_trigger: bool):
+        if self.current_control_mode != ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
+            self.is_boundary_triggered = False
+            self.boundary_active_count = 0
+            self.boundary_clear_count = 0
+            self.boundary_stop_published = False
+            return
+
+        if self.boundary_correct_locked:
+            return
+
+        if raw_trigger:
+            self.boundary_active_count += 1
+            self.boundary_clear_count = 0
+        else:
+            self.boundary_clear_count += 1
+            self.boundary_active_count = 0
+            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                if self.is_boundary_triggered:
+                    self.get_logger().info("[RTKNav] 边界传感器释放确认，清除待处理触发")
+                self.is_boundary_triggered = False
+                self.boundary_stop_published = False
+            return
+
+        if self.boundary_active_count < BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+            return
+
+        if self.is_boundary_triggered:
+            return
+
+        self.is_boundary_triggered = True
+        self.get_logger().warn(
+            f"[RTKNav] 边界触发确认：连续{self.boundary_active_count}帧有效，"
+            f"front=({self.front_left},{self.front_right}), mid=({self.mid_left},{self.mid_right}), "
+            f"back=({self.back_left},{self.back_right})"
+        )
+        if not self.boundary_stop_published:
+            self.publish_stop_speed()
+            self.boundary_stop_published = True
+            self.get_logger().warn("[RTKNav] 边界触发后立即停车，等待纠偏状态机接管")
     
     def io_data_rtk_callback(self, msg: UInt8):
 
@@ -476,13 +542,23 @@ class RTKNavControlNode(Node):
         self.mid_right = (msg.data & 0x08) == 0x00
         self.back_left = (msg.data & 0x10) == 0x00
         self.back_right = (msg.data & 0x20) == 0x00
-        self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
-        self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
-        #开启后传感器误触发，注释
-        # if self.mid_left or self.mid_right:
-        #     self.is_boundary_triggered = True
-        # else:
-        #     self.is_boundary_triggered = False
+        self.sensors_status = (
+            int(self.front_left)
+            | (int(self.front_right) << 1)
+            | (int(self.mid_left) << 2)
+            | (int(self.mid_right) << 3)
+            | (int(self.back_left) << 4)
+            | (int(self.back_right) << 5)
+        )
+        # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
+        # raw_boundary_trigger = bool(self.mid_left or self.mid_right)
+        # if raw_boundary_trigger != self.boundary_last_raw_trigger:
+        #     self.get_logger().info(
+        #         f"[RTKNav] 边界原始信号变化: raw={raw_boundary_trigger}, "
+        #         f"mid_left={self.mid_left}, mid_right={self.mid_right}, io=0x{msg.data:02X}"
+        #     )
+        #     self.boundary_last_raw_trigger = raw_boundary_trigger
+        # self.update_boundary_trigger_state(raw_boundary_trigger)
 
         # self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
         # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
@@ -519,7 +595,6 @@ class RTKNavControlNode(Node):
             f"[RTKNav] 收到出仓GPS坐标但不再作为进仓航点: 经度={msg.x:.6f}, 纬度={msg.y:.6f}, 航向={msg.z:.2f}°；"
             f"固定进仓点={self.loading_waypoint}"
         )
-        
         # # 步骤1：首次接收出仓点，缓存为基准点（不计算偏移）
         # if self.base_loading_waypoint is None:
         #     self.base_loading_waypoint = current_loading
@@ -809,6 +884,7 @@ class RTKNavControlNode(Node):
             )
             self.last_rtk_timeout_log_time = now
 
+        self.update_rtk_error_status(ERROR_RTK_TIMEOUT)
         return True
 
     def heading_callback(self, msg: WTRTK) -> None:
@@ -842,6 +918,10 @@ class RTKNavControlNode(Node):
         
         is_fixed = (fix_status == 4)
         if not is_fixed:
+            if self.current_control_mode == ControlMode.AUTO_CLEANING:
+                self.update_rtk_error_status(ERROR_RTK_NOT_FIXED)
+            else:
+                self.update_rtk_error_status(0)
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                 self.nav_context["brush_active"] = self.brush_active
@@ -851,6 +931,7 @@ class RTKNavControlNode(Node):
                 stop_speed = Vector3()
                 self.publish_stop_speed()
         else:
+            self.update_rtk_error_status(0)
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
                 self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
@@ -937,6 +1018,7 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(f"[RTKNav] 开始执行返回出仓点：{self.loading_waypoint}")
                     # 将出仓点追加到航点列表末尾
                     self.waypoints.append(self.loading_waypoint)
+                    self.waypoint_areas.append("")
                     # 手动更新索引，指向新增的出仓点
                     self.current_waypoint_idx = idx
                     # 标记出仓点已追加
@@ -1590,6 +1672,14 @@ class RTKNavControlNode(Node):
         }
         self.return_to_loading_added = False  # 重置出仓点追加标志
         self.brush_active = False  # 重置滚刷状态
+        self.is_boundary_triggered = False
+        self.boundary_correct_state = BoundaryCorrectState.IDLE
+        self.boundary_correct_start_time = None
+        self.boundary_correct_direction = None
+        self.boundary_correct_locked = False
+        self.boundary_active_count = 0
+        self.boundary_clear_count = 0
+        self.boundary_stop_published = False
             # 重置后退纠正相关计数器
         self.last_distance_for_backup = 0.0
         self.distance_increase_count = 0
@@ -2096,6 +2186,29 @@ class RTKNavControlNode(Node):
         state_msg.data = state if isinstance(state, str) else state.value
         self.nav_state_pub.publish(state_msg)
 
+    def update_rtk_error_status(self, error_code: int, force: bool = False):
+        if not force and error_code == self.rtk_error_code:
+            return
+        self.rtk_error_code = error_code
+        msg = Int16()
+        msg.data = int(error_code)
+        self.rtk_error_pub.publish(msg)
+
+    def get_cleaning_area_for_waypoint(self, idx: int = None) -> str:
+        idx = self.current_waypoint_idx if idx is None else idx
+        if 0 <= idx < len(self.waypoint_areas):
+            return self.waypoint_areas[idx]
+        return ""
+
+    def update_cleaning_area(self, force: bool = False):
+        area = self.get_cleaning_area_for_waypoint()
+        self.current_cleaning_area = area
+        if force or area != self.last_published_cleaning_area:
+            area_msg = String()
+            area_msg.data = area
+            self.cleaning_area_pub.publish(area_msg)
+            self.last_published_cleaning_area = area
+
     def state_callback(self, msg: String):
         """电机状态回调函数：监听控制状态变化，HOLD暂停导航"""
         if msg.data == "HOLD" and self.last_state != "HOLD":
@@ -2130,6 +2243,9 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[RTKNav] 收到路径切换指令: {new_path_file}")
         self.cross_file_last_waypoint = None
         self.waypoints = []
+        self.waypoint_areas = []
+        self.current_cleaning_area = ""
+        self.update_cleaning_area(force=True)
         self.is_first_file_load = False
         self.rtk_path_file = new_path_file
         self.current_waypoint_idx = 0  # 重置航点索引为0
@@ -2184,6 +2300,8 @@ class RTKNavControlNode(Node):
 
     def rtk_timer_callback(self):
         """10Hz定时器回调, 驱动多点导航逻辑"""
+        self.update_cleaning_area()
+        self.update_rtk_error_status(self.rtk_error_code, force=True)
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
@@ -2242,6 +2360,7 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.IDLE)
         else:
             # 非RTK模式：重置生成器
+            self.update_rtk_error_status(0)
             if self.multi_waypoint_generator:
                 self.multi_waypoint_generator = None
                 self.nav_running = False
