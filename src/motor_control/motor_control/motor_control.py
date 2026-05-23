@@ -46,8 +46,8 @@ class RobotStateKey(Enum):
 
 STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'START'...}
 
-MAX_SPEED = 12.0   # 遥控器最大速度
-MIN_SPEED = -12.0  # 遥控器最小速度
+MAX_SPEED = 10.0   # 遥控器最大速度
+MIN_SPEED = -10.0  # 遥控器最小速度
 BRUSH_SPEED = -18.0
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
@@ -56,6 +56,18 @@ RC_CH_MAX_VALUE = 1722
 
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
 MAX_GPS_WAIT_TIME = 30.0
+LASER_DATA_TIMEOUT = 1.0
+UNLOADING_MIN_BATTERY = 80.0
+
+ERROR_MOTOR_FAULT = 1
+ERROR_LASER_TIMEOUT = 2
+ERROR_RTK_NOT_FIXED = 4
+ERROR_RTK_TIMEOUT = 8
+ERROR_LOW_BATTERY = 16
+ERROR_RESERVED_1 = 32
+ERROR_RESERVED_2 = 64
+ERROR_RESERVED_3 = 128
+ERROR_RESERVED_4 = 256
 
 #PID参数
 MAX_CORRECTION = 0.8
@@ -126,6 +138,7 @@ class MotorControlNode(Node):
         self.imu_update_interval = 0.2  # 要求IMU至少100ms更新一次（适配常见IMU发布频率）
 
         self.nav_status = None
+        self.cleaning_area = ""
         self.complete_state = False
         self.is_charging = None # 新增：电池是否正在充电
         self.rc_control = False # 新增：是否遥控器控制（优先级最高）
@@ -135,6 +148,7 @@ class MotorControlNode(Node):
         self.battery_current = None  # 电池电流
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
+        self.low_battery_warning = False
         self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
 
         self.dock_sensors = 0  #停机仓传感器状态
@@ -162,6 +176,7 @@ class MotorControlNode(Node):
         
         self.current_location = None
         self.rtk_status = 0  # 初始化RTK状态为0（无效状态）
+        self.rtk_error_code = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
         #UNLOADING完成后GPS坐标记录（用于后续验证和日志）
@@ -176,6 +191,9 @@ class MotorControlNode(Node):
         self.laser_valid_min = 0  # 激光数据最小值（根据硬件调整）
         self.laser_valid_max = 5000  # 激光数据最大值（根据硬件调整）
         self.laser_distance = [0, 0]  # 滤波后的最终激光距离
+        self.last_laser_update_time = 0.0
+        self.laser_no_response = True
+        self.last_laser_timeout_log_time = 0.0
 
         # 3. ROS2 订阅器
         self.keyboard_sub = self.create_subscription(
@@ -194,6 +212,18 @@ class MotorControlNode(Node):
             String,
             "/rtk/nav_state",
             self.rtk_nav_status_callback,
+            10
+        )
+        self.rtk_error_sub = self.create_subscription(
+            Int16,
+            "/rtk/error_status",
+            self.rtk_error_callback,
+            10
+        )
+        self.cleaning_area_sub = self.create_subscription(
+            String,
+            "/rtk/cleaning_area",
+            self.cleaning_area_callback,
             10
         )
         self.io_subscription = self.create_subscription(
@@ -338,6 +368,25 @@ class MotorControlNode(Node):
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
 
+    def is_laser_timeout(self) -> bool:
+        if self.last_laser_update_time <= 0.0:
+            return True
+        return (time.time() - self.last_laser_update_time) > LASER_DATA_TIMEOUT
+
+    def build_error_code(self) -> int:
+        error = 0
+        if any(code != 0 for code in self.motor_fault_codes):
+            error |= ERROR_MOTOR_FAULT
+        if self.laser_no_response or self.is_laser_timeout():
+            error |= ERROR_LASER_TIMEOUT
+        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
+        if self.low_battery_warning or (
+            self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY
+        ):
+            error |= ERROR_LOW_BATTERY
+        return error
+
+
     def imu_heading_callback(self, msg:Float32):
         """IMU航向回调 - 新增时间戳，过滤旧数据"""
         self.imu_yaw_deg = msg.data
@@ -385,6 +434,11 @@ class MotorControlNode(Node):
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
             self.motor_ctrl.reconnect_can_bus()
+        if self.is_laser_timeout():
+            now = time.time()
+            if now - self.last_laser_timeout_log_time >= 10.0:
+                self.get_logger().warn("[Laser] 激光距离话题超时，未收到最新laser_distance数据")
+                self.last_laser_timeout_log_time = now
         # self.current_control_mode = self.sbus_remote.control_mode
         if self.rc_control:
             self.current_control_mode = "REMOTE"
@@ -540,6 +594,12 @@ class MotorControlNode(Node):
             self.current_control_mode = "NORMAL"  # 切换回普通模式
             self.switch_state('l')
 
+    def rtk_error_callback(self, msg: Int16):
+        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
+
+    def cleaning_area_callback(self, msg: String):
+        self.cleaning_area = msg.data.strip()
+
     def handle_route_change(self, route_id: str):
         """处理路径切换指令"""
         route_file = f"/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/{route_id}.txt"
@@ -619,6 +679,8 @@ class MotorControlNode(Node):
         self.battery_current = round(msg.data[1], 2)  # 总电流（索引1）
         self.battery_total_voltage = round(msg.data[2], 2)  # 总电压（索引2）
         self.battery_temperatures = round(msg.data[3], 1) # 温度（索引3）
+        if self.battery_remaining >= UNLOADING_MIN_BATTERY:
+            self.low_battery_warning = False
     def charging_volt_curr_cb(self, msg: Float32MultiArray):
         """订阅充电电压电流数据的回调函数"""
         if len(msg.data) < 2:
@@ -680,6 +742,14 @@ class MotorControlNode(Node):
         if len(msg.data) < 2:
             self.get_logger().warn("激光距离数据不完整!")
             return
+        self.last_laser_update_time = time.time()
+        laser_status = int(msg.data[2]) if len(msg.data) >= 3 else 0
+        self.laser_no_response = laser_status != 0
+        if self.laser_no_response:
+            now = time.time()
+            if now - self.last_laser_timeout_log_time >= 10.0:
+                self.get_logger().warn(f"[Laser] 激光传感器读数超时/无回应，status=0x{laser_status:02X}")
+                self.last_laser_timeout_log_time = now
         
         # 2. 原始数据提取与异常值过滤
         raw_left = msg.data[0]
@@ -783,9 +853,17 @@ class MotorControlNode(Node):
         # 核心修改：正在进出仓时，仅响应HOLD指令，其余指令直接忽略并打印日志
         if self.is_in_bin_process:
             if new_state not in ["HOLD", "DISABLE"]:
-                self.get_logger().warn(f"[ROSNode] 正在执行进\出仓流程，仅支持HOLD\DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
+                self.get_logger().warn(f"[ROSNode] 正在执行进\出仓流程，仅支持HOLD或DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
                 return
             # 若是HOLD指令，正常执行，后续会重置进出仓标记
+
+        if new_state == "UNLOADING" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
+            self.low_battery_warning = True
+            self.get_logger().warn(
+                f"[UNLOADING] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，拒绝执行出仓任务"
+            )
+            self.publish_state()
+            return
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
@@ -860,7 +938,7 @@ class MotorControlNode(Node):
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
-            self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("w"))
+            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("w"))
 
         elif new_state == "BACKWARD":
             # 后退：双电机反转
@@ -870,7 +948,7 @@ class MotorControlNode(Node):
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
-            self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("s"))
+            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("s"))
         elif new_state == "LEFT":
             # 左转
             left_speed = self.mqtt_control_speed
@@ -879,7 +957,7 @@ class MotorControlNode(Node):
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
-            self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("a"))
+            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("a"))
         elif new_state == "RIGHT":
             # 右转
             left_speed = -self.mqtt_control_speed
@@ -888,7 +966,7 @@ class MotorControlNode(Node):
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
-            self.direction_timer = self.create_timer(10.0, lambda: self.auto_stop("d"))
+            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state == "UNLOADING":
             # 使能电机
             self.motor_ctrl.initialize_motors()
@@ -967,6 +1045,8 @@ class MotorControlNode(Node):
                 "current_lon": self.current_lon if self.current_lon > 0.1 else None,
                 "current_lat": self.current_lat if self.current_lat > 0.1 else None,
                 "route_id": self.route_id if self.route_id is not None else "default",
+                "areas": self.cleaning_area,
+                "error": self.build_error_code(),
                 # "uuid": "163e4ac9-18a9-4e08-9301-36ca08e07581",
                 "acceleration": {
                     "x": self.current_left_speed,

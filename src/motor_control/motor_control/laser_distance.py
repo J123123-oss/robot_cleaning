@@ -35,6 +35,8 @@ class LaserDistanceNode(Node):
         # 2. 初始化串口
         self.ser = None
         self.laser_distance = [0, 0]  # 存储两路激光距离（0-65535）
+        self.laser_status = 0  # bit0=1路无回应, bit1=2路无回应
+        self.last_laser_status_log_time = 0.0
         self.mutex = threading.Lock()
         
         try:
@@ -123,15 +125,20 @@ class LaserDistanceNode(Node):
 
     def read_laser_data(self):
         """读取两路激光传感器数据"""
+        status = 0
         # 读取第一路激光数据（0x01指令,修改为01）
         if self.send_laser_command(0x01):
             distance1 = self.read_serial_response(0x01)
             if distance1 is not None:
                 with self.mutex:
                     self.laser_distance[0] = distance1
+            else:
+                status |= 0x01
             #     self.get_logger().info(f"激光1距离: {distance1} mm")
             # else:
             #     self.get_logger().warn("激光1数据读取失败")
+        else:
+            status |= 0x01
         
         # 短暂延时，避免两路指令冲突
         time.sleep(0.02)
@@ -142,9 +149,20 @@ class LaserDistanceNode(Node):
             if distance2 is not None:
                 with self.mutex:
                     self.laser_distance[1] = distance2
+            else:
+                status |= 0x02
             #     self.get_logger().info(f"激光2距离: {distance2} mm")
             # else:
             #     self.get_logger().warn("激光2数据读取失败")
+        else:
+            status |= 0x02
+
+        with self.mutex:
+            self.laser_status = status
+        now = time.time()
+        if status and now - self.last_laser_status_log_time >= 2.0:
+            self.get_logger().warn(f"激光传感器无回应: status=0x{status:02X}")
+            self.last_laser_status_log_time = now
         
         # 发布合并后的距离数据
         self.publish_distance_data()
@@ -156,14 +174,14 @@ class LaserDistanceNode(Node):
         # 设置数组维度信息（可选，但建议配置）
         dim = MultiArrayDimension()
         dim.label = "laser_distance"
-        dim.size = 2  # 两路数据
-        dim.stride = 2
+        dim.size = 3  # 两路数据 + 状态位
+        dim.stride = 3
         msg.layout.dim.append(dim)
         msg.layout.data_offset = 0
         
         with self.mutex:
             # 直接赋值两路无符号整数，无需边界检查（UInt16天然支持0-65535）
-            msg.data = [self.laser_distance[0], self.laser_distance[1]]
+            msg.data = [self.laser_distance[0], self.laser_distance[1], self.laser_status]
         
         # 发布到单话题
         self.distance_pub.publish(msg)
