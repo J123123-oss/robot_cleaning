@@ -226,6 +226,12 @@ class MotorControlNode(Node):
             self.cleaning_area_callback,
             10
         )
+        self.current_route_sub = self.create_subscription(
+            String,
+            "/rtk/current_route_id",
+            self.current_route_callback,
+            10
+        )
         self.io_subscription = self.create_subscription(
             UInt8,
             "io_data",
@@ -599,6 +605,17 @@ class MotorControlNode(Node):
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
+
+    def current_route_callback(self, msg: String):
+        route_id = msg.data.strip()
+        if not route_id:
+            return
+        if route_id == self.route_id:
+            return
+        self.route_id = route_id
+        self.get_logger().info(f"[ROSNode] RTK当前路径已更新: {route_id}，同步发布MQTT状态")
+        self.publish_state()
+
 
     def handle_route_change(self, route_id: str):
         """处理路径切换指令"""

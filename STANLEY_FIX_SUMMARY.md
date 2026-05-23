@@ -122,3 +122,11 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **当前边界触发状态**: `io_data_rtk_callback()` 中 `raw_boundary_trigger` 计算、边界变化日志和 `update_boundary_trigger_state(raw_boundary_trigger)` 调用目前仍处于注释状态；因此边界防抖框架已保留在代码中，但不会实际触发纠偏接管。
 - **传感器状态整理**: IO 位解析改为显式 `int(...) << bit` 组合，保留 `sensors_status` 原始位图，避免原先布尔位运算可读性差。
 - **导航完成收尾**: `COMPLETED` 收尾路径补齐停止 generator、停车、重置导航上下文并发布 `IDLE`；单航点路径在航点0完成后仍推进索引，让原有 `get_target_waypoint()` 追加固定进仓点逻辑继续生效。
+
+## 2026-05-23 路径切换延后与MQTT同步
+
+- **问题**: 当前路径文件完成后，`get_target_waypoint()` 会立即加载并执行下一个路径文件，导致同一次RTK清扫连续跨路径执行；改为任务完成后重置状态再切换路径时，自动切换又只发生在 `rtk_nav` 内部，MQTT后台看不到新的 `route_id`。
+- **修复**: 当前路径结束时只记录 `pending_next_path_file`，本轮仍追加固定 `loading_gps` 进仓点；`COMPLETED` 后统一停车、重置导航上下文、发布 `IDLE`，再预加载下一条路径。
+- **防止误启动**: 预加载下一条路径后设置 `waiting_for_next_unloading=True`，即使控制模式仍是 `AUTO_CLEANING`，`rtk_timer_callback()` 也只保持停车和 `IDLE`，直到下一次UNLOADING后重新切回 `AUTO_CLEANING` 才允许启动。
+- **MQTT同步**: `rtk_nav` 新增 `/rtk/current_route_id` 发布器，自动预加载下一路径或手动 `/rtk/route_change` 成功加载后发布当前 `route_id`；`motor_control` 新增订阅该话题，更新本地 `route_id` 并调用 `publish_state()`，沿用 `/robot_state -> mqtt_ros2_bridge -> MQTT` 通路让后台看到路径变化。
+- **验证**: 已使用 bundled Python 执行 `py_compile` 检查 `src/rtk_nav/rtk_nav/rtk_nav.py` 和 `src/motor_control/motor_control/motor_control.py`，语法通过。

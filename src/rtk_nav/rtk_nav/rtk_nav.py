@@ -145,6 +145,8 @@ class RTKNavControlNode(Node):
         self.declare_parameter("loading_gps", list(BUILTIN_LOADING_GPS))
         self.loading_waypoint = self.load_builtin_loading_gps()  # 格式：(lon, lat, heading)
         self.return_to_loading_added = False  # 出仓点是否已追加标志
+        self.pending_next_path_file = None
+        self.waiting_for_next_unloading = False
 
         # 边界矫正状态机
         self.boundary_correct_state = BoundaryCorrectState.IDLE
@@ -228,6 +230,7 @@ class RTKNavControlNode(Node):
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
+        self.current_route_pub = self.create_publisher(String, "/rtk/current_route_id", 10)
         self.rtk_error_pub = self.create_publisher(Int16, "/rtk/error_status", 10)
         self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
@@ -998,36 +1001,30 @@ class RTKNavControlNode(Node):
         self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
-        """获取当前目标航点（含航向角）, 到达最后一个航点时自动切换路径文件"""
+        """获取当前目标航点（含航向角）。当前任务结束后只记录下一个路径，等待下一次任务启动。"""
         idx = current_waypoint_idx if current_waypoint_idx is not None else self.current_waypoint_idx
         
         # 检查是否到达最后一个航点
         if idx >= len(self.waypoints):
-            self.get_logger().info("[RTKNav] 已到达当前路径文件的最后一个航点, 准备切换路径文件")
-            
-            # 获取下一个路径文件
-            next_file = self.get_next_path_file()
-            if next_file and self.load_waypoints_from_file(next_file):
-                # 切换文件成功, 返回新文件的第一个航点
-                self.current_waypoint_idx = 0
-                return self.waypoints[0]
-            else:
-                # 没有下一个文件, 返回None表示结束
-                self.get_logger().info("[RTKNav] 没有更多路径文件, 导航结束")
-                if hasattr(self, 'loading_waypoint') and self.loading_waypoint is not None and not self.return_to_loading_added:
-                    self.get_logger().info(f"[RTKNav] 开始执行返回出仓点：{self.loading_waypoint}")
-                    # 将出仓点追加到航点列表末尾
-                    self.waypoints.append(self.loading_waypoint)
-                    self.waypoint_areas.append("")
-                    # 手动更新索引，指向新增的出仓点
-                    self.current_waypoint_idx = idx
-                    # 标记出仓点已追加
-                    self.return_to_loading_added = True
-                    self.get_logger().info(f"[RTKNav] 出仓点追加成功，当前航点索引：{self.current_waypoint_idx}，总航点数：{len(self.waypoints)}")
-                    # 返回出仓点作为新的目标航点
-                    return self.loading_waypoint
-                # self.current_control_mode = ControlMode.NORMAL
-                return None
+            self.get_logger().info("[RTKNav] 已到达当前路径文件的最后一个航点, 本轮任务准备返回进仓点")
+
+            if self.pending_next_path_file is None:
+                self.pending_next_path_file = self.get_next_path_file()
+                if self.pending_next_path_file:
+                    self.get_logger().info(f"[RTKNav] 已记录下一任务路径，待本轮COMPLETED后切换: {self.pending_next_path_file}")
+                else:
+                    self.get_logger().info("[RTKNav] 没有更多路径文件，本轮返仓后结束全部路径")
+
+            if hasattr(self, 'loading_waypoint') and self.loading_waypoint is not None and not self.return_to_loading_added:
+                self.get_logger().info(f"[RTKNav] 开始执行返回进仓点：{self.loading_waypoint}")
+                self.waypoints.append(self.loading_waypoint)
+                self.waypoint_areas.append("")
+                self.current_waypoint_idx = idx
+                self.return_to_loading_added = True
+                self.get_logger().info(f"[RTKNav] 进仓点追加成功，当前航点索引：{self.current_waypoint_idx}，总航点数：{len(self.waypoints)}")
+                return self.loading_waypoint
+
+            return None
         
         # 返回当前目标航点
         return self.waypoints[idx]
@@ -1697,6 +1694,58 @@ class RTKNavControlNode(Node):
             self.distance_increase_count = 0
         # self.get_logger().info("RTK导航状态已重置")
 
+    def load_pending_path_after_task(self):
+        """任务COMPLETED并重置为IDLE后，加载下一条路径，等待下一次UNLOADING启动。"""
+        if not self.pending_next_path_file:
+            return
+
+        next_file = self.pending_next_path_file
+        self.pending_next_path_file = None
+        self.get_logger().info(f"[RTKNav] 任务收尾完成，切换到下一次清扫路径: {next_file}")
+
+        self.cross_file_last_waypoint = None
+        self.waypoints = []
+        self.waypoint_areas = []
+        self.current_cleaning_area = ""
+        self.update_cleaning_area(force=True)
+        self.current_waypoint_idx = 0
+        self.return_to_loading_added = False
+        self.brush_start_idx = None
+        self.brush_stop_idx = None
+        self.brush_active = False
+        self.rtk_path_file = next_file
+
+        if self.load_waypoints_from_file(self.rtk_path_file):
+            self.nav_context["nav_state"] = NavState.IDLE
+            self.nav_context["pre_pause_state"] = None
+            self.publish_nav_state(NavState.IDLE)
+            self.publish_current_route_id()
+            self.waiting_for_next_unloading = True
+            self.get_logger().info(f"[RTKNav] 下一次清扫路径已加载，共 {len(self.waypoints)} 个航点，等待下一次UNLOADING后启动")
+        else:
+            self.get_logger().error(f"[RTKNav] 下一次清扫路径加载失败: {next_file}")
+
+    def finish_navigation_task(self):
+        """统一处理任务完成后的停车、状态重置和下一路径预加载。"""
+        has_pending_path = self.pending_next_path_file is not None
+        self.publish_nav_state(NavState.COMPLETED)
+        self.multi_waypoint_generator = None
+        self.nav_running = False
+        self.brush_active = False
+        self.publish_stop_speed()
+        self.reset_nav_context()
+        self.publish_nav_state(NavState.IDLE)
+        self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
+        if has_pending_path:
+            self.load_pending_path_after_task()
+        else:
+            self.waypoints = []
+            self.waypoint_areas = []
+            self.current_cleaning_area = ""
+            self.update_cleaning_area(force=True)
+            self.waiting_for_next_unloading = True
+            self.get_logger().info("[RTKNav] 没有下一条清扫路径，已清空当前航点并等待退出AUTO_CLEANING")
+
     # ================== 原有控制模式检查 + 多点导航生成器 ==================
     def check_control_mode(self) -> bool:
         """
@@ -2141,14 +2190,7 @@ class RTKNavControlNode(Node):
         # 所有航点完成
         self.get_logger().info("[ROSNode] RTK多点导航全部完成")
         self.nav_context["nav_state"] = NavState.COMPLETED
-        self.publish_nav_state(NavState.COMPLETED)
-        self.multi_waypoint_generator = None
-        self.nav_running = False
-        self.brush_active = False  # 导航完成，关闭滚刷
-        self.publish_stop_speed()
-        self.reset_nav_context()
-        self.publish_nav_state(NavState.IDLE)
-        self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
+        self.finish_navigation_task()
         yield (0.0, 0.0)
 
     # ================== 原有RTKControlNode核心方法 ==================
@@ -2209,6 +2251,13 @@ class RTKNavControlNode(Node):
             self.cleaning_area_pub.publish(area_msg)
             self.last_published_cleaning_area = area
 
+    def publish_current_route_id(self):
+        route_id = os.path.splitext(os.path.basename(self.rtk_path_file))[0] if self.rtk_path_file else "default"
+        route_msg = String()
+        route_msg.data = route_id
+        self.current_route_pub.publish(route_msg)
+        self.get_logger().info(f"[RTKNav] 已发布当前路径ID: {route_id}")
+
     def state_callback(self, msg: String):
         """电机状态回调函数：监听控制状态变化，HOLD暂停导航"""
         if msg.data == "HOLD" and self.last_state != "HOLD":
@@ -2241,6 +2290,8 @@ class RTKNavControlNode(Node):
             return
         
         self.get_logger().info(f"[RTKNav] 收到路径切换指令: {new_path_file}")
+        self.pending_next_path_file = None
+        self.waiting_for_next_unloading = False
         self.cross_file_last_waypoint = None
         self.waypoints = []
         self.waypoint_areas = []
@@ -2258,6 +2309,7 @@ class RTKNavControlNode(Node):
         self.nav_context["pre_pause_state"] = None  # 重置暂停状态
         self.publish_nav_state(self.nav_context["nav_state"])
         self.load_waypoints_from_file(self.rtk_path_file)
+        self.publish_current_route_id()
         
         # 同步滚刷状态到nav_context（加载路径后会更新brush_active）
         if hasattr(self, 'nav_context'):
@@ -2279,6 +2331,9 @@ class RTKNavControlNode(Node):
         #     self.multi_waypoint_generator = None
         #     self.nav_running = False
         if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
+            if self.waiting_for_next_unloading:
+                self.waiting_for_next_unloading = False
+                self.get_logger().info("[RTKNav] 检测到下一次UNLOADING后的AUTO_CLEANING，允许启动预加载路径")
             self.multi_waypoint_generator = None
             self.nav_running = False
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
@@ -2305,6 +2360,11 @@ class RTKNavControlNode(Node):
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            if self.waiting_for_next_unloading:
+                self.publish_stop_speed()
+                self.publish_nav_state(NavState.IDLE)
+                return
+
             if self.handle_rtk_data_timeout():
                 return
 
@@ -2340,14 +2400,7 @@ class RTKNavControlNode(Node):
             except StopIteration:
                 # 导航生成器执行完毕（全部航点完成/主动退出）
                 self.get_logger().info("[ROSNode] 多点导航生成器执行完毕")
-                self.publish_nav_state(NavState.COMPLETED)
-                self.multi_waypoint_generator = None
-                self.nav_running = False
-                self.brush_active = False  # 导航完成，关闭滚刷
-                self.publish_stop_speed()
-                self.reset_nav_context()
-                self.publish_nav_state(NavState.IDLE)
-                self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
+                self.finish_navigation_task()
             except Exception as e:
                 self.get_logger().error(f"[ROSNode] RTK多点导航错误：{str(e)}")
                 # 发布停止指令
