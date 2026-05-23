@@ -1737,6 +1737,10 @@ class RTKNavControlNode(Node):
                     if self.nav_context.get("is_angle_recalib", False):
                         self.get_logger().warn("[ROSNode] 初始移动完成时发现残留角度异常标志，已清除并切换到航点1")
                         self.nav_context["is_angle_recalib"] = False
+                    if len(self.waypoints) <= 1:
+                        self.get_logger().info("[ROSNode] 当前路径只有1个航点，初始航点完成后按原逻辑追加进仓点")
+                    if self.waypoints:
+                        self.last_waypoint_cache = self.waypoints[0]
                     self.current_waypoint_idx = 1
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
@@ -2048,10 +2052,13 @@ class RTKNavControlNode(Node):
         self.get_logger().info("[ROSNode] RTK多点导航全部完成")
         self.nav_context["nav_state"] = NavState.COMPLETED
         self.publish_nav_state(NavState.COMPLETED)
+        self.multi_waypoint_generator = None
         self.nav_running = False
         self.brush_active = False  # 导航完成，关闭滚刷
         self.publish_stop_speed()
-        self.reset_nav_context()        # reset nav /保留导航状态，支持恢复
+        self.reset_nav_context()
+        self.publish_nav_state(NavState.IDLE)
+        self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
         yield (0.0, 0.0)
 
     # ================== 原有RTKControlNode核心方法 ==================
@@ -2219,6 +2226,10 @@ class RTKNavControlNode(Node):
                 self.multi_waypoint_generator = None
                 self.nav_running = False
                 self.brush_active = False  # 导航完成，关闭滚刷
+                self.publish_stop_speed()
+                self.reset_nav_context()
+                self.publish_nav_state(NavState.IDLE)
+                self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
             except Exception as e:
                 self.get_logger().error(f"[ROSNode] RTK多点导航错误：{str(e)}")
                 # 发布停止指令
