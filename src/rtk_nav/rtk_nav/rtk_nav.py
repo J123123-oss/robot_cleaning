@@ -31,6 +31,8 @@ RTK_DATA_TIMEOUT = 1.0
 RTK_TIMEOUT_LOG_INTERVAL = 2.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
+HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时后暂停导航
+HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
 
 TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 0.7  # 中误差中等转向基准速度
@@ -224,6 +226,9 @@ class RTKNavControlNode(Node):
         self.rtk_data_timed_out = False
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
+        self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
+        self.heading_timed_out = False  # 航向角异常导致的超时标志
+        self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self.multi_waypoint_generator = None  # 多点导航生成器
 
         # ROS2发布器/订阅器
@@ -859,10 +864,46 @@ class RTKNavControlNode(Node):
         self.get_logger().info("[RTKNav] 已重置基准出仓点，下次接收将重新缓存")
 
     def handle_rtk_data_timeout(self) -> bool:
+        """RTK数据超时 + 航向角异常超时检测，触发时停车并暂停导航"""
+        now = time.monotonic()
+
+        # —— 航向角异常超时检测（独立于RTK数据超时） ——
+        if self.heading_abnormal_start_time is not None:
+            heading_abnormal_elapsed = now - self.heading_abnormal_start_time
+            if heading_abnormal_elapsed > HEADING_ABNORMAL_TIMEOUT:
+                if not self.heading_timed_out:
+                    if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                        self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.publish_nav_state(NavState.PAUSE)
+                    self.nav_running = False
+                    self.heading_timed_out = True
+                    self.publish_stop_speed()
+                    self.get_logger().warn(
+                        f"[航向异常超时] 航向角异常已持续{heading_abnormal_elapsed:.1f}s，已停车并暂停导航"
+                    )
+                    self.last_rtk_timeout_log_time = now
+                    self._last_heading_recovery_check = now
+                    self.update_rtk_error_status(ERROR_RTK_TIMEOUT)
+                    return True
+                # 周期性恢复检查：允许生成器运行一帧，检查航向是否恢复
+                if now - self._last_heading_recovery_check >= HEADING_RECOVERY_CHECK_INTERVAL:
+                    self._last_heading_recovery_check = now
+                    return False
+                if now - self.last_rtk_timeout_log_time >= RTK_TIMEOUT_LOG_INTERVAL:
+                    self.publish_stop_speed()
+                    self.get_logger().warn(
+                        f"[航向异常超时] 航向角仍异常，已持续{heading_abnormal_elapsed:.1f}s，保持停车"
+                    )
+                    self.last_rtk_timeout_log_time = now
+                self.update_rtk_error_status(ERROR_RTK_TIMEOUT)
+                return True
+
+        # —— RTK数据超时检测 ——
         if self.last_wtrtk_time is None:
             return False
 
-        now = time.monotonic()
         elapsed = now - self.last_wtrtk_time
         if elapsed <= RTK_DATA_TIMEOUT:
             return False
@@ -1630,9 +1671,16 @@ class RTKNavControlNode(Node):
                 distance_to_target=distance
             )
 
+            heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+            if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
+                if self.heading_abnormal_start_time is None:
+                    self.heading_abnormal_start_time = time.monotonic()
+            else:
+                self.heading_abnormal_start_time = None
+                self.heading_timed_out = False
+
             if left_speed != last_left_speed or right_speed != last_right_speed:
                 lateral_err = self.calculate_lateral_error(current_pos, path_start, path_end)
-                heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                 self.get_logger().info(
                     f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}, "
                     f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°, t={t:.3f}"
@@ -1667,6 +1715,8 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": False,
             "brush_active": False,  # 滚刷是否激活
         }
+        self.heading_abnormal_start_time = None  # 重置航向异常计时
+        self.heading_timed_out = False
         self.return_to_loading_added = False  # 重置出仓点追加标志
         self.brush_active = False  # 重置滚刷状态
         self.is_boundary_triggered = False
@@ -1819,8 +1869,12 @@ class RTKNavControlNode(Node):
                     if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                         self.start_heading_recalibration(path_direction, heading_err, "恢复导航时航向异常")
                         current_nav_state = NavState.WAYPOINT_CALIB
+                        if self.heading_abnormal_start_time is None:
+                            self.heading_abnormal_start_time = time.monotonic()
                     else:
                         self.nav_context["angle_abnormal_count"] = 0
+                        self.heading_abnormal_start_time = None
+                        self.heading_timed_out = False
         else:
             # 只有导航状态为IDLE时, 才重新初始化初始移动（解决重复进入第一个航点）
             if self.nav_context["nav_state"] == NavState.IDLE:
@@ -2152,8 +2206,12 @@ class RTKNavControlNode(Node):
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                     self.nav_context["angle_abnormal_count"] += 1
+                    if self.heading_abnormal_start_time is None:
+                        self.heading_abnormal_start_time = time.monotonic()
                 else:
                     self.nav_context["angle_abnormal_count"] = 0
+                    self.heading_abnormal_start_time = None
+                    self.heading_timed_out = False
 
                 if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
                     self.start_heading_recalibration(
