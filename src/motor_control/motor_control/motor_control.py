@@ -57,7 +57,7 @@ RC_CH_MAX_VALUE = 1722
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
 MAX_GPS_WAIT_TIME = 30.0
 LASER_DATA_TIMEOUT = 1.0
-UNLOADING_MIN_BATTERY = 80.0
+UNLOADING_MIN_BATTERY = 91.0
 
 ERROR_MOTOR_FAULT = 1
 ERROR_LASER_TIMEOUT = 2
@@ -154,6 +154,8 @@ class MotorControlNode(Node):
         self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
 
         self.dock_sensors = 0  #停机仓传感器状态
+        self._dock_sensor_blocked_logged_unloading = False
+        self._dock_sensor_blocked_logged_loading = False
         self.dock_last_sensors = 0
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
@@ -764,7 +766,7 @@ class MotorControlNode(Node):
         if self.laser_no_response:
             now = time.time()
             if now - self.last_laser_timeout_log_time >= 10.0:
-                self.get_logger().warn(f"[Laser] 激光传感器读数超时/无回应，status=0x{laser_status:02X}")
+                # self.get_logger().warn(f"[Laser] 激光传感器读数超时/无回应，status=0x{laser_status:02X}")
                 self.last_laser_timeout_log_time = now
         
         # 2. 原始数据提取与异常值过滤
@@ -1007,7 +1009,7 @@ class MotorControlNode(Node):
             # self.complete_state = False
             # self.current_status = new_state
             # # 初始化出仓阶段
-            # self.unloading_phase = "UNLOADING_FORWARD"  # 第一阶段：前进
+            # self.unloading_phase = "UNLOADING_BACKWARD"  # 第一阶段：前进
             # self.unloading_start_time = time.time()
             # # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
@@ -1027,14 +1029,6 @@ class MotorControlNode(Node):
             
             # 修正：目标角度归一化
             self.loading_turn_target_deg = (self.loading_turn_target_deg + 180) % 360 - 180
-            loading_error_code = self.build_error_code()
-            if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
-                self.loading_phase = "LOADING_DIRECT_FORWARD"
-                self.loading_direct_start_time = time.time()
-                self.get_logger().warn(
-                    f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
-                    f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
-                )
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.loading_timer = self.create_timer(0.05, self.handle_loading_step)
         elif new_state == "AUTO_CLEANING":
@@ -1324,13 +1318,17 @@ class MotorControlNode(Node):
             return
         # 补充dock中传感器复位后再响应
         if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
-            self.get_logger().warn("[ROSNode] 拒绝进入出仓状态，仓内限位传感器触发！！！")
+            if not self._dock_sensor_blocked_logged_unloading:
+                self.get_logger().warn("[ROSNode] 拒绝进入出仓状态，仓内限位传感器触发！！！")
+                self._dock_sensor_blocked_logged_unloading = True
             return
-        elif (self.dock_sensors & 0x02):  # dock中归位
+        else:
+            self._dock_sensor_blocked_logged_unloading = False
+        if (self.dock_sensors & 0x02):  # dock中归位
              # ========== 新增：归位后首次初始化出仓流程 ==========
             if self.unloading_phase is None:
                 self.get_logger().info("[UNLOADING] 检测到dock归位，初始化出仓流程")
-                self.unloading_phase = "UNLOADING_FORWARD"  # 第一阶段：前进
+                self.unloading_phase = "UNLOADING_BACKWARD"  # 第一阶段：后退出仓
                 self.unloading_start_time = time.time()  # 记录真正的启动时间
                 self.get_logger().info(f"[UNLOADING] 初始化完成，当前阶段：{self.unloading_phase}")
 
@@ -1352,7 +1350,7 @@ class MotorControlNode(Node):
                 self.yaw_stable_count_unloading = 0
             
             # ========== 阶段1：前进/后退 ==========
-            if self.unloading_phase == "UNLOADING_FORWARD":
+            if self.unloading_phase == "UNLOADING_BACKWARD":
                 if current_time - self.unloading_start_time < self.unloading_forword_threshold:
                     correction = 0  # 直线纠偏待添加
                     left_speed = self.motor_ctrl.BASE_SPEED + correction
@@ -1526,15 +1524,15 @@ class MotorControlNode(Node):
                 
     #             if abs(yaw_diff) < self.yaw_diff_min:
     #                 self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
-    #                 self.loading_phase = "LOADING_BACKWARD"
+    #                 self.loading_phase = "LOADING_FOWARD"
     #                 self.loading_backward_start_time = current_time
     #             elif current_time - self.loading_start_time > self.loading_turn_time:
     #                 self.get_logger().warn("[LOADING] 角度调整超时，强制进入后退阶段")
-    #                 self.loading_phase = "LOADING_BACKWARD"
+    #                 self.loading_phase = "LOADING_FOWARD"
     #                 self.loading_backward_start_time = current_time
             
     #         # ========== 阶段2：后退进仓 ==========
-    #         elif self.loading_phase == "LOADING_BACKWARD":
+    #         elif self.loading_phase == "LOADING_FOWARD":
     #             if current_time - self.loading_backward_start_time < self.loading_backward_threshold:
     #                 correction = 0
     #                 left_speed = self.motor_ctrl.BASE_SPEED + correction
@@ -1576,7 +1574,7 @@ class MotorControlNode(Node):
                     self.last_direct_loading_log_time = current_time
                 return
 
-            self.get_logger().warn("[LOADING] 兜底进仓30s超时，停止并按完成处理")
+            self.get_logger().warn("[LOADING] 兜底进仓26s超时，停止并按完成处理")
             self.set_motors_speed(0.0, 0.0)
             self.loading_phase = "COMPLETE"
             self.complete_state = True
@@ -1592,9 +1590,13 @@ class MotorControlNode(Node):
         if self.bin_process_paused:
             return
         if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
+            if not self._dock_sensor_blocked_logged_loading:
                 self.get_logger().warn("[ROSNode] 拒绝进入进仓状态，仓内限位传感器触发！！！")
-                return
-        elif self.dock_sensors & 0x02:  # dock中归位
+                self._dock_sensor_blocked_logged_loading = True
+            return
+        else:
+            self._dock_sensor_blocked_logged_loading = False
+        if self.dock_sensors & 0x02:  # dock中归位
             # 归位后首次初始化进仓流程
             if self.loading_phase is None:
                 self.get_logger().info("[LOADING] 检测到dock归位，初始化进仓流程")
@@ -1647,9 +1649,18 @@ class MotorControlNode(Node):
                         self.yaw_stable_count += 1
                         self.get_logger().info(f"[LOADING] 角度误差达标，稳定计数={self.yaw_stable_count}/3")
                         if self.yaw_stable_count >= 3:
-                            self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标），进入后退进仓阶段")
-                            self.loading_phase = "LOADING_BACKWARD"
-                            self.loading_backward_start_time = current_time
+                            self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标）")
+                            loading_error_code = self.build_error_code()
+                            if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
+                                self.loading_phase = "LOADING_DIRECT_FORWARD"
+                                self.loading_direct_start_time = current_time
+                                self.get_logger().warn(
+                                    f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
+                                    f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
+                                )
+                            else:
+                                self.loading_phase = "LOADING_FOWARD"
+                                self.loading_backward_start_time = current_time
                             self.yaw_stable_count = 0  # 重置计数器
                     else:
                         self.yaw_stable_count = 0  # 误差不达标，计数器清零
@@ -1658,12 +1669,12 @@ class MotorControlNode(Node):
                     # if current_time - self.loading_start_time > self.loading_turn_time:
                     #     self.get_logger().warn("[LOADING] 角度调整超时，进入DISABLE")
                     #     self.switch_state('z')  # 进入DISABLE状态，人工干预
-                    #     # self.loading_phase = "LOADING_BACKWARD"
+                    #     # self.loading_phase = "LOADING_FOWARD"
                     #     # self.loading_backward_start_time = current_time
                     #     self.yaw_stable_count = 0
                 
                 # ========== +低频日志）==========
-                elif self.loading_phase == "LOADING_BACKWARD":
+                elif self.loading_phase == "LOADING_FOWARD":
                     # 初始化变量
                     left = self.laser_distance[0]
                     right = self.laser_distance[1]

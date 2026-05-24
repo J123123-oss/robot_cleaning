@@ -916,7 +916,7 @@ class RTKNavControlNode(Node):
         
         status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
         if fix_status in status_map and fix_status != self.last_gps_status:
-            self.get_logger().info(f"GPS状态：{status_map[fix_status]}")
+            # self.get_logger().info(f"GPS状态：{status_map[fix_status]}")
             self.last_gps_status = fix_status
         
         is_fixed = (fix_status == 4)
