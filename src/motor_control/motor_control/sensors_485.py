@@ -11,7 +11,7 @@ class Sensors485(Node):
     def __init__(self):
         super().__init__('sensors_485_node')
 
-        self.declare_parameter('serial_port', '/dev/ttyS2')
+        self.declare_parameter('serial_port', '/dev/ttyS1')
         self.declare_parameter('io_baudrate', 9600)
         self.declare_parameter('poll_interval', 0.1)
         self.declare_parameter('timeout', 0.1)

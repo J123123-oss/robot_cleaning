@@ -5,9 +5,9 @@ from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
     # 全局路径配置
-    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/south4-south6.txt'
+    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/path-E1-E7.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
-    loading_gps = [0.0, 0.0, 0.0]
+    loading_gps = [110.647415, 35.605940, 89.80]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
@@ -33,7 +33,7 @@ def generate_launch_description():
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
-            {'port': '/dev/ttyS2'},
+            {'port': '/dev/ttyS1'},
             {'baud': 9600}
         ]
     )
@@ -91,7 +91,8 @@ def generate_launch_description():
         name='wtrtk_serial_driver',
         output='screen',
         parameters=[
-            {'port': '/dev/WTRTK'},
+            # {'port': '/dev/WTRTK'},
+            {'port': '/dev/ttyS2'},
             {'baud': 230400}
         ]
     )

@@ -113,6 +113,8 @@ class MotorControlNode(Node):
         self.loading_start_time = 0.0
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
+        self.loading_direct_start_time = None
+        self.loading_direct_timeout = 26.0
         
         self.state_publish_timer: Optional[Timer] = None  # 定时发布状态
 
@@ -528,12 +530,12 @@ class MotorControlNode(Node):
                 right_speed = -self.mqtt_control_speed
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
-                left_speed = self.mqtt_control_speed
-                right_speed = self.mqtt_control_speed
+                left_speed = self.mqtt_control_speed * 0.5
+                right_speed = self.mqtt_control_speed * 0.5
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "RIGHT":
-                left_speed = -self.mqtt_control_speed
-                right_speed = -self.mqtt_control_speed
+                left_speed = -self.mqtt_control_speed * 0.5
+                right_speed = -self.mqtt_control_speed * 0.5
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
@@ -615,7 +617,6 @@ class MotorControlNode(Node):
         self.route_id = route_id
         self.get_logger().info(f"[ROSNode] RTK当前路径已更新: {route_id}，同步发布MQTT状态")
         self.publish_state()
-
 
     def handle_route_change(self, route_id: str):
         """处理路径切换指令"""
@@ -1013,6 +1014,7 @@ class MotorControlNode(Node):
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
             self.current_status = new_state
+            self.loading_direct_start_time = None
             # 初始化进仓阶段（仅初始化，不启动定时器）
             self.loading_phase = None  # 先置空，等待归位后再初始化
             self.loading_start_time = None  # 暂不记录启动时间
@@ -1026,6 +1028,14 @@ class MotorControlNode(Node):
             
             # 修正：目标角度归一化
             self.loading_turn_target_deg = (self.loading_turn_target_deg + 180) % 360 - 180
+            loading_error_code = self.build_error_code()
+            if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
+                self.loading_phase = "LOADING_DIRECT_FORWARD"
+                self.loading_direct_start_time = time.time()
+                self.get_logger().warn(
+                    f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
+                    f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
+                )
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.loading_timer = self.create_timer(0.05, self.handle_loading_step)
         elif new_state == "AUTO_CLEANING":
@@ -1548,6 +1558,37 @@ class MotorControlNode(Node):
     #         self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
     #         self.is_in_bin_process = False  # 异常时也重置标记
     def handle_loading_step(self):
+        if self.loading_phase == "LOADING_DIRECT_FORWARD":
+            current_time = time.time()
+            if self.loading_direct_start_time is None:
+                self.loading_direct_start_time = current_time
+
+            elapsed_time = current_time - self.loading_direct_start_time
+            if elapsed_time < self.loading_direct_timeout:
+                base_speed = self.motor_ctrl.BASE_SPEED
+                self.set_motors_speed(-base_speed, base_speed)
+                if not hasattr(self, 'last_direct_loading_log_time'):
+                    self.last_direct_loading_log_time = 0.0
+                if current_time - self.last_direct_loading_log_time >= 5.0:
+                    self.get_logger().warn(
+                        f"[LOADING] 激光/电机错误进仓兜底中，已前进{elapsed_time:.1f}s/"
+                        f"{self.loading_direct_timeout:.0f}s"
+                    )
+                    self.last_direct_loading_log_time = current_time
+                return
+
+            self.get_logger().warn("[LOADING] 兜底进仓30s超时，停止并按完成处理")
+            self.set_motors_speed(0.0, 0.0)
+            self.loading_phase = "COMPLETE"
+            self.complete_state = True
+            self.loading_direct_start_time = None
+            self.last_direct_loading_log_time = 0.0
+            self.finish_loading_process()
+            return
+
+        self._handle_loading_step_inner()
+
+    def _handle_loading_step_inner(self):
         """进仓分步处理（核心修复：目标一致+稳定判定+后退停修正+频率正常）"""
         if self.bin_process_paused:
             return
@@ -1851,19 +1892,26 @@ class MotorControlNode(Node):
                 
                 # ========== 阶段3：进仓完成 ==========
                 elif self.loading_phase == "COMPLETE":
-                    self.get_logger().info("[LOADING] 进仓流程完成，电机停止")
-                    if self.loading_timer is not None:
-                        self.loading_timer.cancel()
-                        self.loading_timer = None
-                    self.nav_status = "IDLE"
-                    self.is_in_bin_process = False
-                    self.switch_state('z') # DISABLE状态，确保电机停止
-                    self.yaw_stable_count = 0  # 重置计数器
-                    self.last_backward_log_time = 0.0  # 重置日志时间
+                    self.finish_loading_process()
+                    return
             except Exception as e:
                 self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
                 self.is_in_bin_process = False
                 self.yaw_stable_count = 0
+
+    def finish_loading_process(self):
+        self.get_logger().info("[LOADING] 进仓流程完成，电机停止")
+        self.set_motors_speed(0.0, 0.0)
+        if self.loading_timer is not None:
+            self.loading_timer.cancel()
+            self.loading_timer = None
+        self.nav_status = "IDLE"
+        self.is_in_bin_process = False
+        self.yaw_stable_count = 0
+        self.last_backward_log_time = 0.0
+        self.last_direct_loading_log_time = 0.0
+        self.loading_direct_start_time = None
+        self.switch_state('z')  # DISABLE状态，确保电机停止
 
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
         """设置双电机速度（完全保留原有功能）"""
