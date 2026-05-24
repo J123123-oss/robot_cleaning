@@ -1,12 +1,12 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-05-21
+分支: `stanley` | 日期: 2026-05-24
 
 ## 提交历史
 
 ```
-本次提交 fix: 初始航向校准后强制切换到航点1，避免零长度Stanley路径
-b1d106c Handle abnormal Stanley heading recovery
+本次提交 fix: 航向异常超时保护+RTK恢复守卫+MQTT方向定时器HOLD清理
+df82b2f fix: 航向角异常超时检测，IMU卡死时暂停导航防止反复校准死循环
 bfa045d Stabilize Stanley line correction
 82df935 fix: MAX_LATERAL_ERROR 0.2→5.0，消除横向纠偏饱和导致的抵消
 620aef2 fix: path_direction 回退为固定路径方向，仅在越过终点时切换为指向目标
@@ -122,6 +122,24 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **当前边界触发状态**: `io_data_rtk_callback()` 中 `raw_boundary_trigger` 计算、边界变化日志和 `update_boundary_trigger_state(raw_boundary_trigger)` 调用目前仍处于注释状态；因此边界防抖框架已保留在代码中，但不会实际触发纠偏接管。
 - **传感器状态整理**: IO 位解析改为显式 `int(...) << bit` 组合，保留 `sensors_status` 原始位图，避免原先布尔位运算可读性差。
 - **导航完成收尾**: `COMPLETED` 收尾路径补齐停止 generator、停车、重置导航上下文并发布 `IDLE`；单航点路径在航点0完成后仍推进索引，让原有 `get_target_waypoint()` 追加固定进仓点逻辑继续生效。
+
+## 2026-05-24 航向异常超时保护修复 + MQTT方向定时器清理
+
+### 10. RTK 恢复覆盖航向异常超时 PAUSE 导致死循环
+
+- **问题**: IMU 航向角卡死在 90° 后，`handle_rtk_data_timeout()` 在 15s 超时正确设置 `nav_state=PAUSE`、`heading_timed_out=True`、`nav_running=False`。但 `check_rtk_fix_status()` RTK 恢复分支（`heading_callback` 内）看到 `nav_state==PAUSE` 就**无条件恢复** `nav_running=True` 和 `nav_state=pre_pause_state`(WAYPOINT_CALIB)，IMU 仍卡死，再次超时→PAUSE→RTK恢复→CALIB，形成死循环。同时 `update_rtk_error_status(0)` 在 `heading_timed_out` 检查之前执行，导致错误码被立即清零（本应为8）。
+- **现场证据**: `debug_log.txt` 中 IMU 从 0° 跳到 90° 后，`[航向异常超时] 已停车并暂停导航` → `[RTK状态] 恢复RTK固定解，自动恢复导航` → 再次超时，循环 100+ 秒，期间 RTK 状态在 Fixed(4) 和 Float(5) 之间反复抖动触发恢复。
+- **修复**:
+  - **RTK 恢复分支增加 `heading_timed_out` 守卫**: 当 PAUSE 由航向异常引起时直接 return，不清理错误码也不恢复导航。
+  - **新增 `_is_heading_normal()`**: 通过当前 IMU 航向与路径方向偏差判断是否已恢复，无法判断时 fail-open（返回 True）。
+  - **恢复检查机制实质化**: 原本每 3s 返回 False 让 nav loop 运行但 `nav_running=False` 导致 generator 不 tick，形同虚设。改为调用 `_is_heading_normal()` 判断，恢复后才清零标志位 + `nav_running=True`。
+- **影响**: `src/rtk_nav/rtk_nav/rtk_nav.py` — `handle_rtk_data_timeout()` 恢复检查分支、新增 `_is_heading_normal()`、`heading_callback()` RTK Fixed 分支。
+
+### 11. MQTT 方向指令 300s 定时器未在 HOLD/DISABLE/START 时取消
+
+- **问题**: MQTT 点按方向指令（FORWARD/BACKWARD/LEFT/RIGHT）创建 300 秒 `direction_timer`，到期调用 `auto_stop` → `switch_state("h")`。HOLD 停止或进仓流程被 HOLD 中断时，定时器未被取消，残留的定时器可能在后续 AUTO_CLEANING 任务期间触发，强制 HOLD 导致导航中断。
+- **修复**: 在 HOLD（含 `is_in_bin_process` 分支）、DISABLE、START 四个入口统一取消 `direction_timer` 并置 None。
+- **影响**: `src/motor_control/motor_control/motor_control.py` — `switch_state()` 中 DISABLE/HOLD/START 分支。
 
 ## 2026-05-23 路径切换延后与MQTT同步
 

@@ -887,9 +887,15 @@ class RTKNavControlNode(Node):
                     self._last_heading_recovery_check = now
                     self.update_rtk_error_status(ERROR_RTK_TIMEOUT)
                     return True
-                # 周期性恢复检查：允许生成器运行一帧，检查航向是否恢复
+                # 周期性恢复检查：检查航向是否已恢复正常
                 if now - self._last_heading_recovery_check >= HEADING_RECOVERY_CHECK_INTERVAL:
                     self._last_heading_recovery_check = now
+                    if self._is_heading_normal():
+                        self.heading_abnormal_start_time = None
+                        self.heading_timed_out = False
+                        self.update_rtk_error_status(0)
+                        self.nav_running = True
+                        self.get_logger().info("[航向恢复] 航向角已恢复正常，恢复导航")
                     return False
                 if now - self.last_rtk_timeout_log_time >= RTK_TIMEOUT_LOG_INTERVAL:
                     self.publish_stop_speed()
@@ -930,6 +936,19 @@ class RTKNavControlNode(Node):
 
         self.update_rtk_error_status(ERROR_RTK_TIMEOUT)
         return True
+
+    def _is_heading_normal(self) -> bool:
+        """检查当前航向是否正常（误差在异常阈值内），用于航向异常超时后的恢复判断"""
+        if hasattr(self, 'nav_context') and self.nav_context.get("target_waypoint"):
+            target_lon, target_lat, _ = self.nav_context["target_waypoint"]
+            if self.current_gps:
+                current_lon, current_lat = self.current_gps
+                path_dir = getattr(self, 'stanley_path_direction', None)
+                if path_dir is None:
+                    path_dir = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                heading_err = self.normalize_angle(path_dir - self.imu_yaw)
+                return abs(heading_err) <= HEADING_ABNORMAL_THRESHOLD
+        return True  # 无法判断时假定正常，避免永久阻塞
 
     def heading_callback(self, msg: WTRTK) -> None:
         self.last_wtrtk_time = time.monotonic()
@@ -975,6 +994,8 @@ class RTKNavControlNode(Node):
                 stop_speed = Vector3()
                 self.publish_stop_speed()
         else:
+            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE and self.heading_timed_out:
+                return  # 航向异常导致的暂停，不清理错误码也不恢复导航
             self.update_rtk_error_status(0)
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] == NavState.PAUSE:
                 self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
