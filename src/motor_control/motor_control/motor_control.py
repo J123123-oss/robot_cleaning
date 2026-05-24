@@ -388,9 +388,7 @@ class MotorControlNode(Node):
         if self.laser_no_response or self.is_laser_timeout():
             error |= ERROR_LASER_TIMEOUT
         error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
-        if self.low_battery_warning or (
-            self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY
-        ):
+        if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
         return error
 
