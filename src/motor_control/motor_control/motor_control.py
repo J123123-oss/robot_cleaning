@@ -876,10 +876,11 @@ class MotorControlNode(Node):
         if new_state == "UNLOADING" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
             self.low_battery_warning = True
             self.get_logger().warn(
-                f"[UNLOADING] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，拒绝执行出仓任务"
+                f"[UNLOADING] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，"
+                f"拒绝执行出仓任务，保持状态={self.current_status}，上报故障码"
             )
-            self.publish_state()
-            return
+            self.publish_state()  # 发布原状态 + ERROR_LOW_BATTERY，不更新 current_status
+            return  # 不执行后续状态切换，UNLOADING 流程不会被触发
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
