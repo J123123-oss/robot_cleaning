@@ -512,8 +512,10 @@ class MultiAreaCleaningPathPlanner(Node):
         self.seq_num = 0
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/config/006_north9-1.yaml')
+        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/002-E9-E11.yaml')
         self.declare_parameter('headless', True)
+        self.declare_parameter('output_dir', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/')
+        self.declare_parameter('output_name', '')
         
         # 尝试从 YAML 配置文件加载
         config_file = self.get_parameter('config_file').value
@@ -703,7 +705,8 @@ class MultiAreaCleaningPathPlanner(Node):
     def plan_multi_area_path(self):
         """生成多区域连续路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.expanduser("/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/")
+        save_dir = os.path.expanduser(self.get_parameter('output_dir').value)
+        output_name = self.get_parameter('output_name').value
         os.makedirs(save_dir, exist_ok=True)
         
         merged_path_latlon = []
@@ -787,31 +790,14 @@ class MultiAreaCleaningPathPlanner(Node):
                 
                 self.get_logger().info(f"区域{i}路径生成完成，包含{len(path_latlon)}个点")
             
-            # ---------------------- 计算全局航向角 ----------------------
+            # ---------------------- 确定输出文件前缀 ----------------------
             self.get_logger().info(f"\n所有区域路径合并完成，总点数：{len(merged_path_latlon)}")
-            merged_headings = calculate_heading_angles(merged_path_latlon)
-            
-            # ---------------------- 保存合并后的路径文件（带区域区分） ----------------------
-            self.seq_num = self.get_next_sequence(save_dir)
-            # points_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.txt")
-            # with open(points_filename, "w", encoding="utf-8") as f:
-            #     f.write("#序号,经度,纬度,航向角(度)\n")
-                
-            #     # 按区域写入路径点
-            #     global_idx = 0
-            #     for area_idx, (path_count, area_name) in enumerate(zip(area_path_counts, area_names)):
-            #         # 写入区域名称注释
-            #         f.write(f"#{area_name}\n")
-                    
-            #         # 写入当前区域的所有点
-            #         for _ in range(path_count):
-            #             lon, lat = merged_path_latlon[global_idx]
-            #             heading = merged_headings[global_idx]
-            #             f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{heading:.2f}\n")
-            #             global_idx += 1
-            
-            # self.get_logger().info(f"多区域路径文件已保存到：{points_filename}")
-            
+            if output_name:
+                file_prefix = output_name
+            else:
+                self.seq_num = self.get_next_sequence(save_dir)
+                file_prefix = f"{self.seq_num}_{timestamp}"
+
             # ---------------------- 保存密集点路径文件 ----------------------
             dense_spacing = 15.0  # 密集点间隔（米）
             
@@ -845,7 +831,7 @@ class MultiAreaCleaningPathPlanner(Node):
             # 重新计算航向角（基于完整的密集点路径）
             dense_headings = calculate_heading_angles(dense_latlon)
             
-            dense_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}_dense.txt")
+            dense_filename = os.path.join(save_dir, f"{file_prefix}.txt")
             with open(dense_filename, "w", encoding="utf-8") as f:
                 f.write("序号,经度,纬度,航向角(度)\n")
                 
@@ -870,7 +856,7 @@ class MultiAreaCleaningPathPlanner(Node):
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
-                save_dir, timestamp, all_calib_points_utm, area_names, all_dense_utm, area_index_ranges
+                save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm, area_index_ranges
             )
         
         except ValueError as e:
@@ -879,7 +865,7 @@ class MultiAreaCleaningPathPlanner(Node):
             self.get_logger().error(f"未知异常：{str(e)}")
 
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
-    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, timestamp, all_calib_points_utm, area_names, dense_utm=None, area_index_ranges=None):
+    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, file_prefix, all_calib_points_utm, area_names, dense_utm=None, area_index_ranges=None):
         """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
         fig, ax = plt.subplots(figsize=(24, 20))
         # fig, ax = plt.subplots(figsize=(12, 10))
@@ -953,20 +939,15 @@ class MultiAreaCleaningPathPlanner(Node):
         ax.axis('equal')
         plt.tight_layout()
         
-        # 保存原图片（不带密集点）
-        # img_filename = os.path.join(save_dir, f"{self.seq_num}_{timestamp}.png")
-        # plt.savefig(img_filename, dpi=300, bbox_inches='tight')
-        # self.get_logger().info(f"多区域路径图已保存到：{img_filename}")
-        
         # 保存带密集点的图片
         if dense_utm is not None:
             dense_e = [p[0] for p in dense_utm]
             dense_n = [p[1] for p in dense_utm]
             ax.scatter(dense_e, dense_n, c='blue', s=10, label='dense points', alpha=0.6)
             ax.set_title(f'planner area counter {len(all_orig_corners)} | point counter {len(merged_path_utm)} | dense point counter {len(dense_utm)}')
-            img_filename_dense = os.path.join(save_dir, f"{self.seq_num}_{timestamp}_dense.png")
-            plt.savefig(img_filename_dense, dpi=300, bbox_inches='tight')
-            self.get_logger().info(f"密集点路径图已保存到：{img_filename_dense}")
+        img_filename = os.path.join(save_dir, f"{file_prefix}.png")
+        plt.savefig(img_filename, dpi=300, bbox_inches='tight')
+        self.get_logger().info(f"路径图已保存到：{img_filename}")
         
         # ✅ 修复BUG3：plt.show() 非阻塞显示 + 自动关闭，避免ROS2节点卡死
         if not self.get_parameter('headless').value:

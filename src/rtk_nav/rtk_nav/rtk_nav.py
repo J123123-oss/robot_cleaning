@@ -700,7 +700,6 @@ class RTKNavControlNode(Node):
         try:
             # 1. 获取目录下所有符合命名规则的路径文件
             file_pattern = re.compile(r'^\d{3}[-_].*\.txt$')
-            # file_pattern = re.compile(r'.*_\d{8}_\d{6}\.txt')
             all_files = [f for f in os.listdir(self.path_dir) if file_pattern.match(f)]
             
             if not all_files:

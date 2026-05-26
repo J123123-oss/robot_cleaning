@@ -5,7 +5,7 @@ from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
     # 全局路径配置
-    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/path-E1-E7.txt'
+    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001-E1-E8.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
     loading_gps = [110.647415, 35.605940, 89.80]
 

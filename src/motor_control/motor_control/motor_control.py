@@ -188,9 +188,9 @@ class MotorControlNode(Node):
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         
         # 2. 初始化遥控器模块
-        self.sbus_remote = SBUSRemoteController()
-        if not self.sbus_remote.is_connected:
-            self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
+        # self.sbus_remote = SBUSRemoteController()
+        # if not self.sbus_remote.is_connected:
+        #     self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
         
         self.current_location = None
         self.rtk_status = 0  # 初始化RTK状态为0（无效状态）
@@ -490,7 +490,7 @@ class MotorControlNode(Node):
         mode_msg = String()
         mode_msg.data = self.current_control_mode if isinstance(self.current_control_mode, str) else "NORMAL"
         self.mode_pub.publish(mode_msg)
-        self.publish_rc_channels()
+        # self.publish_rc_channels()
 
         # 进出仓流程的暂停/恢复逻辑：
         # - 当正在进/出仓（is_in_bin_process=True）且当前控制模式不等于流程发起时，暂停流程；
@@ -521,37 +521,37 @@ class MotorControlNode(Node):
                 # 继续执行下面的控制分支
 
         # 2. 按控制模式执行不同逻辑（仅非进出仓状态生效）
-        if self.current_control_mode == "REMOTE":
-            try:
-                ch2_norm = self.sbus_remote.get_channel_normalized(ch_idx=2)  # 前进后退
-                ch0_norm = self.sbus_remote.get_channel_normalized(ch_idx=0)  # 左右旋转
+        # if self.current_control_mode == "REMOTE":
+        #     try:
+        #         ch2_norm = self.sbus_remote.get_channel_normalized(ch_idx=2)  # 前进后退
+        #         ch0_norm = self.sbus_remote.get_channel_normalized(ch_idx=0)  # 左右旋转
 
-                ch2_norm = 0.0 if abs(ch2_norm) < DEAD_ZONE else ch2_norm
-                ch0_norm = 0.0 if abs(ch0_norm) < DEAD_ZONE else ch0_norm
+        #         ch2_norm = 0.0 if abs(ch2_norm) < DEAD_ZONE else ch2_norm
+        #         ch0_norm = 0.0 if abs(ch0_norm) < DEAD_ZONE else ch0_norm
 
-                forward_backward_right = ch2_norm * MAX_SPEED * CH2_SENSITIVITY
-                forward_backward_left = -forward_backward_right
+        #         forward_backward_right = ch2_norm * MAX_SPEED * CH2_SENSITIVITY
+        #         forward_backward_left = -forward_backward_right
 
-                rotate_left_right = -ch0_norm * MAX_SPEED * CH3_SENSITIVITY
+        #         rotate_left_right = -ch0_norm * MAX_SPEED * CH3_SENSITIVITY
 
-                left_speed_target = forward_backward_left + rotate_left_right
-                right_speed_target = forward_backward_right + rotate_left_right
+        #         left_speed_target = forward_backward_left + rotate_left_right
+        #         right_speed_target = forward_backward_right + rotate_left_right
 
-                left_speed = max(MIN_SPEED, min(MAX_SPEED, left_speed_target))
-                right_speed = max(MIN_SPEED, min(MAX_SPEED, right_speed_target))
+        #         left_speed = max(MIN_SPEED, min(MAX_SPEED, left_speed_target))
+        #         right_speed = max(MIN_SPEED, min(MAX_SPEED, right_speed_target))
 
-                self.set_motors_speed(left_speed, right_speed)
-                ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)
-                ch6_norm =1.0 if ch6_norm > 0.5 else 0.0  # 阈值判断
-                brush_speed = ch6_norm * BRUSH_SPEED
-                # self.get_logger().info(f"[ROSNode] 刷: {brush_speed:.2f}")
-                self.set_brush_speed(brush_speed)
-            except Exception as e:
-                self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
-                self.set_motors_speed(0.0, 0.0)
-                self.set_brush_speed(0.0)
+        #         self.set_motors_speed(left_speed, right_speed)
+        #         ch6_norm = self.sbus_remote.get_channel_normalized(ch_idx=6)
+        #         ch6_norm =1.0 if ch6_norm > 0.5 else 0.0  # 阈值判断
+        #         brush_speed = ch6_norm * BRUSH_SPEED
+        #         # self.get_logger().info(f"[ROSNode] 刷: {brush_speed:.2f}")
+        #         self.set_brush_speed(brush_speed)
+        #     except Exception as e:
+        #         self.get_logger().warn(f"[ROSNode] 获取遥控器速度失败：{e}")
+        #         self.set_motors_speed(0.0, 0.0)
+        #         self.set_brush_speed(0.0)
 
-        elif self.current_control_mode == "NORMAL":
+        if self.current_control_mode == "NORMAL":
             # 按当前状态赋值速度
             if self.current_status == "FORWARD":
                 left_speed = -self.mqtt_control_speed
@@ -2224,10 +2224,10 @@ def main(args=None):
                     motor_node.motor_ctrl.bus.shutdown()
                 except Exception as e:
                     motor_node.get_logger().warn(f"[ROSNode] 关闭CAN串口失败：{str(e)}")
-            try:
-                motor_node.sbus_remote.stop()
-            except Exception as e:
-                motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
+            # try:
+            #     motor_node.sbus_remote.stop()
+            # except Exception as e:
+            #     motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
         motor_node.destroy_node()
         rclpy.shutdown()
         print("[ROSNode] 电机控制节点退出完成")

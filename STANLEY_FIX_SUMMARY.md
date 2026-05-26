@@ -202,3 +202,56 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   数据新鲜 (last_wtrtk_time <= 1s) → 立即恢复
   数据过期 → 保持停车
 ```
+
+### 17. get_next_path_file 正则修复
+
+- **问题**: 路径文件切换正则 `^\d{3}_.*\.txt$` 只匹配下划线分隔的文件名（如 `001_E1-E8.txt`），新的短横线命名（如 `007-W23-W20.txt`）不匹配。
+- **现象**: 路径 007 完成后切换到 005 而非 008，sorted 排序将 `007-W23-W20.txt` 排到 `005-*.txt` 之前（短横线 ASCII 45 vs 下划线 ASCII 95）。
+- **修复**: `file_pattern = re.compile(r'^\d{3}[-_].*\.txt$')` 同时匹配两种分隔符。
+- **影响**: `get_next_path_file()` — 路径文件自动切换。
+
+### 18. SBUS 遥控器模块禁用
+
+- **问题**: 现场未使用 SBUS 遥控器，串口初始化失败日志刷屏；且 REMOTE 模式逻辑在 `elif` 分支中，若遥控器未连接会 fallthrough 到 NORMAL 逻辑，行为不明确。
+- **修复**: 注释掉 `SBUSRemoteController()` 初始化、`publish_rc_channels()` 调用、REMOTE 模式分支、shutdown 中的 `sbus_remote.stop()`；`elif self.current_control_mode == "NORMAL"` 改为 `if`。
+- **影响**: `motor_control.py` — 仅保留 NORMAL 和 AUTO_CLEANING 两种控制模式。
+
+### 19. RTK 串口驱动端口切换
+
+- **问题**: `/dev/WTRTK` 为 udev 符号链接，USB 链路不稳定时可能掉线不恢复。
+- **修复**: 改为直接使用物理串口 `/dev/ttyS2`。
+- **影响**: `wtrtk_serial_driver.py` — port 默认值。
+
+### 20. 充电模块地址修正
+
+- **问题**: 充电模块 485 地址配置错误。
+- **修复**: `THREE_BYTE_ADDR` 从 `[0x10, 0x04, 0x6B]` 改为 `[0x10, 0x04, 0x5D]`。
+- **影响**: `charging.py` — 电池/充电数据读取。
+
+### 21. 激光传感器告警日志降频
+
+- **问题**: 激光传感器无回应时每 2s 打印一次 warn 日志，大量刷屏。
+- **修复**: 日志间隔从 2.0s 改为 60.0s。
+- **影响**: `laser_distance.py`。
+
+### 22. 路径规划器输出参数化
+
+- **问题**: 输出文件名固定使用序号+时间戳，输出目录硬编码 `/home/ubuntu/...`，不便批量生成和指定文件名。
+- **修复**: 新增 `output_dir` 和 `output_name` 参数；`output_name` 非空时直接作为文件名前缀，跳过序号生成；输出目录从参数读取而非硬编码；`_plot_multi_area_path` 参数 `timestamp` → `file_prefix`。
+- **影响**: `full_path_planner_dense.py` — `plan_multi_area_path()` 和 `_plot_multi_area_path()`。
+
+### 23. 启动文件默认路径更新
+
+- **问题**: 默认路径配置文件指向旧 `path-E1-E7.txt`。
+- **修复**: 默认路径改为 `001-E1-E8.txt`；`loading_gps` 填入固定进仓坐标。
+- **影响**: `run.launch.py`。
+
+### 24. 路径配置文件重组
+
+- **问题**: 旧配置文件（`003_south18-24.yaml`、`004_north24-18.yaml`、`all_areas.yaml`）与当前区域规划不匹配。
+- **修复**: 删除旧配置，新增 001-011 共 11 个区域配置文件（E1-E8, E9-E11, E12-E14, E15-E18, E19-E21, E22-W24, W23-W20, W19-W16, W15-W13, W12-W9, W8-W1）。
+- **影响**: `config/` 目录。<｜end▁of▁thinking｜>
+
+<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="TodoWrite">
+<｜｜DSML｜｜parameter name="todos" string="false">[{"content": "更新 STANLEY_FIX_SUMMARY.md", "status": "completed", "activeForm": "更新 STANLEY_FIX_SUMMARY.md"}, {"content": "暂存并提交所有更改", "status": "in_progress", "activeForm": "暂存并提交所有更改"}, {"content": "推送到远程", "status": "pending", "activeForm": "推送到远程"}]
