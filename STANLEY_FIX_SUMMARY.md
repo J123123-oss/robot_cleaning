@@ -148,3 +148,57 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **防止误启动**: 预加载下一条路径后设置 `waiting_for_next_unloading=True`，即使控制模式仍是 `AUTO_CLEANING`，`rtk_timer_callback()` 也只保持停车和 `IDLE`，直到下一次UNLOADING后重新切回 `AUTO_CLEANING` 才允许启动。
 - **MQTT同步**: `rtk_nav` 新增 `/rtk/current_route_id` 发布器，自动预加载下一路径或手动 `/rtk/route_change` 成功加载后发布当前 `route_id`；`motor_control` 新增订阅该话题，更新本地 `route_id` 并调用 `publish_state()`，沿用 `/robot_state -> mqtt_ros2_bridge -> MQTT` 通路让后台看到路径变化。
 - **验证**: 已使用 bundled Python 执行 `py_compile` 检查 `src/rtk_nav/rtk_nav/rtk_nav.py` 和 `src/motor_control/motor_control/motor_control.py`，语法通过。
+
+## 2026-05-26 航向异常检测死锁与反复触发修复
+
+### 12. `_is_heading_normal()` 恢复条件改为数据新鲜度
+
+- **问题**: 航向异常超时停车后，`_is_heading_normal()` 检查 `abs(heading_err) <= 15°`。IMU 停车后持续漂移（~2-12°/s），航向误差始终 > 15°，恢复条件永远不满足。
+- **现场证据**: `debug_log.txt` 中机器人停车后 IMU 从 82° 持续漂移到 -8°，航向误差始终 > 30°，147 秒后才碰巧漂回阈值范围。
+- **修复**: `_is_heading_normal()` 不再检查航向误差绝对值，改为检查 `last_wtrtk_time` 是否在 `RTK_DATA_TIMEOUT`(1s) 内。数据新鲜说明 IMU 未死机/卡死，航向误差由 Stanley 控制器或重校准主动纠正；数据过期才表示 IMU 真正故障。
+- **影响**: `handle_rtk_data_timeout()` 恢复检查分支每 3s 调用此函数。
+
+### 13. INITIAL_MOVE 增加 5 帧连续航向异常重校准
+
+- **问题**: INITIAL_MOVE 阶段航向异常只记录 `heading_abnormal_start_time`，等待 15s 全局超时。WAYPOINT_MOVE 已有 5 帧（0.5s）即时重校准，INITIAL_MOVE 缺少对称保护。
+- **修复**: INITIAL_MOVE 中增加 `angle_abnormal_count` 计数，连续 5 帧 `abs(heading_err) > 15°` 后内联调用 `calibrate_heading_at_waypoint()`，以 `yield` 方式原地旋转校准，完成后 `continue` 回到主循环。
+- **影响**: `move_to_first_waypoint()` 内 Stanley 控制循环。
+
+### 14. 航向异常状态未在路径切换 / 模式切入时清零
+
+- **问题**: `heading_abnormal_start_time` 和 `heading_timed_out` 在路径切换和 AUTO_CLEANING 切入时未重置。旧导航任务的航向异常计时污染新任务，导致一切入 AUTO_CLEANING 就立即触发超时。
+- **现场证据**: `debug_log.txt` 中机器人从 DISABLE 切回 AUTO_CLEANING 时 `heading_abnormal_start_time` 已累积 30.4s，立即触发 `[航向异常超时] 已持续30.4s，已停车`。
+- **修复**:
+  - 路径切换回调: 加载新路径后清零 `heading_abnormal_start_time = None`, `heading_timed_out = False`
+  - `mode_callback`: 进入 AUTO_CLEANING 时同上清零
+- **影响**: `path_change_callback()` 和 `mode_callback()`。
+
+### 15. t>1.0 方位角模式排除航向异常检测
+
+- **问题**: t>1.0 时 `path_direction` 从固定段方向切换到 `bearing(current→target)`。当车体侧向接近航点时，方位角与 IMU 航向差可达 80-110°，这是几何现象而非 IMU 异常。上一版只屏蔽了 `angle_abnormal_count`（5 帧重校准）但未屏蔽 `heading_abnormal_start_time`（15s 超时），导致方位角模式下反复触发超时→恢复→超时循环。
+- **现场证据**:
+  - **振荡**: 车在航点附近 t≈1.0 徘徊，path_dir 在段方向和方位角之间交替跳变 → 5 帧重校准反复触发 → 车原地左右转动
+  - **循环超时**: 方位角模式下 `heading_abnormal_start_time` 累积 15s → 停车 → 3s 后恢复 → 仍在方位角模式 → 再次超时，每 ~18s 一个周期
+- **修复**: INITIAL_MOVE 和 WAYPOINT_MOVE 中，`t > 1.0` 时:
+  - `angle_abnormal_count` 不累加，清空为 0
+  - `heading_abnormal_start_time` 不启动，清空为 None
+  - `heading_timed_out` 清空为 False
+  - 航向误差 <= 15° 时的正常清零逻辑不变
+- **安全网**: 方位角模式下的 IMU 彻底死机由 RTK 数据超时（1s）兜底。
+
+### 16. 修复总结: 航向异常检测完整逻辑
+
+```
+段模式 (t <= 1.0):
+  abs(hdg_err) > 15° × 5帧 → 即时重校准
+  abs(hdg_err) > 15° × 15s → 全局超时停车
+
+方位角模式 (t > 1.0):
+  不触发任何航向异常保护
+  → 航点到达后正常校准流程纠正航向
+  → RTK 数据超时(1s) 作为最终安全网
+
+恢复条件:
+  数据新鲜 (last_wtrtk_time <= 1s) → 立即恢复
+  数据过期 → 保持停车
+```

@@ -938,16 +938,14 @@ class RTKNavControlNode(Node):
         return True
 
     def _is_heading_normal(self) -> bool:
-        """检查当前航向是否正常（误差在异常阈值内），用于航向异常超时后的恢复判断"""
-        if hasattr(self, 'nav_context') and self.nav_context.get("target_waypoint"):
-            target_lon, target_lat, _ = self.nav_context["target_waypoint"]
-            if self.current_gps:
-                current_lon, current_lat = self.current_gps
-                path_dir = getattr(self, 'stanley_path_direction', None)
-                if path_dir is None:
-                    path_dir = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
-                heading_err = self.normalize_angle(path_dir - self.imu_yaw)
-                return abs(heading_err) <= HEADING_ABNORMAL_THRESHOLD
+        """检查是否可恢复导航，用于航向异常超时后的恢复判断。
+
+        不检查航向误差绝对值——IMU 停车后持续漂移，误差可能始终偏大导致死锁。
+        只检查 IMU 数据是否仍在更新：数据新鲜说明 IMU 未死机/卡死，
+        Stanley 控制器或航向重校准可主动纠正漂移误差。
+        """
+        if self.last_wtrtk_time is not None:
+            return (time.monotonic() - self.last_wtrtk_time) <= RTK_DATA_TIMEOUT
         return True  # 无法判断时假定正常，避免永久阻塞
 
     def heading_callback(self, msg: WTRTK) -> None:
@@ -1693,12 +1691,40 @@ class RTKNavControlNode(Node):
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+            # t>1.0 时为方位角模式（已越过投影点），航向误差来自侧向接近目标，
+            # 非 IMU 异常，跳过重校准计数和超时计时，避免路径方向在 t≈1.0 附近摆动时反复触发
+            in_bearing_mode = (t > 1.0)
             if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
-                if self.heading_abnormal_start_time is None:
-                    self.heading_abnormal_start_time = time.monotonic()
+                if not in_bearing_mode:
+                    self.nav_context["angle_abnormal_count"] += 1
+                    if self.heading_abnormal_start_time is None:
+                        self.heading_abnormal_start_time = time.monotonic()
+                else:
+                    self.nav_context["angle_abnormal_count"] = 0
+                    self.heading_abnormal_start_time = None
+                    self.heading_timed_out = False
             else:
+                self.nav_context["angle_abnormal_count"] = 0
                 self.heading_abnormal_start_time = None
                 self.heading_timed_out = False
+
+            # 连续航向异常触发即时重校准（与 WAYPOINT_MOVE 对齐），避免等待15s全局超时
+            if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
+                self.get_logger().warn(
+                    f"[Stanley] 航向异常持续{self.nav_context['angle_abnormal_count']}帧："
+                    f"hdg_err={heading_err:.1f}°，重新校准到路径方向{path_direction:.1f}°"
+                )
+                self.nav_context["angle_abnormal_count"] = 0
+                calib_gen = self.calibrate_heading_at_waypoint(path_direction)
+                while True:
+                    try:
+                        left_speed, right_speed = next(calib_gen)
+                        if self.is_boundary_triggered or self.boundary_correct_locked:
+                            left_speed, right_speed = self.get_boundary_correct_speed()
+                        yield (left_speed, right_speed)
+                    except StopIteration:
+                        break
+                continue
 
             if left_speed != last_left_speed or right_speed != last_right_speed:
                 lateral_err = self.calculate_lateral_error(current_pos, path_start, path_end)
@@ -2225,10 +2251,18 @@ class RTKNavControlNode(Node):
                     path_direction = self.stanley_path_direction
 
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                # t>1.0 时为方位角模式（已越过投影点），航向误差来自侧向接近目标，
+                # 非 IMU 异常，跳过重校准计数和超时计时，避免路径方向在 t≈1.0 附近摆动时反复触发
+                in_bearing_mode = (t > 1.0)
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
-                    self.nav_context["angle_abnormal_count"] += 1
-                    if self.heading_abnormal_start_time is None:
-                        self.heading_abnormal_start_time = time.monotonic()
+                    if not in_bearing_mode:
+                        self.nav_context["angle_abnormal_count"] += 1
+                        if self.heading_abnormal_start_time is None:
+                            self.heading_abnormal_start_time = time.monotonic()
+                    else:
+                        self.nav_context["angle_abnormal_count"] = 0
+                        self.heading_abnormal_start_time = None
+                        self.heading_timed_out = False
                 else:
                     self.nav_context["angle_abnormal_count"] = 0
                     self.heading_abnormal_start_time = None
@@ -2386,6 +2420,9 @@ class RTKNavControlNode(Node):
         self.brush_active = False    # 重置滚刷状态
         self.nav_context["nav_state"] = NavState.IDLE  # 重置导航状态为IDLE
         self.nav_context["pre_pause_state"] = None  # 重置暂停状态
+        # 路径切换时清零航向异常状态，避免旧航向计时污染新路径首段转向
+        self.heading_abnormal_start_time = None
+        self.heading_timed_out = False
         self.publish_nav_state(self.nav_context["nav_state"])
         self.load_waypoints_from_file(self.rtk_path_file)
         self.publish_current_route_id()
@@ -2415,6 +2452,9 @@ class RTKNavControlNode(Node):
                 self.get_logger().info("[RTKNav] 检测到下一次UNLOADING后的AUTO_CLEANING，允许启动预加载路径")
             self.multi_waypoint_generator = None
             self.nav_running = False
+            # 进入RTK模式时清零航向异常状态，避免旧计时污染新导航任务
+            self.heading_abnormal_start_time = None
+            self.heading_timed_out = False
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
             if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]:
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE
