@@ -78,7 +78,6 @@ areas:
     calib_point_a: {lon: 110.64776705903036, lat: 35.60371975122639}
     calib_point_b: {lon: 110.6477676095043, lat: 35.60360864241737}
     calib_point_c: {lon: 110.64776705903036, lat: 35.60371975122639}
-    edge_distance_lat: [0.1, -0.3]   
 
   # 16南侧
   - name: "south_16"

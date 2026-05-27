@@ -262,6 +262,12 @@ class MotorControlNode(Node):
             self.imu_heading_callback,
             10
         )
+        self.rtk_velocity_sub = self.create_subscription(
+            Float32,
+            "/rtk/velocity",
+            self.rtk_velocity_callback,
+            10
+        )
         self.battery_subscription = self.create_subscription(
             Float32MultiArray,
             "battery_data",
@@ -307,6 +313,7 @@ class MotorControlNode(Node):
         self.current_control_mode = "NORMAL"  # 默认普通模式
         self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
         self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
+        self.rtk_velocity = 0.0    # 存储RTK导航真实速度 (m/s)
 
         self.status_list = [
             "HOLD", "START", "FORWARD", "BACKWARD", "LOADING", "UNLOADING",
@@ -624,7 +631,11 @@ class MotorControlNode(Node):
         if self.current_control_mode == "AUTO_CLEANING":
             self.set_brush_speed(float(msg.z))
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}，刷：{msg.z:.2f}")
-    
+
+    def rtk_velocity_callback(self, msg: Float32):
+        """订阅RTK导航真实速度"""
+        self.rtk_velocity = msg.data
+
     def rtk_nav_status_callback(self, msg: String):
         """订阅RTK导航状态消息（备用）"""
         self.nav_status = msg.data.strip()
@@ -1123,6 +1134,7 @@ class MotorControlNode(Node):
                     "z": self.brush_speed
                 },
                 "sensors_status":self.sensors_status,
+                "velocity": self.rtk_velocity,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
                 "complete_state": self.complete_state,

@@ -36,7 +36,6 @@ areas:
     calib_point_a: {lon: 110.64776313280512, lat: 35.60452749634761}
     calib_point_b: {lon: 110.64776416327175, lat: 35.60442191035046}
     calib_point_c: {lon: 110.64776313280512, lat: 35.60452749634761}
-    edge_distance_lat: [0.1, -0.3]   
 
   # 12南侧    
   - name: "south_12"
@@ -81,12 +80,25 @@ areas:
   # 14南侧
   - name: "south_14"
     calib_point_a: {lon: 110.64776723843342, lat: 35.603863009383225}
-    calib_point_b: {lon: 110.64776557275421, lat: 35.60404401827957}
+    calib_point_b: {lon: 110.64776609371995, lat: 35.60403166766645}
     calib_point_c: {lon: 110.64727126713728, lat: 35.60404198676027}
     reverse_end_point: True
     edge_distance_lon: [0.3, 0.5]   
     edge_distance_lat: [0.3, 0.3] 
 
+  # back_14B-13A
+  - name: "back_14B-13A"
+    calib_point_a: {lon: 110.64776557275421, lat: 35.60404401827957}
+    calib_point_b: {lon: 110.64776491482968, lat: 35.60415389596566}
+    calib_point_c: {lon: 110.64776557275421, lat: 35.60404401827957}
+    start_corner: "top_right"
+
+  # back_13B-12A
+  - name: "back_13B-12A"
+    calib_point_a: {lon: 110.64776464459975, lat: 35.60426221780848}
+    calib_point_b: {lon: 110.64776463744738, lat: 35.60429273226822}
+    calib_point_c: {lon: 110.64776464459975, lat: 35.60426221780848}
+    start_corner: "top_right"
 
   # back_12B-11A
   - name: "back_12B-11A"

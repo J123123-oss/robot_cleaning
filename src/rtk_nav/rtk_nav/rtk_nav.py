@@ -216,6 +216,8 @@ class RTKNavControlNode(Node):
             "pre_pause_state": None,
             "angle_abnormal_count": 0,  # 连续角度异常计数器
             "is_angle_recalib": False,  # 是否是角度异常后的重新校准
+            "waypoint_recalib_count": 0,  # 同航点校准次数（打滑检测）
+            "force_bearing_mode": False,  # 跳过循迹，直接用方位角直行
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -230,6 +232,7 @@ class RTKNavControlNode(Node):
         self.heading_timed_out = False  # 航向角异常导致的超时标志
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self.multi_waypoint_generator = None  # 多点导航生成器
+        self.real_velocity = 0.0  # 当前真实速度 (m/s)
 
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
@@ -238,6 +241,7 @@ class RTKNavControlNode(Node):
         self.current_route_pub = self.create_publisher(String, "/rtk/current_route_id", 10)
         self.rtk_error_pub = self.create_publisher(Int16, "/rtk/error_status", 10)
         self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
+        self.velocity_pub = self.create_publisher(Float32, "/rtk/velocity", 10)
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
 
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
@@ -708,7 +712,7 @@ class RTKNavControlNode(Node):
             
             # 2. 按文件名最前面的3位数字序号排序（提取如002, 004等）
             def extract_sequence_number(filename: str) -> int:
-                match = re.search(r'^(\d{3})_', filename)
+                match = re.search(r'^(\d{3})[-_]', filename)
                 return int(match.group(1)) if match else 0
             
             all_files.sort(key=extract_sequence_number)
@@ -1350,6 +1354,7 @@ class RTKNavControlNode(Node):
         lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
         heading_error = self.normalize_angle(path_direction - current_heading)
         real_velocity = velocity * SPEED_CMD_TO_MPS
+        self.real_velocity = real_velocity
         k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
         steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
         if heading_error * steering_correction > 0 and abs(heading_error) > 4.0:
@@ -1674,7 +1679,9 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
-            if t > 1.0:
+            if self.nav_context.get("force_bearing_mode"):
+                path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
+            elif t > 1.0:
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             else:
                 path_direction = fixed_path_dir
@@ -1690,9 +1697,8 @@ class RTKNavControlNode(Node):
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
-            # t>1.0 时为方位角模式（已越过投影点），航向误差来自侧向接近目标，
-            # 非 IMU 异常，跳过重校准计数和超时计时，避免路径方向在 t≈1.0 附近摆动时反复触发
-            in_bearing_mode = (t > 1.0)
+            # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
+            in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or t > 1.0)
             if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                 if not in_bearing_mode:
                     self.nav_context["angle_abnormal_count"] += 1
@@ -1707,13 +1713,20 @@ class RTKNavControlNode(Node):
                 self.heading_abnormal_start_time = None
                 self.heading_timed_out = False
 
-            # 连续航向异常触发即时重校准（与 WAYPOINT_MOVE 对齐），避免等待15s全局超时
+            # 连续航向异常触发即时重校准；同航点≥2次则切换到方位角直行模式
             if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
+                self.nav_context["waypoint_recalib_count"] += 1
                 self.get_logger().warn(
                     f"[Stanley] 航向异常持续{self.nav_context['angle_abnormal_count']}帧："
-                    f"hdg_err={heading_err:.1f}°，重新校准到路径方向{path_direction:.1f}°"
+                    f"hdg_err={heading_err:.1f}°，同航点第{self.nav_context['waypoint_recalib_count']}次校准"
                 )
                 self.nav_context["angle_abnormal_count"] = 0
+                if self.nav_context["waypoint_recalib_count"] >= 2:
+                    self.nav_context["force_bearing_mode"] = True
+                    self.get_logger().warn(
+                        "[Stanley] 打滑/位置偏移，切换为方位角直行模式，不再校准航向"
+                    )
+                    continue
                 calib_gen = self.calibrate_heading_at_waypoint(path_direction)
                 while True:
                     try:
@@ -1759,6 +1772,8 @@ class RTKNavControlNode(Node):
             "pre_pause_state": None,
             "angle_abnormal_count": 0,
             "is_angle_recalib": False,
+            "waypoint_recalib_count": 0,
+            "force_bearing_mode": False,
             "brush_active": False,  # 滚刷是否激活
         }
         self.heading_abnormal_start_time = None  # 重置航向异常计时
@@ -2101,6 +2116,8 @@ class RTKNavControlNode(Node):
                     # 检查滚刷控制
                     self.check_and_control_brush()
                     self.nav_context["angle_abnormal_count"] = 0
+                    self.nav_context["waypoint_recalib_count"] = 0
+                    self.nav_context["force_bearing_mode"] = False
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["last_distance"] = 0.0  # 重置距离缓存
@@ -2244,15 +2261,16 @@ class RTKNavControlNode(Node):
 
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
-                if t > 1.0:
+                if self.nav_context.get("force_bearing_mode"):
+                    path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                elif t > 1.0:
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 else:
                     path_direction = self.stanley_path_direction
 
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
-                # t>1.0 时为方位角模式（已越过投影点），航向误差来自侧向接近目标，
-                # 非 IMU 异常，跳过重校准计数和超时计时，避免路径方向在 t≈1.0 附近摆动时反复触发
-                in_bearing_mode = (t > 1.0)
+                # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
+                in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or t > 1.0)
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                     if not in_bearing_mode:
                         self.nav_context["angle_abnormal_count"] += 1
@@ -2267,7 +2285,22 @@ class RTKNavControlNode(Node):
                     self.heading_abnormal_start_time = None
                     self.heading_timed_out = False
 
+                # 连续航向异常触发即时重校准；同航点≥2次则切换到方位角直行模式
                 if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
+                    self.nav_context["waypoint_recalib_count"] += 1
+                    self.get_logger().warn(
+                        f"[Stanley] 航向异常持续{self.nav_context['angle_abnormal_count']}帧："
+                        f"hdg_err={heading_err:.1f}°，同航点第{self.nav_context['waypoint_recalib_count']}次校准"
+                    )
+                    self.nav_context["angle_abnormal_count"] = 0
+                    if self.nav_context["waypoint_recalib_count"] >= 2:
+                        self.nav_context["force_bearing_mode"] = True
+                        self.heading_abnormal_start_time = None
+                        self.heading_timed_out = False
+                        self.get_logger().warn(
+                            "[Stanley] 打滑/位置偏移，切换为方位角直行模式，不再校准航向"
+                        )
+                        continue
                     self.start_heading_recalibration(
                         path_direction,
                         heading_err,
@@ -2515,6 +2548,9 @@ class RTKNavControlNode(Node):
                     brush_speed = RTK_BRUSH_SPEED if getattr(self, 'brush_active', False) else 0.0
                     speed_msg.z = brush_speed
                     self.motor_speed_pub.publish(speed_msg)
+                    velocity_msg = Float32()
+                    velocity_msg.data = float(getattr(self, 'real_velocity', 0.0))
+                    self.velocity_pub.publish(velocity_msg)
             except StopIteration:
                 # 导航生成器执行完毕（全部航点完成/主动退出）
                 self.get_logger().info("[ROSNode] 多点导航生成器执行完毕")

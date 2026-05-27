@@ -250,7 +250,34 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 - **问题**: 旧配置文件（`003_south18-24.yaml`、`004_north24-18.yaml`、`all_areas.yaml`）与当前区域规划不匹配。
 - **修复**: 删除旧配置，新增 001-011 共 11 个区域配置文件（E1-E8, E9-E11, E12-E14, E15-E18, E19-E21, E22-W24, W23-W20, W19-W16, W15-W13, W12-W9, W8-W1）。
-- **影响**: `config/` 目录。<｜end▁of▁thinking｜>
+- **影响**: `config/` 目录。
+
+## 2026-05-27 打滑反复校准修复 + 真实速度 MQTT 上报
+
+### 25. 打滑/位置偏移导致同航点反复校准死循环（force_bearing_mode）
+
+- **问题**: 轮子打滑导致车体实际位置偏离路径，Stanley 输出大角度横向纠偏（st_corr≈-37.5°），车体航向快速漂移 >15°，触发航向异常重校准。校准后位置更偏，再次触发重校准，在同一航点形成死循环。Fix 15 的方位角模式排除（t>1.0）未生效，因为打滑发生时 t<1.0，仍处于段模式。
+- **现场证据**: `debug2.log` 中航点 73 出现 5 次校准循环，每次校准后 ~2s 航向从 0° 漂到 -15°，横向误差从 -0.317m 累积到 -0.412m。
+- **修复**: 新增 `waypoint_recalib_count` 和 `force_bearing_mode` 两个 nav_context 字段：
+  - 同航点每次重校准累加计数，≥2 次后设置 `force_bearing_mode=True`
+  - force_bearing_mode 下：path_direction 固定为 `bearing(current→target)`（方位角直行），跳过所有航向异常检测（`in_bearing_mode=True`），不再触发重校准
+  - 航点切换时清零 `waypoint_recalib_count=0` 和 `force_bearing_mode=False`
+  - 同时修复了 INITIAL_MOVE 中 `t` 变量在 force_bearing_mode 分支未定义的问题（提前计算 t）
+- **影响**: INITIAL_MOVE 和 WAYPOINT_MOVE 两处 Stanley 控制循环 + 航点切换重置逻辑。离线验证：5 次循环 → 1 次校准 + force_bearing_mode 直行。
+
+### 26. RTK 真实速度上报到 MQTT
+
+- **需求**: 将 Stanley 控制器计算的真实速度（m/s）通过 MQTT 上报到云端，字段名为 `velocity`。
+- **修复**:
+  - `rtk_nav.py`: `stanley_steering_control()` 中存储 `self.real_velocity`；新增 `/rtk/velocity` (Float32) 发布器，`rtk_timer_callback()` 中随速度指令同步发布
+  - `motor_control.py`: 新增订阅 `/rtk/velocity` → `rtk_velocity_callback` 存储到 `self.rtk_velocity`；`publish_state()` JSON 中新增 `"velocity"` 字段
+- **影响**: rtk_nav.py + motor_control.py。转换系数 `SPEED_CMD_TO_MPS=0.0345`。
+
+### 27. 路径配置微调
+
+- **003-E12-E14.yaml**: 修正 south_14 calib_point_b 坐标；新增 back_14B-13A、back_13B-12A 两个回程区域；移除 south_12 多余的 edge_distance_lat
+- **004-E15-E18.yaml**: 移除 south_15 多余的 edge_distance_lat
+- **影响**: `config/003-E12-E14.yaml`, `config/004-E15-E18.yaml`<｜end▁of▁thinking｜>
 
 <｜｜DSML｜｜tool_calls>
 <｜｜DSML｜｜invoke name="TodoWrite">
