@@ -41,6 +41,7 @@ ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 ## RTK导航流程图
 
 ### 主状态机
+```mermaid
 graph TD
     %% ===== 入口 =====
     STARTUP["上电启动"] --> DISABLE
@@ -108,6 +109,7 @@ graph TD
     style RC_ENABLE fill:#e17055,stroke:#333,color:#fff
     style REMOTE_MODE fill:#fab1a0,stroke:#e17055
     style RESTORE fill:#74b9ff,stroke:#333
+```
 
 ```mermaid
 graph TD
