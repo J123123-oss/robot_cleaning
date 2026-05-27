@@ -41,14 +41,84 @@ ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 ## RTK导航流程图
 
 ### 主状态机
+graph TD
+    %% ===== 入口 =====
+    STARTUP["上电启动"] --> DISABLE
+
+    %% ===== 电机初始化 =====
+    DISABLE -->|"START"| START["START<br/>电机初始化，恢复发布频率"]
+    START -->|"DISABLE"| DISABLE
+
+    %% ===== HOLD 中枢 =====
+    START -->|"HOLD"| HOLD["HOLD<br/>电机停止，保持使能"]
+    HOLD -->|"DISABLE"| DISABLE
+    HOLD -->|"START（重新初始化）"| START
+
+    %% ===== 全自动清扫 =====
+    HOLD -->|"AUTO_CLEANING"| AUTO_CLEANING["AUTO_CLEANING<br/>RTK巡航清扫"]
+    START -->|"AUTO_CLEANING"| AUTO_CLEANING
+    AUTO_CLEANING -->|"HOLD 暂停"| HOLD
+    AUTO_CLEANING -->|"DISABLE 失能"| DISABLE
+    AUTO_CLEANING -->|"导航完成 COMPLETED<br/>自动触发"| LOADING
+
+    %% ===== 出仓 =====
+    HOLD -->|"UNLOADING"| U_CHECK{"电量 ≥ 91%？"}
+    U_CHECK -->|"是"| UNLOADING["UNLOADING<br/>出仓流程"]
+    U_CHECK -->|"否，拒绝执行"| HOLD
+    UNLOADING -->|"出仓完成"| UNLOADING_DONE["UNLOADING 完成<br/>complete_state=True<br/>等待后续指令"]
+    UNLOADING -->|"GPS超时 30s"| DISABLE
+    UNLOADING -->|"HOLD 强制中断"| HOLD
+
+    %% ===== 进仓 =====
+    HOLD -->|"LOADING"| L_CHECK{"距进仓点 ≤ 10m？"}
+    L_CHECK -->|"是"| LOADING["LOADING<br/>激光对位进仓"]
+    L_CHECK -->|"否，拒绝执行"| HOLD
+    LOADING -->|"进仓完成"| LOADING_DONE["LOADING 完成<br/>complete_state=True<br/>等待后续指令"]
+    LOADING -->|"HOLD 强制中断"| HOLD
+
+    %% ===== 进出仓期间保护 =====
+    UNLOADING -.->|"仅接受 HOLD / DISABLE"| UNLOADING
+    LOADING -.->|"仅接受 HOLD / DISABLE"| LOADING
+
+    %% ===== MQTT 遥控接管流程 =====
+    RC_ENABLE["RC_ENABLE<br/>MQTT启用遥控器"] -->|"保存当前状态<br/>开启遥控接管"| REMOTE_MODE["遥控模式<br/>REMOTE<br/>接受遥控器指令"]
+    REMOTE_MODE -->|"RC_DISABLE<br/>MQTT关闭遥控器"| RESTORE["恢复之前状态<br/>继续原流程"]
+
+    %% RC_ENABLE 可从任意状态进入（AUTO_CLEANING下也允许）
+    HOLD -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+    AUTO_CLEANING -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+    LOADING_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+    UNLOADING_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+    DISABLE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+
+    RESTORE --> HOLD
+
+    %% ===== 样式 =====
+    style STARTUP fill:#e1e1e1,stroke:#999
+    style DISABLE fill:#ff6b6b,stroke:#333,color:#fff
+    style HOLD fill:#ffd93d,stroke:#333
+    style UNLOADING fill:#6bcb77,stroke:#333
+    style UNLOADING_DONE fill:#b8e6c8,stroke:#6bcb77
+    style LOADING fill:#4d96ff,stroke:#333,color:#fff
+    style LOADING_DONE fill:#a8d1ff,stroke:#4d96ff
+    style AUTO_CLEANING fill:#9b59b6,stroke:#333,color:#fff
+    style START fill:#dfe6e9,stroke:#333
+    style U_CHECK fill:#ffeaa7,stroke:#333
+    style L_CHECK fill:#ffeaa7,stroke:#333
+    style RC_ENABLE fill:#e17055,stroke:#333,color:#fff
+    style REMOTE_MODE fill:#fab1a0,stroke:#e17055
+    style RESTORE fill:#74b9ff,stroke:#333
+
 ```mermaid
 graph TD
     subgraph 外部事件中断
         GPS_NONFIX["GPS非固定解"] --> PAUSE["PAUSE暂停导航"]
-        PAUSE --> GPS_FIX["GPS恢复固定解"] --> RESUME["恢复pre_pause_state"]
+        PAUSE --> GPS_FIX["GPS恢复固定解"] --> RESUME["恢复pre_pause_state<br/>heading_timed_out时拒绝恢复"]
+        RTK_TIMEOUT["RTK数据断流>1s"] --> PAUSE_STOP["立即停车 PAUSE<br/>数据恢复后自动恢复"]
+        HDG_TIMEOUT["航向异常>15s"] --> PAUSE_STOP2["立即停车 PAUSE<br/>IMU恢复后自动恢复"]
         HOLD["电机状态HOLD"] --> STOP_NAV["强制停止导航"]
         MODE_SWITCH["控制模式切换"] --> STOP_NAV
-        ROUTE_CHANGE["路径切换/rtk/route_change"] --> RELOAD["重新加载航点文件"]
+        ROUTE_CHANGE["路径切换/rtk/route_change"] --> RELOAD["重新加载航点文件<br/>清零航向异常计时器"]
         RELOAD --> RESET_IDX["重置航点索引为0"]
     end
 ```
@@ -70,45 +140,62 @@ graph TD
 ### 导航状态机 
 ```mermaid
 graph TD
-    subgraph 导航状态机 
-        IDLE["IDLE"] --> INIT_MOVE["INITIAL_MOVE"]
-        INIT_MOVE --> MOVE_FIRST["初始点->第一个航点"]
-        MOVE_FIRST --> STANLEY1["Stanley控制器直线行驶"]
-        STANLEY1 --> CHECK_DIST1{"距离<0.1m 连续5帧?"}
-        CHECK_DIST1 -- 否 --> STANLEY1
-        CHECK_DIST1 -- 是 --> CALIB1["WAYPOINT_CALIB 航向校准"]
-        CALIB1 --> TURN1["原地旋转至目标heading"]
-        TURN1 --> CHECK_ANGLE1{"角度误差<1度?"}
-        CHECK_ANGLE1 -- 否 --> TURN1
-        CHECK_ANGLE1 -- 是 --> NEXT_WP["current_waypoint_idx++"]
+    IDLE["IDLE"] --> INIT_MOVE["INITIAL_MOVE"]
+    INIT_MOVE --> MOVE_FIRST["初始点->第一个航点"]
+    MOVE_FIRST --> STANLEY1["Stanley控制器直线行驶"]
+    STANLEY1 --> CHECK_FORCE1{"force_bearing_mode?"}
+    CHECK_FORCE1 -- 是 --> BEARING1["方位角直行: path_dir=bearing→target<br/>跳过航向异常检测"]
+    BEARING1 --> CHECK_DIST1
+    CHECK_FORCE1 -- 否 --> CHECK_HEADING1{"航向误差>15° 连续5帧?"}
+    CHECK_HEADING1 -- 是 --> INC_COUNT1["waypoint_recalib_count++"]
+    INC_COUNT1 --> CHECK_COUNT1{"同航点校准≥2次?"}
+    CHECK_COUNT1 -- 是 --> SET_FORCE1["force_bearing_mode=True<br/>打滑/位置偏移，直行不校准"]
+    SET_FORCE1 --> STANLEY1
+    CHECK_COUNT1 -- 否 --> RECALIB1_INLINE["内联航向校准 原地旋转至path_dir"]
+    RECALIB1_INLINE --> STANLEY1
+    CHECK_HEADING1 -- 否 --> CHECK_DIST1{"距离<0.1m 连续5帧?"}
+    CHECK_DIST1 -- 否 --> STANLEY1
+    CHECK_DIST1 -- 是 --> CALIB1["WAYPOINT_CALIB 航向校准"]
+    CALIB1 --> TURN1["原地旋转至目标heading"]
+    TURN1 --> CHECK_ANGLE1{"角度误差<1°?"}
+    CHECK_ANGLE1 -- 否 --> TURN1
+    CHECK_ANGLE1 -- 是 --> RESET_COUNT1["清零 waypoint_recalib_count<br/>current_waypoint_idx++"]
+    RESET_COUNT1 --> NEXT_WP["current_waypoint_idx++"]
 
-        NEXT_WP --> WP_MOVE["WAYPOINT_MOVE"]
-        WP_MOVE --> GET_TARGET["获取目标航点"]
-        GET_TARGET --> CHECK_LAST{"到达最后一个航点?"}
-        CHECK_LAST -- 是 --> SWITCH_FILE["自动切换下一路径文件"]
-        SWITCH_FILE --> CHECK_NEXT{"有下一文件?"}
-        CHECK_NEXT -- 是 --> RESET_IDX2["重置索引=0, 返回新文件首航点"]
-        RESET_IDX2 --> WP_MOVE
-        CHECK_NEXT -- 否 --> CHECK_LOADING{"有出仓点?"}
-        CHECK_LOADING -- 是 --> APPEND_LOADING["追加出仓点到航点列表"]
-        APPEND_LOADING --> WP_MOVE
-        CHECK_LOADING -- 否 --> COMPLETED["COMPLETED 导航完成"]
+    NEXT_WP --> WP_MOVE["WAYPOINT_MOVE"]
+    WP_MOVE --> GET_TARGET["获取目标航点"]
+    GET_TARGET --> CHECK_LAST{"到达最后一个航点?"}
+    CHECK_LAST -- 是 --> SWITCH_FILE["自动切换下一路径文件"]
+    SWITCH_FILE --> CHECK_NEXT{"有下一文件?"}
+    CHECK_NEXT -- 是 --> RESET_IDX2["重置索引=0, 返回新文件首航点<br/>清零 waypoint_recalib_count"]
+    RESET_IDX2 --> WP_MOVE
+    CHECK_NEXT -- 否 --> CHECK_LOADING{"有出仓点?"}
+    CHECK_LOADING -- 是 --> APPEND_LOADING["追加出仓点到航点列表"]
+    APPEND_LOADING --> WP_MOVE
+    CHECK_LOADING -- 否 --> COMPLETED["COMPLETED 导航完成"]
 
-        CHECK_LAST -- 否 --> STANLEY2["Stanley控制器直线行驶"]
-        STANLEY2 --> CHECK_HEADING{"航向误差>15度 连续5帧?"}
-        CHECK_HEADING -- 是 --> RECALIB["WAYPOINT_CALIB 重新校准到当前路径方向"]
-        RECALIB --> STANLEY2
-        CHECK_HEADING -- 否 --> CHECK_DIST2{"距离<0.1m?"}
-        CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.5m?"}
-        CHECK_LOW -- 是 --> SLOW_DOWN["线性减速 speed_scale=0.2~0.7"]
-        SLOW_DOWN --> STANLEY2
-        CHECK_LOW -- 否 --> STANLEY2
-        CHECK_DIST2 -- 是 --> CALIB2["WAYPOINT_CALIB 航向校准"]
-        CALIB2 --> TURN2["原地旋转至目标heading"]
-        TURN2 --> CHECK_ANGLE2{"角度误差<1度?"}
-        CHECK_ANGLE2 -- 否 --> TURN2
-        CHECK_ANGLE2 -- 是 --> NEXT_WP
-    end
+    CHECK_LAST -- 否 --> STANLEY2["Stanley控制器直线行驶"]
+    STANLEY2 --> CHECK_FORCE{"force_bearing_mode?"}
+    CHECK_FORCE -- 是 --> BEARING2["方位角直行: path_dir=bearing→target<br/>跳过航向异常检测"]
+    BEARING2 --> CHECK_DIST2
+    CHECK_FORCE -- 否 --> CHECK_HEADING{"航向误差>15° 连续5帧?"}
+    CHECK_HEADING -- 是 --> INC_COUNT["waypoint_recalib_count++"]
+    INC_COUNT --> CHECK_COUNT{"同航点校准≥2次?"}
+    CHECK_COUNT -- 是 --> SET_FORCE["force_bearing_mode=True<br/>打滑/位置偏移，直行不校准"]
+    SET_FORCE --> STANLEY2
+    CHECK_COUNT -- 否 --> RECALIB["WAYPOINT_CALIB 重新校准到当前路径方向"]
+    RECALIB --> STANLEY2
+    CHECK_HEADING -- 否 --> CHECK_DIST2{"距离<0.1m?"}
+    CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.5m?"}
+    CHECK_LOW -- 是 --> SLOW_DOWN["线性减速 speed_scale=0.2~0.7"]
+    SLOW_DOWN --> STANLEY2
+    CHECK_LOW -- 否 --> STANLEY2
+    CHECK_DIST2 -- 是 --> CALIB2["WAYPOINT_CALIB 航向校准"]
+    CALIB2 --> TURN2["原地旋转至目标heading"]
+    TURN2 --> CHECK_ANGLE2{"角度误差<1°?"}
+    CHECK_ANGLE2 -- 否 --> TURN2
+    CHECK_ANGLE2 -- 是 --> RESET_COUNT["清零 waypoint_recalib_count<br/>current_waypoint_idx++"]
+    RESET_COUNT --> NEXT_WP
 ```
 ### 边界矫正状态机
 ```mermaid
@@ -129,40 +216,48 @@ graph TD
     subgraph STEP1["计算横向误差"]
         UTM1["UTM坐标转换: 当前位置/起点/终点"] --> CROSS["向量叉积 AP x AB"]
         CROSS --> LATERAL["lateral_error = cross / |AB|"]
-        LATERAL --> SIGN["正=偏左 负=偏右"]
+        LATERAL --> CLAMP_LE["clamp ±MAX_LATERAL_ERROR(1.0m)"]
     end
 
     STEP1 --> STEP2
     subgraph STEP2["计算航向误差"]
         HEADING_ERR["heading_error = path_direction - current_heading"]
-        HEADING_ERR --> NORMALIZE["归一化到-180度~180度"]
+        HEADING_ERR --> NORMALIZE["归一化到-180°~180°"]
     end
 
     STEP2 --> STEP3
     subgraph STEP3["Stanley控制律"]
-        K["K自适应: 距离<1.3m取0.26, 其他取0.25"] --> STEERING
-        V["velocity"] --> STEERING
+        V_RAW["velocity (电机指令)"] --> CONV["real_v = velocity × 0.0345"]
+        CONV --> K["K自适应: <1.3m→0.42, ≥1.3m→0.45"]
+        K --> STEERING
         LE["lateral_error"] --> STEERING
         HE["heading_error"] --> STEERING
-        STEERING["total_steering = atan(K * lateral_error / velocity) - heading_error"]
-        STEERING --> CLAMP["clamp -45度~45度"]
+        STEERING["st_corr = atan(K × lat_err / max(real_v, 0.15))"]
+        STEERING --> SUPPRESS{"abs(hdg_err)>4° 且 st_corr与hdg_err同向?"}
+        SUPPRESS -- 是 --> HALF["st_corr × 0.5 航向优先抑制"]
+        SUPPRESS -- 否 --> TOTAL["total = st_corr - hdg_err"]
+        HALF --> TOTAL
+        TOTAL --> CLAMP["clamp ±45°"]
     end
 
     STEP3 --> STEP4
     subgraph STEP4["差速分配"]
-        FACTOR["steering_factor = clamped / 45度"] --> DIFF["speed_diff = factor * STRAIGHT_MAX_CORRECTION"]
+        FACTOR["steering_factor = clamped / 45°"] --> DIFF["speed_diff = factor × 1.5"]
         DIFF --> LEFT["left = -velocity + speed_diff"]
         DIFF --> RIGHT["right = velocity + speed_diff"]
     end
 
-    STEP4 --> OUTPUT["输出: left_speed, right_speed"]
+    STEP4 --> OUTPUT["输出: left_speed, right_speed + real_velocity发布到/rtk/velocity"]
 ```
 
 ### 航向异常保护
 
-- 恢复导航时，如果当前车体航向与目标航段方向偏差超过15度，先进入`WAYPOINT_CALIB`重新校准，再继续当前航点。
-- 导航行驶中，如果航向误差超过15度并连续保持5帧，判定为异常航向，重新校准到当前路径方向。
-- 单帧跳变只累计一次，下一帧恢复到阈值内会清零计数，避免RTK/IMU瞬时抖动导致误判。
+- **连续异常检测**: 导航行驶中航向误差超过 15° 连续 5 帧（0.5s），判定为异常航向，触发重校准。
+- **方位角模式排除**: t>1.0（越过投影终点）或 force_bearing_mode 时，航向误差来自侧向接近目标（几何现象而非 IMU 异常），跳过航向异常计数和超时计时。
+- **打滑/偏移兜底**: 同航点重校准 ≥2 次后自动切换 `force_bearing_mode`，直接用 `bearing(current→target)` 直行，不再校准航向。航点切换后清零。
+- **RTK 数据超时**: `/wtrtk_data` 超过 1s 未更新立即停车 PAUSE；数据新鲜即为恢复条件（不再检查航向误差绝对值，避免 IMU 漂移导致无法恢复）。
+- **模式切入清理**: 进入 AUTO_CLEANING / 路径切换时清零 `heading_abnormal_start_time` 和 `heading_timed_out`，防止旧任务污染。
+- 单帧跳变只累计一次，下一帧恢复到阈值内会清零计数，避免 RTK/IMU 瞬时抖动误判。
 - 异常重校准完成后不推进航点索引，继续前往当前航点；正常到达航点后的校准仍会推进到下一个航点。
 
 ### 航点切换与跨文件处理
@@ -185,16 +280,23 @@ graph TD
 ```
 
 ### 关键参数
-```mermaid
-graph LR
-    P1[RTK_WAYPOINT_TOLERANCE=0.10m] --> P1D[到达航点距离阈值]
-    P2[INITIAL_MOVE_TOLERANCE=0.1m] --> P2D[初始移动到达阈值]
-    P3[LINEAR_SPEED_BASE=10.0] --> P3D[基础行驶速度（约0.35-0.4m/s）]
-    P4[LOW_DISTANCE=1.5m] --> P4D[减速触发距离]
-    P5[Stanley K=0.26/0.25] --> P5D[距离<1.3m取0.26，否则0.25]
-    P6[STRAIGHT_MAX_CORRECTION=1.0] --> P6D[直线最大差速修正]
-    P7[RTK_HEADING_TOLERANCE=1.0°] --> P7D[航向校准精度]
-    P8[STANLEY_MIN_SPEED=0.15] --> P8D[Stanley计算最小速度阈值]
-    P9[MAX_LATERAL_ERROR=1.0m] --> P9D[横向误差上限]
-    P10[HEADING_ABNORMAL_THRESHOLD=15°] --> P10D[连续5帧触发航向重校准]
-```
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| LINEAR_SPEED_BASE | 10.0 | 基础行驶速度（电机指令值，约0.35m/s） |
+| SPEED_LIMIT | 1.3 × BASE | 最大速度限制 |
+| SPEED_CMD_TO_MPS | 0.0345 | 电机指令→真实速度(m/s)转换系数 |
+| RTK_WAYPOINT_TOLERANCE | 0.10 m | 到达航点距离阈值 |
+| INITIAL_MOVE_TOLERANCE | 0.10 m | 初始移动到达阈值 |
+| LOW_DISTANCE | 1.5 m | 减速触发距离 |
+| RTK_HEADING_TOLERANCE | 1.0° | 航向校准精度 |
+| STANLEY_K_NEAR (<1.3m) | 0.42 | 近距离自适应 K |
+| STANLEY_K_FAR (≥1.3m) | 0.45 | 远距离自适应 K |
+| STANLEY_MIN_SPEED | 0.15 m/s | Stanley 计算最小速度（防除零+限幅） |
+| MAX_LATERAL_ERROR | 1.0 m | 横向误差钳位上限 |
+| STRAIGHT_MAX_CORRECTION | 1.5 | 直线最大差速修正 |
+| HEADING_ABNORMAL_THRESHOLD | 15.0° | 航向异常阈值 |
+| ANGLE_ABNORMAL_COUNT | 5 | 连续异常帧数（0.5s） |
+| 航向优先抑制 | abs(hdg_err)>4° | 横向项与航向项同向时 st_corr 减半 |
+| RTK_DATA_TIMEOUT | 1.0 s | RTK 数据断流超时停车 |
+| force_bearing_mode | ≥2次 | 同航点重校准次数阈值，触发后方位角直行 |
