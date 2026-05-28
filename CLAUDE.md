@@ -63,7 +63,7 @@ src/
 
 三种模式（`ControlMode`）：`NORMAL`（键盘）、`REMOTE`（遥控器）、`AUTO_CLEANING`（RTK 自动导航）。通过 `/keyboard/control` 话题切换。
 
-**主状态机**（`motor_control.py`, 10Hz）：根据当前模式和输入下发速度，处理 UNLOADING/LOADING 流程。
+**主状态机**（`motor_control.py`, 10Hz）：根据当前模式和输入下发速度，处理 START/LOADING 流程。
 
 **导航状态机**（`rtk_nav.py`, 10Hz）：
 `IDLE → INITIAL_MOVE → WAYPOINT_MOVE → WAYPOINT_CALIB → COMPLETED`
@@ -81,7 +81,7 @@ src/
 
 ### 进仓/出仓
 
-**出仓**（UNLOADING）：`u` 键 → 直行 → 旋转到目标角度 → 完成。
+**出仓**（START）：`u` 键 → 直行 → 旋转到目标角度 → 完成。
 
 **进仓**（LOADING）：`l` 键 → 激光对位前进 → 后退 → 旋转。激光/电机异常时走兜底：直接前进 26s → 完成。
 

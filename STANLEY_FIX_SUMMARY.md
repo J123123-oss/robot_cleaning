@@ -138,8 +138,8 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 ### 11. MQTT 方向指令 300s 定时器未在 HOLD/DISABLE/START 时取消
 
 - **问题**: MQTT 点按方向指令（FORWARD/BACKWARD/LEFT/RIGHT）创建 300 秒 `direction_timer`，到期调用 `auto_stop` → `switch_state("h")`。HOLD 停止或进仓流程被 HOLD 中断时，定时器未被取消，残留的定时器可能在后续 AUTO_CLEANING 任务期间触发，强制 HOLD 导致导航中断。
-- **修复**: 在 HOLD（含 `is_in_bin_process` 分支）、DISABLE、START 四个入口统一取消 `direction_timer` 并置 None。
-- **影响**: `src/motor_control/motor_control/motor_control.py` — `switch_state()` 中 DISABLE/HOLD/START 分支。
+- **修复**: 在 HOLD（含 `is_in_bin_process` 分支）、DISABLE、ENABLE 四个入口统一取消 `direction_timer` 并置 None。
+- **影响**: `src/motor_control/motor_control/motor_control.py` — `switch_state()` 中 DISABLE/HOLD/ENABLE 分支。
 
 ## 2026-05-23 路径切换延后与MQTT同步
 

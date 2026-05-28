@@ -33,18 +33,18 @@ from motor_control.charging import Charging485Node
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
     HOLD = "h"
-    START = "x"
+    ENABLE = "x"
     FORWARD = "w"
     BACKWARD = "s"
     LEFT = "a"
     RIGHT = "d"
     LOADING = "l"
-    UNLOADING = "u"
+    START = "u"
     AUTO_CLEANING = "r"
-    DISABLE = "z"  # 新增：完全失能状态（区别于HOLD的停止但保持使能）
+    DISABLE = "z"  # 完全失能状态（区别于HOLD的停止但保持使能）
 
 
-STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'START'...}
+STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABLE', 'u':'START'...}
 
 MAX_SPEED = 10.0   # 遥控器最大速度
 MIN_SPEED = -10.0  # 遥控器最小速度
@@ -316,7 +316,7 @@ class MotorControlNode(Node):
         self.rtk_velocity = 0.0    # 存储RTK导航真实速度 (m/s)
 
         self.status_list = [
-            "HOLD", "START", "FORWARD", "BACKWARD", "LOADING", "UNLOADING",
+            "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START",
             "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
@@ -330,7 +330,7 @@ class MotorControlNode(Node):
         # 确保IMU航向默认值存在
         self.imu_yaw_deg = None
 
-        # 初始化电机（进入START状态）>>DISABLE
+        # 初始化电机（进入ENABLE状态）>>DISABLE
         self.switch_state('z')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
@@ -918,20 +918,20 @@ class MotorControlNode(Node):
                 return
             # 若是HOLD指令，正常执行，后续会重置进出仓标记
 
-        if new_state == "UNLOADING" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
+        if new_state == "START" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
             self.low_battery_warning = True
             self.get_logger().warn(
-                f"[UNLOADING] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，"
+                f"[START] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，"
                 f"拒绝执行出仓任务，保持状态={self.current_status}，上报故障码"
             )
             self.publish_state()  # 发布原状态 + ERROR_LOW_BATTERY，不更新 current_status
-            return  # 不执行后续状态切换，UNLOADING 流程不会被触发
+            return  # 不执行后续状态切换，START 流程不会被触发
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
 
         # 核心修复2：设置进出仓状态标记
-        if new_state in ["UNLOADING", "LOADING"]:
+        if new_state in ["START", "LOADING"]:
             # 记录流程开始时的控制模式，作为暂停/恢复判断的来源模式
             self.bin_process_origin_mode = self.current_control_mode
             self.bin_process_paused = False
@@ -992,7 +992,7 @@ class MotorControlNode(Node):
             #     self.state_publish_timer = self.create_timer(5.0, self.publish_state)
             #     self.get_logger().info("[ROSNode] 进入HOLD状态，状态发布频率改为60秒")
 
-        elif new_state == "START":
+        elif new_state == "ENABLE":
 
             self.motor_ctrl.initialize_motors()
             time.sleep(0.001)
@@ -1001,11 +1001,11 @@ class MotorControlNode(Node):
             if self.direction_timer is not None:
                 self.direction_timer.cancel()
                 self.direction_timer = None
-            # 恢复状态发布频率至1秒
+            # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
                 self.state_publish_timer = self.create_timer(5.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为5秒")
+                self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为5秒")
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
@@ -1044,12 +1044,12 @@ class MotorControlNode(Node):
             if self.direction_timer:
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
-        elif new_state == "UNLOADING":
+        elif new_state == "START":
             # 使能电机
             self.motor_ctrl.initialize_motors()
             time.sleep(0.001)
             self.complete_state = False
-            # 恢复状态发布频率至1秒
+            # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
                 self.state_publish_timer = self.create_timer(5.0, self.publish_state)
@@ -1062,14 +1062,7 @@ class MotorControlNode(Node):
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
-            
-            # self.get_logger().info("[ROSNode] 进入出仓状态，启动出仓定时器")
-            # self.complete_state = False
-            # self.current_status = new_state
-            # # 初始化出仓阶段
-            # self.unloading_phase = "UNLOADING_BACKWARD"  # 第一阶段：前进
-            # self.unloading_start_time = time.time()
-            # # 修正：降低定时器频率到100ms，匹配IMU更新频率
+
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
             self.current_status = new_state
@@ -1388,10 +1381,10 @@ class MotorControlNode(Node):
         if (self.dock_sensors & 0x02):  # dock中归位
              # ========== 新增：归位后首次初始化出仓流程 ==========
             if self.unloading_phase is None:
-                self.get_logger().info("[UNLOADING] 检测到dock归位，初始化出仓流程")
+                self.get_logger().info("[START] 检测到dock归位，初始化出仓流程")
                 self.unloading_phase = "UNLOADING_BACKWARD"  # 第一阶段：后退出仓
                 self.unloading_start_time = time.time()  # 记录真正的启动时间
-                self.get_logger().info(f"[UNLOADING] 初始化完成，当前阶段：{self.unloading_phase}")
+                self.get_logger().info(f"[START] 初始化完成，当前阶段：{self.unloading_phase}")
 
             # if self.unloading_phase is None:
             #     self.get_logger().warn("[ROSNode] 出仓阶段未初始化，停止定时器")
@@ -1402,7 +1395,7 @@ class MotorControlNode(Node):
             
             # 前置校验：IMU数据是否有效且最新
             # if self.imu_yaw_deg is None or (time.time() - self.last_imu_update_time) > self.imu_update_interval:
-            #     self.get_logger().warn("[UNLOADING] IMU数据过期/无效，跳过本次处理")
+            #     self.get_logger().warn("[START] IMU数据过期/无效，跳过本次处理")
             #     return
             
             current_time = time.time()
@@ -1418,9 +1411,9 @@ class MotorControlNode(Node):
                     right_speed = -self.motor_ctrl.BASE_SPEED + correction
                     self.set_motors_speed(left_speed, right_speed)
                 else:
-                    # self.get_logger().info("[UNLOADING] 前进阶段完成，进入转向阶段")
+                    # self.get_logger().info("[START] 前进阶段完成，进入转向阶段")
                     self.set_motors_speed(0.0, 0.0)  # 停止运动
-                    self.get_logger().info("[UNLOADING] 等待RTK")
+                    self.get_logger().info("[START] 等待RTK")
                     # self.unloading_phase = "UNLOADING_TURN"
                     self.unloading_phase = "COMPLETE"  # 直接进入完成阶段，等待GPS固定解（如果需要转向，可以在后续版本添加）
                     self.unloading_turn_start_time = current_time
@@ -1428,7 +1421,7 @@ class MotorControlNode(Node):
                     # 修正：目标角度归一化
                     # self.unloading_turn_target_deg = self.imu_yaw_deg + 90
                     # self.unloading_turn_target_deg = (self.unloading_turn_target_deg + 180) % 360 - 180
-                    # self.get_logger().info(f"[UNLOADING] 转向目标角设定为{self.unloading_turn_target_deg:.2f}deg")
+                    # self.get_logger().info(f"[START] 转向目标角设定为{self.unloading_turn_target_deg:.2f}deg")
 
             # ========== 阶段2：转向 ==========
             # elif self.unloading_phase == "UNLOADING_TURN":            
@@ -1439,7 +1432,7 @@ class MotorControlNode(Node):
             #     # 差值小于0，左转；差值大于0，右转，保持方向正确
             #     turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
             #     # self.motor_ctrl.BASE_SPEED
-            #     # self.get_logger().info(f"[UNLOADING] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
+            #     # self.get_logger().info(f"[START] 转向阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，目标{self.unloading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg")
                 
             #     left_speed = turn_speed + correction
             #     right_speed = turn_speed + correction
@@ -1447,16 +1440,16 @@ class MotorControlNode(Node):
             #     # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
             #     if abs(yaw_diff) < self.yaw_diff_min:
             #         self.yaw_stable_count_unloading += 1
-            #         self.get_logger().info(f"[UNLOADING] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
+            #         self.get_logger().info(f"[START] 角度误差达标，稳定计数={self.yaw_stable_count_unloading}/3")
             #         if self.yaw_stable_count_unloading >= 3:
-            #             self.get_logger().info("[UNLOADING] 转向阶段完成，出仓结束（连续3次达标）")
+            #             self.get_logger().info("[START] 转向阶段完成，出仓结束（连续3次达标）")
             #             self.unloading_phase = "COMPLETE"
             #             self.set_motors_speed(0.0, 0.0)  # 停止运动
             #             self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
             #     else:
             #         self.yaw_stable_count_unloading = 0  # 误差不达标，计数器清零
             #     if current_time - self.unloading_turn_start_time > self.unloading_turn_time_max:
-            #         self.get_logger().warn(f"[UNLOADING] Timeout: 转向阶段超时，强制完成出仓")
+            #         self.get_logger().warn(f"[START] Timeout: 转向阶段超时，强制完成出仓")
             #         self.unloading_phase = "COMPLETE"
             #         self.set_motors_speed(0.0, 0.0)  # 停止运动
             
@@ -1465,26 +1458,26 @@ class MotorControlNode(Node):
                 # 新增：初始化超时计时（仅首次进入该分支时初始化）
                 if not hasattr(self, 'unloading_gps_wait_start'):
                     self.unloading_gps_wait_start = self.get_clock().now()
-                    self.get_logger().info("[UNLOADING] 开始等待GPS固定解，超时时间30s")
+                    self.get_logger().info("[START] 开始等待GPS固定解，超时时间30s")
 
                 
                 elapsed_time = (self.get_clock().now() - self.unloading_gps_wait_start).nanoseconds / 1e9
 
                 # 1. 优先：获取RTK Fixed固定解，正常收尾
                 if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
-                    self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
+                    self.get_logger().info(f"[START] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
                     self.unloading_lon = self.current_lon
                     self.unloading_lat = self.current_lat
                     heading = self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00
                     heading = (heading + 360) % 360  # 归一化到0-360度
-                    self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
+                    self.get_logger().info(f"[START] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
                     unloading_gps_msg = Vector3()
                     unloading_gps_msg.x = self.unloading_lon
                     unloading_gps_msg.y = self.unloading_lat
                     unloading_gps_msg.z = heading
                     self.unloading_gps_pub.publish(unloading_gps_msg)
-                    self.get_logger().info(f"[UNLOADING] 已发布出仓GPS坐标到/unloading_gps话题")
-                    self.get_logger().info("[UNLOADING] 出仓流程完成")
+                    self.get_logger().info(f"[START] 已发布出仓GPS坐标到/unloading_gps话题")
+                    self.get_logger().info("[START] 出仓流程完成")
                     self.switch_state('h') # 切回HOLD状态，确保电机停止
                     time.sleep(2.0)  # 确保状态切换生效
                     self.current_control_mode = "AUTO_CLEANING"
@@ -1498,7 +1491,7 @@ class MotorControlNode(Node):
                     self.is_in_bin_process = False  # 重置进出仓标记
                 # 2. 新增：超时兜底（GPS长期无固定解，强制退出）
                 elif elapsed_time > MAX_GPS_WAIT_TIME:
-                    self.get_logger().error(f"[UNLOADING] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，进入DISABLE")
+                    self.get_logger().error(f"[START] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，进入DISABLE")
                     # # 可选：记录当前非固定解的坐标（或置空）
                     # self.unloading_lon = self.current_lon
                     # self.unloading_lat = self.current_lat
@@ -1515,22 +1508,22 @@ class MotorControlNode(Node):
                 else:
                     # 每3s打印一次警告（替代0.1Hz高频打印）
                     if int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
-                        self.get_logger().warn(f"[UNLOADING] 出仓完成，GPS状态不佳（状态码{self.rtk_status}），已等待{elapsed_time:.1f}s，继续等待...")
+                        self.get_logger().warn(f"[START] 出仓完成，GPS状态不佳（状态码{self.rtk_status}），已等待{elapsed_time:.1f}s，继续等待...")
                     elif self.unloading_phase == "COMPLETE":
                         # get_gps
                         if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
-                            self.get_logger().info(f"[UNLOADING] 出仓完成，当前GPS坐标：经度{self.unloading_lon:.6f}，纬度{self.unloading_lat:.6f}")
+                            self.get_logger().info(f"[START] 出仓完成，当前GPS坐标：经度{self.unloading_lon:.6f}，纬度{self.unloading_lat:.6f}")
                             heading = self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00
                             heading = (heading + 360) % 360  # 归一化到0-360度
-                            self.get_logger().info(f"[UNLOADING] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
+                            self.get_logger().info(f"[START] 准备发布出仓GPS坐标到RTK: 经度={self.unloading_lon:.6f}, 纬度={self.unloading_lat:.6f}, 航向={heading:.2f}°")
                             # pub unloading result
                             unloading_gps_msg = Vector3()
                             unloading_gps_msg.x = self.unloading_lon
                             unloading_gps_msg.y = self.unloading_lat
                             unloading_gps_msg.z = heading
                             self.unloading_gps_pub.publish(unloading_gps_msg)
-                            self.get_logger().info(f"[UNLOADING] 已发布出仓GPS坐标到/unloading_gps话题")
-                            self.get_logger().info("[UNLOADING] 出仓流程完成")
+                            self.get_logger().info(f"[START] 已发布出仓GPS坐标到/unloading_gps话题")
+                            self.get_logger().info("[START] 出仓流程完成")
                             self.is_in_bin_process = False  # 重置进出仓标记
                             self.switch_state('h') # 切回HOLD状态，确保电机停止
                             time.sleep(2.0)  # 确保状态切换生效
@@ -1539,7 +1532,7 @@ class MotorControlNode(Node):
                             self.unloading_timer.cancel()
                             self.unloading_timer = None
                         elif int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
-                            self.get_logger().warn(f"[UNLOADING] 出仓完成，但GPS状态不佳（状态码{self.rtk_status}），无法获取可靠坐标,继续等待GPS修正")
+                            self.get_logger().warn(f"[START] 出仓完成，但GPS状态不佳（状态码{self.rtk_status}），无法获取可靠坐标,继续等待GPS修正")
                             self.switch_state('h') # 切回HOLD状态，确保电机停止
 
 

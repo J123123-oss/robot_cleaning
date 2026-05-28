@@ -47,28 +47,28 @@ graph TD
     STARTUP["上电启动"] --> DISABLE
 
     %% ===== 电机初始化 =====
-    DISABLE -->|"START"| START["START<br/>电机初始化，恢复发布频率"]
-    START -->|"DISABLE"| DISABLE
+    DISABLE -->|"ENABLE"| ENABLE["ENABLE<br/>电机使能"]
+    ENABLE -->|"DISABLE"| DISABLE
 
     %% ===== HOLD 中枢 =====
-    START -->|"HOLD"| HOLD["HOLD<br/>电机停止，保持使能"]
+    ENABLE -->|"HOLD"| HOLD["HOLD<br/>电机停止，保持使能"]
     HOLD -->|"DISABLE"| DISABLE
-    HOLD -->|"START（重新初始化）"| START
+    HOLD -->|"ENABLE"| ENABLE
 
     %% ===== 全自动清扫 =====
     HOLD -->|"AUTO_CLEANING"| AUTO_CLEANING["AUTO_CLEANING<br/>RTK巡航清扫"]
-    START -->|"AUTO_CLEANING"| AUTO_CLEANING
+    ENABLE -->|"AUTO_CLEANING"| AUTO_CLEANING
     AUTO_CLEANING -->|"HOLD 暂停"| HOLD
     AUTO_CLEANING -->|"DISABLE 失能"| DISABLE
     AUTO_CLEANING -->|"导航完成 COMPLETED<br/>自动触发"| LOADING
 
-    %% ===== 出仓 =====
-    HOLD -->|"UNLOADING"| U_CHECK{"电量 ≥ 91%？"}
-    U_CHECK -->|"是"| UNLOADING["UNLOADING<br/>出仓流程"]
+    %% ===== 出仓/开始作业 =====
+    HOLD -->|"START"| U_CHECK{"电量 ≥ 91%？"}
+    U_CHECK -->|"是"| START["START<br/>出仓流程"]
     U_CHECK -->|"否，拒绝执行"| HOLD
-    UNLOADING -->|"出仓完成"| UNLOADING_DONE["UNLOADING 完成<br/>complete_state=True<br/>等待后续指令"]
-    UNLOADING -->|"GPS超时 30s"| DISABLE
-    UNLOADING -->|"HOLD 强制中断"| HOLD
+    START -->|"出仓完成"| START_DONE["START 完成<br/>complete_state=True<br/>等待后续指令"]
+    START -->|"GPS超时 30s"| DISABLE
+    START -->|"HOLD 强制中断"| HOLD
 
     %% ===== 进仓 =====
     HOLD -->|"LOADING"| L_CHECK{"距进仓点 ≤ 10m？"}
@@ -78,7 +78,7 @@ graph TD
     LOADING -->|"HOLD 强制中断"| HOLD
 
     %% ===== 进出仓期间保护 =====
-    UNLOADING -.->|"仅接受 HOLD / DISABLE"| UNLOADING
+    START -.->|"仅接受 HOLD / DISABLE"| START
     LOADING -.->|"仅接受 HOLD / DISABLE"| LOADING
 
     %% ===== MQTT 遥控接管流程 =====
@@ -89,7 +89,7 @@ graph TD
     HOLD -.->|"MQTT: RC_ENABLE"| RC_ENABLE
     AUTO_CLEANING -.->|"MQTT: RC_ENABLE"| RC_ENABLE
     LOADING_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
-    UNLOADING_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+    START_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
     DISABLE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
 
     RESTORE --> HOLD
@@ -98,12 +98,12 @@ graph TD
     style STARTUP fill:#e1e1e1,stroke:#999
     style DISABLE fill:#ff6b6b,stroke:#333,color:#fff
     style HOLD fill:#ffd93d,stroke:#333
-    style UNLOADING fill:#6bcb77,stroke:#333
-    style UNLOADING_DONE fill:#b8e6c8,stroke:#6bcb77
+    style START fill:#6bcb77,stroke:#333
+    style START_DONE fill:#b8e6c8,stroke:#6bcb77
     style LOADING fill:#4d96ff,stroke:#333,color:#fff
     style LOADING_DONE fill:#a8d1ff,stroke:#4d96ff
     style AUTO_CLEANING fill:#9b59b6,stroke:#333,color:#fff
-    style START fill:#dfe6e9,stroke:#333
+    style ENABLE fill:#dfe6e9,stroke:#333
     style U_CHECK fill:#ffeaa7,stroke:#333
     style L_CHECK fill:#ffeaa7,stroke:#333
     style RC_ENABLE fill:#e17055,stroke:#333,color:#fff

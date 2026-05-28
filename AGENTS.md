@@ -114,7 +114,7 @@ src/
 
 ### 进仓/出仓流程
 
-**出仓**（UNLOADING）：键盘 `u` 触发 → 直行（`unloading_forword_threshold` 秒）→ 旋转到目标角度 → 完成。
+**出仓**（START）：键盘 `u` 触发 → 直行（`unloading_forword_threshold` 秒）→ 旋转到目标角度 → 完成。
 
 **进仓**（LOADING）：键盘 `l` 触发 → 激光距离 < 阈值时一直前进 → 后退固定时长 → 旋转到目标角度。
 

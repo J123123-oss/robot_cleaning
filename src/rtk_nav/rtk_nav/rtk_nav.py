@@ -119,7 +119,7 @@ class RTKNavControlNode(Node):
             "lat_offset": 0.0,
             "heading_offset": 0.0 # 航向角偏移量（°）
         }
-        self.laste_state = None  # 保存上一个  "status": "START"状态
+        self.laste_state = None  # 保存上一个  "status": "ENABLE"状态
         self.offset_calculated = False  # 偏移量是否已计算（避免重复计算）
 
         self.imu_initialized = False
