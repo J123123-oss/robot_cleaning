@@ -218,6 +218,7 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": False,  # 是否是角度异常后的重新校准
             "waypoint_recalib_count": 0,  # 同航点校准次数（打滑检测）
             "force_bearing_mode": False,  # 跳过循迹，直接用方位角直行
+            "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -1679,9 +1680,10 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
-            if self.nav_context.get("force_bearing_mode"):
+            if self.nav_context.get("force_bearing_mode") or self.nav_context.get("bearing_mode_locked"):
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             elif t > 1.0:
+                self.nav_context["bearing_mode_locked"] = True
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             else:
                 path_direction = fixed_path_dir
@@ -1698,7 +1700,7 @@ class RTKNavControlNode(Node):
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
             # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
-            in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or t > 1.0)
+            in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or self.nav_context.get("bearing_mode_locked", False) or t > 1.0)
             if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                 if not in_bearing_mode:
                     self.nav_context["angle_abnormal_count"] += 1
@@ -1774,6 +1776,7 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": False,
             "waypoint_recalib_count": 0,
             "force_bearing_mode": False,
+            "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
         }
         self.heading_abnormal_start_time = None  # 重置航向异常计时
@@ -2118,6 +2121,7 @@ class RTKNavControlNode(Node):
                     self.nav_context["angle_abnormal_count"] = 0
                     self.nav_context["waypoint_recalib_count"] = 0
                     self.nav_context["force_bearing_mode"] = False
+                    self.nav_context["bearing_mode_locked"] = False
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     self.nav_context["last_distance"] = 0.0  # 重置距离缓存
@@ -2261,16 +2265,17 @@ class RTKNavControlNode(Node):
 
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
-                if self.nav_context.get("force_bearing_mode"):
+                if self.nav_context.get("force_bearing_mode") or self.nav_context.get("bearing_mode_locked"):
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 elif t > 1.0:
+                    self.nav_context["bearing_mode_locked"] = True
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 else:
                     path_direction = self.stanley_path_direction
 
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                 # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
-                in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or t > 1.0)
+                in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or self.nav_context.get("bearing_mode_locked", False) or t > 1.0)
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                     if not in_bearing_mode:
                         self.nav_context["angle_abnormal_count"] += 1

@@ -277,7 +277,63 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 - **003-E12-E14.yaml**: 修正 south_14 calib_point_b 坐标；新增 back_14B-13A、back_13B-12A 两个回程区域；移除 south_12 多余的 edge_distance_lat
 - **004-E15-E18.yaml**: 移除 south_15 多余的 edge_distance_lat
-- **影响**: `config/003-E12-E14.yaml`, `config/004-E15-E18.yaml`<｜end▁of▁thinking｜>
+- **影响**: `config/003-E12-E14.yaml`, `config/004-E15-E18.yaml`
+
+## 2026-05-28 方位角锁定迟滞 + 出仓航向校验 + 进仓修复 + RC_ENABLE 停车 + REMOTE 废弃
+
+### 28. bearing_mode_locked 迟滞防止 t≈1.0 路径方向振荡
+
+- **问题**: t≈1.0 时 `path_direction` 在固定段方向和 `bearing(current→target)` 之间交替跳变。当航段较短时，车速约 0.35m/s，t 在 0.95~1.05 反复穿越，path_dir 频繁切换导致航向误差突变，触发航向异常 5 帧重校准。
+- **修复**: 新增 `bearing_mode_locked` nav_context 字段；一旦 `t > 1.0` 进入方位角模式就锁定，直到航点切换才解锁。避免短段末端反复振荡。
+- **复位时机**: 航点切换时清零（与 `force_bearing_mode`、`waypoint_recalib_count` 同步）。
+- **影响**: `rtk_nav.py` — INITIAL_MOVE 和 WAYPOINT_MOVE 两处 path_direction 计算 + 航向异常检测排除 + nav_context 初始化/重置。
+
+### 29. 出仓完成后航向角校验（90°±25°）
+
+- **问题**: 手动出仓后 IMU 航向约 -45°（应为 ~90°），直接切 AUTO_CLEANING 导致 INITIAL_MOVE 航向异常和大量重校准。
+- **修复**: 新增 `UNLOADING_HEADING_TARGET=90.0` 和 `_is_unloading_heading_ready()`；START 完成切换 AUTO_CLEANING 前要求 RTK Fixed + IMU 航向在 65°~115° 范围内。
+- **影响**: `motor_control.py` — 两处 START COMPLETE 分支增加航向校验条件。
+
+### 30. 进仓超时日志刷屏 + 故障码上报
+
+- **问题**: 进仓导航超时后每 100ms 打印一次 warn 日志并重复调用 `switch_state('z')`；超时后无故障码上报。
+- **修复**:
+  - 新增 `ERROR_LOADING_TIMEOUT=32` 错误码位
+  - `build_error_code()` 中合并 `loading_timeout_error` 标志
+  - 超时分支：设置 `loading_timeout_error=True`，日志级别改为 error，清理 loading 状态防止重入
+  - 进仓入口清零 `loading_timeout_error=False`
+- **影响**: `motor_control.py` — `handle_loading_step()` 超时分支 + `build_error_code()`。
+
+### 31. complete_state 完成标志 + 进仓后补发 3 条消息
+
+- **问题**: 进仓完成后切换 DISABLE，MQTT 消息中 `complete_state: false` 导致前台无法检测完成。
+- **修复**:
+  - `finish_loading_process()` 中 `switch_state('z')` 前设置 `self.complete_state = True`
+  - DISABLE 状态处理：`complete_state=True` 时补发 3 条消息（0s/5s/10s）再切换为 3000s 低频定时器，防止单条丢失
+  - 新增 `_publish_and_countdown()` 回调，发够 3 条后自动切回 3000s 定时器
+  - 新增 `_disable_publish_countdown` 计数变量
+- **影响**: `motor_control.py` — `finish_loading_process()` + `switch_state()` DISABLE 分支 + 新增 `_publish_and_countdown()`。
+
+### 32. RC_ENABLE 遥控接管不停止
+
+- **问题**: AUTO_CLEANING 导航中通过 MQTT 发送 RC_ENABLE 接管遥控，`rc_control=True` 后 timer 把模式切为 `"REMOTE"`（已废弃的死代码），NORMAL 和 AUTO_CLEANING 分支都不命中，电机保持导航最后速度继续运转。
+- **现场证据**: RC_ENABLE 后 `acceleration: {x: -10.06, y: 9.94}` 持续 15+ 秒，imu_yaw 从 -0.8° 漂到 6.1°，机器人未停车。
+- **修复**:
+  - RC_ENABLE handler 中接管时立即 `set_motors_speed(0,0)` + `set_brush_speed(0)` 停车
+  - `timer_callback`: `rc_control=True` → `"NORMAL"`（原 `"REMOTE"`），去掉 `"REMOTE"` 排除项
+  - keyboard 'm' 键切到 `"NORMAL"`（原 `"REMOTE"` 已废弃）
+  - `bin_process_origin_mode` 移除 `!= "REMOTE"` 条件
+  - `status_callback` 移除两处 `REMOTE → NORMAL` 死代码
+- **影响**: `motor_control.py` — RC_ENABLE handler + timer_callback 模式映射 + keyboard_callback + bin_process + status_callback。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| UNLOADING_HEADING_TARGET | 90.0° | 出仓后预期 IMU 航向 |
+| UNLOADING_HEADING_TOLERANCE | 25.0° | 出仓航向允许偏差 |
+| ERROR_LOADING_TIMEOUT | 32 (bit 5) | 进仓超时故障码 |
+| _disable_publish_countdown | 3 | 进仓完成后补发消息数 |<｜end▁of▁thinking｜>
 
 <｜｜DSML｜｜tool_calls>
 <｜｜DSML｜｜invoke name="TodoWrite">

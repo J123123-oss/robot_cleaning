@@ -56,6 +56,9 @@ RC_CH_MAX_VALUE = 1722
 
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
 MAX_GPS_WAIT_TIME = 30.0
+# 出仓完成后航向角校验：目标90°，允许±25°偏差（归一化到[0,360]）
+UNLOADING_HEADING_TARGET = 90.0
+UNLOADING_HEADING_TOLERANCE = 25.0
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 91.0
 
@@ -71,6 +74,7 @@ ERROR_LASER_TIMEOUT = 2
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
 ERROR_LOW_BATTERY = 16
+ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_RESERVED_1 = 32
 ERROR_RESERVED_2 = 64
 ERROR_RESERVED_3 = 128
@@ -130,6 +134,7 @@ class MotorControlNode(Node):
         self._nav_align_timeout = 20.0     # 航向对准超时（秒）
         
         self.state_publish_timer: Optional[Timer] = None  # 定时发布状态
+        self._disable_publish_countdown = 0  # DISABLE状态完成消息补发计数
 
         self.correction_state = "IDLE"  # 状态：IDLE/DEFLECT/RETRACT/CHECK
         self.correction_count = 0
@@ -175,6 +180,7 @@ class MotorControlNode(Node):
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
         self.motor_fault_codes = [0, 0, 0]  # 三路电机故障码
+        self.loading_timeout_error = False  # 进仓导航超时故障标志
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
         self.charge_resume_threshold = 90   #old:98 # 恢复充电的电量阈值（百分比）
@@ -431,6 +437,8 @@ class MotorControlNode(Node):
         error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
         if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
+        if self.loading_timeout_error:
+            error |= ERROR_LOADING_TIMEOUT
         return error
 
 
@@ -488,8 +496,8 @@ class MotorControlNode(Node):
                 self.last_laser_timeout_log_time = now
         # self.current_control_mode = self.sbus_remote.control_mode
         if self.rc_control:
-            self.current_control_mode = "REMOTE"
-        elif self.rc_control == False and self.current_control_mode not in ["AUTO_CLEANING", "REMOTE"]:
+            self.current_control_mode = "NORMAL"
+        elif self.rc_control == False and self.current_control_mode != "AUTO_CLEANING":
             self.current_control_mode = "NORMAL"
             # self.get_logger().info(f"{self.current_control_mode}")
         
@@ -505,7 +513,7 @@ class MotorControlNode(Node):
         # 暂停时不取消定时器，仅停止电机并在 handler 中短路，从而可在回到原模式后继续。
         if self.is_in_bin_process:
             # 如果尚未记录来源模式，则以当前模式作为来源
-            if self.bin_process_origin_mode is None and self.current_control_mode != "REMOTE":
+            if self.bin_process_origin_mode is None:
                 self.bin_process_origin_mode = self.current_control_mode
 
             if self.current_control_mode != self.bin_process_origin_mode:
@@ -585,12 +593,10 @@ class MotorControlNode(Node):
             # stop brush
 
         elif self.current_control_mode == "AUTO_CLEANING":
-            left_speed = self.rtk_left_speed 
-            right_speed = self.rtk_right_speed 
+            left_speed = self.rtk_left_speed
+            right_speed = self.rtk_right_speed
             self.set_motors_speed(left_speed, right_speed)
             self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
-            # start brush
-            # self.set_brush_speed(BRUSH_SPEED)
         state_msg = String()
         state_msg.data = str(self.current_status)
         self.state_pub.publish(state_msg)
@@ -612,9 +618,9 @@ class MotorControlNode(Node):
             self.current_control_mode = "NORMAL"
             self.get_logger().info(f"[ROSNode] 控制模式切换：→ NORMAL")
         elif key == 'm':
-            # 切换到遥控器模式
-            self.current_control_mode = "REMOTE"
-            self.get_logger().info(f"[ROSNode] 控制模式切换：→ REMOTE")
+            # 切换到遥控器模式（已废弃，切到NORMAL）
+            self.current_control_mode = "NORMAL"
+            self.get_logger().info(f"[ROSNode] 控制模式切换：→ NORMAL (原REMOTE已废弃)")
         # 原有状态切换逻辑（仅非RTK模式生效）
         elif key in STATE_DICT:
             if self.current_control_mode != "AUTO_CLEANING":
@@ -959,13 +965,18 @@ class MotorControlNode(Node):
                 self.motor_ctrl.motor_set_speed(motor["id"], 0.0)
                 self.motor_ctrl.motor_disable(motor["id"])
                 time.sleep(0.01)
-            # 降低状态发布频率至600秒
+            # 降低状态发布频率；进仓完成后先补发3条（5s间隔）保底再切3000s
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
+            if self.complete_state:
+                self._disable_publish_countdown = 3
+                self.state_publish_timer = self.create_timer(5.0, self._publish_and_countdown)
+                self.get_logger().info("[ROSNode] 进仓完成，补发3条完成消息（5s间隔）后降频至3000s")
+            else:
+                self._disable_publish_countdown = 0
                 self.state_publish_timer = self.create_timer(3000.0, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入DISABLE状态，状态发布频率改为3000秒")
-                # 发布最后一条消息
-                self.publish_state()
+            self.publish_state()
             # 取消 MQTT 方向指令的自动停止定时器
             if self.direction_timer is not None:
                 self.direction_timer.cancel()
@@ -1103,6 +1114,16 @@ class MotorControlNode(Node):
             self.direction_timer.cancel()
             self.direction_timer = None
 
+    def _publish_and_countdown(self):
+        """进仓完成后的补发回调：发够3条后切回3000s低频定时器"""
+        self.publish_state()
+        self._disable_publish_countdown -= 1
+        if self._disable_publish_countdown <= 0:
+            if self.state_publish_timer is not None:
+                self.state_publish_timer.cancel()
+            self.state_publish_timer = self.create_timer(3000.0, self.publish_state)
+            self.get_logger().info("[ROSNode] 补发完成，状态发布频率改为3000秒")
+
     def publish_state(self):
         """发布机器人状态消息（MQTT）"""
         try:
@@ -1216,6 +1237,9 @@ class MotorControlNode(Node):
                     self.rc_previous_status = self.current_status
                     self.rc_control = True
                     self.current_status = command
+                    # 立即停车，防止导航残留速度继续驱动电机
+                    self.set_motors_speed(0.0, 0.0)
+                    self.set_brush_speed(0.0)
                 self.get_logger().info(f"[ROSNode] RC_ENABLE 已启用遥控器控制，保存之前模式: {self.rc_previous_status}")
                 self.publish_state()
             elif command == "RC_DISABLE":
@@ -1241,9 +1265,6 @@ class MotorControlNode(Node):
                 if is_rtk_nav_mode and command != "HOLD":
                     self.get_logger().warn(f"[ROSNode] AUTO_CLEANING模式下拒绝指令: {command}，仅允许HOLD")
                     return
-                if not self.rc_control and self.current_control_mode == "REMOTE":
-                    self.current_control_mode = "NORMAL"
-                    self.get_logger().info(f"[ROSNode] 状态切换时更新控制模式: REMOTE -> NORMAL")
                 if self.rc_control and command in ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "HOLD"]:
                     self.get_logger().info(f"[ROSNode] 收到MQTT运动命令 {command}，暂时禁用RC控制")
                     self.rc_control = False
@@ -1254,9 +1275,6 @@ class MotorControlNode(Node):
                 if is_rtk_nav_mode and command != "HOLD":
                     self.get_logger().warn(f"[ROSNode] AUTO_CLEANING模式下拒绝指令: {command}，仅允许HOLD")
                     return
-                if not self.rc_control and self.current_control_mode == "REMOTE":
-                    self.current_control_mode = "NORMAL"
-                    self.get_logger().info(f"[ROSNode] 状态切换时更新控制模式: REMOTE -> NORMAL")
                 if self.rc_control and command in ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "HOLD"]:
                     self.get_logger().info(f"[ROSNode] 收到MQTT运动命令 {command}，暂时禁用RC控制")
                     self.rc_control = False
@@ -1363,7 +1381,19 @@ class MotorControlNode(Node):
             return 0.8 * self.motor_ctrl.BASE_SPEED   # 中误差（10°~30°）：中等速度
         else:
             return 0.1 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
-        
+
+    def _is_unloading_heading_ready(self):
+        """出仓完成后航向角校验：IMU航向需在90°±25°范围内。
+        返回 True 表示航向就绪，可切入AUTO_CLEANING。"""
+        if self.imu_yaw_deg is None:
+            return False
+        heading_0_360 = (self.imu_yaw_deg + 360) % 360
+        low = (UNLOADING_HEADING_TARGET - UNLOADING_HEADING_TOLERANCE) % 360
+        high = (UNLOADING_HEADING_TARGET + UNLOADING_HEADING_TOLERANCE) % 360
+        if low < high:
+            return low <= heading_0_360 <= high
+        else:
+            return heading_0_360 >= low or heading_0_360 <= high
 
     def handle_unloading_step(self):
         """出仓分步处理（修正：适配IMU更新频率，修复角度计算）"""
@@ -1463,8 +1493,8 @@ class MotorControlNode(Node):
                 
                 elapsed_time = (self.get_clock().now() - self.unloading_gps_wait_start).nanoseconds / 1e9
 
-                # 1. 优先：获取RTK Fixed固定解，正常收尾
-                if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
+                # 1. 优先：获取RTK Fixed固定解+航向校验，正常收尾
+                if self.rtk_status == 4 and self._is_unloading_heading_ready():
                     self.get_logger().info(f"[START] 出仓完成，当前GPS坐标：经度{self.current_lon:.6f}，纬度{self.current_lat:.6f}")
                     self.unloading_lon = self.current_lon
                     self.unloading_lat = self.current_lat
@@ -1504,14 +1534,16 @@ class MotorControlNode(Node):
                     # self.switch_state('r') # RTK导航模式，准备接受RTK速度指令
                     self.unloading_timer.cancel()
                     self.unloading_timer = None
-                # 3. 未超时+非固定解：继续等待，可选降频打印日志（避免刷屏）
+                # 3. 未满足条件：继续等待，可选降频打印日志（避免刷屏）
                 else:
                     # 每3s打印一次警告（替代0.1Hz高频打印）
                     if int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
-                        self.get_logger().warn(f"[START] 出仓完成，GPS状态不佳（状态码{self.rtk_status}），已等待{elapsed_time:.1f}s，继续等待...")
+                        rtk_label = "Fixed" if self.rtk_status == 4 else f"状态码{self.rtk_status}"
+                        hdg = (self.imu_yaw_deg + 360) % 360 if self.imu_yaw_deg is not None else -1
+                        self.get_logger().warn(f"[START] 出仓完成，等待条件满足（RTK={rtk_label}，航向={hdg:.1f}°），已等待{elapsed_time:.1f}s，继续等待...")
                     elif self.unloading_phase == "COMPLETE":
                         # get_gps
-                        if self.rtk_status == 4:  # RTK固定解，GPS数据可靠
+                        if self.rtk_status == 4 and self._is_unloading_heading_ready():
                             self.get_logger().info(f"[START] 出仓完成，当前GPS坐标：经度{self.unloading_lon:.6f}，纬度{self.unloading_lat:.6f}")
                             heading = self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00
                             heading = (heading + 360) % 360  # 归一化到0-360度
@@ -1532,7 +1564,9 @@ class MotorControlNode(Node):
                             self.unloading_timer.cancel()
                             self.unloading_timer = None
                         elif int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
-                            self.get_logger().warn(f"[START] 出仓完成，但GPS状态不佳（状态码{self.rtk_status}），无法获取可靠坐标,继续等待GPS修正")
+                            rtk_label = "Fixed" if self.rtk_status == 4 else f"状态码{self.rtk_status}"
+                            hdg = (self.imu_yaw_deg + 360) % 360 if self.imu_yaw_deg is not None else -1
+                            self.get_logger().warn(f"[START] 出仓完成，但条件不满足（RTK={rtk_label}，航向={hdg:.1f}°），无法获取可靠坐标,继续等待GPS修正")
                             self.switch_state('h') # 切回HOLD状态，确保电机停止
 
 
@@ -1618,16 +1652,33 @@ class MotorControlNode(Node):
                 LOADING_GPS[0], LOADING_GPS[1])
 
             if self.current_lon == 0.0 and self.current_lat == 0.0:
-                self.get_logger().warn("[LOADING] GPS坐标无效，停止导航，进入DISABLE")
+                self.loading_timeout_error = True
+                self.get_logger().error("[LOADING] GPS坐标无效，上报故障并进入DISABLE")
                 self.switch_state('z')
+                if self.loading_timer is not None:
+                    self.loading_timer.cancel()
+                    self.loading_timer = None
+                self.is_in_bin_process = False
+                self.loading_phase = None
+                self._nav_sub_phase = None
+                self.nav_status = "IDLE"
                 return
 
             # 整体超时检查
             if current_time - self.loading_nav_start_time > self.loading_nav_timeout:
-                self.get_logger().warn(
+                self.loading_timeout_error = True
+                self.get_logger().error(
                     f"[LOADING] 导航到进仓点超时({self.loading_nav_timeout:.0f}s)，"
-                    f"当前距离{gps_dist:.1f}m，进入DISABLE")
+                    f"当前距离{gps_dist:.1f}m，上报故障并进入DISABLE")
                 self.switch_state('z')
+                # 清理进仓状态，防止重复进入造成日志刷屏
+                if self.loading_timer is not None:
+                    self.loading_timer.cancel()
+                    self.loading_timer = None
+                self.is_in_bin_process = False
+                self.loading_phase = None
+                self._nav_sub_phase = None
+                self.nav_status = "IDLE"
                 return
 
             # 到达目标点，转入角度调整阶段
@@ -1773,6 +1824,7 @@ class MotorControlNode(Node):
                     return
                 self._loading_gps_rejected_logged = False
                 # 距离≤10m但>阈值，先导航到进仓点
+                self.loading_timeout_error = False  # 清除上一次进仓超时故障
                 if gps_dist > NAV_ARRIVE_THRESHOLD:
                     self.loading_phase = "LOADING_NAV_TO_GPS"
                     self.loading_nav_start_time = time.time()
@@ -2106,6 +2158,7 @@ class MotorControlNode(Node):
         self.last_backward_log_time = 0.0
         self.last_direct_loading_log_time = 0.0
         self.loading_direct_start_time = None
+        self.complete_state = True
         self.switch_state('z')  # DISABLE状态，确保电机停止
 
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
