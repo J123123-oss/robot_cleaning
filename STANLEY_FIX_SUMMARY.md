@@ -354,7 +354,7 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - 连续 30 帧（~3s @10Hz）→ 锁定倾斜故障，停车 + PAUSE 导航 + 发布故障码 64
   - 姿态恢复后连续 5 帧正常 → 清除故障，自动恢复导航
 - **故障码透传**: `motor_control.py` 中 `rtk_error_callback` 和 `build_error_code` 掩码均加上 `ERROR_TILT_FAULT`，确保故障码 64 不被过滤
-- **参数**: `TILT_ANGLE_THRESHOLD=30.0°`, `TILT_CONFIRM_FRAMES=30`, `TILT_RECOVERY_FRAMES=5`
+- **参数**: `TILT_ANGLE_THRESHOLD=10.0°`, `TILT_CONFIRM_FRAMES=30`, `TILT_RECOVERY_FRAMES=5`
 - **说明**: `angle_x`/`angle_y` 由传感器内部 IMU + 融合算法产出，不依赖 RTK 固定解状态，即使丢星仍有效
 - **影响**: `rtk_nav.py` + `motor_control.py`。
 
@@ -378,15 +378,39 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - `boundary_triggered` 去掉重复的 `info`，仅保留 `warn`
 - **影响**: `rtk_nav.py`。
 
+### 37. 同航点重校准计数在每次校准后被无条件清零（force_bearing_mode 不触发根因 #1）
+
+- **问题**: 航点很近时（~0.56m），航向异常触发第一次重校准（count=1），但 WAYPOINT_CALIB handler 执行完校准后**无条件**把 `waypoint_recalib_count` 清零、`force_bearing_mode` 设为 False。导致第二次航向异常时 count 重新从 1 开始，永远到达不了 2，`force_bearing_mode` 永远不触发。
+- **现场证据**: `run20260528.log` 中航点 314（距离 0.56m）反复校准，但 force_bearing_mode 从未激活，机器人绕圈寻找目标。
+- **修复**: WAYPOINT_CALIB handler 中 `waypoint_recalib_count`、`force_bearing_mode`、`bearing_mode_locked` 的复位移入 `if not is_recalib:` 分支。`is_recalib=True`（航向异常校准）时计数保持，只在正常航点切换时清零。
+- **影响**: `rtk_nav.py` — WAYPOINT_CALIB handler 中 `if not is_recalib:` 分支。
+
+### 38. 重校准后 bearing_mode_locked 未清除压制第二次航向异常检测（force_bearing_mode 不触发根因 #2）
+
+- **问题**: 修复 #37 后计数能保留了，但**更深层问题**仍然存在：第一次航向异常校准完成后，机器人已接近航段终点（t≈1.0 或 >1.0）。回到 WAYPOINT_MOVE 后，`bearing_mode_locked` 立即激活 → `in_bearing_mode=True` → 航向异常检测被完全压制（count 清零）。导致第二次航向异常**永远检测不到**，即使 count 能保留，也等不到 `>=2` 的那一刻。
+- **流程**: 校准到 path_direction=0.2° → bearing_mode_locked=True → path_direction 跳变到 bearing(current→target)≈92° → hdg_err≈84° 但被 in_bearing_mode 忽略 → angle_abnormal_count 被清零 → 永远不会触发第二次重校准 → force_bearing_mode 不生效。
+- **修复**: WAYPOINT_CALIB handler 的 `is_recalib=True` 分支中，清除 `bearing_mode_locked = False` 和 `stanley_path_start = None`。校准完成后下一帧 WAYPOINT_MOVE 会用当前位姿重新初始化 Stanley 路径段，t 从当前位置重算：
+  - 若 t<1.0：段模式，航向异常检测正常运作 → 第二次异常触发 force_bearing_mode 直行
+  - 若 t>1.0：进入 bearing mode 直接朝向目标，也比之前绕圈快
+- **影响**: `rtk_nav.py` — WAYPOINT_CALIB handler 新增 `else` 分支（`is_recalib=True`），清除 `bearing_mode_locked` + `stanley_path_start`。
+
 ### 参数更新
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | ERROR_TILT_FAULT | 64 (bit 6) | 倾斜/跌落故障码 |
-| TILT_ANGLE_THRESHOLD | 30.0° | 倾斜判定阈值 |
+| TILT_ANGLE_THRESHOLD | 10.0° | 倾斜判定阈值 |
 | TILT_CONFIRM_FRAMES | 30 | 连续倾斜确认帧数（防抖） |
-| TILT_RECOVERY_FRAMES | 5 | 连续正常帧数恢复 |<｜end▁of▁thinking｜>
+| TILT_RECOVERY_FRAMES | 5 | 连续正常帧数恢复 |
 
-<｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="TodoWrite">
-<｜｜DSML｜｜parameter name="todos" string="false">[{"content": "更新 STANLEY_FIX_SUMMARY.md", "status": "completed", "activeForm": "更新 STANLEY_FIX_SUMMARY.md"}, {"content": "暂存并提交所有更改", "status": "in_progress", "activeForm": "暂存并提交所有更改"}, {"content": "推送到远程", "status": "pending", "activeForm": "推送到远程"}]
+### 39. 倾斜故障与 RTK 错误位互相覆盖
+
+- **问题**: `update_rtk_error_status()` 采用整值覆盖。倾斜触发时写入 `64`，但后续 fixed 帧会直接写 `0`；倾斜恢复时也会把 `RTK_NOT_FIXED(4)` / `RTK_TIMEOUT(8)` 一并清掉，导致 `/rtk/error_status` 对外呈现不稳定。
+- **修复**: 在 `rtk_nav.py` 中新增按 bit 增删的 helper，倾斜、RTK 非固定解、RTK/航向超时都改为按位置位/清位，不再互相抹掉。
+- **影响**: `rtk_nav.py` — `heading_callback()`、`handle_rtk_data_timeout()`、`update_rtk_error_status()` 周边。
+
+### 40. 倾斜恢复会误恢复其他原因造成的 PAUSE
+
+- **问题**: 倾斜恢复分支此前只判断 `nav_state == PAUSE`，没有区分暂停是由倾斜、RTK 非固定解还是 `/wtrtk_data` 超时触发。结果是“先 RTK 故障暂停，后姿态恢复”也可能被错误拉回导航。
+- **修复**: 为 `nav_context` 增加 `pause_reason`，在 `rtk_not_fixed`、`rtk_timeout`、`heading_timeout`、`tilt_fault` 进入 PAUSE 时记录来源；恢复时只处理自己触发的暂停。
+- **影响**: `rtk_nav.py` — `nav_context`、`publish_nav_context()`、`heading_callback()`、`handle_rtk_data_timeout()`、`reset_nav_context()`。
