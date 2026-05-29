@@ -1150,12 +1150,12 @@ class MotorControlNode(Node):
                 "areas": self.cleaning_area,
                 "error": self.build_error_code(),
                 # "uuid": "163e4ac9-18a9-4e08-9301-36ca08e07581",
-                "acceleration": {
-                    "x": self.current_left_speed,
-                    "y": self.current_right_speed,
-                    "z": self.brush_speed
+                "angular_velocity": {
+                    "x": self.angle_x,
+                    "y": self.angle_y,
+                    "z": self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00,
                 },
-                "motor_speed_feedback": {
+                "acceleration": {
                     "x": float(self.motor_ctrl.motors[0]["actual_velocity"]),
                     "y": float(self.motor_ctrl.motors[1]["actual_velocity"]),
                     "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
@@ -1171,8 +1171,8 @@ class MotorControlNode(Node):
                 "motor_fault": self.motor_fault_codes,
                 "dock_sensors": self.dock_sensors,
                 "resume_charge": self.charge_resume_count,
-                "angle_x": self.angle_x,
-                "angle_y": self.angle_y,
+                # "angle_x": self.angle_x,
+                # "angle_y": self.angle_y,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             dock_state_msg = {

@@ -363,7 +363,7 @@ class CanMotorDriver(Node):
 
     def parse_motor_feedback(self, can_id: int, data: bytearray):
         """解析电机反馈数据（RS02协议 type2）"""
-        motor_id = can_id & 0xFF
+        motor_id = (can_id >> 8) & 0xFF
 
         motor = None
         for m in self.motors:
