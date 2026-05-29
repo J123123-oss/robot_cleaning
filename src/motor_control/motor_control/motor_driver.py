@@ -362,58 +362,41 @@ class CanMotorDriver(Node):
                 self.get_logger().error(f"Failed to query motor {motor['id']} feedback")
 
     def parse_motor_feedback(self, can_id: int, data: bytearray):
-        """解析电机反馈数据（基于图片中定义的协议）"""
-        # 根据图片中的29位ID结构，从bit8~bit15提取电机ID
-        # Bit8~Bit15: 当前电机CAN ID
-        motor_id = (can_id >> 8) & 0xFF
-        
-        # 查找对应的电机
+        """解析电机反馈数据（RS02协议 type2）"""
+        motor_id = can_id & 0xFF
+
         motor = None
         for m in self.motors:
             if m["id"] == motor_id:
                 motor = m
                 break
-                
+
         if motor is None:
             return
-            
+
         try:
-            # 解析数据区（Byte0~Byte7）
-            # Byte0~1: 当前角度 [0~65535] 对应 (-12.57f~12.57f)
-            position_raw = (data[0] << 8) | data[1]  # 低字节在前
-            
-            # Byte2~3: 当前角速度 [0~65535] 对应 (-20rad/s~20rad/s)
-            speed_raw = (data[2] << 8) | data[3]  # 低字节在前
-            
-            # Byte4~5: 当前力矩 [0~65535] 对应 (-60Nm~60Nm)
-            torque_raw = (data[4] << 8) | data[5]  # 低字节在前
-            
-            # Byte6~7: 当前温度：Temp(摄氏度)*10
-            temp_raw = (data[6] << 8) | data[7]  # 低字节在前
-            temp = temp_raw / 10.0  # 转换为实际温度值
-            
-            # 根据电机ID使用不同的转换范围
-            if motor_id in [1, 2]:  # 左右轮电机
-                # 位置范围: -12.57 ~ 12.57
-                position = self.uint16_to_float(position_raw, -12.57, 12.57, 16)
-                # 速度范围: -20 ~ 20 rad/s
-                speed = self.uint16_to_float(speed_raw, -20.0, 20.0, 16)
-                # 扭矩范围: -60 ~ 60 Nm
-                torque = self.uint16_to_float(torque_raw, -60.0, 60.0, 16)
-            else:  # 前毛刷电机 (ID=3)
-                # 位置范围: -4π ~ 4π
-                position = self.uint16_to_float(position_raw, -4 * math.pi, 4 * math.pi, 16)
-                # 速度范围: -44 ~ 44 rad/s
-                speed = self.uint16_to_float(speed_raw, -44.0, 44.0, 16)
-                # 扭矩范围: -17 ~ 17 Nm
-                torque = self.uint16_to_float(torque_raw, -17.0, 17.0, 16)
-                
-            # 更新电机实际参数
+            # Byte0~1: 当前角度 [0~65535] → -12.57~12.57 rad
+            position_raw = (data[0] << 8) | data[1]
+
+            # Byte2~3: 当前角速度 [0~65535] → -44~44 rad/s
+            speed_raw = (data[2] << 8) | data[3]
+
+            # Byte4~5: 当前力矩 [0~65535] → -17~17 Nm
+            torque_raw = (data[4] << 8) | data[5]
+
+            # Byte6~7: 当前温度 = raw / 10 (摄氏度)
+            temp_raw = (data[6] << 8) | data[7]
+            temp = temp_raw / 10.0
+
+            position = self.uint16_to_float(position_raw, -12.57, 12.57, 16)
+            speed = self.uint16_to_float(speed_raw, -44.0, 44.0, 16)
+            torque = self.uint16_to_float(torque_raw, -17.0, 17.0, 16)
+
             motor["actual_position"] = position
             motor["actual_velocity"] = speed
             motor["actual_torque"] = torque
             motor["actual_temperature"] = temp
-            
+
         except Exception as e:
             self.get_logger().warn(f"Error parsing motor {motor_id} feedback: {str(e)}")
 
