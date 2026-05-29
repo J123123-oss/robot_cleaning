@@ -76,7 +76,7 @@ areas:
     edge_distance_lat: [0.1, 0.3]  
 
   # 19南侧加长方块   -------------------------------------------------------
-  - name: "south_19_long_block"
+  - name: "E19_long_block start"
     calib_point_a: {lon: 110.64742706559392, lat: 35.60286741056806}
     calib_point_b: {lon: 110.64742587033007, lat: 35.60311039971046}
     calib_point_c: {lon: 110.64727525351053, lat: 35.60311302695789}
@@ -84,7 +84,7 @@ areas:
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
   # 19南侧
-  - name: "south_19"
+  - name: "E19"
     calib_point_a: {lon: 110.6477703763593, lat: 35.602868395349155}
     calib_point_b: {lon: 110.64776966454107, lat: 35.603101230415184}
     calib_point_c: {lon: 110.6474309438137, lat: 35.603101918359954}
@@ -100,7 +100,7 @@ areas:
     edge_distance_lat: [0.1, -0.3]  
 
   # 20南侧加长方块
-  - name: "south_20_long_block"
+  - name: "E20_long_block"
     calib_point_a: {lon: 110.64742843779285, lat: 35.60265380108701}
     calib_point_b: {lon: 110.64742718555796, lat: 35.60283492029976}
     calib_point_c: {lon: 110.64727659884244, lat: 35.60283444780098}
@@ -108,7 +108,7 @@ areas:
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
   # 20南侧
-  - name: "south_20"
+  - name: "E20"
     calib_point_a: {lon: 110.64777166295664, lat: 35.602665661235534}
     calib_point_b: {lon: 110.64777090237833, lat: 35.60283616232081}
     calib_point_c: {lon: 110.6474350356423, lat: 35.602835007169}
@@ -125,7 +125,7 @@ areas:
     edge_distance_lat: [0.1, 0.3]  
 
   # 21南侧加长方块
-  - name: "south_21_long_block"
+  - name: "E21_long_block"
     calib_point_a: {lon: 110.64742833232991, lat: 35.60244005332984}
     calib_point_b: {lon: 110.64742745040523, lat: 35.6025690612263}
     calib_point_c: {lon: 110.64727644082087, lat: 35.60256836411488}
@@ -134,7 +134,7 @@ areas:
     edge_distance_lat: [0.3, 0.3]
 
   # 21南侧
-  - name: "south_21"
+  - name: "E21"
     calib_point_a: {lon: 110.64777253579807, lat: 35.60244104011207}
     calib_point_b: {lon: 110.64777235307753, lat: 35.60255989772949}
     calib_point_c: {lon: 110.64743581917091, lat: 35.60255880384909}
@@ -144,7 +144,7 @@ areas:
     edge_distance_lat: [0.3, 0.3]
 
   # back_21B-20A
-  - name: "back_21B-20A"
+  - name: "back_21B-20A stop"
     calib_point_a: {lon: 110.64777235307753, lat: 35.60255989772949}
     calib_point_b: {lon: 110.64777166295664, lat: 35.602665661235534}
     calib_point_c: {lon: 110.64777235307753, lat: 35.60255989772949}

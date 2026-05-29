@@ -34,7 +34,7 @@ areas:
     calib_point_c: {lon: 110.64776102878216, lat: 35.60507126970284}
 
   # # 9南侧
-  - name: "south_9"
+  - name: "E9 start"
     calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
     calib_point_b: {lon: 110.64776064561126, lat: 35.6050338231927}
     calib_point_c: {lon: 110.64726666463734, lat: 35.60503572475744}
@@ -53,7 +53,7 @@ areas:
     
 
   # 10南侧加长方块
-  - name: "south_10_long_block"
+  - name: "E10_long_block"
     calib_point_a: {lon: 110.64741750868075, lat: 35.60483190908763}
     calib_point_b: {lon: 110.64741799610167, lat: 35.604981450387}
     calib_point_c: {lon: 110.64726701518703, lat: 35.60498111769845}
@@ -64,7 +64,7 @@ areas:
     # [下，上]  
     edge_distance_lat: [0.3, 0.3]  
   # 10南侧
-  - name: "south_10"
+  - name: "E10"
     calib_point_a: {lon: 110.64776160546539, lat: 35.60485301059596}
     calib_point_b: {lon: 110.64776151365355, lat: 35.604980205991225}
     calib_point_c: {lon: 110.64742660623908, lat: 35.60498207020261}
@@ -83,7 +83,7 @@ areas:
 
 
   # 11南侧加长方块-----------------------------------------------------------------
-  - name: "south_11_long_block"
+  - name: "E11_long_block"
     calib_point_a: {lon: 110.64741933208789, lat: 35.60450568654541}
     calib_point_b: {lon: 110.64741883105908, lat: 35.604748695649164}
     calib_point_c: {lon: 110.64726902077777, lat: 35.60474919227829}
@@ -95,7 +95,7 @@ areas:
     edge_distance_lat: [0.3, 0.3]  
 
   # 11南侧
-  - name: "south_11"
+  - name: "E11"
     calib_point_a: {lon: 110.64776313280512, lat: 35.60452749634761}
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_c: {lon: 110.64742686839072, lat: 35.604749034251505}
@@ -105,7 +105,7 @@ areas:
     # [下，上]  
     edge_distance_lat: [0.3, 0.3]  
 
-  # back_11B-10A
+  # back_11B-10A stop
   - name: "back_11B-10A"
     calib_point_a: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_b: {lon: 110.64776160546539, lat: 35.60485301059596}

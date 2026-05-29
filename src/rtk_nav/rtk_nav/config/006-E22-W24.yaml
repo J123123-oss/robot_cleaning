@@ -90,7 +90,7 @@ areas:
     edge_distance_lat: [0.1, -0.3]  
 
   # 22南侧加长方块  -----------------------------------------------------
-  - name: "south_22_long_block"
+  - name: "E22_long_block start"
     calib_point_a: {lon: 110.64742962574496, lat: 35.602277601960715}
     calib_point_b: {lon: 110.64742868463246, lat: 35.602406783823106}
     calib_point_c: {lon: 110.64727723790173, lat: 35.60240587549978}
@@ -98,7 +98,7 @@ areas:
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
   # 22南侧
-  - name: "south_22"
+  - name: "E22"
     calib_point_a: {lon: 110.64777328985258, lat: 35.602289317044416}
     calib_point_b: {lon: 110.64777309831817, lat: 35.60240848925073}
     calib_point_c: {lon: 110.64743674068407, lat: 35.60240675086808}
@@ -115,7 +115,7 @@ areas:
     edge_distance_lat: [0.1, 0.4]  
 
   # 23南侧最小块
-  - name: "south_23_small_block"
+  - name: "E23_small_block"
     calib_point_a: {lon: 110.64727199480592, lat: 35.60211544701447}
     calib_point_b: {lon: 110.64727207955534, lat: 35.602129950559984}
     calib_point_c: {lon: 110.6472006510195, lat: 35.60212948887804}
@@ -123,7 +123,7 @@ areas:
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3]
   # 23南侧
-  - name: "south_23"
+  - name: "E23"
     calib_point_a: {lon: 110.64777457663791, lat: 35.60211783161967}
     calib_point_b: {lon: 110.64777398498698, lat: 35.602184783694824}
     calib_point_c: {lon: 110.647279569684, lat: 35.60218200226331}
@@ -137,7 +137,7 @@ areas:
     calib_point_c: {lon: 110.64777398498698, lat: 35.602184783694824}
     edge_distance_lat: [0.1, -0.1]  
   # 24南侧
-  - name: "south_24"
+  - name: "E24"
     calib_point_a: {lon: 110.64777591376827, lat: 35.60192967830139}
     calib_point_b: {lon: 110.64777435841093, lat: 35.602079561345256}
     calib_point_c: {lon: 110.6472005047547, lat: 35.60207628552591}
@@ -146,8 +146,8 @@ areas:
     edge_distance_lat: [0.3, 0.3]
 
 
-  # bridge_24A-south24D
-  - name: "bridge_24A-south24D"
+  # bridge_E24A-E24D
+  - name: "bridge_E24A-E24D stop"
     calib_point_a: {lon: 110.64777591376827, lat: 35.60192967830139}
     calib_point_b: {lon: 110.64720316, lat: 35.60192661}
     calib_point_c: {lon: 110.64777591376827, lat: 35.60192967830139}
@@ -155,15 +155,15 @@ areas:
     edge_distance_lon: [0.3, 0.3]  
     edge_distance_lat: [0.3, 1.0]  
 
-  # bridge_front1-north24C
-  - name: "bridge_front1-north24C"
+  # bridge_front1-W24C
+  - name: "bridge_front1-W24C"
     calib_point_a: {lon: 110.6472026954892, lat: 35.601931421995225}
     calib_point_b: {lon: 110.64718371063053, lat: 35.601931086848886}
     calib_point_c: {lon: 110.6472026954892, lat: 35.601931421995225}
 
 
   # 北侧24
-  - name: "north_24"
+  - name: "W24"
     calib_point_a: {lon: 110.6466094331906, lat: 35.60207900896125}
     calib_point_b: {lon: 110.64660984388259, lat: 35.60192961528979}
     calib_point_c: {lon: 110.64718371063053, lat: 35.601931086848886}
@@ -172,26 +172,21 @@ areas:
     edge_distance_lat: [0.3, 0.3]
 
 
-  # back_north24B-north24C   --------------------------------------------
-  - name: "back_north24B-north24C"
+  # back_W24B-W24C   --------------------------------------------
+  - name: "back_W24B-W24C"
     calib_point_a: {lon: 110.64660984388259, lat: 35.60192961528979}
     calib_point_b: {lon: 110.64718371063053, lat: 35.601931086848886}
     calib_point_c: {lon: 110.64660984388259, lat: 35.60192961528979}
     start_corner: "top_right"
-  # back_front1-south24D
-  - name: "front1-south24D"
-    calib_point_a: {lon: 110.6472026954892, lat: 35.601931421995225}
-    calib_point_b: {lon: 110.64720316, lat: 35.60192661}
-    calib_point_c: {lon: 110.6472026954892, lat: 35.601931421995225}
-    start_corner: "top_right" 
-  # back_north24D-24A
-  - name: "back_south24D-24A"
+
+  # back_W24D-24A
+  - name: "back_E24D-24A"
     calib_point_a: {lon: 110.64720316, lat: 35.60192661}
     calib_point_b: {lon: 110.64777591376827, lat: 35.60192967830139}
     calib_point_c: {lon: 110.64720316, lat: 35.60192661}
     start_corner: "top_right"
     edge_distance_lon: [0.3, 0.3]  
-    edge_distance_lat: [1.0, 0.5]  
+    edge_distance_lat: [3.0, 0.5]  
     
 
   # back_24B-23A
