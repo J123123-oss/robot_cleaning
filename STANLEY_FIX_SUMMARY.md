@@ -414,3 +414,39 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **问题**: 倾斜恢复分支此前只判断 `nav_state == PAUSE`，没有区分暂停是由倾斜、RTK 非固定解还是 `/wtrtk_data` 超时触发。结果是“先 RTK 故障暂停，后姿态恢复”也可能被错误拉回导航。
 - **修复**: 为 `nav_context` 增加 `pause_reason`，在 `rtk_not_fixed`、`rtk_timeout`、`heading_timeout`、`tilt_fault` 进入 PAUSE 时记录来源；恢复时只处理自己触发的暂停。
 - **影响**: `rtk_nav.py` — `nav_context`、`publish_nav_context()`、`heading_callback()`、`handle_rtk_data_timeout()`、`reset_nav_context()`。
+
+## 2026-05-29 force_bearing_mode 修复（count 重置 bug + bearing_mode 抑制 + 追尾螺旋）
+
+### 41. 同航点重校准计数在每次校准后被无条件清零（根因 #1）
+
+- **问题**: 航点很近时（~0.56m），航向异常触发第一次重校准（count=1），但 WAYPOINT_CALIB handler 把 `waypoint_recalib_count` 无条件清零。导致第二次航向异常时 count 重新从 1 开始，`force_bearing_mode` 永远不触发。
+- **修复**: `waypoint_recalib_count`、`force_bearing_mode`、`bearing_mode_locked` 的复位移入 `if not is_recalib:` 分支。航向异常校准（`is_recalib=True`）时计数保留，只在正常航点切换时清零。
+- **影响**: `rtk_nav.py` — WAYPOINT_CALIB handler。
+
+### 42. 重校准后 bearing_mode_locked 压制第二次航向异常检测（根因 #2）
+
+- **问题**: 修复 #41 后计数保留了，但校准完成回到 WAYPOINT_MOVE 时 t>1.0，`bearing_mode_locked` 立即激活 → `in_bearing_mode=True` → 航向异常检测被压制（count 被清零）。第二次航向异常永远检测不到。
+- **修复**: `is_recalib=True` 分支清除 `bearing_mode_locked=False` + `stanley_path_start=None`。校准完成后用当前位姿重新初始化 Stanley 路径段。
+- **影响**: `rtk_nav.py` — WAYPOINT_CALIB handler 新增 `else` 分支。
+
+### 43. force_bearing_mode 追尾螺旋 + 中途打滑无法纠正（根因 #3 — 最终修复）
+
+- **问题**: 修复 #41+#42 后 `force_bearing_mode` 成功触发了，但 `path_direction = bearing(current→target)` 每帧重算，形成正反馈追尾螺旋：
+  - 机器人转弯追赶 path_dir → path_dir 随位置变化 → 永远追不上
+  - 日志证据：`run20260529.log` 航点 8，force_bearing_mode 激活后 path_dir 从 65.5° 螺旋到 173°→-177°→-167°→...，hdg_err 始终 80-116°，机器人绕圈
+  - **进一步问题**：若用固定死缓存方位角，中途打滑航向偏了之后永远回不来
+- **修复**（自适应循环对准）:
+  1. **激活时先旋转校准再直行**（两处 WAYPOINT_MOVE + INITIAL_MOVE）：计算 `bearing(current→target)`，原地旋转对准目标方向
+  2. **每帧检查航向偏差**：`bearing_err = abs(bearing(current→target) - imu_yaw)`
+     - `bearing_err > 15°`：先原地旋转对准，再继续 — 处理打滑/漂移
+     - `bearing_err ≤ 15°`：直接用实时方位角 — 偏差小不会螺旋，且随位置自适应更新，不会"死"
+  3. **新增 `force_bearing_target` 字段**：nav_context 初始化、航点切换重置、debug 发布
+- **流程**: 激活 → 原地旋转对准 → 直行（实时方位角，偏差小安全） → 偏差大 → 再原地对准 → 直行 → ...循环 → 到达目标
+- **影响**: `rtk_nav.py` — 两处 force_bearing_mode 激活 + 两处 path_direction 计算（自适应循环）+ nav_context 初始化/重置/debug 发布。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| force_bearing_target | None / bearing° | force_bearing_mode 激活时缓存的固定目标方位角 |
+

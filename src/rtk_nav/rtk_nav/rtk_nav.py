@@ -226,6 +226,7 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": False,  # 是否是角度异常后的重新校准
             "waypoint_recalib_count": 0,  # 同航点校准次数（打滑检测）
             "force_bearing_mode": False,  # 跳过循迹，直接用方位角直行
+            "force_bearing_target": None,  # 激活时缓存的固定方位角，防止追尾螺旋
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
             "tilt_confirm_count": 0,     # 连续倾斜帧数（触发确认）
             "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
@@ -1747,7 +1748,24 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
-            if self.nav_context.get("force_bearing_mode") or self.nav_context.get("bearing_mode_locked"):
+            if self.nav_context.get("force_bearing_mode"):
+                current_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
+                bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
+                if bearing_err > 15.0:
+                    self.get_logger().warn(
+                        f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
+                    calib_gen = self.calibrate_heading_at_waypoint(current_bearing)
+                    while True:
+                        try:
+                            left_speed, right_speed = next(calib_gen)
+                            if self.is_boundary_triggered or self.boundary_correct_locked:
+                                left_speed, right_speed = self.get_boundary_correct_speed()
+                            yield (left_speed, right_speed)
+                        except StopIteration:
+                            break
+                    continue
+                path_direction = current_bearing
+            elif self.nav_context.get("bearing_mode_locked"):
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             elif t > 1.0:
                 self.nav_context["bearing_mode_locked"] = True
@@ -1792,9 +1810,22 @@ class RTKNavControlNode(Node):
                 self.nav_context["angle_abnormal_count"] = 0
                 if self.nav_context["waypoint_recalib_count"] >= 2:
                     self.nav_context["force_bearing_mode"] = True
+                    self.heading_abnormal_start_time = None
+                    self.heading_timed_out = False
+                    fixed_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
+                    self.nav_context["force_bearing_target"] = fixed_bearing
                     self.get_logger().warn(
-                        "[Stanley] 打滑/位置偏移，切换为方位角直行模式，不再校准航向"
+                        f"[Stanley] 同航点≥2次航向异常，先原地旋转校准到目标方位{fixed_bearing:.1f}°，再直行"
                     )
+                    calib_gen = self.calibrate_heading_at_waypoint(fixed_bearing)
+                    while True:
+                        try:
+                            left_speed, right_speed = next(calib_gen)
+                            if self.is_boundary_triggered or self.boundary_correct_locked:
+                                left_speed, right_speed = self.get_boundary_correct_speed()
+                            yield (left_speed, right_speed)
+                        except StopIteration:
+                            break
                     continue
                 calib_gen = self.calibrate_heading_at_waypoint(path_direction)
                 while True:
@@ -1844,6 +1875,7 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": False,
             "waypoint_recalib_count": 0,
             "force_bearing_mode": False,
+            "force_bearing_target": None,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
         }
@@ -2195,6 +2227,7 @@ class RTKNavControlNode(Node):
                         # 正常航点切换时才清零打滑计数器和方位角直行模式
                         self.nav_context["waypoint_recalib_count"] = 0
                         self.nav_context["force_bearing_mode"] = False
+                        self.nav_context["force_bearing_target"] = None
                         self.nav_context["bearing_mode_locked"] = False
                         # 仅在正常航点切换时获取新航点
                         target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
@@ -2339,7 +2372,25 @@ class RTKNavControlNode(Node):
 
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
-                if self.nav_context.get("force_bearing_mode") or self.nav_context.get("bearing_mode_locked"):
+                if self.nav_context.get("force_bearing_mode"):
+                    # 实时算目标方位，偏差大则先原地旋转对准再走，偏差小直接跟
+                    current_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                    bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
+                    if bearing_err > 15.0:
+                        # 航向偏差大→先原地旋转对准目标，防止追尾螺旋
+                        self.get_logger().warn(
+                            f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
+                        calib_gen = self.calibrate_heading_at_waypoint(current_bearing)
+                        while True:
+                            try:
+                                left_speed, right_speed = next(calib_gen)
+                                yield (left_speed, right_speed)
+                            except StopIteration:
+                                break
+                        continue
+                    # 偏差可接受→用实时方位角（偏差小不会螺旋，且自适应车体位移）
+                    path_direction = current_bearing
+                elif self.nav_context.get("bearing_mode_locked"):
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 elif t > 1.0:
                     self.nav_context["bearing_mode_locked"] = True
@@ -2376,9 +2427,19 @@ class RTKNavControlNode(Node):
                         self.nav_context["force_bearing_mode"] = True
                         self.heading_abnormal_start_time = None
                         self.heading_timed_out = False
+                        target_lon, target_lat, _ = target_waypoint
+                        fixed_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                        self.nav_context["force_bearing_target"] = fixed_bearing
                         self.get_logger().warn(
-                            "[Stanley] 打滑/位置偏移，切换为方位角直行模式，不再校准航向"
+                            f"[Stanley] 同航点≥2次航向异常，先原地旋转校准到目标方位{fixed_bearing:.1f}°，再直行"
                         )
+                        self.start_heading_recalibration(
+                            fixed_bearing,
+                            self.normalize_angle(fixed_bearing - self.imu_yaw),
+                            f"同航点第{self.nav_context['waypoint_recalib_count']}次航向异常"
+                        )
+                        current_nav_state = NavState.WAYPOINT_CALIB
+                        yield (0.0, 0.0)
                         continue
                     self.start_heading_recalibration(
                         path_direction,
@@ -2466,6 +2527,7 @@ class RTKNavControlNode(Node):
             "pre_pause_state": self.nav_context.get("pre_pause_state"),
             "pause_reason": self.nav_context.get("pause_reason"),
             "force_bearing_mode": self.nav_context.get("force_bearing_mode", False),
+            "force_bearing_target": self.nav_context.get("force_bearing_target"),
             "bearing_mode_locked": self.nav_context.get("bearing_mode_locked", False),
             "angle_abnormal_count": self.nav_context.get("angle_abnormal_count", 0),
             "is_angle_recalib": self.nav_context.get("is_angle_recalib", False),
