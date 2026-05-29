@@ -40,6 +40,21 @@ ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 
 ## RTK导航流程图
 
+### 自动清扫简化流程
+
+```mermaid
+graph LR
+    DISABLE["DISABLE<br/>失能"] -->|"ENABLE + START"| START["START<br/>出仓"]
+    START -->|"出仓完成"| AUTO_CLEANING["AUTO_CLEANING<br/>RTK巡航清扫"]
+    AUTO_CLEANING -->|"导航完成"| LOADING["LOADING<br/>激光对位进仓"]
+    LOADING -->|"进仓完成"| DISABLE
+
+    style DISABLE fill:#ff6b6b,stroke:#333,color:#fff
+    style START fill:#6bcb77,stroke:#333
+    style AUTO_CLEANING fill:#9b59b6,stroke:#333,color:#fff
+    style LOADING fill:#4d96ff,stroke:#333,color:#fff
+```
+
 ### 主状态机
 ```mermaid
 graph TD
@@ -256,7 +271,7 @@ graph TD
 
 - **连续异常检测**: 导航行驶中航向误差超过 15° 连续 5 帧（0.5s），判定为异常航向，触发重校准。
 - **方位角模式排除**: t>1.0（越过投影终点）或 force_bearing_mode 时，航向误差来自侧向接近目标（几何现象而非 IMU 异常），跳过航向异常计数和超时计时。
-- **打滑/偏移兜底**: 同航点重校准 ≥2 次后自动切换 `force_bearing_mode`，直接用 `bearing(current→target)` 直行，不再校准航向。航点切换后清零。
+- **打滑/偏移兜底**: 同航点重校准 ≥2 次后自动切换 `force_bearing_mode`，先原地旋转对准目标方位，之后每帧检查航向偏差：>15° 先原地对准再走，≤15° 用实时方位角直行。既防止 `bearing(current→target)` 每帧重算导致的追尾螺旋，又避免固定缓存中途打滑回不来。航点切换后清零。
 - **RTK 数据超时**: `/wtrtk_data` 超过 1s 未更新立即停车 PAUSE；数据新鲜即为恢复条件（不再检查航向误差绝对值，避免 IMU 漂移导致无法恢复）。
 - **模式切入清理**: 进入 AUTO_CLEANING / 路径切换时清零 `heading_abnormal_start_time` 和 `heading_timed_out`，防止旧任务污染。
 - 单帧跳变只累计一次，下一帧恢复到阈值内会清零计数，避免 RTK/IMU 瞬时抖动误判。
@@ -301,4 +316,22 @@ graph TD
 | ANGLE_ABNORMAL_COUNT | 5 | 连续异常帧数（0.5s） |
 | 航向优先抑制 | abs(hdg_err)>4° | 横向项与航向项同向时 st_corr 减半 |
 | RTK_DATA_TIMEOUT | 1.0 s | RTK 数据断流超时停车 |
-| force_bearing_mode | ≥2次 | 同航点重校准次数阈值，触发后方位角直行 |
+| force_bearing_mode | ≥2次 | 同航点重校准次数阈值，触发后自适应循环对准（>15°先旋转, ≤15°实时方位角直行） |
+| FORCE_BEARING_REALIGN_THRESHOLD | 15.0° | force_bearing_mode 下航向偏差超此值触发原地重新对准 |
+
+## 批量生成清扫路径
+
+`batch_generate_paths.py` —— 不依赖 ROS2 环境，直接读取 YAML 配置，调用路径规划核心函数生成清扫路径 txt 文件。
+
+```bash
+# 基础用法（只生成 txt，不画图）
+python batch_generate_paths.py
+
+# 输出目录: src/rtk_nav/rtk_nav/cleaning_path/
+# 读取目录: src/rtk_nav/rtk_nav/config/
+```
+
+- 遍历 `config/` 下所有 `*.yaml` 配置文件
+- 每个配置文件生成一个 `{配置名}.txt` 密集点路径文件
+- 图片绘制已注释，需要时取消注释 `plot_multi_area_path` 和 matplotlib 导入即可
+
