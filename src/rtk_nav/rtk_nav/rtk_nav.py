@@ -3,6 +3,7 @@
 import os
 import math
 from typing import Optional, List, Dict, Tuple, Generator
+import json
 import time
 import rclpy
 import re
@@ -68,6 +69,12 @@ BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
+ERROR_TILT_FAULT = 64        # 倾斜/跌落故障
+
+# 倾斜检测配置
+TILT_ANGLE_THRESHOLD = 30.0  # 倾角阈值（度），abs(angle_x)或abs(angle_y)超此值判定倾斜
+TILT_CONFIRM_FRAMES = 30     # 连续倾斜帧数确认（防抖），避免颠簸误报
+TILT_RECOVERY_FRAMES = 5     # 连续正常帧数清除故障
 
 
 # 控制模式（与电机节点保持一致）
@@ -219,6 +226,9 @@ class RTKNavControlNode(Node):
             "waypoint_recalib_count": 0,  # 同航点校准次数（打滑检测）
             "force_bearing_mode": False,  # 跳过循迹，直接用方位角直行
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
+            "tilt_confirm_count": 0,     # 连续倾斜帧数（触发确认）
+            "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
+            "tilt_fault": False,         # 倾斜故障标志
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -232,6 +242,7 @@ class RTKNavControlNode(Node):
         self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
         self.heading_timed_out = False  # 航向角异常导致的超时标志
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
+        self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
         self.real_velocity = 0.0  # 当前真实速度 (m/s)
 
@@ -244,6 +255,7 @@ class RTKNavControlNode(Node):
         self.imu_heading_pub = self.create_publisher(Float32, "/imu_heading", 10)
         self.velocity_pub = self.create_publisher(Float32, "/rtk/velocity", 10)
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
+        self.nav_context_pub = self.create_publisher(String, "/rtk/nav_context", 10)  # 调试用：nav_context状态快照
 
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
@@ -498,7 +510,7 @@ class RTKNavControlNode(Node):
                 self.boundary_stop_published = False
                 self.get_logger().info("[RTKNav] 边界矫正完成，恢复正常 [解锁]")
 
-        self.get_logger().info(f"[RTKNav] 边界矫正状态: {self.boundary_correct_state}, 速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
+        self.get_logger().debug(f"[RTKNav] 边界矫正状态: {self.boundary_correct_state}, 速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
         return (left_speed, right_speed)
 
     def update_boundary_trigger_state(self, raw_trigger: bool):
@@ -1008,7 +1020,45 @@ class RTKNavControlNode(Node):
                 else:
                     self.publish_brush_speed(0.0)
                 self.nav_running = True
-        
+
+        # —— 倾斜/跌落检测（基于 angle_x/angle_y） ——
+        is_tilted = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD or abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
+
+        if is_tilted:
+            self.nav_context["tilt_normal_count"] = 0
+            self.nav_context["tilt_confirm_count"] += 1
+            if self.nav_context["tilt_confirm_count"] >= TILT_CONFIRM_FRAMES and not self.nav_context["tilt_fault"]:
+                self.nav_context["tilt_fault"] = True
+                if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                    self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                    self.nav_context["brush_active"] = self.brush_active
+                    self.nav_context["nav_state"] = NavState.PAUSE
+                    self.publish_nav_state(NavState.PAUSE)
+                self.nav_running = False
+                self.publish_stop_speed()
+                self.update_rtk_error_status(ERROR_TILT_FAULT)
+                self.get_logger().error(
+                    f"[倾斜故障] angle_x={msg.angle_x:.2f}°, angle_y={msg.angle_y:.2f}° "
+                    f"连续{self.nav_context['tilt_confirm_count']}帧超阈值({TILT_ANGLE_THRESHOLD}°)，已停车并暂停导航"
+                )
+        else:
+            self.nav_context["tilt_confirm_count"] = 0
+            if self.nav_context["tilt_fault"]:
+                self.nav_context["tilt_normal_count"] += 1
+                if self.nav_context["tilt_normal_count"] >= TILT_RECOVERY_FRAMES:
+                    self.nav_context["tilt_fault"] = False
+                    self.nav_context["tilt_normal_count"] = 0
+                    self.update_rtk_error_status(0)
+                    if self.nav_context["nav_state"] == NavState.PAUSE:
+                        self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
+                        self.brush_active = self.nav_context.get("brush_active", False)
+                        if self.brush_active:
+                            self.publish_brush_speed(RTK_BRUSH_SPEED)
+                        else:
+                            self.publish_brush_speed(0.0)
+                        self.get_logger().info("[倾斜恢复] 倾角已恢复正常，自动恢复导航")
+                    self.nav_running = True
+
         raw_lon = msg.ins_longitude
         raw_lat = msg.ins_latitude
         
@@ -1954,7 +2004,6 @@ class RTKNavControlNode(Node):
         self.publish_nav_state(current_nav_state)
         self.check_and_control_brush()
         if self.is_boundary_triggered:
-            self.get_logger().info("boundary_triggered!!!")
             self.get_logger().warn("boundary_triggered!!!")
 
         # 2. 阶段1：初始移动（初始点→第一个航点）- 仅首次启动且非恢复时执行
@@ -2378,6 +2427,33 @@ class RTKNavControlNode(Node):
         state_msg.data = state if isinstance(state, str) else state.value
         self.nav_state_pub.publish(state_msg)
 
+    def publish_nav_context(self):
+        """发布 nav_context 快照（JSON），便于调试定位问题"""
+        ctx = {
+            "nav_state": self.nav_context.get("nav_state", ""),
+            "current_waypoint_idx": self.current_waypoint_idx,
+            "total_waypoints": len(self.waypoints),
+            "nav_running": self.nav_running,
+            "rtk_error_code": self.rtk_error_code,
+            "tilt_fault": self.nav_context.get("tilt_fault", False),
+            "tilt_confirm_count": self.nav_context.get("tilt_confirm_count", 0),
+            "tilt_normal_count": self.nav_context.get("tilt_normal_count", 0),
+            "pre_pause_state": self.nav_context.get("pre_pause_state"),
+            "force_bearing_mode": self.nav_context.get("force_bearing_mode", False),
+            "bearing_mode_locked": self.nav_context.get("bearing_mode_locked", False),
+            "angle_abnormal_count": self.nav_context.get("angle_abnormal_count", 0),
+            "is_angle_recalib": self.nav_context.get("is_angle_recalib", False),
+            "heading_timed_out": self.heading_timed_out,
+            "rtk_data_timed_out": self.rtk_data_timed_out,
+            "control_mode": self.current_control_mode,
+            "brush_active": self.brush_active,
+            "ts": time.strftime("%H:%M:%S"),
+        }
+        msg = String()
+        msg.data = json.dumps(ctx, ensure_ascii=False)
+        self.nav_context_pub.publish(msg)
+        self._last_nav_context_publish = time.monotonic()
+
     def update_rtk_error_status(self, error_code: int, force: bool = False):
         if not force and error_code == self.rtk_error_code:
             return
@@ -2511,6 +2587,10 @@ class RTKNavControlNode(Node):
 
     def rtk_timer_callback(self):
         """10Hz定时器回调, 驱动多点导航逻辑"""
+        # 周期性发布 nav_context（每2s），便于 ros2 topic echo 调试
+        if time.monotonic() - self._last_nav_context_publish >= 2.0:
+            self.publish_nav_context()
+
         self.update_cleaning_area()
         self.update_rtk_error_status(self.rtk_error_code, force=True)
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value

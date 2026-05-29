@@ -21,7 +21,8 @@ from sensor_msgs.msg import NavSatFix
 import collections  # 用于创建固定长度的双端队列
 from rclpy.executors import MultiThreadedExecutor
 from std_srvs.srv import Trigger
-from custom_msgs.srv import ChargeControl  # 导入自定义充电控制服务类型  
+from custom_msgs.srv import ChargeControl  # 导入自定义充电控制服务类型
+from custom_msgs.msg import WTRTK
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -75,8 +76,7 @@ ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
 ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
-ERROR_RESERVED_1 = 32
-ERROR_RESERVED_2 = 64
+ERROR_TILT_FAULT = 64     # 倾斜/跌落故障（来自RTK角度检测）
 ERROR_RESERVED_3 = 128
 ERROR_RESERVED_4 = 256
 
@@ -203,6 +203,8 @@ class MotorControlNode(Node):
         self.rtk_error_code = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
+        self.angle_x = 0.0   # RTK角度X(度)，来自 /wtrtk_data
+        self.angle_y = 0.0   # RTK角度Y(度)，来自 /wtrtk_data
         #UNLOADING完成后GPS坐标记录（用于后续验证和日志）
         self.unloading_lon = None
         self.unloading_lat = None
@@ -314,6 +316,7 @@ class MotorControlNode(Node):
         self.dock_state_pub = self.create_publisher(String, "/dock_state", 10)  # dock mqtt msg
         self.rc_channels_pub = self.create_publisher(Float32MultiArray, "/rc_channels", 10)
         self.gps_sub = self.create_subscription(NavSatFix, '/car_center_gps', self.gps_callback, 10)
+        self.wtrtk_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.wtrtk_callback, 10)
 
         # 全局变量
         self.current_control_mode = "NORMAL"  # 默认普通模式
@@ -405,6 +408,11 @@ class MotorControlNode(Node):
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
 
+    def wtrtk_callback(self, msg: WTRTK) -> None:
+        """订阅 /wtrtk_data，提取 angle_x 和 angle_y"""
+        self.angle_x = msg.angle_x
+        self.angle_y = msg.angle_y
+
     def haversine_distance(self, lon1: float, lat1: float, lon2: float, lat2: float) -> float:
         """计算两个GPS坐标的大圆距离（米）"""
         R = 6371000.0
@@ -434,7 +442,7 @@ class MotorControlNode(Node):
             error |= ERROR_MOTOR_FAULT
         if self.laser_no_response or self.is_laser_timeout():
             error |= ERROR_LASER_TIMEOUT
-        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
+        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT)
         if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
@@ -652,7 +660,7 @@ class MotorControlNode(Node):
             self.switch_state('l')
 
     def rtk_error_callback(self, msg: Int16):
-        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT)
+        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT)
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
@@ -1147,6 +1155,11 @@ class MotorControlNode(Node):
                     "y": self.current_right_speed,
                     "z": self.brush_speed
                 },
+                "motor_speed_feedback": {
+                    "x": float(self.motor_ctrl.motors[0]["actual_velocity"]),
+                    "y": float(self.motor_ctrl.motors[1]["actual_velocity"]),
+                    "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
+                },
                 "sensors_status":self.sensors_status,
                 "velocity": self.rtk_velocity,
                 "laser_left": self.laser_distance[0],
@@ -1158,6 +1171,8 @@ class MotorControlNode(Node):
                 "motor_fault": self.motor_fault_codes,
                 "dock_sensors": self.dock_sensors,
                 "resume_charge": self.charge_resume_count,
+                "angle_x": self.angle_x,
+                "angle_y": self.angle_y,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
             dock_state_msg = {

@@ -1,10 +1,11 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-05-24
+分支: `stanley` | 日期: 2026-05-29
 
 ## 提交历史
 
 ```
+d40c5b5 feat: 倾斜跌落检测+angle姿态角MQTT上报+nav_context调试话题+日志精简
 本次提交 fix: 航向异常超时保护+RTK恢复守卫+MQTT方向定时器HOLD清理
 df82b2f fix: 航向角异常超时检测，IMU卡死时暂停导航防止反复校准死循环
 bfa045d Stabilize Stanley line correction
@@ -333,7 +334,58 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 | UNLOADING_HEADING_TARGET | 90.0° | 出仓后预期 IMU 航向 |
 | UNLOADING_HEADING_TOLERANCE | 25.0° | 出仓航向允许偏差 |
 | ERROR_LOADING_TIMEOUT | 32 (bit 5) | 进仓超时故障码 |
-| _disable_publish_countdown | 3 | 进仓完成后补发消息数 |<｜end▁of▁thinking｜>
+| _disable_publish_countdown | 3 | 进仓完成后补发消息数 |
+
+## 2026-05-29 倾斜跌落检测 + angle_x/angle_y MQTT上报 + nav_context调试发布 + 日志精简
+
+### 33. WTRTK angle_x/angle_y 通过 MQTT 上报
+
+- **需求**: 将 RTK 接收机的姿态角 `angle_x`(横滚) 和 `angle_y`(俯仰) 通过 MQTT 上报到云端，便于后台监控机器人姿态。
+- **修复**:
+  - `motor_control.py`: 新增 `WTRTK` 消息导入 + `/wtrtk_data` 订阅 + `wtrtk_callback`，提取 `angle_x`/`angle_y` 存储到实例变量
+  - `publish_state()` JSON 中新增 `"angle_x"` 和 `"angle_y"` 字段
+- **影响**: `motor_control.py` — import + subscription + callback + publish_state。
+
+### 34. 倾斜/跌落故障检测（ERROR_TILT_FAULT=64）
+
+- **问题**: 清扫过程中机器人跌落会导致一侧倾斜严重（横滚>30°），继续导航可能损坏设备或产生危险。
+- **修复**: `rtk_nav.py` `heading_callback` 中新增倾斜检测逻辑:
+  - `abs(angle_x) > 30°` 或 `abs(angle_y) > 30°` → 倾斜帧计数
+  - 连续 30 帧（~3s @10Hz）→ 锁定倾斜故障，停车 + PAUSE 导航 + 发布故障码 64
+  - 姿态恢复后连续 5 帧正常 → 清除故障，自动恢复导航
+- **故障码透传**: `motor_control.py` 中 `rtk_error_callback` 和 `build_error_code` 掩码均加上 `ERROR_TILT_FAULT`，确保故障码 64 不被过滤
+- **参数**: `TILT_ANGLE_THRESHOLD=30.0°`, `TILT_CONFIRM_FRAMES=30`, `TILT_RECOVERY_FRAMES=5`
+- **说明**: `angle_x`/`angle_y` 由传感器内部 IMU + 融合算法产出，不依赖 RTK 固定解状态，即使丢星仍有效
+- **影响**: `rtk_nav.py` + `motor_control.py`。
+
+### 35. nav_context 调试话题发布
+
+- **需求**: 导航状态上下文（`nav_context`）信息量大且分散，出问题时难以快速定位。
+- **修复**: 新增 `/rtk/nav_context` 话题（JSON/String），每 2s 发布一次完整状态快照:
+  - 导航状态: `nav_state`, `current_waypoint_idx`, `total_waypoints`, `nav_running`
+  - 故障状态: `rtk_error_code`, `tilt_fault`, `tilt_confirm_count`, `tilt_normal_count`
+  - 控制状态: `pre_pause_state`, `force_bearing_mode`, `bearing_mode_locked`, `angle_abnormal_count`
+  - 超时/异常: `heading_timed_out`, `rtk_data_timed_out`, `is_angle_recalib`
+  - 运行信息: `control_mode`, `brush_active`, 时间戳
+- **调试用法**: `ros2 topic echo /rtk/nav_context`
+- **影响**: `rtk_nav.py` — 新增 `publish_nav_context()` + `/rtk/nav_context` publisher + rtk_timer_callback 中每 2s 调用。
+
+### 36. 日志精简
+
+- **问题**: 边界矫正状态每帧（10Hz）打印 `info` 日志刷屏；`boundary_triggered` 重复打印 `info` + `warn` 两条相同日志。
+- **修复**:
+  - 边界矫正每帧状态 `info` → `debug`（需 `--ros-args --log-level debug` 才可见）
+  - `boundary_triggered` 去掉重复的 `info`，仅保留 `warn`
+- **影响**: `rtk_nav.py`。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| ERROR_TILT_FAULT | 64 (bit 6) | 倾斜/跌落故障码 |
+| TILT_ANGLE_THRESHOLD | 30.0° | 倾斜判定阈值 |
+| TILT_CONFIRM_FRAMES | 30 | 连续倾斜确认帧数（防抖） |
+| TILT_RECOVERY_FRAMES | 5 | 连续正常帧数恢复 |<｜end▁of▁thinking｜>
 
 <｜｜DSML｜｜tool_calls>
 <｜｜DSML｜｜invoke name="TodoWrite">
