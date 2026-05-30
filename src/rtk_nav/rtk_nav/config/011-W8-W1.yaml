@@ -41,7 +41,7 @@ areas:
     calib_point_c: {lon: 110.64694080666239, lat: 35.605035319074254}
     
   # 北侧8
-  - name: "W8 start"
+  - name: "W8_start"
     calib_point_a: {lon: 110.64693948372128, lat: 35.60525109654438}
     calib_point_b: {lon: 110.64694032246108, lat: 35.60507031658687}
     calib_point_c: {lon: 110.64709075927466, lat: 35.60507081711438}
@@ -171,7 +171,7 @@ areas:
     edge_distance_lat: 0.3
 
   # back_1B-2B        -------------------------------------------------------------
-  - name: "back_1B-2B stop"
+  - name: "back_1B-2B_stop"
     calib_point_a: {lon: 110.64693508220195, lat: 35.60658436686629}
     calib_point_b: {lon: 110.64693530376132, lat: 35.60636748733694}
     calib_point_c: {lon: 110.64693508220195, lat: 35.60658436686629}

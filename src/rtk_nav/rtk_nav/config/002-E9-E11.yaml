@@ -34,7 +34,7 @@ areas:
     calib_point_c: {lon: 110.64776102878216, lat: 35.60507126970284}
 
   # # 9南侧
-  - name: "E9 start"
+  - name: "E9_start"
     calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
     calib_point_b: {lon: 110.64776064561126, lat: 35.6050338231927}
     calib_point_c: {lon: 110.64726666463734, lat: 35.60503572475744}

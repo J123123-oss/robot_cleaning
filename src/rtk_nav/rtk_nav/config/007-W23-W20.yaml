@@ -119,7 +119,7 @@ areas:
     # start_corner: "top_right" 
 
   # bridge_24A-23s
-  - name: "bridge_24A-23s start"
+  - name: "bridge_24A-23s_start"
     calib_point_a: {lon: 110.6466094331906, lat: 35.60207900896125}
     calib_point_b: {lon: 110.64660884686268, lat: 35.602113270160785}
     calib_point_c: {lon: 110.6466094331906, lat: 35.60207900896125}
@@ -224,7 +224,7 @@ areas:
     edge_distance_lat: 0.3
 
   # back_W20A-W19B
-  - name: "back_W20A-W19B stop"
+  - name: "back_W20A-W19B_stop"
     calib_point_a: {lon: 110.64660579733663, lat: 35.60283868808951}
     calib_point_b: {lon: 110.64660561307961, lat: 35.60287015397685}
     calib_point_c: {lon: 110.64660579733663, lat: 35.60283868808951}

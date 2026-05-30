@@ -75,7 +75,7 @@ areas:
     edge_distance_lat: [0.1, -0.5] 
 
   # 北侧15加长方块
-  - name: "W15_long_block start"
+  - name: "W15_long_block_start"
     calib_point_a: {lon: 110.64694593828234, lat: 35.60382853032021}
     calib_point_b: {lon: 110.64694684650163, lat: 35.60364793400997}
     calib_point_c: {lon: 110.64709729831193, lat: 35.60364820088346}
@@ -135,7 +135,7 @@ areas:
     edge_distance_lat: 0.3
   
   # back_13-12B
-  - name: "back_13-12B stop"
+  - name: "back_13-12B_stop"
     calib_point_a: {lon: 110.64660053596772, lat: 35.60425996043149}
     calib_point_b: {lon: 110.64660078489712, lat: 35.60429258785293}
     calib_point_c: {lon: 110.64660053596772, lat: 35.60425996043149}

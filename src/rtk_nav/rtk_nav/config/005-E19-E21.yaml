@@ -76,7 +76,7 @@ areas:
     edge_distance_lat: [0.1, 0.3]  
 
   # 19南侧加长方块   -------------------------------------------------------
-  - name: "E19_long_block start"
+  - name: "E19_long_block_start"
     calib_point_a: {lon: 110.64742706559392, lat: 35.60286741056806}
     calib_point_b: {lon: 110.64742587033007, lat: 35.60311039971046}
     calib_point_c: {lon: 110.64727525351053, lat: 35.60311302695789}
@@ -144,7 +144,7 @@ areas:
     edge_distance_lat: [0.3, 0.3]
 
   # back_21B-20A
-  - name: "back_21B-20A stop"
+  - name: "back_21B-20A_stop"
     calib_point_a: {lon: 110.64777235307753, lat: 35.60255989772949}
     calib_point_b: {lon: 110.64777166295664, lat: 35.602665661235534}
     calib_point_c: {lon: 110.64777235307753, lat: 35.60255989772949}
