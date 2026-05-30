@@ -1426,8 +1426,6 @@ class RTKNavControlNode(Node):
         self.real_velocity = real_velocity
         k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
         steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
-        if heading_error * steering_correction > 0 and abs(heading_error) > 4.0:
-            steering_correction *= 0.5
         total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5
@@ -1765,10 +1763,13 @@ class RTKNavControlNode(Node):
                             break
                     continue
                 path_direction = current_bearing
-            elif self.nav_context.get("bearing_mode_locked"):
-                path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             elif t > 1.0:
-                self.nav_context["bearing_mode_locked"] = True
+                self.nav_context["force_bearing_mode"] = True
+                self.nav_context["force_bearing_target"] = self.calculate_bearing(
+                    current_lat, current_lon, first_lat, first_lon
+                )
+                continue
+            elif self.nav_context.get("bearing_mode_locked"):
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             else:
                 path_direction = fixed_path_dir
@@ -1784,8 +1785,8 @@ class RTKNavControlNode(Node):
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
-            # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
-            in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or self.nav_context.get("bearing_mode_locked", False) or t > 1.0)
+            # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
+            in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
             if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                 if not in_bearing_mode:
                     self.nav_context["angle_abnormal_count"] += 1
@@ -2394,17 +2395,20 @@ class RTKNavControlNode(Node):
                         continue
                     # 偏差可接受→用实时方位角（偏差小不会螺旋，且自适应车体位移）
                     path_direction = current_bearing
-                elif self.nav_context.get("bearing_mode_locked"):
-                    path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 elif t > 1.0:
-                    self.nav_context["bearing_mode_locked"] = True
+                    self.nav_context["force_bearing_mode"] = True
+                    self.nav_context["force_bearing_target"] = self.calculate_bearing(
+                        current_lat, current_lon, target_lat, target_lon
+                    )
+                    continue
+                elif self.nav_context.get("bearing_mode_locked"):
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 else:
                     path_direction = self.stanley_path_direction
 
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
-                # t>1.0/force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
-                in_bearing_mode = (self.nav_context.get("force_bearing_mode", False) or self.nav_context.get("bearing_mode_locked", False) or t > 1.0)
+                # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
+                in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                     if not in_bearing_mode:
                         self.nav_context["angle_abnormal_count"] += 1
