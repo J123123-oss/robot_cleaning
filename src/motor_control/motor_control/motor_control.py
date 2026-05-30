@@ -129,7 +129,7 @@ class MotorControlNode(Node):
         self.loading_direct_start_time = None
         self.loading_direct_timeout = 26.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
-        self.loading_nav_timeout = 60.0    # 导航到进仓点超时（秒）
+        self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
         self._nav_sub_phase = "ALIGN"      # NAV_TO_GPS 子阶段: ALIGN(航向对准) / DRIVE(直线行驶)
         self._nav_align_stable_count = 0   # 航向对准稳定计数
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
