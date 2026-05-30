@@ -1878,7 +1878,11 @@ class RTKNavControlNode(Node):
             "force_bearing_target": None,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
+            "tilt_confirm_count": 0,
+            "tilt_normal_count": 0,
+            "tilt_fault": False,
         }
+        self.clear_rtk_error_bits(ERROR_TILT_FAULT)  # 同步清除，防止tilt_fault与rtk_error_code脱钩
         self.heading_abnormal_start_time = None  # 重置航向异常计时
         self.heading_timed_out = False
         self.return_to_loading_added = False  # 重置出仓点追加标志

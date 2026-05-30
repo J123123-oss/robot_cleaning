@@ -69,6 +69,7 @@ LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
 NAV_SPEED_BASE = 5.0         # 导航基础速度（motor_control 单位）
 NAV_ARRIVE_THRESHOLD = 0.1   # 到达目标点距离阈值（米）
+NAV_USE_FIXED_HEADING_DIST = 1.0  # 小于此距离时用进仓预设航向代替GPS方位角（避免近距离GPS噪声）
 
 ERROR_MOTOR_FAULT = 1
 ERROR_LASER_TIMEOUT = 2
@@ -77,6 +78,7 @@ ERROR_RTK_TIMEOUT = 8
 ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_TILT_FAULT = 64     # 倾斜/跌落故障（来自RTK角度检测）
+ERROR_UNLOADING_HEADING_TIMEOUT = 128  # 出仓航向校验超时
 ERROR_RESERVED_3 = 128
 ERROR_RESERVED_4 = 256
 
@@ -131,7 +133,7 @@ class MotorControlNode(Node):
         self._nav_sub_phase = "ALIGN"      # NAV_TO_GPS 子阶段: ALIGN(航向对准) / DRIVE(直线行驶)
         self._nav_align_stable_count = 0   # 航向对准稳定计数
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
-        self._nav_align_timeout = 20.0     # 航向对准超时（秒）
+        self._nav_align_timeout = 60.0     # 航向对准超时（秒）
         
         self.state_publish_timer: Optional[Timer] = None  # 定时发布状态
         self._disable_publish_countdown = 0  # DISABLE状态完成消息补发计数
@@ -181,6 +183,7 @@ class MotorControlNode(Node):
         self.charging_fault = 0 # 停机仓充电故障代码
         self.motor_fault_codes = [0, 0, 0]  # 三路电机故障码
         self.loading_timeout_error = False  # 进仓导航超时故障标志
+        self.unloading_gps_timeout = False  # 出仓GPS/航向等待超时故障标志
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
         self.charge_resume_threshold = 90   #old:98 # 恢复充电的电量阈值（百分比）
@@ -447,6 +450,8 @@ class MotorControlNode(Node):
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
             error |= ERROR_LOADING_TIMEOUT
+        if self.unloading_gps_timeout:
+            error |= ERROR_UNLOADING_HEADING_TIMEOUT
         return error
 
 
@@ -1081,6 +1086,7 @@ class MotorControlNode(Node):
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
+            self.unloading_gps_timeout = False  # 重置出仓超时故障标志
 
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
@@ -1534,9 +1540,14 @@ class MotorControlNode(Node):
                     self.unloading_timer.cancel()
                     self.unloading_timer = None
                     self.is_in_bin_process = False  # 重置进出仓标记
-                # 2. 新增：超时兜底（GPS长期无固定解，强制退出）
+                # 2. 新增：超时兜底（GPS固定解+航向校验长时间未满足，强制退出）
                 elif elapsed_time > MAX_GPS_WAIT_TIME:
-                    self.get_logger().error(f"[START] 等待GPS固定解超时（{MAX_GPS_WAIT_TIME}s），状态码始终为{self.rtk_status}，进入DISABLE")
+                    rtk_label = "Fixed" if self.rtk_status == 4 else f"状态码{self.rtk_status}"
+                    hdg = (self.imu_yaw_deg + 360) % 360 if self.imu_yaw_deg is not None else -1
+                    self.get_logger().error(
+                        f"[START] 等待GPS固定解+航向校验超时（{MAX_GPS_WAIT_TIME}s），"
+                        f"RTK={rtk_label}，航向={hdg:.1f}°，进入DISABLE")
+                    self.unloading_gps_timeout = True
                     # # 可选：记录当前非固定解的坐标（或置空）
                     # self.unloading_lon = self.current_lon
                     # self.unloading_lat = self.current_lat
@@ -1707,10 +1718,13 @@ class MotorControlNode(Node):
                 self.set_motors_speed(0.0, 0.0)
                 return
 
-            # 计算目标方位角
-            target_bearing = self.bearing_to_target(
-                self.current_lon, self.current_lat,
-                LOADING_GPS[0], LOADING_GPS[1])
+            # 计算目标方位角：近距离时GPS方位角不可靠，用进仓预设航向
+            if gps_dist < NAV_USE_FIXED_HEADING_DIST:
+                target_bearing = LOADING_GPS[2]
+            else:
+                target_bearing = self.bearing_to_target(
+                    self.current_lon, self.current_lat,
+                    LOADING_GPS[0], LOADING_GPS[1])
 
             # --- 子阶段1：航向对准（原地旋转，参照 calibrate_heading_at_waypoint） ---
             if self._nav_sub_phase == "ALIGN":
@@ -1878,6 +1892,9 @@ class MotorControlNode(Node):
                 # 新增：后退阶段日志频率控制（1秒1次）
                 if not hasattr(self, 'last_backward_log_time'):
                     self.last_backward_log_time = 0.0
+                # 前向对位阶段日志频率控制（3秒1次，减少刷屏）
+                if not hasattr(self, '_last_loading_fwd_log_time'):
+                    self._last_loading_fwd_log_time = 0.0
 
                 # ========== 阶段1：调整进仓角度（核心：目标航向一致+稳定判定）==========
                 if self.loading_phase == "LOADING_TURN":
@@ -1941,7 +1958,9 @@ class MotorControlNode(Node):
                     
                     # 步骤1：激光距离<3000mm（核心条件）
                     if left < 3000 and right < 3000:
-                        self.get_logger().info(f"[LOADING] 激光距离有效 - 左：{left}mm, 右：{right}mm, 差值：{diff_dis}mm")
+                        if current_time - self._last_loading_fwd_log_time >= 3.0:
+                            self.get_logger().info(f"[LOADING] 激光距离有效 - 左：{left}mm, 右：{right}mm, 差值：{diff_dis}mm")
+                            self._last_loading_fwd_log_time = current_time
                         
                         # 步骤2：判断激光差值是否>1000mm（大幅偏离）执行「偏转→后退2s→反向偏转检查」流程
                         # if diff_dis > 1000:
@@ -2016,7 +2035,9 @@ class MotorControlNode(Node):
                                     # 未达标则继续反向偏转，同时增加超时保护
                                     check_elapsed = current_time - self.correction_start_time
                                     if check_elapsed < self.check_max_timeout:
-                                        self.get_logger().warning(f"[LOADING] 反向检查中（已持续{check_elapsed:.1f}s），当前差值{diff_dis}")
+                                        if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                            self.get_logger().warning(f"[LOADING] 反向检查中（已持续{check_elapsed:.1f}s），当前差值{diff_dis}")
+                                            self._last_loading_fwd_log_time = current_time
                                         # 反向偏转：原左转则右转，原右转则左转
                                         if self.last_state == "LEFT_DEFLECT":  # 原偏左 → 反向右转（双负）
                                             left_speed = -base_speed / 6.0
@@ -2056,7 +2077,9 @@ class MotorControlNode(Node):
                             if left < 375 and right < 375:
                                 if not hasattr(self, 'straight_loading_time'):
                                     self.straight_loading_time = current_time
-                                self.get_logger().info("[LOADING] 极近距离（<375mm），判断差值是否<2mm 进行最终对位")
+                                if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                    self.get_logger().info("[LOADING] 极近距离（<375mm），判断差值是否<2mm 进行最终对位")
+                                    self._last_loading_fwd_log_time = current_time
                                 # 定时器：5秒后切换到完成阶段（确保电机停止）
                                 if self.straight_loading_time is not None:
                                     elapsed_time = current_time - self.straight_loading_time
@@ -2088,7 +2111,9 @@ class MotorControlNode(Node):
                                     
                                 # 步骤9：差值≥2mm → 最终对位（低速旋转）
                                 else:
-                                    self.get_logger().warning("[LOADING] 极近距离但差值≥2mm, 最终对位")
+                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                        self.get_logger().warning("[LOADING] 极近距离但差值≥2mm, 最终对位")
+                                        self._last_loading_fwd_log_time = current_time
                                     if (left - right) < 0:
                                         left_speed = base_speed / 10.0
                                         right_speed = base_speed / 10.0
@@ -2101,7 +2126,9 @@ class MotorControlNode(Node):
                                 # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
                                 # 步骤5：差值≥10mm → 低速旋转对准
                                 if diff_dis >= 10:
-                                    self.get_logger().info("[LOADING] 中等偏差（>10mm），低速旋转对准")
+                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                        self.get_logger().info("[LOADING] 中等偏差（>10mm），低速旋转对准")
+                                        self._last_loading_fwd_log_time = current_time
                                     if (left - right) < 0:
                                         left_speed = base_speed / 10.0
                                         right_speed = base_speed / 10.0
@@ -2110,14 +2137,18 @@ class MotorControlNode(Node):
                                         right_speed = -base_speed / 10.0
                                 # 步骤6：差值<10mm → 低速纠偏直行
                                 else:
-                                    self.get_logger().info("[LOADING] 差值<10mm，直行")
+                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                        self.get_logger().info("[LOADING] 差值<10mm，直行")
+                                        self._last_loading_fwd_log_time = current_time
                                     left_speed = -base_speed / 1.5
                                     right_speed = base_speed / 1.5
                             else:
                                 # self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
                                 # 差值≥40mm → 中速旋转对准
                                 if diff_dis >= 20:
-                                    self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
+                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
+                                        self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
+                                        self._last_loading_fwd_log_time = current_time
                                     if (left - right) < 0:
                                         left_speed = base_speed / 4.0
                                         right_speed = base_speed / 4.0
@@ -2172,6 +2203,7 @@ class MotorControlNode(Node):
         self.yaw_stable_count = 0
         self.last_backward_log_time = 0.0
         self.last_direct_loading_log_time = 0.0
+        self._last_loading_fwd_log_time = 0.0
         self.loading_direct_start_time = None
         self.complete_state = True
         self.switch_state('z')  # DISABLE状态，确保电机停止
