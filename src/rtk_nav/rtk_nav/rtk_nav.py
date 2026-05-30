@@ -2598,6 +2598,12 @@ class RTKNavControlNode(Node):
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
             self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
+            # 清除等待标志，避免mode_callback竞态导致标志残留阻塞导航启动
+            if self.waiting_for_next_unloading:
+                self.waiting_for_next_unloading = False
+                self.multi_waypoint_generator = None
+                self.nav_running = False
+                self.get_logger().info("[RTKNav] 清除waiting_for_next_unloading标志（state_callback）")
             if hasattr(self, 'nav_context'):
                 self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
                 if self.brush_active:
@@ -2654,7 +2660,8 @@ class RTKNavControlNode(Node):
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式, 更新自身状态"""
-        previous_mode = self.current_control_mode
+        previous_mode = getattr(self, '_last_mode_msg', None)
+        self._last_mode_msg = msg.data
         self.current_control_mode = msg.data
         # 切换到RTK模式时, 重置IMU校准
         # if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
