@@ -69,7 +69,7 @@ LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
 NAV_SPEED_BASE = 5.0         # 导航基础速度（motor_control 单位）
 NAV_ARRIVE_THRESHOLD = 0.1   # 到达目标点距离阈值（米）
-NAV_USE_FIXED_HEADING_DIST = 1.0  # 小于此距离时用进仓预设航向代替GPS方位角（避免近距离GPS噪声）
+# NAV_USE_FIXED_HEADING_DIST = 1.0  # 近距离用进仓预设航向——实际进仓方向不固定，固定航向反而降低精度
 
 ERROR_MOTOR_FAULT = 1
 ERROR_LASER_TIMEOUT = 2
@@ -1718,13 +1718,10 @@ class MotorControlNode(Node):
                 self.set_motors_speed(0.0, 0.0)
                 return
 
-            # 计算目标方位角：近距离时GPS方位角不可靠，用进仓预设航向
-            if gps_dist < NAV_USE_FIXED_HEADING_DIST:
-                target_bearing = LOADING_GPS[2]
-            else:
-                target_bearing = self.bearing_to_target(
-                    self.current_lon, self.current_lat,
-                    LOADING_GPS[0], LOADING_GPS[1])
+            # 计算目标方位角
+            target_bearing = self.bearing_to_target(
+                self.current_lon, self.current_lat,
+                LOADING_GPS[0], LOADING_GPS[1])
 
             # --- 子阶段1：航向对准（原地旋转，参照 calibrate_heading_at_waypoint） ---
             if self._nav_sub_phase == "ALIGN":
