@@ -78,6 +78,7 @@ ERROR_CALIB_TIMEOUT = 256    # 航向校准超时
 TILT_ANGLE_THRESHOLD = 10.0  # 倾角阈值（度），abs(angle_x)或abs(angle_y)超此值判定倾斜
 TILT_CONFIRM_FRAMES = 30     # 连续倾斜帧数确认（防抖），避免颠簸误报
 TILT_RECOVERY_FRAMES = 5     # 连续正常帧数清除故障
+TILT_STABILIZE_TIMEOUT = 120.0  # 跌落后INS稳定等待时间（秒），重新AUTO_CLEANING后等待此时间再开始
 
 
 # 控制模式（与电机节点保持一致）
@@ -246,6 +247,7 @@ class RTKNavControlNode(Node):
         self.last_rtk_timeout_log_time = 0.0
         self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
         self.heading_timed_out = False  # 航向角异常导致的超时标志
+        self.last_tilt_time = 0.0       # 最后一次倾斜故障确认时间，用于跌落后稳定等待
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
@@ -1064,6 +1066,7 @@ class RTKNavControlNode(Node):
             self.nav_context["tilt_confirm_count"] += 1
             if self.nav_context["tilt_confirm_count"] >= TILT_CONFIRM_FRAMES and not self.nav_context["tilt_fault"]:
                 self.nav_context["tilt_fault"] = True
+                self.last_tilt_time = time.monotonic()
                 if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                     self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                     self.nav_context["pause_reason"] = "tilt_fault"
@@ -2066,6 +2069,28 @@ class RTKNavControlNode(Node):
                     current_nav_state = pre_pause_state
                     self.nav_context["nav_state"] = current_nav_state
 
+                    # 跌落后稳定等待：倾斜故障导致的暂停恢复后，需等待INS数据稳定
+                    if pause_reason == "tilt_fault" and self.last_tilt_time > 0:
+                        elapsed_since_tilt = time.monotonic() - self.last_tilt_time
+                        if elapsed_since_tilt < TILT_STABILIZE_TIMEOUT:
+                            remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
+                            self.get_logger().warn(
+                                f"[跌落稳定] 距上次倾斜故障仅{elapsed_since_tilt:.0f}s，"
+                                f"需等待{remaining:.0f}s让INS数据稳定后自动恢复清扫"
+                            )
+                            while True:
+                                if not self.check_control_mode():
+                                    yield (0.0, 0.0)
+                                    return
+                                elapsed_since_tilt = time.monotonic() - self.last_tilt_time
+                                if elapsed_since_tilt >= TILT_STABILIZE_TIMEOUT:
+                                    self.get_logger().info(
+                                        f"[跌落稳定] 等待完成，已过{elapsed_since_tilt:.0f}s，恢复清扫"
+                                    )
+                                    break
+                                self.publish_stop_speed()
+                                yield (0.0, 0.0)
+
                     # 如果恢复的是校准状态，需要重新初始化校准生成器
                     if current_nav_state == NavState.WAYPOINT_CALIB:
                         target_waypoint = self.nav_context.get("target_waypoint")
@@ -2114,6 +2139,27 @@ class RTKNavControlNode(Node):
         else:
             # 只有导航状态为IDLE时, 才重新初始化初始移动（解决重复进入第一个航点）
             if self.nav_context["nav_state"] == NavState.IDLE:
+                # 跌落后稳定等待：倾斜故障后首次AUTO_CLEANING需等待INS数据稳定
+                if self.last_tilt_time > 0:
+                    elapsed_since_tilt = time.monotonic() - self.last_tilt_time
+                    if elapsed_since_tilt < TILT_STABILIZE_TIMEOUT:
+                        remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
+                        self.get_logger().warn(
+                            f"[跌落稳定] 距上次倾斜故障仅{elapsed_since_tilt:.0f}s，"
+                            f"需等待{remaining:.0f}s让INS数据稳定后自动开始清扫"
+                        )
+                        while True:
+                            if not self.check_control_mode():
+                                yield (0.0, 0.0)
+                                return
+                            elapsed_since_tilt = time.monotonic() - self.last_tilt_time
+                            if elapsed_since_tilt >= TILT_STABILIZE_TIMEOUT:
+                                self.get_logger().info(
+                                    f"[跌落稳定] 等待完成，已过{elapsed_since_tilt:.0f}s，开始清扫"
+                                )
+                                break
+                            self.publish_stop_speed()
+                            yield (0.0, 0.0)
                 # 初始航向校验：IMU须在90°±25°范围内，等待航向就绪后自动开始
                 while True:
                     if not self.check_control_mode():
