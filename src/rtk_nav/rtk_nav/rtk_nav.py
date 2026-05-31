@@ -920,8 +920,23 @@ class RTKNavControlNode(Node):
                         self.heading_abnormal_start_time = None
                         self.heading_timed_out = False
                         self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
+                        # 检查跌落故障是否活跃，避免倾斜状态下恢复导航
+                        if self.nav_context.get("tilt_fault", False):
+                            self.get_logger().warn("[航向恢复] 航向已恢复但跌落故障仍活跃，保持PAUSE等待倾斜恢复")
+                            return False
+                        if (
+                            self.nav_context["nav_state"] == NavState.PAUSE
+                            and self.nav_context.get("pause_reason") == "heading_timeout"
+                        ):
+                            self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
+                            self.nav_context["pause_reason"] = None
+                            self.brush_active = self.nav_context.get("brush_active", False)
+                            if self.brush_active:
+                                self.publish_brush_speed(RTK_BRUSH_SPEED)
+                            else:
+                                self.publish_brush_speed(0.0)
+                            self.get_logger().info("[航向恢复] 航向角已恢复正常，自动恢复导航")
                         self.nav_running = True
-                        self.get_logger().info("[航向恢复] 航向角已恢复正常，恢复导航")
                     return False
                 if now - self.last_rtk_timeout_log_time >= RTK_TIMEOUT_LOG_INTERVAL:
                     self.publish_stop_speed()
@@ -2031,22 +2046,36 @@ class RTKNavControlNode(Node):
         if resume:
             current_nav_state = self.nav_context["nav_state"]
             
-            # 处理RTK非固定解导致的暂停状态恢复
+            # 处理暂停状态恢复：检查故障条件是否已清除
             if current_nav_state == NavState.PAUSE:
-                pre_pause_state = self.nav_context.get("pre_pause_state", NavState.WAYPOINT_MOVE)
-                self.get_logger().info(f"[ROSNode] 从RTK暂停状态恢复，恢复到：{pre_pause_state}")
-                current_nav_state = pre_pause_state
-                self.nav_context["nav_state"] = current_nav_state
-                
-                # 如果恢复的是校准状态，需要重新初始化校准生成器
-                if current_nav_state == NavState.WAYPOINT_CALIB:
-                    target_waypoint = self.nav_context.get("target_waypoint")
-                    if target_waypoint:
-                        target_heading = self.get_path_heading(target_waypoint)
-                        self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
-                        self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
-            
-            self.get_logger().info(f"从状态{current_nav_state}恢复导航")
+                pause_reason = self.nav_context.get("pause_reason", "")
+                fault_active = False
+                if pause_reason == "tilt_fault" and self.nav_context.get("tilt_fault", False):
+                    self.get_logger().warn("[ROSNode] 跌落故障仍活跃，保持PAUSE等待倾斜恢复")
+                    fault_active = True
+                elif pause_reason == "heading_timeout" and self.heading_timed_out:
+                    self.get_logger().warn("[ROSNode] 航向超时仍活跃，保持PAUSE等待航向恢复")
+                    fault_active = True
+                elif pause_reason in {"rtk_not_fixed", "rtk_timeout"} and self.rtk_data_timed_out:
+                    self.get_logger().warn("[ROSNode] RTK数据超时仍活跃，保持PAUSE等待数据恢复")
+                    fault_active = True
+
+                if not fault_active:
+                    pre_pause_state = self.nav_context.get("pre_pause_state", NavState.WAYPOINT_MOVE)
+                    self.get_logger().info(f"[ROSNode] 从RTK暂停状态恢复，恢复到：{pre_pause_state}")
+                    current_nav_state = pre_pause_state
+                    self.nav_context["nav_state"] = current_nav_state
+
+                    # 如果恢复的是校准状态，需要重新初始化校准生成器
+                    if current_nav_state == NavState.WAYPOINT_CALIB:
+                        target_waypoint = self.nav_context.get("target_waypoint")
+                        if target_waypoint:
+                            target_heading = self.get_path_heading(target_waypoint)
+                            self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
+                            self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+
+            if current_nav_state != NavState.PAUSE:
+                self.get_logger().info(f"从状态{current_nav_state}恢复导航")
             # 新增：恢复校准状态时，重新初始化校准生成器
             if current_nav_state == NavState.WAYPOINT_CALIB:
                 target_waypoint = self.nav_context["target_waypoint"]
@@ -2229,7 +2258,13 @@ class RTKNavControlNode(Node):
             
             # 发布导航状态
             self.publish_nav_state(current_nav_state)
-            
+
+            # PAUSE状态处理：停止电机并等待故障恢复
+            if current_nav_state == NavState.PAUSE:
+                yield (0.0, 0.0)
+                current_nav_state = self.nav_context["nav_state"]
+                continue
+
             # 子阶段A：航向校准（到达航点后执行）
             if current_nav_state == NavState.WAYPOINT_CALIB:
                 calib_generator = self.nav_context["calib_generator"]
@@ -2561,12 +2596,13 @@ class RTKNavControlNode(Node):
 
     # ================== 原有RTKControlNode核心方法 ==================
     def publish_stop_speed(self):
-        """发布停止电机速度指令"""
+        """发布停止电机速度指令，同时清除滚刷标志避免PAUSE期间误启"""
         stop_speed = Vector3()
         stop_speed.x = 0.0
         stop_speed.y = 0.0
         stop_speed.z = 0.0
         self.motor_speed_pub.publish(stop_speed)
+        self.brush_active = False
 
     def publish_brush_speed(self, speed: float):
         """发布滚刷速度指令（仅更新标志位，不单独发布）"""
@@ -2681,19 +2717,28 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
-            self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
-            # 清除等待标志，避免mode_callback竞态导致标志残留阻塞导航启动
-            if self.waiting_for_next_unloading:
-                self.waiting_for_next_unloading = False
-                self.multi_waypoint_generator = None
-                self.nav_running = False
-                self.get_logger().info("[RTKNav] 清除waiting_for_next_unloading标志（state_callback）")
-            if hasattr(self, 'nav_context'):
-                self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
-                if self.brush_active:
-                    self.publish_brush_speed(RTK_BRUSH_SPEED)
-                else:
-                    self.publish_brush_speed(0.0)
+            # 检查是否有活跃故障阻止恢复导航
+            if (hasattr(self, 'nav_context')
+                    and self.nav_context["nav_state"] == NavState.PAUSE
+                    and self.nav_context.get("tilt_fault", False)):
+                self.get_logger().warn(
+                    f"[RTKNav] AUTO_CLEANING请求但跌落故障仍活跃，保持PAUSE"
+                    f"（pause_reason={self.nav_context.get('pause_reason')}）"
+                )
+            else:
+                self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
+                # 清除等待标志，避免mode_callback竞态导致标志残留阻塞导航启动
+                if self.waiting_for_next_unloading:
+                    self.waiting_for_next_unloading = False
+                    self.multi_waypoint_generator = None
+                    self.nav_running = False
+                    self.get_logger().info("[RTKNav] 清除waiting_for_next_unloading标志（state_callback）")
+                if hasattr(self, 'nav_context'):
+                    self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
+                    if self.brush_active:
+                        self.publish_brush_speed(RTK_BRUSH_SPEED)
+                    else:
+                        self.publish_brush_speed(0.0)
         self.last_state = msg.data
 
     def route_change_callback(self, msg: String):

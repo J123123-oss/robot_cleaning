@@ -50,6 +50,8 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABL
 MAX_SPEED = 10.0   # 遥控器最大速度
 MIN_SPEED = -10.0  # 遥控器最小速度
 BRUSH_SPEED = -18.0
+SPEED_CMD_TO_MPS = 0.0345  # 电机阶段速度指令 → 实际线速度 (m/s)，10 → 0.345 m/s
+MOTOR_RAD_S_TO_MPS = SPEED_CMD_TO_MPS * (10.0 / 22.0)  # 电机反馈 rad/s → 线速度 m/s，22rad/s → 0.345m/s
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
@@ -79,8 +81,7 @@ ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_TILT_FAULT = 64     # 倾斜/跌落故障（来自RTK角度检测）
 ERROR_UNLOADING_HEADING_TIMEOUT = 128  # 出仓航向校验超时
-ERROR_RESERVED_3 = 128
-ERROR_RESERVED_4 = 256
+ERROR_RESERVED_1 = 256
 
 #PID参数
 MAX_CORRECTION = 0.8
@@ -273,12 +274,7 @@ class MotorControlNode(Node):
             self.imu_heading_callback,
             10
         )
-        self.rtk_velocity_sub = self.create_subscription(
-            Float32,
-            "/rtk/velocity",
-            self.rtk_velocity_callback,
-            10
-        )
+
         self.battery_subscription = self.create_subscription(
             Float32MultiArray,
             "battery_data",
@@ -325,7 +321,7 @@ class MotorControlNode(Node):
         self.current_control_mode = "NORMAL"  # 默认普通模式
         self.rtk_left_speed = 0.0  # 存储RTK订阅的左轮速度
         self.rtk_right_speed = 0.0 # 存储RTK订阅的右轮速度
-        self.rtk_velocity = 0.0    # 存储RTK导航真实速度 (m/s)
+
 
         self.status_list = [
             "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START",
@@ -651,9 +647,6 @@ class MotorControlNode(Node):
             self.set_brush_speed(float(msg.z))
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}，刷：{msg.z:.2f}")
 
-    def rtk_velocity_callback(self, msg: Float32):
-        """订阅RTK导航真实速度"""
-        self.rtk_velocity = msg.data
 
     def rtk_nav_status_callback(self, msg: String):
         """订阅RTK导航状态消息（备用）"""
@@ -1167,7 +1160,7 @@ class MotorControlNode(Node):
                     "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
                 },
                 "sensors_status":self.sensors_status,
-                "velocity": self.rtk_velocity,
+                "velocity": (abs(self.motor_ctrl.motors[0]["actual_velocity"]) + abs(self.motor_ctrl.motors[1]["actual_velocity"])) / 2.0 * MOTOR_RAD_S_TO_MPS,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
                 "complete_state": self.complete_state,

@@ -5,6 +5,7 @@
 ## 提交历史
 
 ```
+本次提交 fix: PAUSE未停止滚刷(5处修复) + velocity改用电机实际反馈
 1c4ef6b fix: 滚刷索引改为队列，支持同一文件内多段刷区 + 过期索引清理
 5062800 fix: #注释行start/stop分支中elif改为if，确保区域名同步更新
 f84526c fix: 进仓导航超时从60s延长到120s，给GPS固定解恢复留足时间
@@ -514,4 +515,44 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **关键误区**: `STANLEY_MIN_SPEED=0.15` 只在 Stanley 公式 `max(v, 0.15)` 中防除零，不控制真实行驶速度。实际最低速 = `LINEAR_SPEED_BASE × speed_scale_min × SPEED_CMD_TO_MPS`。
 - **修复**: `speed_scale` 下限 `0.2 → 0.3`，最低电机指令 = 3.0 → 实际速度 0.10 m/s。commit: e024fa2
 - **影响**: `rtk_nav.py` — 两处 `speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)`（INITIAL_MOVE + WAYPOINT_MOVE）。
+
+## 2026-05-31 PAUSE 未停止滚刷 + 恢复路径未检测故障
+
+### 50. publish_stop_speed() 未清除 brush_active 导致 PAUSE 期间滚刷继续
+
+- **问题**: PAUSE 触发后 `publish_stop_speed()` 发送 `(0,0,0)`，但 `self.brush_active` 仍为 True。随后 `rtk_timer_callback` 的 timer 读到 `brush_active=True`，继续发布 `z=RTK_BRUSH_SPEED`，滚刷未停。
+- **修复**: `publish_stop_speed()` 内增加 `self.brush_active = False`，停电机时同步清除滚刷标志。
+- **影响**: `rtk_nav.py` — `publish_stop_speed()`。
+
+### 51. 航向超时恢复缺少状态复原 + 未检查跌落故障
+
+- **问题**: `handle_rtk_data_timeout()` 中航向恢复分支只设 `nav_running=True`，没有恢复 `nav_state`、`pause_reason`、`brush_active`。且未检查 `tilt_fault`，可能在倾斜状态下恢复导航。
+- **修复**: 增加完整的 `nav_state`/`pause_reason`/`brush_active` 恢复逻辑；增加 `tilt_fault` 守卫，故障活跃时返回 False 不恢复。
+- **影响**: `rtk_nav.py` — `handle_rtk_data_timeout()` 航向恢复分支。
+
+### 52. 生成器 resume 路径无条件恢复 PAUSE
+
+- **问题**: `multi_waypoint_nav_generator()` resume 分支看到 `nav_state==PAUSE` 即无条件恢复到 `pre_pause_state`，不检查故障是否仍活跃。
+- **修复**: 增加故障条件检查：`tilt_fault` → 检查 `nav_context["tilt_fault"]`；`heading_timeout` → 检查 `self.heading_timed_out`；`rtk_not_fixed/rtk_timeout` → 检查 `self.rtk_data_timed_out`。任一活跃则保持 PAUSE。
+- **影响**: `rtk_nav.py` — resume 分支。
+
+### 53. 生成器主循环缺少 PAUSE 状态处理
+
+- **问题**: `multi_waypoint_nav_generator()` 主循环没有 PAUSE 分支。`nav_state==PAUSE` 时降落到最后的 `yield (0,0)` + `continue`，期间 `nav_running` 可能已为 False 但 generator 仍在空转。
+- **修复**: 新增 PAUSE handler，显式 `yield (0.0, 0.0)` 并重新读取 `nav_state`，等待外部恢复。
+- **影响**: `rtk_nav.py` — `multi_waypoint_nav_generator()` 主循环。
+
+### 54. state_callback 在故障活跃时仍恢复 AUTO_CLEANING
+
+- **问题**: 手动发送 AUTO_CLEANING 时，`state_callback` 无条件恢复滚刷状态和导航，即使 `tilt_fault=True`。之后 tilt_fault 已 latch，tilt 检测的 `not self.nav_context["tilt_fault"]` 条件阻止重新触发 PAUSE → 机器人倾斜状态下继续行驶。
+- **修复**: AUTO_CLEANING 入口增加 `tilt_fault` 检查，活跃时保持 PAUSE 并记录 warn 日志；恢复逻辑移入 else 分支。
+- **影响**: `rtk_nav.py` — `state_callback()` AUTO_CLEANING 分支。
+
+### 55. MQTT velocity 从 RTK 计算值切换为电机实际反馈
+
+- **问题**: `velocity` 字段使用 `rtk_nav` 通过 `SPEED_CMD_TO_MPS` 计算的估算速度，与真实车速存在偏差。且 `/rtk/velocity` 订阅增加通信开销。
+- **修复**: 移除 `/rtk/velocity` 订阅和 `rtk_velocity_callback`；`velocity` 改用左右电机 `actual_velocity` 平均值 × `MOTOR_RAD_S_TO_MPS` 计算。
+- **转换系数**: `MOTOR_RAD_S_TO_MPS = SPEED_CMD_TO_MPS × (10.0 / 22.0)`，22 rad/s → 0.345 m/s → 10.0 电机指令。
+- **副作用清理**: `ERROR_RESERVED_3=128` 和 `ERROR_RESERVED_4=256` 合并为 `ERROR_RESERVED_1=256`（bit 8 曾被 `ERROR_UNLOADING_HEADING_TIMEOUT=128` 使用后未清理）。
+- **影响**: `motor_control.py` — import/常量/subscription/callback/publish_state。
 
