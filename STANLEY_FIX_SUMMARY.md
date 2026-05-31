@@ -1,10 +1,15 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-05-29
+分支: `stanley` | 日期: 2026-05-31
 
 ## 提交历史
 
 ```
+1c4ef6b fix: 滚刷索引改为队列，支持同一文件内多段刷区 + 过期索引清理
+5062800 fix: #注释行start/stop分支中elif改为if，确保区域名同步更新
+f84526c fix: 进仓导航超时从60s延长到120s，给GPS固定解恢复留足时间
+43fc0ff fix: Stanley去对半砍 + t>1.0切force_bearing防追尾螺旋
+a19a247 fix: state_callback/mode_callback竞态导致waiting标志残留，阻塞下次清扫启动
 d40c5b5 feat: 倾斜跌落检测+angle姿态角MQTT上报+nav_context调试话题+日志精简
 本次提交 fix: 航向异常超时保护+RTK恢复守卫+MQTT方向定时器HOLD清理
 df82b2f fix: 航向角异常超时检测，IMU卡死时暂停导航防止反复校准死循环
@@ -449,4 +454,64 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | force_bearing_target | None / bearing° | force_bearing_mode 激活时缓存的固定目标方位角 |
+
+## 2026-05-30 Stanley 去对半砍 + t>1.0 切 force_bearing 防追尾螺旋
+
+### 44. steering_correction 对半砍导致横向偏差无法收敛
+
+- **问题**: 航向误差 4-15° 区间时 `steering_correction *= 0.5`，横向纠偏被压制一半。长直线路段 `lat_err` 从 -0.272m 逐步漂移到 +0.848m 稳态值（纠正力不足，无法克服积累偏差）。
+- **修复**: 移除 `steering_correction *= 0.5` 整段逻辑。>15° 已有航向重校准兜底，4-15° 区间不需要衰减。
+- **K 参数**: 不需要立即重调——多个硬限制（clamp ±45°、STRAIGHT_MAX_CORRECTION=1.5、MAX_LATERAL_ERROR=1.0、atan 饱和）共同保护。若高速段出现振荡，可降低 K 20%。
+- **影响**: `rtk_nav.py` — `stanley_steering_control()`。
+
+### 45. t>1.0 切 bearing_mode_locked 导致追尾螺旋 + force_bearing_mode 死锁
+
+- **问题**: t>1.0 时激活 `bearing_mode_locked`，每帧重算 `bearing(current→target)` 形成追尾螺旋（path_dir 随位置变化，永远追不上）。同时 `bearing_mode_locked` 屏蔽航向异常检测 → `waypoint_recalib_count` 死锁在 1 → `force_bearing_mode`（修复#43）永远无法触发。
+- **现场证据**: `debug2.log` 航点 48 距离 1.18m，path_dir 在 ~60s 内从 180° 循环到 -83.8°，机器人绕圈。
+- **修复**: t>1.0 改为直接激活 `force_bearing_mode`（原地旋转对准目标后直行），不再走 `bearing_mode_locked` 路径。`bearing_mode_locked` 保留为残留状态兼容路径，不再被新代码设置。
+- **影响**: `rtk_nav.py` — INITIAL_MOVE 和 WAYPOINT_MOVE 两处 t>1.0 分支 + `in_bearing_mode` 简化。
+
+## 2026-05-30 state_callback/mode_callback 竞态导致 waiting 标志残留
+
+### 46. 预加载路径后无法启动导航
+
+- **问题**: 清扫 COMPLETED → `load_pending_path_after_task()` 设置 `waiting_for_next_unloading=True`，等待下次 START→UNLOADING→AUTO_CLEANING 后清除。但 `state_callback` 和 `mode_callback` 是两个独立 ROS 订阅，以不确定顺序执行：
+  - state_callback 先到 → `self.current_control_mode = AUTO_CLEANING`
+  - mode_callback 后到 → `previous_mode = self.current_control_mode` 读到已被改过的 AUTO_CLEANING → 过渡检测为 False → 跳过 `waiting_for_next_unloading` 清除
+  - `rtk_timer_callback` 被 `waiting_for_next_unloading == True` 拦住，不创建生成器，机器人不动
+- **现场证据**: `debug3txt` 中 `启动/恢复RTK多点导航` 日志缺失，nav_status 保持 IDLE 超过 35 秒。
+- **修复**:
+  - `state_callback`: 收到 AUTO_CLEANING 时同步清除 `waiting_for_next_unloading` + 重置生成器
+  - `mode_callback`: 过渡检测改用独立 `_last_mode_msg` 变量，不再读取可能已被 state_callback 修改的 `self.current_control_mode`
+- **影响**: `rtk_nav.py` — `state_callback()` + `mode_callback()`。两层兜底，各自独立修好竞态。
+
+## 2026-05-31 滚刷索引覆盖 + 队列支持多段区域
+
+### 47. `elif → if` 导致区域名不更新
+
+- **问题**: 路径注释 `#E19_long_block_start` 中 `'start' in comment` 为 True，走 `if 'start'` 分支后 `elif comment:` 被跳过 → `current_area` 始终不更新。同样 `#*_stop` 也会跳过区域更新。
+- **现场证据**: `run20260530.log` 中 `route_id` 已切到 `005-E19-E21`，但 `areas` 字段始终显示上一条路径的 `bridge_18A-19A_mid`。
+- **修复**: `elif comment:` → `if comment:`，start/stop 检测和区域名更新独立执行。commit: 5062800
+- **影响**: `rtk_nav.py` — 主路径加载的注释解析（line 360）。
+
+### 48. 多个 `#*start` 注释覆盖导致滚刷延迟开启
+
+- **问题**: 同一路径文件中 `#E19_long_block_start`（航点41）和 `#E19_long_block_start_mid`（航点83）都包含 `start` 子串。`brush_start_idx` 为单一标量，后者覆盖前者，滚刷在 83 才开而非 41。
+- **现场证据**: `run20260530.log` 中 005-E19-E21 路径加载时输出两次 start 检测（航点41 和 83），`check_and_control_brush` 在 83 才触发开启。
+- **修复**:
+  - `brush_start_idx/brush_stop_idx` 从单一标量改为 list 队列
+  - 加载时 append（支持多段独立滚刷区域），`check_and_control_brush` 逐对 pop 消费
+  - 过期清理：含 start/stop 子串的非标记注释（如 `_mid`）产生的冗余索引，随 `current_waypoint_idx` 递增触发 `idx > indices[0]` → pop + warn
+  - commit: 1c4ef6b
+- **影响**: `rtk_nav.py` — 属性初始化、两处路径加载、两处重置点、`check_and_control_brush()`。
+
+## 2026-05-31 进点末段低速卡目标点
+
+### 49. speed_scale 下限过低，草地里推不动
+
+- **问题**: 接近航点（<1.5m）时 `speed_scale = max(0.2, distance/1.5*0.7)`，最低电机指令 = 10.0×0.2 = 2.0 → 实际速度 0.069 m/s，草地/坡面无法克服摩擦力，机器人卡在距目标 0.2m 处不动。
+- **现场证据**: `run20260530.log` 航点99 最后 0.2m 耗时 486+ 秒仍未到达，位置在 ±0.000001° 内波动。需 RC_ENABLE 手动推过。
+- **关键误区**: `STANLEY_MIN_SPEED=0.15` 只在 Stanley 公式 `max(v, 0.15)` 中防除零，不控制真实行驶速度。实际最低速 = `LINEAR_SPEED_BASE × speed_scale_min × SPEED_CMD_TO_MPS`。
+- **修复**: `speed_scale` 下限 `0.2 → 0.3`，最低电机指令 = 3.0 → 实际速度 0.10 m/s。commit: e024fa2
+- **影响**: `rtk_nav.py` — 两处 `speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)`（INITIAL_MOVE + WAYPOINT_MOVE）。
 
