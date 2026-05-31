@@ -1744,7 +1744,7 @@ class RTKNavControlNode(Node):
                 consecutive_count = 0
 
             if distance < LOW_DISTANCE:
-                speed_scale = max(0.2, distance / LOW_DISTANCE * 0.7)
+                speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
             else:
                 current_base_speed = LINEAR_SPEED_BASE
@@ -2374,7 +2374,7 @@ class RTKNavControlNode(Node):
                     )
 
                 if distance < LOW_DISTANCE:
-                    speed_scale = max(0.2, distance / LOW_DISTANCE * 0.7)
+                    speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
                     current_base_speed = LINEAR_SPEED_BASE * speed_scale
                 else:
                     current_base_speed = LINEAR_SPEED_BASE
