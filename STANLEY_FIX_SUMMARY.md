@@ -5,14 +5,16 @@
 ## 提交历史
 
 ```
-本次提交 fix: PAUSE未停止滚刷(5处修复) + velocity改用电机实际反馈
+0b06cb6 docs: 精简REVIEW.md + motor_start.sh补ROS2 source + 007配置更新区域坐标
+72b9460 fix: 跌落后INS稳定等待120s，覆盖首次启动和清扫中恢复两条路径
+4d82adf fix: PAUSE未停止滚刷(5处修复) + velocity改用电机实际反馈
+adf5d4c fix: 航向校准超时修复 + 初始航向校验(90°±25°) + 卡滞提速
 1c4ef6b fix: 滚刷索引改为队列，支持同一文件内多段刷区 + 过期索引清理
 5062800 fix: #注释行start/stop分支中elif改为if，确保区域名同步更新
 f84526c fix: 进仓导航超时从60s延长到120s，给GPS固定解恢复留足时间
 43fc0ff fix: Stanley去对半砍 + t>1.0切force_bearing防追尾螺旋
 a19a247 fix: state_callback/mode_callback竞态导致waiting标志残留，阻塞下次清扫启动
 d40c5b5 feat: 倾斜跌落检测+angle姿态角MQTT上报+nav_context调试话题+日志精简
-本次提交 fix: 航向异常超时保护+RTK恢复守卫+MQTT方向定时器HOLD清理
 df82b2f fix: 航向角异常超时检测，IMU卡死时暂停导航防止反复校准死循环
 bfa045d Stabilize Stanley line correction
 82df935 fix: MAX_LATERAL_ERROR 0.2→5.0，消除横向纠偏饱和导致的抵消
@@ -555,4 +557,53 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **转换系数**: `MOTOR_RAD_S_TO_MPS = SPEED_CMD_TO_MPS × (10.0 / 22.0)`，22 rad/s → 0.345 m/s → 10.0 电机指令。
 - **副作用清理**: `ERROR_RESERVED_3=128` 和 `ERROR_RESERVED_4=256` 合并为 `ERROR_RESERVED_1=256`（bit 8 曾被 `ERROR_UNLOADING_HEADING_TIMEOUT=128` 使用后未清理）。
 - **影响**: `motor_control.py` — import/常量/subscription/callback/publish_state。
+
+## 2026-05-31 航向校准超时修复 + 初始航向校验 + 卡滞提速
+
+### 56. 航向校准超时修复 + 卡滞检测 + 初始航向校验(90°±25°) + 校准失败PAUSE
+
+- **问题1 — 校准超时从未触发**: `calibrate_heading_at_waypoint()` 中 `calib_start_time = time.monotonic()` 写在 `while True` 循环**内部**，每帧重置，`ERROR_CALIB_TIMEOUT`(256s) 永远不会到达。
+- **问题2 — 草地卡滞**: 航向校准时在草地/坡面上 `min_positive_speed=0.1` 无法推动电机，校准停滞。
+- **问题3 — 校准失败后继续导航**: 超时后即使 `heading_err > 5°`，函数仍返回 True，导航继续但航向错误。
+- **问题4 — 起步航向无校验**: 出仓后直接切 AUTO_CLEANING，IMU 航向可能偏离 90° 很远，导致 INITIAL_MOVE 立即触发航向异常重校准。
+- **修复**:
+  - `calib_start_time` 移到 while 循环外部，超时保护真正生效
+  - 卡滞检测：左右轮速度指令变化 < 0.3°/帧 持续 5s → 速度从 TURN_SPEED_MID(1.0) 升级到 TURN_SPEED_HIGH(1.5)
+  - 超时 + `heading_err > 5°` → 返回 False → 调用方进入 PAUSE
+  - `min_positive_speed` 0.1 → 0.5（确保草地上能推动）
+  - INITIAL_MOVE 入口新增航向校验：IMU 须在 90°±25° 范围内，不满足则原地等待直到就绪（以 stop_speed yield 形式，不阻塞其他处理）
+  - HOLD 和模式切换时清理 `heading_abnormal_start_time`/`heading_timed_out`
+- **参数**: `INITIAL_HEADING_TARGET=90.0`, `INITIAL_HEADING_TOLERANCE=25.0`, `ERROR_CALIB_TIMEOUT=256`, `TURN_SPEED_MID=1.0`(原0.7), `TURN_SPEED_SLOW=0.4`(原0.2)
+- **影响**: `rtk_nav.py` — `calibrate_heading_at_waypoint()` + `move_to_first_waypoint()` + `mode_callback` + keyboard HOLD handler。
+
+### 58. get_next_path_file 最后文件循环回到第一个
+
+- **问题**: 执行到最后一个路径文件后 `get_next_path_file()` 返回 `None`，任务结束。现场需要循环往复清扫所有区域，而不是跑完一轮就停止。
+- **修复**: 最后一个文件（`current_idx >= total_files - 1`）时不再返回 `None`，改为返回 `all_files[0]`（第一个文件），进度从 1/N 重新开始。
+- **日志**: `已执行到最后一个路径文件（011-W8-W1.txt）, 循环回到第一个: 001-E1-E8.txt`
+- **影响**: `rtk_nav.py` — `get_next_path_file()` 最后文件分支。
+
+## 2026-05-31 跌落后INS稳定等待120s
+
+### 57. 倾斜故障后重新AUTO_CLEANING需等待120s让INS数据稳定
+
+- **问题**: 机器人跌落/倾斜后 INS 传感器融合滤波发散（gyro 饱和 + 加速度计重力参考被污染），恢复后静止状态 Roll≈88°、Pitch≈34°，`ins_flag` 恒为 0 无参考意义。直接重新下发 AUTO_CLEANING 会以错误的 IMU 航向执行导航，导致反复校准或走偏。
+- **修复**: 新增 `TILT_STABILIZE_TIMEOUT=120.0` 和 `last_tilt_time` 时间戳：
+  - 倾斜故障首次确认时记录 `last_tilt_time = time.monotonic()`
+  - **首次启动路径**（IDLE→INITIAL_MOVE）：`last_tilt_time > 0` 且距倾斜不到 120s → while 循环等待（publish_stop_speed + yield），到期后继续航向校验流程
+  - **恢复路径**（PAUSE→WAYPOINT_MOVE/ CALIB）：`pause_reason == "tilt_fault"` 且距倾斜不到 120s → 同上等待循环，到期后恢复到 `pre_pause_state`
+  - 两条路径覆盖全新启动和清扫中途跌落后恢复
+- **参数**: `TILT_STABILIZE_TIMEOUT=120.0`
+- **影响**: `rtk_nav.py` — `heading_callback`(记录 last_tilt_time) + `multi_waypoint_nav_generator`(两处等待循环)。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| INITIAL_HEADING_TARGET | 90.0° | 初始航向校验目标 |
+| INITIAL_HEADING_TOLERANCE | 25.0° | 初始航向允许偏差 |
+| TILT_STABILIZE_TIMEOUT | 120.0s | 倾斜后 INS 稳定等待时间 |
+| ERROR_CALIB_TIMEOUT | 256s | 航向校准超时 |
+| TURN_SPEED_MID | 1.0 (原0.7) | 中速旋转电机指令 |
+| TURN_SPEED_SLOW | 0.4 (原0.2) | 低速旋转电机指令 |
 

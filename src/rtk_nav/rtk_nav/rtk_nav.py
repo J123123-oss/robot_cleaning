@@ -757,10 +757,11 @@ class RTKNavControlNode(Node):
             self.process_percent = progress_percent
             self.get_logger().info(f"[RTKNav] 路径文件进度：{current_progress}/{total_files}, {progress_percent}%")
             
-            # 5. 最后一个文件时结束循环（不再返回新文件）
+            # 5. 最后一个文件时循环回到第一个
             if current_idx >= total_files - 1:
-                self.get_logger().info(f"[RTKNav] 已执行到最后一个路径文件（{current_file}）, 执行返回")
-                return None
+                first_file = all_files[0]
+                self.get_logger().info(f"[RTKNav] 已执行到最后一个路径文件（{current_file}）, 循环回到第一个: {first_file}")
+                return os.path.join(self.path_dir, first_file)
             
             # 6. 获取下一个文件（非最后一个时）
             next_idx = current_idx + 1
