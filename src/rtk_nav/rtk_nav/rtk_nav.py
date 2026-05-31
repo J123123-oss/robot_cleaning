@@ -181,8 +181,8 @@ class RTKNavControlNode(Node):
         self.last_valid_heading = None  # 存储距离≥0.5m时最后一次计算的航向
         self.bad_error_counter = 0   #yaw_error绝对值大于15度的次数
         
-        self.brush_start_idx = None  # 滚刷开启的航点索引
-        self.brush_stop_idx = None    # 滚刷关闭的航点索引
+        self.brush_start_indices = []  # 滚刷开启的航点索引队列
+        self.brush_stop_indices = []   # 滚刷关闭的航点索引队列
         self.brush_active = False     # 滚刷是否激活
         # self.is_boundary_triggered = False # test, False origin
         # 定义参数描述：bool类型, 名称：is_boundary_triggered, 默认值：False
@@ -350,13 +350,15 @@ class RTKNavControlNode(Node):
                     if line.startswith('#'):
                         comment = line[1:].strip().lower()
                         if 'start' in comment:
-                            self.brush_start_idx = len(self.waypoints)
-                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
-                            if self.brush_start_idx == 0:
+                            start_idx = len(self.waypoints)
+                            self.brush_start_indices.append(start_idx)
+                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{start_idx}开启")
+                            if start_idx == 0:
                                 self.brush_active = True
                         elif 'stop' in comment:
-                            self.brush_stop_idx = len(self.waypoints)
-                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
+                            stop_idx = len(self.waypoints)
+                            self.brush_stop_indices.append(stop_idx)
+                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{stop_idx}关闭")
                         if comment:
                             current_area = line[1:].strip()
                         continue
@@ -842,14 +844,16 @@ class RTKNavControlNode(Node):
                         comment = line[1:].strip().lower()
                         if 'start' in comment:
                             # 记录滚刷开启的下一个航点索引
-                            self.brush_start_idx = len(self.waypoints)
-                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{self.brush_start_idx}开启")
-                            if self.brush_start_idx == 0:
+                            start_idx = len(self.waypoints)
+                            self.brush_start_indices.append(start_idx)
+                            self.get_logger().info(f"[RTKNav] 检测到#start标记，滚刷将在航点{start_idx}开启")
+                            if start_idx == 0:
                                 self.brush_active = True
                         elif 'stop' in comment:
                             # 记录滚刷关闭的下一个航点索引
-                            self.brush_stop_idx = len(self.waypoints)
-                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
+                            stop_idx = len(self.waypoints)
+                            self.brush_stop_indices.append(stop_idx)
+                            self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{stop_idx}关闭")
                         continue
                     
                     seq, lon, lat, heading_deg = line.split(',')
@@ -867,10 +871,10 @@ class RTKNavControlNode(Node):
                     # )
                     # self.waypoints.append((corrected_lon, corrected_lat, corrected_heading))
             # self.get_logger().info(f"成功加载RTK航点{len(self.waypoints)}个")
-            if self.brush_start_idx is not None:
-                self.get_logger().info(f"[RTKNav] 滚刷开启航点索引: {self.brush_start_idx}")
-            if self.brush_stop_idx is not None:
-                self.get_logger().info(f"[RTKNav] 滚刷关闭航点索引: {self.brush_stop_idx}")
+            if self.brush_start_indices:
+                self.get_logger().info(f"[RTKNav] 滚刷开启航点索引: {self.brush_start_indices}")
+            if self.brush_stop_indices:
+                self.get_logger().info(f"[RTKNav] 滚刷关闭航点索引: {self.brush_stop_indices}")
             return True
         except Exception as e:
             self.get_logger().error(f"解析RTK文件失败：{str(e)}")
@@ -1929,8 +1933,8 @@ class RTKNavControlNode(Node):
         self.update_cleaning_area(force=True)
         self.current_waypoint_idx = 0
         self.return_to_loading_added = False
-        self.brush_start_idx = None
-        self.brush_stop_idx = None
+        self.brush_start_indices.clear()
+        self.brush_stop_indices.clear()
         self.brush_active = False
         self.rtk_path_file = next_file
 
@@ -2501,19 +2505,28 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[RTKNav] 设置滚刷状态: {'开启' if self.brush_active else '关闭'}")
 
     def check_and_control_brush(self):
-        """根据当前航点索引控制滚刷开关"""
-        if not hasattr(self, 'brush_start_idx') or not hasattr(self, 'brush_stop_idx'):
+        """根据当前航点索引控制滚刷开关，支持多段区域"""
+        if not hasattr(self, 'brush_start_indices') or not hasattr(self, 'brush_stop_indices'):
             return
-        
+
         idx = self.current_waypoint_idx
-        
-        if self.brush_start_idx is not None and idx >= self.brush_start_idx and not self.brush_active:
+
+        # 清理已过期的开启索引（因 _mid 等含 start 子串的注释产生的冗余条目）
+        while self.brush_start_indices and idx > self.brush_start_indices[0]:
+            stale = self.brush_start_indices.pop(0)
+            self.get_logger().warn(f"[RTKNav] 跳过过期滚刷开启索引 {stale}（当前航点{idx}）")
+
+        if self.brush_start_indices and idx >= self.brush_start_indices[0] and not self.brush_active:
             self.publish_brush_speed(RTK_BRUSH_SPEED)
-            self.brush_start_idx = None
-        
-        if self.brush_stop_idx is not None and idx >= self.brush_stop_idx and self.brush_active:
+            self.brush_start_indices.pop(0)
+
+        while self.brush_stop_indices and idx > self.brush_stop_indices[0]:
+            stale = self.brush_stop_indices.pop(0)
+            self.get_logger().warn(f"[RTKNav] 跳过过期滚刷关闭索引 {stale}（当前航点{idx}）")
+
+        if self.brush_stop_indices and idx >= self.brush_stop_indices[0] and self.brush_active:
             self.publish_brush_speed(0.0)
-            self.brush_stop_idx = None
+            self.brush_stop_indices.pop(0)
 
     def publish_nav_state(self, state: NavState):
         """发布当前导航状态"""
@@ -2636,9 +2649,9 @@ class RTKNavControlNode(Node):
         self.current_waypoint_idx = 0  # 重置航点索引为0
         self.get_logger().info(f"[RTKNav] 路径切换时重置航点索引为0")
         self.return_to_loading_added = False  # 重置出仓点追加标志
-        self.brush_start_idx = None  # 重置滚刷开启索引
-        self.brush_stop_idx = None   # 重置滚刷关闭索引
-        self.brush_active = False    # 重置滚刷状态
+        self.brush_start_indices.clear()  # 重置滚刷开启索引队列
+        self.brush_stop_indices.clear()   # 重置滚刷关闭索引队列
+        self.brush_active = False         # 重置滚刷状态
         self.nav_context["nav_state"] = NavState.IDLE  # 重置导航状态为IDLE
         self.nav_context["pre_pause_state"] = None  # 重置暂停状态
         self.nav_context["pause_reason"] = None
