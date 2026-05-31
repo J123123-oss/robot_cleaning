@@ -36,8 +36,8 @@ HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时
 HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
 
 TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
-TURN_SPEED_MID = 0.7  # 中误差中等转向基准速度
-TURN_SPEED_SLOW = 0.2 # 小误差慢速转向基准速度（防超调）
+TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
+TURN_SPEED_SLOW = 0.4 # 小误差慢速转向基准速度（草地需更高最低速克服静摩擦）
 MAX_CORRECTION = 2.0   # 车体停止后，旋转调整最大修正量
 # STRAIGHT_MAX_CORRECTION = 3.0 # 直线运行最大纠正量
 # straight line speed correction factor
@@ -52,6 +52,8 @@ DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 HEADING_ABNORMAL_THRESHOLD = 15.0  # 航向异常阈值（度），连续超限后重新校准
+INITIAL_HEADING_TARGET = 90.0   # 初始航向校验目标（度），清扫起步前IMU必须在此±容差内
+INITIAL_HEADING_TOLERANCE = 25.0  # 初始航向校验容差（度），与motor_control出仓校验一致
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
 STANLEY_MIN_SPEED = 0.15
@@ -70,6 +72,7 @@ BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
 ERROR_TILT_FAULT = 64        # 倾斜/跌落故障
+ERROR_CALIB_TIMEOUT = 256    # 航向校准超时
 
 # 倾斜检测配置
 TILT_ANGLE_THRESHOLD = 10.0  # 倾角阈值（度），abs(angle_x)或abs(angle_y)超此值判定倾斜
@@ -1573,40 +1576,71 @@ class RTKNavControlNode(Node):
         
 
     def calibrate_heading_at_waypoint(self, target_heading: float) -> Generator[Tuple[float, float], None, bool]:
-        # self.get_logger().info(
-            # f"开始航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+        self.clear_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+        calib_start_time = self.get_clock().now()
+        last_heading_error_deg = None
+        stuck_start_time = None
+        escalated = False
+        STUCK_ERROR_CHANGE = 0.3    # 误差变化小于此值视为卡滞（度）
+        STUCK_ESCALATE_TIME = 5.0   # 卡滞超此时长后提速（秒）
+        STUCK_ESCALATE_SPEED = 0.7  # 卡滞提速目标转速
 
         while rclpy.ok():
-            start_time = self.get_clock().now()
             heading_error = self.get_heading_error(target_heading)
-            # ========== 核心修复：归一化航向误差到[-180°, 180°]，取最短路径 ==========
             heading_error = math.fmod(heading_error + 180.0, 360.0) - 180.0
             heading_error_deg = abs(heading_error)
             # 校准达标
             if heading_error_deg <= RTK_HEADING_TOLERANCE:
                 self.get_logger().info(f"航向校准完成！误差：{heading_error_deg:.2f}°")
+                self.clear_rtk_error_bits(ERROR_CALIB_TIMEOUT)
                 return True
 
+            elapsed_time = (self.get_clock().now() - calib_start_time).nanoseconds / 1e9
+
+            # 卡滞检测：误差不收敛时自动提速到FAST档
+            if last_heading_error_deg is not None:
+                error_change = abs(heading_error_deg - last_heading_error_deg)
+                if error_change < STUCK_ERROR_CHANGE:
+                    if stuck_start_time is None:
+                        stuck_start_time = self.get_clock().now()
+                    stuck_duration = (self.get_clock().now() - stuck_start_time).nanoseconds / 1e9
+                    if stuck_duration > STUCK_ESCALATE_TIME and not escalated:
+                        self.get_logger().warn(
+                            f"[航向校准] 卡滞检测：{stuck_duration:.1f}s内误差变化<{STUCK_ERROR_CHANGE}°，"
+                            f"提速至{STUCK_ESCALATE_SPEED}重试"
+                        )
+                        escalated = True
+                else:
+                    stuck_start_time = None
+            last_heading_error_deg = heading_error_deg
+
             # 超时处理
-            elapsed_time = (self.get_clock().now() - start_time).nanoseconds / 1e9
             if elapsed_time > HEADING_CALIBRATION_TIMEOUT:
+                self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                if heading_error_deg > 5.0:
+                    self.get_logger().error(
+                        f"[航向校准] 超时且误差仍大({heading_error_deg:.1f}°>5°)，"
+                        f"可能机械卡死或阻力过大，暂停导航"
+                    )
+                    return False
                 self.get_logger().warn(f"航向校准超时！误差：{heading_error_deg:.2f}°")
                 return True
 
-            # 计算转向速度
-            turn_speed = self.get_adaptive_turn_speed(heading_error_deg)
+            # 选择转速：卡滞提速后使用固定提速档
+            if escalated:
+                turn_speed = STUCK_ESCALATE_SPEED
+            else:
+                turn_speed = self.get_adaptive_turn_speed(heading_error_deg)
 
             # 额外的方向修正项（基于航向误差的速度修正）
             correction = self.get_speed_correction(target_heading)
 
             # 根据修正后的误差计算转向方向
-            min_positive_speed = 0.1  # 最小正向速度，防止停滞 origin 0.1
+            min_positive_speed = 0.5  # 最小转向速度，草地需更高值克服静摩擦
             if heading_error > 0:
-                # turn_right旋转（根据你的电机控制逻辑调整, 若反向则互换左右速度）
                 left_speed = -max(turn_speed - correction, min_positive_speed)
                 right_speed = -max(turn_speed - correction, min_positive_speed)
             else:
-                # turn_left旋转
                 left_speed = max(turn_speed + correction, min_positive_speed)
                 right_speed = max(turn_speed + correction, min_positive_speed)
             yield (left_speed, right_speed)
@@ -2051,6 +2085,25 @@ class RTKNavControlNode(Node):
         else:
             # 只有导航状态为IDLE时, 才重新初始化初始移动（解决重复进入第一个航点）
             if self.nav_context["nav_state"] == NavState.IDLE:
+                # 初始航向校验：IMU须在90°±25°范围内，等待航向就绪后自动开始
+                while True:
+                    if not self.check_control_mode():
+                        yield (0.0, 0.0)
+                        return
+                    heading_diff = self.get_ring_angle_diff(self.imu_yaw, INITIAL_HEADING_TARGET)
+                    if heading_diff <= INITIAL_HEADING_TOLERANCE:
+                        self.get_logger().info(
+                            f"[初始航向校验] 通过：IMU航向={self.imu_yaw:.1f}°，"
+                            f"偏离目标{INITIAL_HEADING_TARGET}°仅{heading_diff:.1f}°"
+                        )
+                        break
+                    self.get_logger().warn(
+                        f"[初始航向校验] 等待航向就绪：IMU航向={self.imu_yaw:.1f}°，"
+                        f"偏离目标{INITIAL_HEADING_TARGET}°达{heading_diff:.1f}° > 容差{INITIAL_HEADING_TOLERANCE}°，"
+                        f"保持停车等待..."
+                    )
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
                 current_nav_state = NavState.INITIAL_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 self.current_waypoint_idx = 0
@@ -2195,7 +2248,23 @@ class RTKNavControlNode(Node):
                     yield (left_speed, right_speed)
                 except StopIteration as e:
                     calib_result = e.value if hasattr(e, 'value') else False
-                    
+
+                    # 校准失败（卡滞无法克服），暂停导航等待人工介入
+                    if not calib_result:
+                        self.get_logger().error(
+                            "[ROSNode] 航向校准失败（卡滞/阻力过大），暂停导航等待人工介入"
+                        )
+                        self.nav_context["calib_generator"] = None
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
+                        self.nav_context["pause_reason"] = "calib_stuck"
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_running = False
+                        self.publish_nav_state(NavState.PAUSE)
+                        self.publish_stop_speed()
+                        yield (0.0, 0.0)
+                        return
+
                     is_recalib = self.nav_context.get("is_angle_recalib", False)
                     
                     if is_recalib:
@@ -2605,6 +2674,8 @@ class RTKNavControlNode(Node):
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
             self.nav_running = False
+            self.heading_abnormal_start_time = None
+            self.heading_timed_out = False
             if hasattr(self, 'nav_context'):
                 self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
             self.publish_stop_speed()
@@ -2701,6 +2772,8 @@ class RTKNavControlNode(Node):
             if self.multi_waypoint_generator:
                 self.multi_waypoint_generator = None
             self.nav_running = False
+            self.heading_abnormal_start_time = None
+            self.heading_timed_out = False
             self.publish_stop_speed()
             # 新增：无航点时强制重置导航上下文，避免恢复时保留异常状态
             if not self.waypoints:
@@ -2760,9 +2833,13 @@ class RTKNavControlNode(Node):
                     velocity_msg.data = float(getattr(self, 'real_velocity', 0.0))
                     self.velocity_pub.publish(velocity_msg)
             except StopIteration:
-                # 导航生成器执行完毕（全部航点完成/主动退出）
-                self.get_logger().info("[ROSNode] 多点导航生成器执行完毕")
-                self.finish_navigation_task()
+                # 校准失败导致的退出，不触发finish_navigation_task
+                if self.nav_context.get("pause_reason") == "calib_stuck":
+                    self.get_logger().info("[ROSNode] 校准失败导致导航暂停，保持PAUSE状态等待恢复")
+                    self.multi_waypoint_generator = None
+                else:
+                    self.get_logger().info("[ROSNode] 多点导航生成器执行完毕")
+                    self.finish_navigation_task()
             except Exception as e:
                 self.get_logger().error(f"[ROSNode] RTK多点导航错误：{str(e)}")
                 # 发布停止指令
