@@ -181,20 +181,19 @@ areas:
     edge_distance_lon: [0.3, 0.3] 
     edge_distance_lat: 0.3
 
-  # bridge_22-21A
-  - name: "bridge_22-21A"
+  # bridge_22-21B
+  - name: "bridge_22-21B"
     calib_point_a: {lon: 110.64660776009069, lat: 35.602400693105714}
-    calib_point_b: {lon: 110.64660679996989, lat: 35.60256285679127}
+    calib_point_b: {lon: 110.64660758597817, lat: 35.602434203751486}
     calib_point_c: {lon: 110.64660776009069, lat: 35.602400693105714}
     edge_distance_lat: [0.1, 0.3]
 
   # 北侧21
   - name: "W21"
-    calib_point_a: {lon: 110.64660679996989, lat: 35.60256285679127}
+    calib_point_a: {lon: 110.64660668762801, lat: 35.602552196077525}
     calib_point_b: {lon: 110.64660758597817, lat: 35.602434203751486}
     calib_point_c: {lon: 110.64710216381792, lat: 35.60243622674924}
     start_corner: "top_left"
-    reverse_end_point: True
     edge_distance_lon: [0.3, 0.5] 
     edge_distance_lat: 0.3
   # bridge_21-20A
