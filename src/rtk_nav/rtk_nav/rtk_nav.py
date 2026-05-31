@@ -357,7 +357,7 @@ class RTKNavControlNode(Node):
                         elif 'stop' in comment:
                             self.brush_stop_idx = len(self.waypoints)
                             self.get_logger().info(f"[RTKNav] 检测到#stop标记，滚刷将在航点{self.brush_stop_idx}关闭")
-                        elif comment:
+                        if comment:
                             current_area = line[1:].strip()
                         continue
                     
