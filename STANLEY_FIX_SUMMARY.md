@@ -5,7 +5,11 @@
 ## 提交历史
 
 ```
-a6c7462 fix: 航向稳定性检查防INS漂移 + 倾斜阈值10→15° + 短促颠簸跳过120s等待
+71adb2f fix: resume路径通用恢复滚刷状态，覆盖tilt_fault和calib_stuck
+59d9224 fix: 倾斜恢复后还原滚刷状态，防止刷停后无法自动重启
+1b4a1d7 fix: 航向稳定性检查防INS漂移 + 倾斜阈值10→15° + 短促颠簸跳过120s等待
+04bee16 fix: 007-W23-W20航点坐标更新
+61de8e6 fix: get_next_path_file最后文件循环回到第一个，支持往复清扫
 0b06cb6 docs: 精简REVIEW.md + motor_start.sh补ROS2 source + 007配置更新区域坐标
 72b9460 fix: 跌落后INS稳定等待120s，覆盖首次启动和清扫中恢复两条路径
 4d82adf fix: PAUSE未停止滚刷(5处修复) + velocity改用电机实际反馈
@@ -647,3 +651,25 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 | HEADING_STABILITY_TOLERANCE | — | 15.0° | 稳定航向容差 |
 | UNLOADING_HEADING_TOLERANCE | 25.0° | 15.0° | 出仓航向校验容差 |
 | MAX_GPS_WAIT_TIME | 30.0s | 300.0s | GPS 等待超时（给航向稳定留时间） |
+
+## 2026-06-02 calib_stuck 自动重试 + heading_timeout 校准保护
+
+### 61. calib_stuck 恢复路径 heading_abnormal_start_time 未清零导致立即 heading_timeout
+
+- **问题**: calib_stuck 触发 PAUSE 后，`heading_abnormal_start_time` 仍保留着校准期间的累积值（已 >15s）。resume 路径恢复到 WAYPOINT_CALIB 时未清零，导致恢复后的第一个 timer callback 中 `handle_rtk_data_timeout()` 立即触发 heading_timeout PAUSE，杀死刚启动的校准。
+- **现场证据**: `卡滞监测，无法纠正.lpg` 中 calib_stuck 后 81s 无恢复——自动恢复失败，但手动 HOLD+AUTO_CLEANING 在 13:00:50 成功（手动路径中 `mode_callback` line 2927 清零了 `heading_abnormal_start_time`，校准能跑满 40s）。
+- **根因对比**:
+  - 手动 HOLD+AUTO_CLEANING: `mode_callback` → 清零航向状态 → 校准 40s 完整执行 → 成功
+  - 自动恢复: 旧 `heading_abnormal_start_time` 已累积 >15s → resume → heading_timeout 立即触发 → 校准被秒杀
+- **修复 (三处联动)**:
+  1. **resume 路径**: 恢复到 WAYPOINT_CALIB 时清零 `heading_abnormal_start_time`/`heading_timed_out`/`angle_abnormal_count`
+  2. **heading_timeout 排除校准**: `handle_rtk_data_timeout()` 中 `nav_state not in [IDLE, PAUSE, COMPLETED]` → 追加 `WAYPOINT_CALIB`——校准有自己的 40s 超时，heading_timeout 打断它是多余的。同时将 `nav_running=False` 等副作用代码移入 if 块内，确保校准中不被意外停止
+  3. **calib_stuck 自动重试**: 校准卡滞不再直接 PAUSE，改为最多重试 3 次（每次重建校准生成器、清零航向状态、40s 超时）。3 次后仍未成功才进入 PAUSE 等待人工介入
+- **影响**: `rtk_nav.py` — `handle_rtk_data_timeout()` + resume 路径（两处 WAYPOINT_CALIB 恢复）+ calib_stuck 处理段 + `reset_nav_context()` + HOLD/mode_callback 清零。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| CALIB_STUCK_MAX_RETRIES | 3 | 校准卡滞最大自动重试次数，超此次数后永久暂停 |
+| HEADING_CALIBRATION_TIMEOUT (注) | 40.0s | 每次校准重试独立的超时，3 次共 120s 自动恢复窗口 |

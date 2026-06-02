@@ -35,6 +35,7 @@ IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
 HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时后暂停导航
 HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
+CALIB_STUCK_MAX_RETRIES = 3  # 校准卡滞最大重试次数，超此次数后才永久暂停
 
 TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
@@ -244,6 +245,7 @@ class RTKNavControlNode(Node):
             "tilt_confirm_count": 0,     # 连续倾斜帧数（触发确认）
             "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
             "tilt_fault": False,         # 倾斜故障标志
+            "calib_retry_count": 0,      # 校准卡滞重试次数
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -911,22 +913,24 @@ class RTKNavControlNode(Node):
             heading_abnormal_elapsed = now - self.heading_abnormal_start_time
             if heading_abnormal_elapsed > HEADING_ABNORMAL_TIMEOUT:
                 if not self.heading_timed_out:
-                    if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                    # 仅在主动导航状态（非空闲/暂停/完成/校准中）时触发heading_timeout暂停
+                    # 校准中(WAYPOINT_CALIB)有自己的40s超时，不应被heading_timeout打断
+                    if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED, NavState.WAYPOINT_CALIB]:
                         self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                         self.nav_context["pause_reason"] = "heading_timeout"
                         self.nav_context["brush_active"] = self.brush_active
                         self.nav_context["nav_state"] = NavState.PAUSE
                         self.publish_nav_state(NavState.PAUSE)
-                    self.nav_running = False
-                    self.heading_timed_out = True
-                    self.publish_stop_speed()
-                    self.get_logger().warn(
-                        f"[航向异常超时] 航向角异常已持续{heading_abnormal_elapsed:.1f}s，已停车并暂停导航"
-                    )
-                    self.last_rtk_timeout_log_time = now
-                    self._last_heading_recovery_check = now
-                    self.set_rtk_error_bits(ERROR_RTK_TIMEOUT)
-                    return True
+                        self.nav_running = False
+                        self.heading_timed_out = True
+                        self.publish_stop_speed()
+                        self.get_logger().warn(
+                            f"[航向异常超时] 航向角异常已持续{heading_abnormal_elapsed:.1f}s，已停车并暂停导航"
+                        )
+                        self.last_rtk_timeout_log_time = now
+                        self._last_heading_recovery_check = now
+                        self.set_rtk_error_bits(ERROR_RTK_TIMEOUT)
+                        return True
                 # 周期性恢复检查：检查航向是否已恢复正常
                 if now - self._last_heading_recovery_check >= HEADING_RECOVERY_CHECK_INTERVAL:
                     self._last_heading_recovery_check = now
@@ -1984,6 +1988,7 @@ class RTKNavControlNode(Node):
             "tilt_confirm_count": 0,
             "tilt_normal_count": 0,
             "tilt_fault": False,
+            "calib_retry_count": 0,
         }
         self.clear_rtk_error_bits(ERROR_TILT_FAULT)  # 同步清除，防止tilt_fault与rtk_error_code脱钩
         self.heading_abnormal_start_time = None  # 重置航向异常计时
@@ -2150,6 +2155,10 @@ class RTKNavControlNode(Node):
                             target_heading = self.get_path_heading(target_waypoint)
                             self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                             self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+                        # 清零航向异常状态，避免恢复后立即触发heading_timeout杀死校准
+                        self.heading_abnormal_start_time = None
+                        self.heading_timed_out = False
+                        self.nav_context["angle_abnormal_count"] = 0
 
             if current_nav_state != NavState.PAUSE:
                 self.get_logger().info(f"从状态{current_nav_state}恢复导航")
@@ -2161,6 +2170,10 @@ class RTKNavControlNode(Node):
                     # 重新创建校准生成器（重置超时计时和误差计算）
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                     self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+                # 清零航向异常状态，避免恢复后立即触发heading_timeout杀死校准
+                self.heading_abnormal_start_time = None
+                self.heading_timed_out = False
+                self.nav_context["angle_abnormal_count"] = 0
             
             # 恢复暂停前保存的滚刷状态（覆盖所有暂停原因：tilt_fault/calib_stuck等）
             # brush_start_indices已被消费(pop)，无法通过check_and_control_brush自动重启
@@ -2403,10 +2416,24 @@ class RTKNavControlNode(Node):
                 except StopIteration as e:
                     calib_result = e.value if hasattr(e, 'value') else False
 
-                    # 校准失败（卡滞无法克服），暂停导航等待人工介入
+                    # 校准失败（卡滞无法克服）
                     if not calib_result:
+                        self.nav_context["calib_retry_count"] += 1
+                        retry_count = self.nav_context["calib_retry_count"]
+                        if retry_count <= CALIB_STUCK_MAX_RETRIES:
+                            self.get_logger().warn(
+                                f"[ROSNode] 航向校准失败（卡滞），第{retry_count}/{CALIB_STUCK_MAX_RETRIES}次自动重试"
+                            )
+                            self.heading_abnormal_start_time = None
+                            self.heading_timed_out = False
+                            self.nav_context["angle_abnormal_count"] = 0
+                            target_heading = self.get_path_heading(target_waypoint)
+                            self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
+                            self.get_logger().info(f"重新初始化航向校准（重试{retry_count}）：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
+                            yield (0.0, 0.0)
+                            continue
                         self.get_logger().error(
-                            "[ROSNode] 航向校准失败（卡滞/阻力过大），暂停导航等待人工介入"
+                            f"[ROSNode] 航向校准失败（卡滞/阻力过大），已重试{CALIB_STUCK_MAX_RETRIES}次，暂停导航等待人工介入"
                         )
                         self.nav_context["calib_generator"] = None
                         self.nav_context["nav_state"] = NavState.PAUSE
@@ -2420,7 +2447,12 @@ class RTKNavControlNode(Node):
                         return
 
                     is_recalib = self.nav_context.get("is_angle_recalib", False)
-                    
+
+                    # 校准成功，清零卡滞重试计数
+                    if self.nav_context.get("calib_retry_count", 0) > 0:
+                        self.get_logger().info(f"[航向校准] 校准成功，清零卡滞重试计数（之前重试{self.nav_context['calib_retry_count']}次）")
+                        self.nav_context["calib_retry_count"] = 0
+
                     if is_recalib:
                         # 角度异常后的重新校准：校准完成后继续前往当前航点
                         self.get_logger().info(
@@ -2831,6 +2863,7 @@ class RTKNavControlNode(Node):
             self.nav_running = False
             self.heading_abnormal_start_time = None
             self.heading_timed_out = False
+            self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             if hasattr(self, 'nav_context'):
                 self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
             self.publish_stop_speed()
@@ -2926,6 +2959,7 @@ class RTKNavControlNode(Node):
             # 进入RTK模式时清零航向异常状态，避免旧计时污染新导航任务
             self.heading_abnormal_start_time = None
             self.heading_timed_out = False
+            self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
             if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]:
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE
@@ -2938,6 +2972,7 @@ class RTKNavControlNode(Node):
             self.nav_running = False
             self.heading_abnormal_start_time = None
             self.heading_timed_out = False
+            self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             self.publish_stop_speed()
             # 新增：无航点时强制重置导航上下文，避免恢复时保留异常状态
             if not self.waypoints:
