@@ -59,7 +59,7 @@ areas:
     calib_point_b: {lon: 110.64660078489712, lat: 35.60429258785293}
     calib_point_c: {lon: 110.64659951957887, lat: 35.6045257066004}
     start_corner: "top_right"
-    edge_distance_lat: [0.1, 0.3] 
+    edge_distance_lat: [0.1, 0.7] 
 
   # 北侧12   -----------------------------------------------------------------
   - name: "W12_start"

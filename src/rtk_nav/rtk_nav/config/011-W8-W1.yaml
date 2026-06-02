@@ -36,9 +36,9 @@ areas:
   
   # bridge_W9-W9B
   - name: "bridge_W9-W9B"
-    calib_point_a: {lon: 110.64694080666239, lat: 35.605035319074254}
-    calib_point_b: {lon: 110.64694067249663, lat: 35.604999976240926}
-    calib_point_c: {lon: 110.64694080666239, lat: 35.605035319074254}
+    calib_point_a: {lon: 110.64694067249663, lat: 35.604999976240926}
+    calib_point_b: {lon: 110.64694080666239, lat: 35.605035319074254}
+    calib_point_c: {lon: 110.64694067249663, lat: 35.604999976240926}
     
   # 北侧8
   - name: "W8_start"
@@ -194,11 +194,11 @@ areas:
     calib_point_b: {lon: 110.64694032246108, lat: 35.60507031658687}
     calib_point_c: {lon: 110.64693926233181, lat: 35.6052853867204}
     start_corner: "top_right"
-  # back_9B-10bA
-  - name: "back_9B-E9"
-    calib_point_a: {lon: 110.64694067249663, lat: 35.604999976240926}
-    calib_point_b: {lon: 110.64727306408854, lat: 35.6050072561475}
-    calib_point_c: {lon: 110.64694067249663, lat: 35.604999976240926}
+  # back_W9A-W9B
+  - name: "back_W9A-W9B"
+    calib_point_a: {lon: 110.64694080666239, lat: 35.605035319074254}
+    calib_point_b: {lon: 110.64694067249663, lat: 35.604999976240926}
+    calib_point_c: {lon: 110.64694080666239, lat: 35.605035319074254}
     start_corner: "top_right"
   # back_W9-E9
   - name: "back_W9-E9"
@@ -208,11 +208,20 @@ areas:
     edge_distance_lon: 0.0
     edge_distance_lat: 0.0
     
-  # back_9A-8B
-  - name: "back_9A-8B"
-    calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
+    # back_E9_E9A
+  - name: "back_E9_E9A"
+    calib_point_a: {lon: 110.64727306408854, lat: 35.6050072561475}
+    calib_point_b: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_c: {lon: 110.64727306408854, lat: 35.6050072561475}
+    edge_distance_lat: 2.0
+    edge_distance_lon: 0.0
+
+ 
+  # back_9B-8B
+  - name: "back_9B-8B"
+    calib_point_a: {lon: 110.64776064561126, lat: 35.6050338231927}
     calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
-    calib_point_c: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_c: {lon: 110.64776064561126, lat: 35.6050338231927}
     start_corner: "top_right"
 
   # back_7A-7bA

@@ -21,17 +21,11 @@ areas:
     # [右，左]
     edge_distance_lon: [0.3, 0.3]  
 
-  # bridge_7A-8B
-  - name: "bridge_7A-8B"
-    calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
-    calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
-    calib_point_c: {lon: 110.64776001450005, lat: 35.605286952396405}
-
-  # bridge_8A-9B
-  - name: "bridge_8A-9B"
-    calib_point_a: {lon: 110.64776102878216, lat: 35.60507126970284}
+  # bridge_8B-9B
+  - name: "bridge_8B-9B"
+    calib_point_a: {lon: 110.6477602879233, lat: 35.605252466171876}
     calib_point_b: {lon: 110.64776114629366, lat: 35.60503614295901}
-    calib_point_c: {lon: 110.64776102878216, lat: 35.60507126970284}
+    calib_point_c: {lon: 110.6477602879233, lat: 35.605252466171876}
 
   # # 9南侧
   - name: "E9_start"
@@ -105,8 +99,8 @@ areas:
     # [下，上]  
     edge_distance_lat: [0.3, 0.3]  
 
-  # back_11B-10A stop
-  - name: "back_11B-10A"
+  # back_11B-10
+  - name: "back_11B-10A_stop"
     calib_point_a: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_b: {lon: 110.64776160546539, lat: 35.60485301059596}
     calib_point_c: {lon: 110.64776265157377, lat: 35.60475014299974}
