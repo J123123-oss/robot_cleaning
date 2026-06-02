@@ -2162,12 +2162,12 @@ class RTKNavControlNode(Node):
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                     self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
             
-            # 倾斜恢复：还原滚刷状态（brush_start_indices已消费，无法通过check_and_control_brush自动重启）
-            if pause_reason == "tilt_fault":
-                saved_brush = self.nav_context.get("brush_active", False)
-                if saved_brush and not self.brush_active:
-                    self.brush_active = True
-                    self.get_logger().info("[倾斜恢复] 恢复倾斜前滚刷开启状态")
+            # 恢复暂停前保存的滚刷状态（覆盖所有暂停原因：tilt_fault/calib_stuck等）
+            # brush_start_indices已被消费(pop)，无法通过check_and_control_brush自动重启
+            saved_brush = self.nav_context.get("brush_active", False)
+            if saved_brush and not self.brush_active:
+                self.brush_active = True
+                self.get_logger().info(f"[{pause_reason}恢复] 恢复暂停前滚刷开启状态")
 
             # 恢复导航时检查滚刷控制（处理暂停恢复场景）
             self.check_and_control_brush()
