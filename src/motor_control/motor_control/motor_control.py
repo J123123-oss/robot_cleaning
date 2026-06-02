@@ -10,7 +10,7 @@ import math
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16MultiArray, Int16
+from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16MultiArray, Int16, Bool
 from geometry_msgs.msg import Vector3
 import traceback
 import json
@@ -58,10 +58,10 @@ DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
 
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
-MAX_GPS_WAIT_TIME = 30.0
-# 出仓完成后航向角校验：目标90°，允许±25°偏差（归一化到[0,360]）
+MAX_GPS_WAIT_TIME = 300.0
+# 出仓完成后航向角校验：目标90°，允许±15°偏差 + 5s航向稳定
 UNLOADING_HEADING_TARGET = 90.0
-UNLOADING_HEADING_TOLERANCE = 25.0
+UNLOADING_HEADING_TOLERANCE = 15.0
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 91.0
 
@@ -274,6 +274,12 @@ class MotorControlNode(Node):
             self.imu_heading_callback,
             10
         )
+        self.heading_stable_sub = self.create_subscription(
+            Bool,
+            "heading_stable",
+            self.heading_stable_callback,
+            10
+        )
 
         self.battery_subscription = self.create_subscription(
             Float32MultiArray,
@@ -337,6 +343,7 @@ class MotorControlNode(Node):
 
         # 确保IMU航向默认值存在
         self.imu_yaw_deg = None
+        self.heading_stable = False  # 来自 rtk_nav 的航向稳定性标志
 
         # 初始化电机（进入ENABLE状态）>>DISABLE
         self.switch_state('z')
@@ -457,6 +464,11 @@ class MotorControlNode(Node):
         self.last_imu_update_time = time.time()  # 记录最新更新时间
         # 确保角度归一化到[-180, 180]
         self.imu_yaw_deg = (self.imu_yaw_deg + 180) % 360 - 180
+
+    def heading_stable_callback(self, msg: Bool):
+        """接收 rtk_nav 的航向稳定性标志"""
+        self.heading_stable = msg.data
+
     def charge_resume_callback(self):
         # 充电停止条件判断（使用存储的传感器状态）
         if self.is_charging and ((self.dock_sensors & 0x08) or (self.dock_sensors & 0x04)):
@@ -1397,9 +1409,11 @@ class MotorControlNode(Node):
             return 0.1 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
 
     def _is_unloading_heading_ready(self):
-        """出仓完成后航向角校验：IMU航向需在90°±25°范围内。
+        """出仓完成后航向角校验：IMU航向在90°±15°内 + 5s稳定无漂移。
         返回 True 表示航向就绪，可切入AUTO_CLEANING。"""
         if self.imu_yaw_deg is None:
+            return False
+        if not self.heading_stable:
             return False
         heading_0_360 = (self.imu_yaw_deg + 360) % 360
         low = (UNLOADING_HEADING_TARGET - UNLOADING_HEADING_TOLERANCE) % 360
@@ -1559,7 +1573,8 @@ class MotorControlNode(Node):
                     if int(elapsed_time) % 3 == 0 and abs(elapsed_time - int(elapsed_time)) < 0.1:
                         rtk_label = "Fixed" if self.rtk_status == 4 else f"状态码{self.rtk_status}"
                         hdg = (self.imu_yaw_deg + 360) % 360 if self.imu_yaw_deg is not None else -1
-                        self.get_logger().warn(f"[START] 出仓完成，等待条件满足（RTK={rtk_label}，航向={hdg:.1f}°），已等待{elapsed_time:.1f}s，继续等待...")
+                        self.get_logger().warn(f"[START] 出仓完成，等待条件满足（RTK={rtk_label}，航向={hdg:.1f}°，"
+                                               f"稳定={self.heading_stable}），已等待{elapsed_time:.1f}s，继续等待...")
                     elif self.unloading_phase == "COMPLETE":
                         # get_gps
                         if self.rtk_status == 4 and self._is_unloading_heading_ready():

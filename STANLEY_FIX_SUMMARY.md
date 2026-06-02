@@ -5,6 +5,7 @@
 ## 提交历史
 
 ```
+a6c7462 fix: 航向稳定性检查防INS漂移 + 倾斜阈值10→15° + 短促颠簸跳过120s等待
 0b06cb6 docs: 精简REVIEW.md + motor_start.sh补ROS2 source + 007配置更新区域坐标
 72b9460 fix: 跌落后INS稳定等待120s，覆盖首次启动和清扫中恢复两条路径
 4d82adf fix: PAUSE未停止滚刷(5处修复) + velocity改用电机实际反馈
@@ -607,3 +608,42 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 | TURN_SPEED_MID | 1.0 (原0.7) | 中速旋转电机指令 |
 | TURN_SPEED_SLOW | 0.4 (原0.2) | 低速旋转电机指令 |
 
+## 2026-06-01 航向稳定性检查 + INS 漂移防护
+
+### 59. 全新启动时 IMU 航向严重漂移
+
+- **问题**: 冷启动时 `ins_flag=0`（INS 未完成初始化，gyro bias 未收敛），`ins_heading` 以 3-10°/s 持续漂移。机器人静止状态下 31 秒漂移 300°+。若此时触发 UNLOADING/AUTO_CLEANING，IMU 航向完全不可信，导致 INITIAL_MOVE 立即触发航向异常。
+- **现场证据**: `全新启动，角度异常.log` 中 IMU 从 90° 线形漂移到约 -210°，`ins_flag` 始终为 0。
+- **修复**: 新增航向稳定性检查——5 秒滑动窗口内 ins_heading 波动 ≤ 3° 且稳定在 89°±15° 范围内，才允许进入清扫：
+  - `rtk_nav.py` `heading_callback()`: deque 滑动窗口追踪 ins_heading，每帧发布 `/heading_stable`（Bool）
+  - `motor_control.py`: 新增 `/heading_stable` 订阅，`_is_unloading_heading_ready()` 增加 `heading_stable` 条件
+  - INITIAL_MOVE 初始航向校验: 要求 `heading_ok AND stable_ok` 同时满足
+- **关键设计**:
+  - 滑动窗口 5s，用 ≥4.5s 容差 + 最少 20 样本防回调抖动
+  - 稳定性追踪**仅在 IDLE/PAUSE/COMPLETED 时更新**，导航中（INITIAL_MOVE/WAYPOINT_MOVE）冻结最后值，避免移动中误报不稳定
+  - 初始航向校验容差从 25° 收紧到 15°
+- **影响**: `rtk_nav.py` — heading_callback + move_to_first_waypoint + 常量定义；`motor_control.py` — heading_stable 订阅 + _is_unloading_heading_ready。
+
+### 60. 倾斜故障误触发 + 短促颠簸导致 120s 无效等待
+
+- **问题**: angle_y 正常运行时基线在 -7°~-10°（场地自然坡度），10° 阈值几乎没有余量。稍有颠簸 angle_y 突破 10° → 30 帧确认 → 停车 → 恢复后强制等 120s。多次短促颠簸（< 5s）反复浪费数分钟。
+- **现场证据**: `倾斜故障误触发.log` 中 3 次触发：angle_y=-10.78°（刚超）、-15.37°（短促）、-10.01°。每次恢复后等待 60-120s。
+- **修复**:
+  - 倾角阈值 `TILT_ANGLE_THRESHOLD` 从 10° 提升到 **15°**，给 angle_y 正常基线留 5° 余量
+  - 新增 `TILT_SHORT_DURATION=10.0s`：倾斜恢复时记录 `last_tilt_duration = 恢复时间 - 确认时间`
+  - 恢复路径：若 `last_tilt_duration < 10s`（短促颠簸），**跳过 120s 稳定等待**直接恢复；≥ 10s 才走完整等待
+- **影响**: `rtk_nav.py` — 常量 + tilt 恢复逻辑 + 两处跌落稳定等待路径（resume 和首次 AUTO_CLEANING）。
+
+### 参数更新
+
+| 参数 | 原值 | 新值 | 说明 |
+|------|------|------|------|
+| TILT_ANGLE_THRESHOLD | 10.0° | 15.0° | 倾斜判定阈值 |
+| TILT_SHORT_DURATION | — | 10.0s | 短促倾斜跳过稳定等待 |
+| INITIAL_HEADING_TOLERANCE | 25.0° | 15.0° | 初始航向校验容差 |
+| HEADING_STABILITY_WINDOW | — | 5.0s | 航向稳定检查窗口 |
+| HEADING_STABILITY_RANGE | — | 3.0° | 窗口内最大允许波动 |
+| HEADING_STABILITY_TARGET | — | 89.0° | 稳定航向目标 |
+| HEADING_STABILITY_TOLERANCE | — | 15.0° | 稳定航向容差 |
+| UNLOADING_HEADING_TOLERANCE | 25.0° | 15.0° | 出仓航向校验容差 |
+| MAX_GPS_WAIT_TIME | 30.0s | 300.0s | GPS 等待超时（给航向稳定留时间） |
