@@ -2448,10 +2448,11 @@ class RTKNavControlNode(Node):
 
                     is_recalib = self.nav_context.get("is_angle_recalib", False)
 
-                    # 校准成功，清零卡滞重试计数
+                    # 校准成功，清零卡滞重试计数和暂停原因（防止残留导致StopIteration误判）
                     if self.nav_context.get("calib_retry_count", 0) > 0:
                         self.get_logger().info(f"[航向校准] 校准成功，清零卡滞重试计数（之前重试{self.nav_context['calib_retry_count']}次）")
                         self.nav_context["calib_retry_count"] = 0
+                    self.nav_context["pause_reason"] = None
 
                     if is_recalib:
                         # 角度异常后的重新校准：校准完成后继续前往当前航点
@@ -2499,7 +2500,13 @@ class RTKNavControlNode(Node):
                         if target_waypoint:
                             self.get_logger().info(f"[ROSNode] 切换到新航点{self.current_waypoint_idx}, 准备进入移动阶段")
                         else:
-                            self.get_logger().warn(f"[ROSNode] 未获取到航点{self.current_waypoint_idx}，导航结束")
+                            # 返仓点校准完成（return_to_loading_added=True且无更多航点）
+                            # 直接走完成流程，不通过StopIteration（避免pause_reason残留导致误判）
+                            self.get_logger().info("[ROSNode] 返回进仓点校准完成，导航任务全部完成")
+                            self.nav_context["pause_reason"] = None  # 清除可能的残留状态
+                            self.nav_context["nav_state"] = NavState.COMPLETED
+                            self.publish_nav_state(NavState.COMPLETED)
+                            self.finish_navigation_task()
                             yield (0.0, 0.0)
                             return
                     else:
