@@ -80,6 +80,8 @@ ERROR_CALIB_TIMEOUT = 256    # 航向校准超时
 TILT_ANGLE_THRESHOLD = 15.0  # 倾角阈值（度），abs(angle_x)或abs(angle_y)超此值判定倾斜
 TILT_CONFIRM_FRAMES = 30     # 连续倾斜帧数确认（防抖），避免颠簸误报，约3秒
 TILT_RECOVERY_FRAMES = 5     # 连续正常帧数清除故障
+TILT_SUDDEN_DELTA = 5.0      # 突变阈值（度），1s内角度变化超此值才视为真实倾斜，过滤IMU零偏漂移
+TILT_BASELINE_SAMPLES = 10   # 基线窗口样本数（1秒@10Hz），取中位数作为漂移基线
 TILT_STABILIZE_TIMEOUT = 120.0  # 跌落后INS稳定等待时间（秒），重新AUTO_CLEANING后等待此时间再开始
 TILT_SHORT_DURATION = 10.0    # 短促倾斜阈值（秒），倾斜持续低于此值视为颠簸，跳过稳定等待
 
@@ -261,6 +263,8 @@ class RTKNavControlNode(Node):
         self.heading_timed_out = False  # 航向角异常导致的超时标志
         self.last_tilt_time = 0.0       # 最后一次倾斜故障确认时间，用于跌落后稳定等待
         self.last_tilt_duration = 0.0  # 上一次倾斜故障的持续时间（秒），用于判断是否短促颠簸
+        self._angle_x_history = deque(maxlen=TILT_BASELINE_SAMPLES)  # 倾角基线窗口，滤IMU漂移
+        self._angle_y_history = deque(maxlen=TILT_BASELINE_SAMPLES)
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
@@ -1118,7 +1122,26 @@ class RTKNavControlNode(Node):
 
         # —— 倾斜/跌落检测（基于 angle_x/angle_y），仅在 AUTO_CLEANING 模式生效 ——
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
-            is_tilted = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD or abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
+            self._angle_x_history.append(msg.angle_x)
+            self._angle_y_history.append(msg.angle_y)
+
+            over_x = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD
+            over_y = abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
+            over_threshold = over_x or over_y
+
+            # 突变检测：当前值 vs 1s滑动窗口中位数，过滤IMU零偏缓慢漂移
+            already_counting = self.nav_context["tilt_confirm_count"] > 0
+            sudden = False
+            if len(self._angle_x_history) >= TILT_BASELINE_SAMPLES:
+                sorted_x = sorted(self._angle_x_history)
+                sorted_y = sorted(self._angle_y_history)
+                baseline_x = sorted_x[len(sorted_x) // 2]
+                baseline_y = sorted_y[len(sorted_y) // 2]
+                sudden = (abs(msg.angle_x - baseline_x) > TILT_SUDDEN_DELTA
+                          or abs(msg.angle_y - baseline_y) > TILT_SUDDEN_DELTA)
+
+            # 倾斜判定：超阈值 AND (突变 OR 已在计数中，锁存防止持续倾斜时基线追上)
+            is_tilted = over_threshold and (sudden or already_counting)
 
             if is_tilted:
                 self.nav_context["tilt_normal_count"] = 0
