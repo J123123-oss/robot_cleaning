@@ -87,7 +87,7 @@ TILT_SHORT_DURATION = 10.0    # 短促倾斜阈值（秒），倾斜持续低于
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 3.0       # 窗口内最大允许变化（度），超出判定漂移中
 HEADING_STABILITY_TARGET = 89.0     # 稳定航向目标（度），0-360
-HEADING_STABILITY_TOLERANCE = 15.0  # 稳定航向容差（度），即 90°±15°
+HEADING_STABILITY_TOLERANCE = 5.0  # 稳定航向容差（度），即 89°±5°
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -2754,13 +2754,12 @@ class RTKNavControlNode(Node):
 
     # ================== 原有RTKControlNode核心方法 ==================
     def publish_stop_speed(self):
-        """发布停止电机速度指令，同时清除滚刷标志避免PAUSE期间误启"""
+        """发布停止电机速度指令（不清除brush_active，由调用方决定）"""
         stop_speed = Vector3()
         stop_speed.x = 0.0
         stop_speed.y = 0.0
         stop_speed.z = 0.0
         self.motor_speed_pub.publish(stop_speed)
-        self.brush_active = False
 
     def publish_brush_speed(self, speed: float):
         """发布滚刷速度指令（仅更新标志位，不单独发布）"""
