@@ -256,6 +256,7 @@ class RTKNavControlNode(Node):
         self.rtk_data_timed_out = False
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
+        self.last_heading_check_log_time = 0.0
         self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
         self.heading_timed_out = False  # 航向角异常导致的超时标志
         self.last_tilt_time = 0.0       # 最后一次倾斜故障确认时间，用于跌落后稳定等待
@@ -1060,6 +1061,9 @@ class RTKNavControlNode(Node):
         stable_msg.data = self._last_heading_stable
         self.heading_stable_pub.publish(stable_msg)
 
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            return
+
         if not hasattr(self, 'last_gps_status'):
             self.last_gps_status = -1
         
@@ -1112,45 +1116,46 @@ class RTKNavControlNode(Node):
                     self.publish_brush_speed(0.0)
                 self.nav_running = True
 
-        # —— 倾斜/跌落检测（基于 angle_x/angle_y） ——
-        is_tilted = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD or abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
+        # —— 倾斜/跌落检测（基于 angle_x/angle_y），仅在 AUTO_CLEANING 模式生效 ——
+        if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            is_tilted = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD or abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
 
-        if is_tilted:
-            self.nav_context["tilt_normal_count"] = 0
-            self.nav_context["tilt_confirm_count"] += 1
-            if self.nav_context["tilt_confirm_count"] >= TILT_CONFIRM_FRAMES and not self.nav_context["tilt_fault"]:
-                self.nav_context["tilt_fault"] = True
-                self.last_tilt_time = time.monotonic()
-                if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
-                    self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
-                    self.nav_context["pause_reason"] = "tilt_fault"
-                    self.nav_context["brush_active"] = self.brush_active
-                    self.nav_context["nav_state"] = NavState.PAUSE
-                    self.publish_nav_state(NavState.PAUSE)
-                self.nav_running = False
-                self.publish_stop_speed()
-                self.set_rtk_error_bits(ERROR_TILT_FAULT)
-                self.get_logger().error(
-                    f"[倾斜故障] angle_x={msg.angle_x:.2f}°, angle_y={msg.angle_y:.2f}° "
-                    f"连续{self.nav_context['tilt_confirm_count']}帧超阈值({TILT_ANGLE_THRESHOLD}°)，已停车并暂停导航"
-                )
-        else:
-            self.nav_context["tilt_confirm_count"] = 0
-            if self.nav_context["tilt_fault"]:
-                self.nav_context["tilt_normal_count"] += 1
-                if self.nav_context["tilt_normal_count"] >= TILT_RECOVERY_FRAMES:
-                    self.nav_context["tilt_fault"] = False
-                    self.nav_context["tilt_normal_count"] = 0
-                    self.last_tilt_duration = time.monotonic() - self.last_tilt_time
-                    self.clear_rtk_error_bits(ERROR_TILT_FAULT)
-                    self.multi_waypoint_generator = None
-                    if self.last_tilt_duration < TILT_SHORT_DURATION:
-                        self.get_logger().info(
-                            f"[倾斜恢复] 倾角已恢复，倾斜仅持续{self.last_tilt_duration:.1f}s"
-                            f"(<{TILT_SHORT_DURATION}s)，将跳过稳定等待"
-                        )
-                    else:
-                        self.get_logger().info("[倾斜恢复] 倾角已恢复正常，等待生成器重建进入稳定等待流程")
+            if is_tilted:
+                self.nav_context["tilt_normal_count"] = 0
+                self.nav_context["tilt_confirm_count"] += 1
+                if self.nav_context["tilt_confirm_count"] >= TILT_CONFIRM_FRAMES and not self.nav_context["tilt_fault"]:
+                    self.nav_context["tilt_fault"] = True
+                    self.last_tilt_time = time.monotonic()
+                    if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+                        self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
+                        self.nav_context["pause_reason"] = "tilt_fault"
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.publish_nav_state(NavState.PAUSE)
+                    self.nav_running = False
+                    self.publish_stop_speed()
+                    self.set_rtk_error_bits(ERROR_TILT_FAULT)
+                    self.get_logger().error(
+                        f"[倾斜故障] angle_x={msg.angle_x:.2f}°, angle_y={msg.angle_y:.2f}° "
+                        f"连续{self.nav_context['tilt_confirm_count']}帧超阈值({TILT_ANGLE_THRESHOLD}°)，已停车并暂停导航"
+                    )
+            else:
+                self.nav_context["tilt_confirm_count"] = 0
+                if self.nav_context["tilt_fault"]:
+                    self.nav_context["tilt_normal_count"] += 1
+                    if self.nav_context["tilt_normal_count"] >= TILT_RECOVERY_FRAMES:
+                        self.nav_context["tilt_fault"] = False
+                        self.nav_context["tilt_normal_count"] = 0
+                        self.last_tilt_duration = time.monotonic() - self.last_tilt_time
+                        self.clear_rtk_error_bits(ERROR_TILT_FAULT)
+                        self.multi_waypoint_generator = None
+                        if self.last_tilt_duration < TILT_SHORT_DURATION:
+                            self.get_logger().info(
+                                f"[倾斜恢复] 倾角已恢复，倾斜仅持续{self.last_tilt_duration:.1f}s"
+                                f"(<{TILT_SHORT_DURATION}s)，将跳过稳定等待"
+                            )
+                        else:
+                            self.get_logger().info("[倾斜恢复] 倾角已恢复正常，等待生成器重建进入稳定等待流程")
 
         raw_lon = msg.ins_longitude
         raw_lat = msg.ins_latitude
@@ -2259,10 +2264,13 @@ class RTKNavControlNode(Node):
                     if not stable_ok:
                         reasons.append(f"5s内航向不稳定（需稳定在{HEADING_STABILITY_TARGET}°±{HEADING_STABILITY_TOLERANCE}°"
                                        f"且波动≤{HEADING_STABILITY_RANGE}°）")
-                    self.get_logger().warn(
-                        f"[初始航向校验] 等待航向就绪：IMU航向={self.imu_yaw:.1f}°，"
-                        + "；".join(reasons) + "，保持停车等待..."
-                    )
+                    now = time.monotonic()
+                    if now - self.last_heading_check_log_time >= 10.0:
+                        self.get_logger().warn(
+                            f"[初始航向校验] 等待航向就绪：IMU航向={self.imu_yaw:.1f}°，"
+                            + "；".join(reasons) + "，保持停车等待..."
+                        )
+                        self.last_heading_check_log_time = now
                     self.publish_stop_speed()
                     yield (0.0, 0.0)
                 current_nav_state = NavState.INITIAL_MOVE
