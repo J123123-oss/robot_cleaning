@@ -1,10 +1,12 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-05-31
+分支: `stanley` | 日期: 2026-06-03
 
 ## 提交历史
 
 ```
+c6dfe37 fix: calib_stuck故障码未上报 — motor_control屏蔽了ERROR_CALIB_TIMEOUT(256)
+8c4ddbf fix: publish_stop_speed不再清零brush_active，防止RTK震荡污染nav_context保存值
 71adb2f fix: resume路径通用恢复滚刷状态，覆盖tilt_fault和calib_stuck
 59d9224 fix: 倾斜恢复后还原滚刷状态，防止刷停后无法自动重启
 1b4a1d7 fix: 航向稳定性检查防INS漂移 + 倾斜阈值10→15° + 短促颠簸跳过120s等待
@@ -529,6 +531,7 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 - **问题**: PAUSE 触发后 `publish_stop_speed()` 发送 `(0,0,0)`，但 `self.brush_active` 仍为 True。随后 `rtk_timer_callback` 的 timer 读到 `brush_active=True`，继续发布 `z=RTK_BRUSH_SPEED`，滚刷未停。
 - **修复**: `publish_stop_speed()` 内增加 `self.brush_active = False`，停电机时同步清除滚刷标志。
+- **注意**: 此修复在 #62 (2026-06-03) 中被**撤销**，改为不在 `publish_stop_speed()` 中清零 `brush_active`，原因见 #62。
 - **影响**: `rtk_nav.py` — `publish_stop_speed()`。
 
 ### 51. 航向超时恢复缺少状态复原 + 未检查跌落故障
@@ -673,3 +676,23 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 |------|-----|------|
 | CALIB_STUCK_MAX_RETRIES | 3 | 校准卡滞最大自动重试次数，超此次数后永久暂停 |
 | HEADING_CALIBRATION_TIMEOUT (注) | 40.0s | 每次校准重试独立的超时，3 次共 120s 自动恢复窗口 |
+
+## 2026-06-03 publish_stop_speed 滚刷标志清零导致 RTK 震荡后滚刷永久关闭
+
+### 62. publish_stop_speed() 无条件清零 brush_active → 污染 nav_context 保存链
+
+- **问题**: `publish_stop_speed()` 无条件设置 `self.brush_active = False`。RTK 快速 Float↔固定解震荡时，每次 PAUSE 调用 `publish_stop_speed()` 清零 `self.brush_active`，虽然 `wtrtk_data_callback` 中先保存后清零的顺序保证了 `nav_context["brush_active"]` 第一次保存正确，但**10Hz 定时器在 RTK 回调间隙创建生成器**时，`check_and_control_brush()`（line 2186）若当前航点索引匹配已消费的 stop_index → `publish_brush_speed(0.0)` → `self.brush_active = False` → 下一次 RTK Float 保存进 `nav_context` 的就是 False → 后续所有恢复都拿到 False → 滚刷永久关闭。
+- **现场证据**: `run20260602.log` 中 1780452713.336 恢复后 "设置滚刷状态: 开启" ✓，但 1780452714.002（仅 51ms 后）恢复显示 "设置滚刷状态: 关闭" ✗。此后所有恢复都是关闭。HOLD 回调又保存了 False 到 `nav_context`，二次固化。
+- **修复**: 移除 `publish_stop_speed()` 中的 `self.brush_active = False`，由各调用方自行决定是否清零。PAUSE 相关路径依赖 nav_context 的 save/restore 闭环：Float 时保存真值 → 恢复时取回真值 → `publish_brush_speed(ON)` 显式恢复。
+- **影响**: `rtk_nav.py` — `publish_stop_speed()`。所有显式清零滚刷的位置（`finish_navigation_task`、`reset_nav_context`、路径切换、异常退出）已独立设置 `brush_active = False`，不受此修改影响。
+
+## 2026-06-03 calib_stuck 故障码未上报 — motor_control 屏蔽了 ERROR_CALIB_TIMEOUT
+
+### 63. motor_control 的 rtk_error_callback 和 build_error_code 过滤掉了 bit 256
+
+- **问题**: rtk_nav 中 `ERROR_CALIB_TIMEOUT = 256`，calib_stuck 重试超限后校准生成器返回前设置了该位。但 `motor_control.py` 的 `rtk_error_callback`（line 673）接收 `/rtk/error_status` 时掩码只含 `ERROR_RTK_NOT_FIXED(4) | ERROR_RTK_TIMEOUT(8) | ERROR_TILT_FAULT(64)`，bit 256 被直接 & 掉。`build_error_code()`（line 451）同样不包含。结果 `/robot_state` JSON 的 `error` 字段始终只有 2（`ERROR_LASER_TIMEOUT`），丢了 256。
+- **现场证据**: `卡死重试失败,未上报故障码.log` 中 `nav_status: "PAUSE"`、`pause_reason: "calib_stuck"`，但 `error: 2`（仅激光超时），无 calib_stuck 故障码。
+- **修复**:
+  1. `motor_control.py`: `ERROR_RESERVED_1 = 256` 重命名为 `ERROR_CALIB_TIMEOUT = 256`；`rtk_error_callback` 和 `build_error_code` 掩码均加入 `ERROR_CALIB_TIMEOUT`
+  2. `rtk_nav.py`: calib_stuck 进入 PAUSE 时显式调用 `set_rtk_error_bits(ERROR_CALIB_TIMEOUT)`，不再依赖生成器返回前的被动置位
+- **影响**: `motor_control.py` — 常量定义 + rtk_error_callback + build_error_code；`rtk_nav.py` — calib_stuck PAUSE 块。修复后 `error = 2 | 256 = 258`，云端可见校准卡滞故障码。
