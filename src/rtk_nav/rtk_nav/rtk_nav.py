@@ -2435,6 +2435,7 @@ class RTKNavControlNode(Node):
                         self.get_logger().error(
                             f"[ROSNode] 航向校准失败（卡滞/阻力过大），已重试{CALIB_STUCK_MAX_RETRIES}次，暂停导航等待人工介入"
                         )
+                        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
                         self.nav_context["calib_generator"] = None
                         self.nav_context["nav_state"] = NavState.PAUSE
                         self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB

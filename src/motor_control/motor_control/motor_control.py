@@ -81,7 +81,7 @@ ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_TILT_FAULT = 64     # 倾斜/跌落故障（来自RTK角度检测）
 ERROR_UNLOADING_HEADING_TIMEOUT = 128  # 出仓航向校验超时
-ERROR_RESERVED_1 = 256
+ERROR_CALIB_TIMEOUT = 256  # 航向校准卡滞/超时（来自RTK）
 
 #PID参数
 MAX_CORRECTION = 0.8
@@ -448,7 +448,7 @@ class MotorControlNode(Node):
             error |= ERROR_MOTOR_FAULT
         if self.laser_no_response or self.is_laser_timeout():
             error |= ERROR_LASER_TIMEOUT
-        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT)
+        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT | ERROR_CALIB_TIMEOUT)
         if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
@@ -670,7 +670,7 @@ class MotorControlNode(Node):
             self.switch_state('l')
 
     def rtk_error_callback(self, msg: Int16):
-        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT)
+        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT | ERROR_CALIB_TIMEOUT)
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
