@@ -73,7 +73,7 @@ areas:
     calib_point_a: {lon: 110.64776160546539, lat: 35.60485301059596}
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_c: {lon: 110.64776160546539, lat: 35.60485301059596}
-    edge_distance_lat: [0.1, -0.3]   
+    edge_distance_lat: [0.1, -1.3]   
 
 
   # 11南侧加长方块-----------------------------------------------------------------
@@ -82,11 +82,12 @@ areas:
     calib_point_b: {lon: 110.64741883105908, lat: 35.604748695649164}
     calib_point_c: {lon: 110.64726902077777, lat: 35.60474919227829}
     start_corner: "top_right"
+    reverse_end_point: True
     swap_wh_select: True
     # [右，左]
     edge_distance_lon: [0.15, 0.5]   
     # [下，上]  
-    edge_distance_lat: [0.3, 0.3]  
+    edge_distance_lat: [0.3, 1.3]  
 
   # 11南侧
   - name: "E11"
@@ -94,10 +95,11 @@ areas:
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_c: {lon: 110.64742686839072, lat: 35.604749034251505}
     start_corner: "top_right"
+    reverse_end_point: True
     # [右，左]
     edge_distance_lon: [0.3, 0.5]   
     # [下，上]  
-    edge_distance_lat: [0.3, 0.3]  
+    edge_distance_lat: [0.3, 1.3]  
 
   # back_11B-10
   - name: "back_11B-10A_stop"

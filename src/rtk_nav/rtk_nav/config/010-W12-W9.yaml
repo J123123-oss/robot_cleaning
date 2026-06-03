@@ -162,11 +162,20 @@ areas:
     edge_distance_lon: 0.0
     edge_distance_lat: 0.0
     
-  # back_9A-8B
-  - name: "back_9A-8B"
-    calib_point_a: {lon: 110.6477609856752, lat: 35.60500043052129}
+  # back_E9_E9A
+  - name: "back_E9_E9A"
+    calib_point_a: {lon: 110.64727306408854, lat: 35.6050072561475}
+    calib_point_b: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_c: {lon: 110.64727306408854, lat: 35.6050072561475}
+    edge_distance_lat: 2.0
+    edge_distance_lon: 0.0
+
+ 
+  # back_9B-8B
+  - name: "back_9B-8B"
+    calib_point_a: {lon: 110.64776064561126, lat: 35.6050338231927}
     calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
-    calib_point_c: {lon: 110.6477609856752, lat: 35.60500043052129}
+    calib_point_c: {lon: 110.64776064561126, lat: 35.6050338231927}
     start_corner: "top_right"
 
   # back_7A-7bA
