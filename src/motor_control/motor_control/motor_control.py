@@ -59,9 +59,9 @@ RC_CH_MAX_VALUE = 1722
 
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
 MAX_GPS_WAIT_TIME = 300.0
-# 出仓完成后航向角校验：目标90°，允许±15°偏差 + 5s航向稳定
-UNLOADING_HEADING_TARGET = 90.0
-UNLOADING_HEADING_TOLERANCE = 15.0
+# 出仓完成后航向角校验：目标89°，允许±5°偏差 + 5s航向稳定
+UNLOADING_HEADING_TARGET = 89.0
+UNLOADING_HEADING_TOLERANCE = 5.0
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 91.0
 
@@ -128,7 +128,7 @@ class MotorControlNode(Node):
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
         self.loading_direct_start_time = None
-        self.loading_direct_timeout = 26.0
+        self.loading_direct_timeout = 24.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
         self._nav_sub_phase = "ALIGN"      # NAV_TO_GPS 子阶段: ALIGN(航向对准) / DRIVE(直线行驶)
@@ -489,22 +489,22 @@ class MotorControlNode(Node):
                 self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
         
         if self.is_charge_paused and self.battery_remaining is not None:
-            if self.battery_remaining <= self.charge_resume_threshold:
+            docked = (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04)
+            if not docked:
+                self.get_logger().info(f"[ROSNode] 车体已离开停机仓，清除充电暂停标志，累计恢复充电{self.charge_resume_count}次")
+                self.is_charge_paused = False
+                self.charge_resume_count = 0
+            elif self.battery_remaining <= self.charge_resume_threshold:
                 current_time = self.get_clock().now().nanoseconds / 1e9
                 if current_time - self.last_charge_stop_time >= 60.0:
-                    if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):
-                        if not self.is_charging:
-                            if current_time - self.last_charge_resume_time >= 360.0:
-                                self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
-                                self.start_charge_async()
-                                self.last_charge_resume_time = current_time
-                        else:
-                            self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
-                            self.is_charge_paused = False
+                    if not self.is_charging:
+                        if current_time - self.last_charge_resume_time >= 360.0:
+                            self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
+                            self.start_charge_async()
+                            self.last_charge_resume_time = current_time
                     else:
-                        self.get_logger().info(f"[ROSNode] 车体已离开停机仓，清除充电暂停标志，累计恢复充电{self.charge_resume_count}次")
+                        self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
                         self.is_charge_paused = False
-                        self.charge_resume_count = 0
     def timer_callback(self):
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
@@ -1809,13 +1809,13 @@ class MotorControlNode(Node):
                     self.last_direct_loading_log_time = 0.0
                 if current_time - self.last_direct_loading_log_time >= 5.0:
                     self.get_logger().warn(
-                        f"[LOADING] 激光/电机错误进仓兜底中，已前进{elapsed_time:.1f}s/"
+                        f"[LOADING] 激光错误进仓兜底中，已前进{elapsed_time:.1f}s/"
                         f"{self.loading_direct_timeout:.0f}s"
                     )
                     self.last_direct_loading_log_time = current_time
                 return
 
-            self.get_logger().warn("[LOADING] 兜底进仓26s超时，停止并按完成处理")
+            self.get_logger().warn("[LOADING] 兜底进仓24s超时，停止并按完成处理")
             self.set_motors_speed(0.0, 0.0)
             self.loading_phase = "COMPLETE"
             self.complete_state = True
