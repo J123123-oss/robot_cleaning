@@ -2083,7 +2083,7 @@ class MotorControlNode(Node):
 
                     # ── 子阶段：MOVE_TO_TARGET（直线移动到目标点，不转向）──
                     elif self._pos_recover_sub_phase == "MOVE_TO_TARGET":
-                        move_speed = base_speed / 5.0
+                        move_speed = base_speed / 2.0
                         if self._pos_recover_use_backward:
                             # 后退：左正右负
                             left_speed = move_speed
