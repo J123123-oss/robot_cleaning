@@ -161,7 +161,7 @@ class LaserDistanceNode(Node):
             self.laser_status = status
         now = time.time()
         if status and now - self.last_laser_status_log_time >= 60.0:
-            self.get_logger().warn(f"激光传感器无回应: status=0x{status:02X}")
+            # self.get_logger().warn(f"激光传感器无回应: status=0x{status:02X}")
             self.last_laser_status_log_time = now
         
         # 发布合并后的距离数据
