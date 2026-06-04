@@ -1,11 +1,14 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-06-03
+分支: `stanley` | 日期: 2026-06-04
 
 ## 提交历史
 
 ```
-c6dfe37 fix: calib_stuck故障码未上报 — motor_control屏蔽了ERROR_CALIB_TIMEOUT(256)
+faafd3a fix: 撤销分段转向子状态机，改为旋转/平移分离的位置恢复
+66dcb7d fix: LOADING_NAV_TO_GPS支持后退行驶，目标在后方时不调头
+4f9a294 fix: 航向校准卡滞重试时增加后退脱困步骤
+be90044 fix: 撤销heading_callback的AUTO_CLEANING守卫 + 进仓分段转向优化
 8c4ddbf fix: publish_stop_speed不再清零brush_active，防止RTK震荡污染nav_context保存值
 71adb2f fix: resume路径通用恢复滚刷状态，覆盖tilt_fault和calib_stuck
 59d9224 fix: 倾斜恢复后还原滚刷状态，防止刷停后无法自动重启
@@ -696,3 +699,40 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   1. `motor_control.py`: `ERROR_RESERVED_1 = 256` 重命名为 `ERROR_CALIB_TIMEOUT = 256`；`rtk_error_callback` 和 `build_error_code` 掩码均加入 `ERROR_CALIB_TIMEOUT`
   2. `rtk_nav.py`: calib_stuck 进入 PAUSE 时显式调用 `set_rtk_error_bits(ERROR_CALIB_TIMEOUT)`，不再依赖生成器返回前的被动置位
 - **影响**: `motor_control.py` — 常量定义 + rtk_error_callback + build_error_code；`rtk_nav.py` — calib_stuck PAUSE 块。修复后 `error = 2 | 256 = 258`，云端可见校准卡滞故障码。
+
+## 2026-06-04 进仓打滑漂移修复 — 旋转/平移分离
+
+### 64. 分段转向边走边转导致 bearing_error 反馈振荡，无法直走到目标点
+
+- **问题**: be90044 引入的分段转向子状态机（ADJUST/PAUSE/POS_CORRECT）将转向和移动叠加在一起输出。转动改变航向→航向改变 bearing_error→bearing_error 改变转向量，形成双输入耦合振荡。靠近目标时微小位移导致 bearing 大幅变化，触发剧烈修正。实际运行左右摆动，无法直走到进仓 GPS 点。
+- **根因分析**:
+  1. **转向+移动耦合**: `turn_amount` 和 `move_speed` 同时输出，每个动作都在破坏另一个的参考系
+  2. **后退转向方向反了**: `bearing_error > 0`（目标右后）时 `turn_sign=1`（左传），应该右转
+  3. **转向优先比例不合理**: `abs_be > 30` 时 `turn_ratio=0.8, move_ratio=0.05`，机器人几乎原地打转
+  4. **没有分离"对准"和"移动"**: 应先原地旋转对齐 bearing，再直线前进/后退
+- **修复** (faafd3a):
+  - LOADING_TURN 恢复为昨天版本（纯原地旋转，`get_speed_correction` + `get_adaptive_turn_speed`）
+  - 转向完成（yaw 稳定 3 次）后二次 GPS 判距，漂移 >0.3m 进入新阶段 `LOADING_POS_RECOVER`
+  - `LOADING_POS_RECOVER`:
+    - `ALIGN_BEARING`: 原地纯旋转对齐目标方位（**不移动**）— 目标在前对齐 bearing，目标在后对齐 bearing+180° 准备后退
+    - `MOVE_TO_TARGET`: 纯直线移动（**不转向**）— 到达后重新 LOADING_TURN
+  - 旋转和平移彻底分离，消除反馈振荡
+- **影响**: `motor_control.py` — LOADING_TURN + 新增 LOADING_POS_RECOVER 阶段 + 删除分段转向子状态机（_turn_sub_phase/_finish_turn_to_forward 等）。
+
+### 65. LOADING_NAV_TO_GPS 同样问题：目标在后方时强制前进导致大角度调头打滑
+
+- **问题**: LOADING_NAV_TO_GPS 的 ALIGN/DRIVE 子阶段只支持前进。当进仓 GPS 点在机器人后方时，ALIGN 阶段需要旋转 >90° 掉头，然后 DRIVE 阶段前进行驶。大幅原地旋转同样导致打滑漂移。
+- **修复** (66dcb7d):
+  - ALIGN 子阶段: `abs(bearing_error) > 90` 时对齐 `bearing + 180°`（反向方位），准备后退
+  - DRIVE 子阶段: 后退时 `left=+move+turn, right=-move+turn`，差速修正逻辑与前进一致
+  - 增加 `_nav_use_backward` 标志，贯穿 ALIGN → DRIVE
+- **电机方向验证**: `turn_speed` 同时对左右轮叠加同号分量（正=左传/负=右转），前进后退相同，无需反转
+- **影响**: `motor_control.py` — ALIGN 子阶段（前进/后退判断 + 对齐目标切换）+ DRIVE 子阶段（后退电机方向）。
+
+### 参数更新
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| _pos_recover_gps_drift_limit | 0.3m | 转向后 GPS 漂移阈值，超过触发位置恢复 |
+| _pos_recover_timeout | 60.0s | 位置恢复整体超时 |
+| loading_turn_time | 60.0s | 角度调整超时（30→60，给位置恢复留余量） |
