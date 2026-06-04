@@ -2907,20 +2907,19 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[RTKNav] 已发布当前路径ID: {route_id}")
 
     def state_callback(self, msg: String):
-        """电机状态回调函数：监听控制状态变化，HOLD暂停导航"""
+        """电机状态回调函数：监听控制状态变化"""
         if msg.data == "HOLD" and self.last_state != "HOLD":
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
             self.nav_running = False
             self.heading_abnormal_start_time = None
             self.heading_timed_out = False
-            self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
+            self.nav_context["calib_retry_count"] = 0
             if hasattr(self, 'nav_context'):
-                self.nav_context["brush_active"] = self.brush_active  # 保存滚刷状态
+                self.nav_context["brush_active"] = self.brush_active
             self.publish_stop_speed()
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
-            # 检查是否有活跃故障阻止恢复导航
             if (hasattr(self, 'nav_context')
                     and self.nav_context["nav_state"] == NavState.PAUSE
                     and self.nav_context.get("tilt_fault", False)):
@@ -2930,18 +2929,23 @@ class RTKNavControlNode(Node):
                 )
             else:
                 self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
-                # 清除等待标志，避免mode_callback竞态导致标志残留阻塞导航启动
                 if self.waiting_for_next_unloading:
                     self.waiting_for_next_unloading = False
                     self.multi_waypoint_generator = None
                     self.nav_running = False
                     self.get_logger().info("[RTKNav] 清除waiting_for_next_unloading标志（state_callback）")
                 if hasattr(self, 'nav_context'):
-                    self.brush_active = self.nav_context.get("brush_active", False)  # 恢复滚刷状态
+                    self.brush_active = self.nav_context.get("brush_active", False)
                     if self.brush_active:
                         self.publish_brush_speed(RTK_BRUSH_SPEED)
                     else:
                         self.publish_brush_speed(0.0)
+        elif msg.data == "DISABLE" and self.last_state == "LOADING":
+            self.get_logger().info("[RTKNav] LOADING完成→DISABLE，重置导航上下文")
+            self.reset_nav_context()
+            self.multi_waypoint_generator = None
+            self.nav_running = False
+            self.publish_stop_speed()
         self.last_state = msg.data
 
     def route_change_callback(self, msg: String):
