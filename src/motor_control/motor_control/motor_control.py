@@ -197,7 +197,7 @@ class MotorControlNode(Node):
         self.unloading_gps_timeout = False  # 出仓GPS/航向等待超时故障标志
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
-        self.charge_resume_threshold = 90   #old:98 # 恢复充电的电量阈值（百分比）
+        self.charge_resume_threshold = 92   #old:98 # 恢复充电的电量阈值（百分比）
         self.is_charge_paused = True  # 充电是否已暂停（充满后暂停）
         self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
         self.charge_resume_count = 0  # 恢复充电的次数
