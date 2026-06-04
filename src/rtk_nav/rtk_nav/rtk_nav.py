@@ -1065,19 +1065,16 @@ class RTKNavControlNode(Node):
         stable_msg.data = self._last_heading_stable
         self.heading_stable_pub.publish(stable_msg)
 
-        if self.current_control_mode != ControlMode.AUTO_CLEANING:
-            return
-
         if not hasattr(self, 'last_gps_status'):
             self.last_gps_status = -1
-        
+
         fix_status = msg.fix_status
-        
+
         if fix_status < 0:
             self.get_logger().warn("GPS信号无效")
             self.last_gps_status = -1
             return
-        
+
         status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
         if fix_status in status_map and fix_status != self.last_gps_status:
             # self.get_logger().info(f"GPS状态：{status_map[fix_status]}")
@@ -1085,13 +1082,10 @@ class RTKNavControlNode(Node):
 
         if not self.rtk_data_timed_out and not self.heading_timed_out:
             self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
-        
+
         is_fixed = (fix_status == 4)
         if not is_fixed:
-            if self.current_control_mode == ControlMode.AUTO_CLEANING:
-                self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
-            else:
-                self.clear_rtk_error_bits(ERROR_RTK_NOT_FIXED)
+            self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                 self.nav_context["pause_reason"] = "rtk_not_fixed"
@@ -3025,10 +3019,11 @@ class RTKNavControlNode(Node):
             self.publish_nav_context()
 
         self.update_cleaning_area()
-        self.update_rtk_error_status(self.rtk_error_code, force=True)
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            # 仅在RTK导航模式下上报导航错误码
+            self.update_rtk_error_status(self.rtk_error_code, force=True)
             if self.waiting_for_next_unloading:
                 self.publish_stop_speed()
                 self.publish_nav_state(NavState.IDLE)

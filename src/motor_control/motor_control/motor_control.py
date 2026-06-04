@@ -122,7 +122,7 @@ class MotorControlNode(Node):
 
         self.loading_turn_target_deg = 89.04    # 进仓转向目标角
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
-        self.loading_turn_time = 30.0
+        self.loading_turn_time = 120.0
         self.loading_phase = None
         self.loading_start_time = 0.0
         self.loading_timer: Optional[Timer] = None
@@ -148,6 +148,18 @@ class MotorControlNode(Node):
         self.retract_duration = 2.0     # 后退固定时长（2秒）
         self.last_state = None  # 上一次的状态（用于偏转回正逻辑）
         self.check_max_timeout = 3.0          # 反向检查最大超时（秒，避免无限循环）
+
+        # 进仓分段转向（避免大幅转向打滑漂出进仓点）
+        self._turn_sub_phase = "ADJUST"       # 转向子阶段: ADJUST/PAUSE/POS_CORRECT
+        self._turn_segment_start = 0.0        # 当前转向段开始时间
+        self._turn_pause_start = 0.0          # 段间暂停开始时间
+        self._turn_segment_duration = 1.0     # 每段转向1秒
+        self._turn_pause_duration = 0.3       # 段间暂停0.3秒
+        self._turn_gps_drift_limit = 0.2      # GPS漂移上限（米），超过则进入位置修正
+        self._turn_segment_count = 0          # 已完成转向段数
+        self._last_turn_log_time = 0.0        # 转向日志去重
+        self._pos_correct_start = 0.0         # 位置修正开始时间
+        self._pos_correct_timeout = 100.0     # 位置修正超时（秒）
 
         # self.loading_adjust_phase = ""  # 大幅差值调整阶段：DEFLECT/RETREAT/CHECK
         # self.last_deflect_phase = ""  # 新增：记录上次的偏转方向（LEFT_DEFLECT/RIGHT_DEFLECT）
@@ -1723,6 +1735,9 @@ class MotorControlNode(Node):
                 self.loading_phase = "LOADING_TURN"
                 self.loading_start_time = current_time
                 self.yaw_stable_count = 0
+                self._turn_sub_phase = "ADJUST"
+                self._turn_segment_start = current_time
+                self._turn_segment_count = 0
                 self.set_motors_speed(0.0, 0.0)
                 return
 
@@ -1873,6 +1888,9 @@ class MotorControlNode(Node):
                     self.get_logger().info("[LOADING] 检测到dock归位，初始化进仓流程")
                     self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
                     self.loading_start_time = time.time()
+                    self._turn_sub_phase = "ADJUST"
+                    self._turn_segment_start = time.time()
+                    self._turn_segment_count = 0
                     self.get_logger().info(f"[LOADING] 初始化完成，当前阶段：{self.loading_phase}")
         
             # if self.loading_phase is None:
@@ -1904,49 +1922,158 @@ class MotorControlNode(Node):
                 # ========== 阶段1：调整进仓角度（核心：目标航向一致+稳定判定）==========
                 if self.loading_phase == "LOADING_TURN":
                     # 修正1：传实际进仓目标航向，和判定目标一致，误差才能归0
-                    correction = self.get_speed_correction(self.loading_turn_target_deg)
                     yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
-                    # 差值小于0，左转；差值大于0，右转，保持方向正确
-                    turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
-                    left_speed = turn_speed + correction
-                    right_speed = turn_speed + correction
-                    self.set_motors_speed(left_speed, right_speed)
-                    
-                    # 计算归一化后的角度差
-                    # self.get_logger().info(
-                    #     f"[LOADING] 角度调整阶段 - 当前航向{self.imu_yaw_deg:.2f}deg，"
-                    #     f"目标{self.loading_turn_target_deg:.2f}deg，差值{yaw_diff:.2f}deg"
-                    # )
-                    
-                    # 修正2：稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
-                    if abs(yaw_diff) < self.yaw_diff_min:
+                    abs_yaw = abs(yaw_diff)
+
+                    # 转向总超时检查
+                    if current_time - self.loading_start_time > self.loading_turn_time:
+                        self.get_logger().warn(
+                            f"[LOADING] 分段转向总超时({self.loading_turn_time:.0f}s)，"
+                            f"当前误差{abs_yaw:.1f}°，强制进入前进阶段")
+                        self._finish_turn_to_forward(current_time)
+                        return
+
+                    # 已对准 → 稳定判定（避免IMU抖动）
+                    # POS_CORRECT阶段跳过航向判定，由子阶段逻辑控制移动
+                    if self._turn_sub_phase != "POS_CORRECT" and abs_yaw < self.yaw_diff_min:
                         self.yaw_stable_count += 1
-                        self.get_logger().info(f"[LOADING] 角度误差达标，稳定计数={self.yaw_stable_count}/3")
                         if self.yaw_stable_count >= 3:
-                            self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标）")
-                            loading_error_code = self.build_error_code()
-                            if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
-                                self.loading_phase = "LOADING_DIRECT_FORWARD"
-                                self.loading_direct_start_time = current_time
-                                self.get_logger().warn(
-                                    f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
-                                    f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
-                                )
-                            else:
-                                self.loading_phase = "LOADING_FOWARD"
-                                self.loading_backward_start_time = current_time
-                            self.yaw_stable_count = 0  # 重置计数器
+                            # 转向完成，检查GPS是否因打滑漂移
+                            gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
+                            if gps_valid:
+                                gps_dist = self.haversine_distance(
+                                    self.current_lon, self.current_lat,
+                                    LOADING_GPS[0], LOADING_GPS[1])
+                                if gps_dist > self._turn_gps_drift_limit:
+                                    self.get_logger().warn(
+                                        f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
+                                        f"{self._turn_gps_drift_limit}m，进入位置修正")
+                                    self._turn_sub_phase = "POS_CORRECT"
+                                    self._pos_correct_start = current_time
+                                    self.yaw_stable_count = 0
+                                    self.set_motors_speed(0.0, 0.0)
+                                    return
+                            self._finish_turn_to_forward(current_time)
+                        return
                     else:
-                        self.yaw_stable_count = 0  # 误差不达标，计数器清零
-                    
-                    # 超时逻辑保留
-                    # if current_time - self.loading_start_time > self.loading_turn_time:
-                    #     self.get_logger().warn("[LOADING] 角度调整超时，进入DISABLE")
-                    #     self.switch_state('z')  # 进入DISABLE状态，人工干预
-                    #     # self.loading_phase = "LOADING_FOWARD"
-                    #     # self.loading_backward_start_time = current_time
-                    #     self.yaw_stable_count = 0
-                
+                        self.yaw_stable_count = 0
+
+                    # ── 子阶段：ADJUST（分段转向，每1秒暂停重评）──
+                    if self._turn_sub_phase == "ADJUST":
+                        segment_elapsed = current_time - self._turn_segment_start
+                        if segment_elapsed < self._turn_segment_duration:
+                            base_speed = self.motor_ctrl.BASE_SPEED
+
+                            # 根据GPS位置判断目标在前方还是后方（而非航向差）
+                            gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
+                            if gps_valid:
+                                target_bearing = self.bearing_to_target(
+                                    self.current_lon, self.current_lat,
+                                    LOADING_GPS[0], LOADING_GPS[1])
+                                bearing_error = self.get_heading_error(target_bearing)
+                                use_backward = abs(bearing_error) > 90
+                            else:
+                                # GPS无效时退化为航向差判断
+                                bearing_error = 0.0
+                                use_backward = abs_yaw > 90
+
+                            # 航向修正方向：基于进仓目标航向的误差
+                            turn_sign = 1 if yaw_diff < 0 else -1
+                            # 航向差大时转向分量稍大，小时更精细
+                            turn_ratio = 1.0 / 8.0 if abs_yaw > 30 else 1.0 / 12.0
+                            small_turn = base_speed * turn_ratio * turn_sign
+
+                            if use_backward:
+                                # 目标在后方：后退移动+小幅转向对准进仓航向
+                                # 后退=向目标靠近，避免>90°原地旋转打滑
+                                back_speed = base_speed / 5.0
+                                left_speed = back_speed + small_turn
+                                right_speed = -back_speed + small_turn
+                                if current_time - self._last_turn_log_time >= 2.0:
+                                    self.get_logger().info(
+                                        f"[LOADING] 分段转向(后退) - GPS方位差{bearing_error:.1f}°>90°"
+                                        f"目标在后，航向差{abs_yaw:.1f}°，后退+小幅转向"
+                                        f"已分段{self._turn_segment_count}次")
+                                    self._last_turn_log_time = current_time
+                            else:
+                                # 目标在前方：前进移动+小幅转向对准进仓航向
+                                forward_speed = base_speed / 5.0
+                                left_speed = -forward_speed + small_turn
+                                right_speed = forward_speed + small_turn
+                                if current_time - self._last_turn_log_time >= 2.0:
+                                    self.get_logger().info(
+                                        f"[LOADING] 分段转向(前进) - GPS方位差{bearing_error:.1f}°≤90°"
+                                        f"目标在前，航向差{abs_yaw:.1f}°，前进+小幅转向"
+                                        f"已分段{self._turn_segment_count}次")
+                                    self._last_turn_log_time = current_time
+                            self.set_motors_speed(left_speed, right_speed)
+                        else:
+                            # 1秒段结束，暂停让机器人稳定
+                            self.set_motors_speed(0.0, 0.0)
+                            self._turn_sub_phase = "PAUSE"
+                            self._turn_pause_start = current_time
+                            self._turn_segment_count += 1
+
+                    # ── 子阶段：PAUSE（段间暂停，让IMU稳定）──
+                    elif self._turn_sub_phase == "PAUSE":
+                        if current_time - self._turn_pause_start >= self._turn_pause_duration:
+                            self._turn_sub_phase = "ADJUST"
+                            self._turn_segment_start = current_time
+
+                    # ── 子阶段：POS_CORRECT（GPS漂移修正，向目标点移动）──
+                    elif self._turn_sub_phase == "POS_CORRECT":
+                        if current_time - self._pos_correct_start > self._pos_correct_timeout:
+                            self.get_logger().warn(
+                                f"[LOADING] 位置修正超时({self._pos_correct_timeout:.0f}s)，"
+                                f"强制进入前进阶段")
+                            self._finish_turn_to_forward(current_time)
+                            return
+
+                        gps_dist = self.haversine_distance(
+                            self.current_lon, self.current_lat,
+                            LOADING_GPS[0], LOADING_GPS[1])
+
+                        # 距离修正到阈值内，回到转向调整
+                        if gps_dist <= self._turn_gps_drift_limit:
+                            self.get_logger().info(
+                                f"[LOADING] 位置修正完成(gps_dist={gps_dist:.2f}m)，"
+                                f"重新检查航向")
+                            self._turn_sub_phase = "ADJUST"
+                            self._turn_segment_start = current_time
+                            self.yaw_stable_count = 0
+                            self.set_motors_speed(0.0, 0.0)
+                            return
+
+                        # 向目标GPS点移动（1秒分段，与转向逻辑一致）
+                        target_bearing = self.bearing_to_target(
+                            self.current_lon, self.current_lat,
+                            LOADING_GPS[0], LOADING_GPS[1])
+                        bearing_error = self.get_heading_error(target_bearing)
+                        base_speed = self.motor_ctrl.BASE_SPEED
+
+                        if abs(bearing_error) > 90:
+                            # 目标在后方：后退移动+小幅航向修正
+                            move_speed = base_speed / 5.0
+                            turn_sign = 1 if bearing_error < 0 else -1
+                            small_turn = base_speed / 15.0 * turn_sign
+                            left_speed = move_speed + small_turn
+                            right_speed = -move_speed + small_turn
+                        else:
+                            # 目标在前方：前进移动+小幅航向修正
+                            move_speed = base_speed / 5.0
+                            turn_sign = 1 if bearing_error < 0 else -1
+                            small_turn = base_speed / 15.0 * turn_sign
+                            left_speed = -move_speed + small_turn
+                            right_speed = move_speed + small_turn
+
+                        self.set_motors_speed(left_speed, right_speed)
+
+                        if current_time - self._last_turn_log_time >= 2.0:
+                            self.get_logger().info(
+                                f"[LOADING] 位置修正中 - 距目标{gps_dist:.2f}m，"
+                                f"方位差{bearing_error:.1f}°")
+                            self._last_turn_log_time = current_time
+
                 # ========== +低频日志）==========
                 elif self.loading_phase == "LOADING_FOWARD":
                     # 初始化变量
@@ -2196,6 +2323,25 @@ class MotorControlNode(Node):
                 self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
                 self.is_in_bin_process = False
                 self.yaw_stable_count = 0
+
+    def _finish_turn_to_forward(self, current_time):
+        """转向完成后的统一出口：检查错误码决定走激光对位还是兜底直行"""
+        self.get_logger().info("[LOADING] 分段转向完成，进入前进/后退进仓阶段")
+        loading_error_code = self.build_error_code()
+        if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
+            self.loading_phase = "LOADING_DIRECT_FORWARD"
+            self.loading_direct_start_time = current_time
+            self.get_logger().warn(
+                f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
+                f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
+            )
+        else:
+            self.loading_phase = "LOADING_FOWARD"
+            self.loading_backward_start_time = current_time
+        self.yaw_stable_count = 0
+        self._turn_sub_phase = "ADJUST"
+        self._turn_segment_count = 0
+        self.set_motors_speed(0.0, 0.0)
 
     def finish_loading_process(self):
         self.get_logger().info("[LOADING] 进仓流程完成，电机停止")
