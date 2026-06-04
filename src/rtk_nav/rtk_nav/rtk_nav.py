@@ -248,6 +248,7 @@ class RTKNavControlNode(Node):
             "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
             "tilt_fault": False,         # 倾斜故障标志
             "calib_retry_count": 0,      # 校准卡滞重试次数
+            "calib_target_heading": None,  # 当前校准目标航向（重试/恢复时复用，保证一致性）
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -1661,6 +1662,7 @@ class RTKNavControlNode(Node):
         )
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["is_angle_recalib"] = True
+        self.nav_context["calib_target_heading"] = path_direction
         self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(path_direction)
         self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
         
@@ -1943,6 +1945,7 @@ class RTKNavControlNode(Node):
                     self.heading_timed_out = False
                     fixed_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                     self.nav_context["force_bearing_target"] = fixed_bearing
+                    self.nav_context["calib_target_heading"] = fixed_bearing
                     self.get_logger().warn(
                         f"[Stanley] 同航点≥2次航向异常，先原地旋转校准到目标方位{fixed_bearing:.1f}°，再直行"
                     )
@@ -2011,6 +2014,7 @@ class RTKNavControlNode(Node):
             "tilt_normal_count": 0,
             "tilt_fault": False,
             "calib_retry_count": 0,
+            "calib_target_heading": None,
         }
         self.clear_rtk_error_bits(ERROR_TILT_FAULT)  # 同步清除，防止tilt_fault与rtk_error_code脱钩
         self.heading_abnormal_start_time = None  # 重置航向异常计时
@@ -2174,7 +2178,8 @@ class RTKNavControlNode(Node):
                     if current_nav_state == NavState.WAYPOINT_CALIB:
                         target_waypoint = self.nav_context.get("target_waypoint")
                         if target_waypoint:
-                            target_heading = self.get_path_heading(target_waypoint)
+                            saved = self.nav_context.get("calib_target_heading")
+                            target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
                             self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                             self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                         # 清零航向异常状态，避免恢复后立即触发heading_timeout杀死校准
@@ -2188,7 +2193,8 @@ class RTKNavControlNode(Node):
             if current_nav_state == NavState.WAYPOINT_CALIB:
                 target_waypoint = self.nav_context["target_waypoint"]
                 if target_waypoint:
-                    target_heading = self.get_path_heading(target_waypoint)
+                    saved = self.nav_context.get("calib_target_heading")
+                    target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
                     # 重新创建校准生成器（重置超时计时和误差计算）
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                     self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
@@ -2427,8 +2433,9 @@ class RTKNavControlNode(Node):
                 calib_generator = self.nav_context["calib_generator"]
                 if not calib_generator:
                     self.get_logger().warn("[ROSNode] 校准生成器不存在, 重新初始化")
-                    target_heading = self.get_path_heading(target_waypoint)
-
+                    saved = self.nav_context.get("calib_target_heading")
+                    target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
+                    self.nav_context["calib_target_heading"] = target_heading
                     calib_generator = self.calibrate_heading_at_waypoint(target_heading)
                     self.nav_context["calib_generator"] = calib_generator
                 try:
@@ -2462,7 +2469,8 @@ class RTKNavControlNode(Node):
                             self.heading_abnormal_start_time = None
                             self.heading_timed_out = False
                             self.nav_context["angle_abnormal_count"] = 0
-                            target_heading = self.get_path_heading(target_waypoint)
+                            saved = self.nav_context.get("calib_target_heading")
+                            target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
                             self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                             self.get_logger().info(f"重新初始化航向校准（重试{retry_count}）：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                             yield (0.0, 0.0)
@@ -2646,6 +2654,7 @@ class RTKNavControlNode(Node):
                     )
                     self.nav_context["angle_abnormal_count"] = 0
                     calib_target_heading = self.get_path_heading(target_waypoint)
+                    self.nav_context["calib_target_heading"] = calib_target_heading
                     calib_generator = self.calibrate_heading_at_waypoint(calib_target_heading)
                     self.nav_context["calib_generator"] = calib_generator
                     current_nav_state = NavState.WAYPOINT_CALIB
