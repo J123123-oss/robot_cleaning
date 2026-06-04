@@ -2870,10 +2870,10 @@ class RTKNavControlNode(Node):
         self.rtk_error_pub.publish(msg)
 
     def set_rtk_error_bits(self, error_bits: int):
-        self.update_rtk_error_status(self.rtk_error_code | int(error_bits))
+        self.rtk_error_code = self.rtk_error_code | int(error_bits)
 
     def clear_rtk_error_bits(self, error_bits: int):
-        self.update_rtk_error_status(self.rtk_error_code & ~int(error_bits))
+        self.rtk_error_code = self.rtk_error_code & ~int(error_bits)
 
     def get_cleaning_area_for_waypoint(self, idx: int = None) -> str:
         idx = self.current_waypoint_idx if idx is None else idx
