@@ -2449,6 +2449,16 @@ class RTKNavControlNode(Node):
                             self.get_logger().warn(
                                 f"[ROSNode] 航向校准失败（卡滞），第{retry_count}/{CALIB_STUCK_MAX_RETRIES}次自动重试"
                             )
+                            # 第2次及以上重试：先短暂后退脱困，再重新校准
+                            if retry_count >= 2:
+                                self.get_logger().info("[航向校准] 后退1s脱困...")
+                                backup_start = self.get_clock().now()
+                                while (self.get_clock().now() - backup_start).nanoseconds / 1e9 < 1.0:
+                                    if self.is_boundary_triggered or self.boundary_correct_locked:
+                                        yield self.get_boundary_correct_speed()
+                                    else:
+                                        yield (0.4, -0.4) # 后退速度
+                                yield (0.0, 0.0)
                             self.heading_abnormal_start_time = None
                             self.heading_timed_out = False
                             self.nav_context["angle_abnormal_count"] = 0
