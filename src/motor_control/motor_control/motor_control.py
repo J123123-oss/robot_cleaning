@@ -135,6 +135,7 @@ class MotorControlNode(Node):
         self._nav_align_stable_count = 0   # 航向对准稳定计数
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
         self._nav_align_timeout = 60.0     # 航向对准超时（秒）
+        self._nav_use_backward = False   # 目标在后方时后退行驶，不调头
         
         self.state_publish_timer: Optional[Timer] = None  # 定时发布状态
         self._disable_publish_countdown = 0  # DISABLE状态完成消息补发计数
@@ -1740,18 +1741,28 @@ class MotorControlNode(Node):
                 self.current_lon, self.current_lat,
                 LOADING_GPS[0], LOADING_GPS[1])
 
-            # --- 子阶段1：航向对准（原地旋转，参照 calibrate_heading_at_waypoint） ---
+            # --- 子阶段1：航向对准（原地旋转，目标在后方时不调头，对齐反向方位） ---
             if self._nav_sub_phase == "ALIGN":
-                yaw_diff = abs(self.get_heading_error(target_bearing))
+                bearing_error = self.get_heading_error(target_bearing)
 
                 # 航向对准超时
                 if current_time - self._nav_align_start_time > self._nav_align_timeout:
                     self.get_logger().warn(
                         f"[LOADING] 航向对准超时({self._nav_align_timeout:.0f}s)，"
-                        f"当前误差{yaw_diff:.1f}°，直接进入直线行驶阶段")
+                        f"当前误差{abs(bearing_error):.1f}°，直接进入直线行驶阶段")
                     self._nav_sub_phase = "DRIVE"
                     self._nav_align_stable_count = 0
                     return
+
+                # 确定前进/后退：目标在后方时对齐反向方位，准备后退（不调头）
+                if abs(bearing_error) > 90:
+                    self._nav_use_backward = True
+                    align_error = self.get_heading_error(target_bearing + 180.0)
+                else:
+                    self._nav_use_backward = False
+                    align_error = bearing_error
+
+                yaw_diff = abs(align_error)
 
                 # 稳定判定（参照 LOADING_TURN: 连续3次误差<0.3°）
                 if yaw_diff < self.yaw_diff_min:
@@ -1759,7 +1770,8 @@ class MotorControlNode(Node):
                     if self._nav_align_stable_count >= 3:
                         self.get_logger().info(
                             f"[LOADING] 航向对准完成（误差{yaw_diff:.1f}°），"
-                            f"进入直线行驶阶段，距目标{gps_dist:.1f}m")
+                            f"进入{'后退' if self._nav_use_backward else '前进'}直线行驶阶段，"
+                            f"距目标{gps_dist:.1f}m")
                         self._nav_sub_phase = "DRIVE"
                         self._nav_align_stable_count = 0
                         self.set_motors_speed(0.0, 0.0)
@@ -1768,30 +1780,39 @@ class MotorControlNode(Node):
                     self._nav_align_stable_count = 0
 
                 # 原地旋转：使用与 LOADING_TURN 相同的转向逻辑
-                correction = self.get_speed_correction(target_bearing)
-                heading_error = self.get_heading_error(target_bearing)
-                turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
-                turn_speed = turn_speed if heading_error <= 0 else -turn_speed
+                align_target = target_bearing + 180.0 if self._nav_use_backward else target_bearing
+                correction = self.get_speed_correction(align_target)
+                turn_speed = self.get_adaptive_turn_speed(abs(align_error))
+                turn_speed = turn_speed if align_error <= 0 else -turn_speed
                 self.set_motors_speed(turn_speed + correction, turn_speed + correction)
                 return
 
-            # --- 子阶段2：直线行驶+航向保持（差速转向，参照原导航逻辑） ---
+            # --- 子阶段2：直线行驶+航向保持（差速转向，支持前进/后退） ---
             if self._nav_sub_phase == "DRIVE":
                 # 速度缩放（参照 rtk_nav: speed_scale = max(0.2, dist/LOW_DISTANCE*0.7)）
                 if gps_dist < NAV_LOW_DISTANCE:
                     speed_scale = max(0.2, gps_dist / NAV_LOW_DISTANCE * 0.7)
-                    forward_speed = NAV_SPEED_BASE * speed_scale
+                    move_speed = NAV_SPEED_BASE * speed_scale
                 else:
-                    forward_speed = NAV_SPEED_BASE
+                    move_speed = NAV_SPEED_BASE
 
-                # 差速转向（参照 rtk_nav Stanley: left=-v+diff, right=v+diff）
-                yaw_diff = self.get_heading_error(target_bearing)
+                # 差速转向（参照 rtk_nav Stanley）
+                if self._nav_use_backward:
+                    yaw_diff = self.get_heading_error(target_bearing + 180.0)
+                else:
+                    yaw_diff = self.get_heading_error(target_bearing)
                 turn_speed = self.get_adaptive_turn_speed(abs(yaw_diff))
                 turn_speed = turn_speed if yaw_diff <= 0 else -turn_speed
-                # 限幅：转向速度不超过前进速度，防止原地打转
-                turn_speed = max(-forward_speed, min(forward_speed, turn_speed))
-                left_speed = -forward_speed + turn_speed
-                right_speed = forward_speed + turn_speed
+                # 限幅：转向速度不超过行驶速度，防止原地打转
+                turn_speed = max(-move_speed, min(move_speed, turn_speed))
+                if self._nav_use_backward:
+                    # 后退：左正右负
+                    left_speed = move_speed + turn_speed
+                    right_speed = -move_speed + turn_speed
+                else:
+                    # 前进：左负右正
+                    left_speed = -move_speed + turn_speed
+                    right_speed = move_speed + turn_speed
                 self.set_motors_speed(left_speed, right_speed)
 
                 if not hasattr(self, '_last_nav_log_time'):
@@ -1799,8 +1820,8 @@ class MotorControlNode(Node):
                 if current_time - self._last_nav_log_time > 2.0:
                     self._last_nav_log_time = current_time
                     self.get_logger().info(
-                        f"[LOADING] 导航中→进仓点: 距离{gps_dist:.1f}m, "
-                        f"速度{forward_speed:.1f}, 转向{turn_speed:.1f}, "
+                        f"[LOADING] 导航中→进仓点({'后退' if self._nav_use_backward else '前进'}): "
+                        f"距离{gps_dist:.1f}m, 速度{move_speed:.1f}, 转向{turn_speed:.1f}, "
                         f"方位{target_bearing:.1f}°, 航向{self.imu_yaw_deg:.1f}°, "
                         f"差值{yaw_diff:.1f}°")
                 return
