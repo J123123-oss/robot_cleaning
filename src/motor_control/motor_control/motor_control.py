@@ -1787,7 +1787,7 @@ class MotorControlNode(Node):
                 self.set_motors_speed(turn_speed + correction, turn_speed + correction)
                 return
 
-            # --- 子阶段2：直线行驶+航向保持（差速转向，支持前进/后退） ---
+            # --- 子阶段2：直线行驶（ALIGN已对准，不纠偏，纯直走） ---
             if self._nav_sub_phase == "DRIVE":
                 # 速度缩放（参照 rtk_nav: speed_scale = max(0.2, dist/LOW_DISTANCE*0.7)）
                 if gps_dist < NAV_LOW_DISTANCE:
@@ -1796,23 +1796,14 @@ class MotorControlNode(Node):
                 else:
                     move_speed = NAV_SPEED_BASE
 
-                # 差速转向（参照 rtk_nav Stanley）
-                if self._nav_use_backward:
-                    yaw_diff = self.get_heading_error(target_bearing + 180.0)
-                else:
-                    yaw_diff = self.get_heading_error(target_bearing)
-                turn_speed = self.get_adaptive_turn_speed(abs(yaw_diff))
-                turn_speed = turn_speed if yaw_diff <= 0 else -turn_speed
-                # 限幅：转向速度不超过行驶速度，防止原地打转
-                turn_speed = max(-move_speed, min(move_speed, turn_speed))
                 if self._nav_use_backward:
                     # 后退：左正右负
-                    left_speed = move_speed + turn_speed
-                    right_speed = -move_speed + turn_speed
+                    left_speed = move_speed
+                    right_speed = -move_speed
                 else:
                     # 前进：左负右正
-                    left_speed = -move_speed + turn_speed
-                    right_speed = move_speed + turn_speed
+                    left_speed = -move_speed
+                    right_speed = move_speed
                 self.set_motors_speed(left_speed, right_speed)
 
                 if not hasattr(self, '_last_nav_log_time'):
@@ -1821,9 +1812,8 @@ class MotorControlNode(Node):
                     self._last_nav_log_time = current_time
                     self.get_logger().info(
                         f"[LOADING] 导航中→进仓点({'后退' if self._nav_use_backward else '前进'}): "
-                        f"距离{gps_dist:.1f}m, 速度{move_speed:.1f}, 转向{turn_speed:.1f}, "
-                        f"方位{target_bearing:.1f}°, 航向{self.imu_yaw_deg:.1f}°, "
-                        f"差值{yaw_diff:.1f}°")
+                        f"距离{gps_dist:.1f}m, 速度{move_speed:.1f}, "
+                        f"方位{target_bearing:.1f}°, 航向{self.imu_yaw_deg:.1f}°")
                 return
 
         if self.loading_phase == "LOADING_DIRECT_FORWARD":
