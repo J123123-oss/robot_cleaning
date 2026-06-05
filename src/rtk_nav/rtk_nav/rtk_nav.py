@@ -2458,13 +2458,13 @@ class RTKNavControlNode(Node):
                             )
                             # 第2次及以上重试：先短暂后退脱困，再重新校准
                             if retry_count >= 2:
-                                self.get_logger().info("[航向校准] 后退1s脱困...")
+                                self.get_logger().info("[航向校准] 后退1.5s脱困...")
                                 backup_start = self.get_clock().now()
-                                while (self.get_clock().now() - backup_start).nanoseconds / 1e9 < 1.0:
+                                while (self.get_clock().now() - backup_start).nanoseconds / 1e9 < 1.5:
                                     if self.is_boundary_triggered or self.boundary_correct_locked:
                                         yield self.get_boundary_correct_speed()
                                     else:
-                                        yield (0.4, -0.4) # 后退速度
+                                        yield (1.0, -1.0) # 后退速度
                                 yield (0.0, 0.0)
                             self.heading_abnormal_start_time = None
                             self.heading_timed_out = False
