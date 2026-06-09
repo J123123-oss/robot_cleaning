@@ -59,9 +59,8 @@ RC_CH_MAX_VALUE = 1722
 
 # 新增：定义RTK Fixed最大等待时间（可根据实际需求调整，如30s）
 MAX_GPS_WAIT_TIME = 300.0
-# 出仓完成后航向角校验：目标89°，允许±5°偏差 + 5s航向稳定
-UNLOADING_HEADING_TARGET = 89.0
-UNLOADING_HEADING_TOLERANCE = 5.0
+# 出仓完成后航向角校验目标已废弃——不再限制固定角度，仅需 heading_stable 无漂移
+# （原 UNLOADING_HEADING_TARGET=89.0 / UNLOADING_HEADING_TOLERANCE=5.0 已移除）
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 91.0
 
@@ -71,6 +70,10 @@ LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
 NAV_SPEED_BASE = 5.0         # 导航基础速度（motor_control 单位）
 NAV_ARRIVE_THRESHOLD = 0.1   # 到达目标点距离阈值（米）
+NAV_REALIGN_DIST = 1.0      # DRIVE阶段距离<此值时暂停重对准，避免GPS漂移冲过头
+NAV_DRIVE_KP = 0.08          # DRIVE直线行驶航向纠偏比例增益
+NAV_DRIVE_MAX_CORR = 2.0     # DRIVE纠偏最大修正量（motor_control速度单位）
+NAV_DRIVE_DEADZONE = 1.5     # DRIVE纠偏死区（度），小于此误差不纠偏
 # NAV_USE_FIXED_HEADING_DIST = 1.0  # 近距离用进仓预设航向——实际进仓方向不固定，固定航向反而降低精度
 
 ERROR_MOTOR_FAULT = 1
@@ -112,7 +115,7 @@ class MotorControlNode(Node):
         self.current_right_speed = 0.0  # 当前右轮速度
         self.mqtt_control_speed = 10.0  # MQTT控制速度
         # UNLOADING parameters
-        self.unloading_forword_threshold = 22.0 # seconds
+        self.unloading_forword_threshold = 25.0 # seconds
         self.unloading_turn_start_time = None
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
@@ -136,7 +139,8 @@ class MotorControlNode(Node):
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
         self._nav_align_timeout = 60.0     # 航向对准超时（秒）
         self._nav_use_backward = False   # 目标在后方时后退行驶，不调头
-        
+        self._nav_realign_done = False   # 近距离重对准是否已完成（防重复触发）
+
         self.state_publish_timer: Optional[Timer] = None  # 定时发布状态
         self._disable_publish_countdown = 0  # DISABLE状态完成消息补发计数
 
@@ -1109,11 +1113,16 @@ class MotorControlNode(Node):
             self.loading_direct_start_time = None
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
             self._nav_sub_phase = "ALIGN"  # 重置导航子阶段
+            self._nav_realign_done = False  # 重置近距离重对准标志
             # 初始化进仓阶段（仅初始化，不启动定时器）
             self.loading_phase = None  # 先置空，等待归位后再初始化
             self.loading_start_time = None  # 暂不记录启动时间
             self.loading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
+            # 重置激光纠偏状态（防止上一次 LOADING 残留状态污染）
+            self.in_full_correction = False
+            self.correction_state = "IDLE"
+            self.correction_count = 0
             
             # self.get_logger().info("[ROSNode] 进入进仓状态，启动进仓定时器")
             # self.current_status = new_state
@@ -1291,8 +1300,35 @@ class MotorControlNode(Node):
                 if hasattr(self, 'previous_control_mode') and self.previous_control_mode:
                     restore_mode = self.previous_control_mode
                     self.current_control_mode = restore_mode
-                    self.current_status = self.rc_previous_status
-                    self.get_logger().info(f"[ROSNode] RC_DISABLE 已禁用遥控器控制，恢复之前模式: {self.rc_previous_status}")
+                    restore_status = self.rc_previous_status
+                    # START 特殊处理：如果已经完成后退动作（COMPLETE阶段），
+                    # 直接恢复到等待航向就绪阶段，避免重新执行出仓后退导致位置偏移
+                    if (restore_status == "START"
+                            and self.unloading_phase == "COMPLETE"):
+                        self.current_status = "START"
+                        self.is_in_bin_process = True
+                        self.bin_process_origin_mode = restore_mode
+                        self.bin_process_paused = False
+                        self.unloading_gps_timeout = False
+                        # 重建定时器，恢复 COMPLETE 阶段的航向/GPS等待
+                        if self.unloading_timer is not None:
+                            self.unloading_timer.cancel()
+                        self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
+                        # 重置超时计时，给予完整的 MAX_GPS_WAIT_TIME
+                        if hasattr(self, 'unloading_gps_wait_start'):
+                            delattr(self, 'unloading_gps_wait_start')
+                        self.get_logger().info(
+                            "[ROSNode] RC_DISABLE 恢复START：已在COMPLETE阶段，"
+                            "跳过出仓后退，直接等待航向就绪")
+                    else:
+                        # 通用恢复路径：通过 switch_state 正确初始化定时器/标记
+                        rev_dict = {v: k for k, v in STATE_DICT.items()}
+                        raw_key = rev_dict.get(restore_status)
+                        if raw_key is not None:
+                            self.switch_state(raw_key)
+                        else:
+                            self.current_status = restore_status
+                    self.get_logger().info(f"[ROSNode] RC_DISABLE 已禁用遥控器控制，恢复之前模式: {restore_status}")
                 else:
                     self.get_logger().info(f"[ROSNode] RC_DISABLE 已禁用遥控器控制")
                 self.publish_state()
@@ -1419,19 +1455,11 @@ class MotorControlNode(Node):
             return 0.3 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
 
     def _is_unloading_heading_ready(self):
-        """出仓完成后航向角校验：IMU航向在90°±15°内 + 5s稳定无漂移。
-        返回 True 表示航向就绪，可切入AUTO_CLEANING。"""
+        """出仓完成后航向角校验：5s稳定无漂移即视为航向就绪，可切入AUTO_CLEANING。
+        不限制固定角度范围——出仓后无论车头朝向哪边，只要IMU不再漂移就放行。"""
         if self.imu_yaw_deg is None:
             return False
-        if not self.heading_stable:
-            return False
-        heading_0_360 = (self.imu_yaw_deg + 360) % 360
-        low = (UNLOADING_HEADING_TARGET - UNLOADING_HEADING_TOLERANCE) % 360
-        high = (UNLOADING_HEADING_TARGET + UNLOADING_HEADING_TOLERANCE) % 360
-        if low < high:
-            return low <= heading_0_360 <= high
-        else:
-            return heading_0_360 >= low or heading_0_360 <= high
+        return self.heading_stable
 
     def handle_unloading_step(self):
         """出仓分步处理（修正：适配IMU更新频率，修复角度计算）"""
@@ -1787,7 +1815,19 @@ class MotorControlNode(Node):
                 self.set_motors_speed(turn_speed + correction, turn_speed + correction)
                 return
 
-            # --- 子阶段2：直线行驶（ALIGN已对准，不纠偏，纯直走） ---
+            # --- 子阶段2：直线行驶（航向差速纠偏，避免偏移目标） ---
+            # 距离<1m时停下重算方位再对准一次，避免GPS漂移导致直线冲过头
+            if self._nav_sub_phase == "DRIVE" and not self._nav_realign_done and gps_dist < NAV_REALIGN_DIST:
+                self.get_logger().info(
+                    f"[LOADING] 距离{gps_dist:.1f}m < {NAV_REALIGN_DIST}m，"
+                    f"暂停直线行驶，重新对准目标方位")
+                self._nav_sub_phase = "ALIGN"
+                self._nav_align_stable_count = 0
+                self._nav_align_start_time = current_time
+                self._nav_realign_done = True
+                self.set_motors_speed(0.0, 0.0)
+                return
+
             if self._nav_sub_phase == "DRIVE":
                 # 速度缩放（参照 rtk_nav: speed_scale = max(0.2, dist/LOW_DISTANCE*0.7)）
                 if gps_dist < NAV_LOW_DISTANCE:
@@ -1796,14 +1836,24 @@ class MotorControlNode(Node):
                 else:
                     move_speed = NAV_SPEED_BASE
 
-                if self._nav_use_backward:
-                    # 后退：左正右负
-                    left_speed = move_speed
-                    right_speed = -move_speed
+                # ── 航向差速纠偏：根据航向误差进行差速调节 ──
+                drive_target_heading = (target_bearing + 180.0) if self._nav_use_backward else target_bearing
+                heading_err = self.get_heading_error(drive_target_heading)
+
+                if abs(heading_err) < NAV_DRIVE_DEADZONE:
+                    correction = 0.0
                 else:
-                    # 前进：左负右正
-                    left_speed = -move_speed
-                    right_speed = move_speed
+                    correction = heading_err * NAV_DRIVE_KP
+                    correction = max(-NAV_DRIVE_MAX_CORR, min(NAV_DRIVE_MAX_CORR, correction))
+
+                if self._nav_use_backward:
+                    # 后退：左正右负，correction>0 → 左更快后退+右更慢后退 → 右转(CW)
+                    left_speed = move_speed + correction
+                    right_speed = -move_speed + correction
+                else:
+                    # 前进：左负右正，correction>0 → 左更慢前进+右更快前进 → 右转(CW)
+                    left_speed = -move_speed + correction
+                    right_speed = move_speed + correction
                 self.set_motors_speed(left_speed, right_speed)
 
                 if not hasattr(self, '_last_nav_log_time'):
@@ -1813,7 +1863,8 @@ class MotorControlNode(Node):
                     self.get_logger().info(
                         f"[LOADING] 导航中→进仓点({'后退' if self._nav_use_backward else '前进'}): "
                         f"距离{gps_dist:.1f}m, 速度{move_speed:.1f}, "
-                        f"方位{target_bearing:.1f}°, 航向{self.imu_yaw_deg:.1f}°")
+                        f"方位{target_bearing:.1f}°, 航向{self.imu_yaw_deg:.1f}°, "
+                        f"航向差{heading_err:.1f}°, 纠偏{correction:+.2f}")
                 return
 
         if self.loading_phase == "LOADING_DIRECT_FORWARD":
@@ -1885,6 +1936,7 @@ class MotorControlNode(Node):
                     self._nav_sub_phase = "ALIGN"
                     self._nav_align_stable_count = 0
                     self._nav_align_start_time = time.time()
+                    self._nav_realign_done = (gps_dist <= NAV_REALIGN_DIST)  # 起始已近距则跳过重对准
                     self.get_logger().info(
                         f"[LOADING] 检测到dock归位，距进仓点{gps_dist:.1f}m，"
                         f"先导航到目标点[{LOADING_GPS[0]:.6f},{LOADING_GPS[1]:.6f}]")
@@ -1964,6 +2016,10 @@ class MotorControlNode(Node):
                             else:
                                 self.loading_phase = "LOADING_FOWARD"
                                 self.loading_backward_start_time = current_time
+                                # 重置激光纠偏状态（进入新阶段，确保干净初始状态）
+                                self.in_full_correction = False
+                                self.correction_state = "IDLE"
+                                self.correction_count = 0
                             self.yaw_stable_count = 0
                             self.set_motors_speed(0.0, 0.0)
                     else:
@@ -1985,6 +2041,10 @@ class MotorControlNode(Node):
                         else:
                             self.loading_phase = "LOADING_FOWARD"
                             self.loading_backward_start_time = current_time
+                            # 重置激光纠偏状态（进入新阶段，确保干净初始状态）
+                            self.in_full_correction = False
+                            self.correction_state = "IDLE"
+                            self.correction_count = 0
                         self.yaw_stable_count = 0
                         self.set_motors_speed(0.0, 0.0)
 
@@ -2112,8 +2172,9 @@ class MotorControlNode(Node):
                             self._last_loading_fwd_log_time = current_time
                         
                         # 步骤2：判断激光差值是否>1000mm（大幅偏离）执行「偏转→后退2s→反向偏转检查」流程
-                        # if diff_dis > 1000:
-                        if diff_dis > 1000 and self.correction_count < 5 or self.in_full_correction:  # 最多2次调整
+                        # correction_state != "IDLE" → 流程锁：已进入纠偏序列则执行到底，不受瞬时差值波动影响
+                        # diff_dis > 1000 → 新触发：差值确实超标才启动新序列
+                        if self.correction_state != "IDLE" or (diff_dis > 1000 and self.correction_count < 5):
 
                             self.get_logger().info("[LOADING] 大幅偏离（差值>1000mm），强力旋转对准（中速）")
                             # # 强力纠偏：左转/右转 速度为 BASE_SPEED/2.0
@@ -2123,12 +2184,10 @@ class MotorControlNode(Node):
                             # else:  # 右转
                             #     left_speed = -base_speed / 2.0
                             #     right_speed = -base_speed / 2.0
-                            self.in_full_correction = True
 
                             if self.correction_state == "IDLE":
-                                self.correction_count += 1
                                 self.correction_start_time = current_time
-                                self.get_logger().info(f"[LOADING] 大幅偏离，第{self.correction_count}次调整-开始偏转")
+                                self.get_logger().info(f"[LOADING] 大幅偏离，第{self.correction_count + 1}次调整-开始偏转")
 
                                 if (left - right) < 0:  # 左转
                                     left_speed = base_speed / 4.0  # 左转：双正（低速）
@@ -2170,14 +2229,12 @@ class MotorControlNode(Node):
                             
                             # 阶段3：反向偏转检查（修正差值）
                             elif self.correction_state == "CHECK":
-                                # 先检查是否达标：diff_dis < 1000 则立即退出
+                                # 先检查是否达标：diff < 10mm 则退出，否则反向偏转直到超时
                                 if diff_dis < 10:
                                     self.get_logger().info(f"[LOADING] 反向检查达标（差值{diff_dis}mm<10），退出检查阶段")
-                                    # 重置状态+解锁+计数+1
-                                    self.in_full_correction = False
                                     self.correction_state = "IDLE"
                                     self.last_state = None
-                                    self.correction_count += 1
+                                    self.correction_count += 1   # 完成一次完整纠偏周期，计数+1
                                     left_speed = 0.0  # 停止反向偏转
                                     right_speed = 0.0
                                 else:
@@ -2197,7 +2254,6 @@ class MotorControlNode(Node):
                                     else:
                                         # 超时未达标，强制退出（避免无限检查）
                                         self.get_logger().warning(f"[LOADING] 反向检查超时（{self.check_max_timeout}s），强制退出")
-                                        self.in_full_correction = False
                                         self.correction_state = "IDLE"
                                         self.last_state = None
                                         self.correction_count += 1
@@ -2248,7 +2304,6 @@ class MotorControlNode(Node):
                                     left_speed = 0.0
                                     right_speed = 0.0
                                     self.get_logger().info("[LOADING] 后退进仓完成，进入完成阶段")
-                                    self.in_full_correction = False
                                     self.loading_phase = "COMPLETE"
                                     self.complete_state = True
                                     self.is_charging = False  #清除充电状态，衔接后续充电
