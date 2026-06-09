@@ -1,10 +1,16 @@
 # Stanley 控制器修复记录
 
-分支: `stanley` | 日期: 2026-06-04
+分支: `stanley` | 日期: 2026-06-09
 
 ## 提交历史
 
 ```
+a96dec8 fix: NAV_TO_GPS DRIVE阶段恢复航向差速纠偏，避免偏移目标
+5fa0344 fix: NAV_TO_GPS DRIVE去掉差速转向，ALIGN对准后纯直线行驶
+983f7eb fix: 航向校准卡滞重试和恢复时复用初始校准目标航向
+09c62f2 fix: set/clear_rtk_error_bits只改内存不发布，避免非AUTO_CLEANING下错误码泄露
+3c3b51f docs: STANLEY_FIX_SUMMARY 补充 #66 航向校准卡滞后退脱困
+d5684d5 docs: 更新STANLEY_FIX_SUMMARY — 进仓打滑漂移修复(#64旋转/平移分离 + #65 NAV_TO_GPS后退行驶)
 faafd3a fix: 撤销分段转向子状态机，改为旋转/平移分离的位置恢复
 66dcb7d fix: LOADING_NAV_TO_GPS支持后退行驶，目标在后方时不调头
 4f9a294 fix: 航向校准卡滞重试时增加后退脱困步骤
@@ -115,6 +121,8 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - [ ] 横向偏差 > 0.1m 时，Stanley 是否有效拉回路径
 - [ ] 起步段 `lat_err≈0.08m` 时应在 1~2m 内明显回收，不再需要 4~5m
 - [ ] 横偏回收过程中 `hdg_err` 不应持续超过 5°
+- [ ] DRIVE 直线行驶航向纠偏：航向差应在 2° 以内，不应出现旧版"来回小幅摆头"或新版"航向持续漂移"
+- [ ] 进仓 DRIVE 阶段日志应出现 `航向差` 和 `纠偏` 字段，纠偏值应在 ±2.0 范围内平滑变化
 
 ## 2026-05-22 RTK 数据超时保护
 
@@ -747,3 +755,50 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - 第1次重试保持原逻辑（不后退），避免偶尔的短时卡滞被不必要的后退扩大偏离
   - 后退速度0.4/-0.4（差速扰动），持续1s后停顿再校准
 - **影响**: `rtk_nav.py` — calib_stuck 重试分支（`multi_waypoint_nav_generator` 中 WAYPOINT_CALIB handler）。
+
+### 67. 航向校准卡滞重试使用错误的目标航向（~90° 偏移）
+
+- **问题**: 航向校准卡滞超时后，重试代码调用 `get_path_heading(target_waypoint)` 作为校准目标航向。该函数返回 `waypoint[2] + imu_calibration_offset`（路径文件存储航向），但初始校准时使用的是 `path_direction`（Stanley 计算的路径段方位角）。当路径文件航向与实际路径方向差 ~90° 时，重试校准到错误角度。
+- **现场证据**: `0604卡滞转向调整.log` 中航点7：path_dir=179.4°（正确），get_path_heading=89.85°（错误 ~90° 偏移）；航点10：path_dir=90.1°（正确），get_path_heading=179.65°（错误 ~90° 偏移）。重试1/2/3均使用错误目标179.65°，校准完成后 Stanley 检测到 hdg_err≈-89°，航向异常保护重新校准到 ~88.5°。
+- **根因**: `get_path_heading()` 读取的是人工打点时记录的航向（waypoint[2]），与 Stanley 计算的路径段方向（起点→终点方位角）是两个独立概念。路径文件中人工记录的航向可能因打点站立角度、imu_calibration_offset 变化等因素与实际路径方向偏差 ~90°。初始校准用 `path_direction`（正确），但卡滞重试的4个读取点直接或间接调用 `get_path_heading()`（错误）。
+- **修复** (983f7eb):
+  - 新增 `calib_target_heading` 字段到 `nav_context`，所有校准入口保存首次使用的目标航向
+  - `start_heading_recalibration()`: 保存 `calib_target_heading = path_direction`
+  - 同航点 ≥2 次校准的 fixed_bearing 内联校准: 保存 `fixed_bearing` 为目标
+  - 正常航点到达校准: 保存当前 `path_direction` 为目标
+  - 卡滞重试的 4 个读取点: 改用 `saved if saved is not None else get_path_heading()`，优先复用保存值
+  - 使用 `is not None` 显式检查避免 Python `0.0 or X` 真值陷阱（航向 0.0° 为合法值但 falsy）
+- **影响**: `rtk_nav.py` — `nav_context` 初始化 (2处) + `start_heading_recalibration()` + 同航点 fixed_bearing 内联校准 + 正常航点到达校准 + 卡滞重试的 4 个读取点 (L2181, L2196, L2436, L2472)。
+
+### 68. NAV_TO_GPS DRIVE 阶段无航向纠偏导致偏移目标 (a96dec8)
+
+- **问题**: commit 5fa0344 去掉了 DRIVE 阶段的差速转向，改为纯直线行驶（"ALIGN对准后不纠偏，纯直走"）。左右电机不平衡导致航向缓慢漂移（~1-2°/s），机器人逐渐偏航，距离目标从 0.1m 越走越远到 1.9m，再也无法接近。
+- **现场证据**: `6月5日1820移动到进仓点近距离没有重对正.txt`:
+  - ALIGN 对准完成：航向 164.2°，方位 344.0°，距离 0.6m
+  - ~8s 后：航向漂到 170.2°，方位 340.5°，距离 0.4m（已偏）
+  - ~30s 后：航向漂到 ~-174°，方位 189°，距离 1.9m
+  - 最终：距离卡在 1.9m，速度 5.0（全速），但无法接近目标
+  - 根因：航向漂移 25°+，bearing 也跟着变，机器人沿错误方向后退
+- **旧版差速转向为何被去掉 (5fa0344)**:
+  1. 使用 `get_adaptive_turn_speed()`（原地旋转用）：阶梯跳变 <10°→1.5, ≥10°→4.0，10° 硬边界导致纠偏量突变
+  2. 无死区：IMU 噪声（±0.5°）每帧触发微调，左右轮速度来回抖动
+  3. 反向耦合：纠偏量过大 → 航向修正过度 → bearing 变化 → 纠偏量再变 → "走不直，来回小幅摆头"
+- **新版改进** (a96dec8):
+  1. **P-only 替代阶梯函数**：`heading_err × NAV_DRIVE_KP(0.08)`，10° 误差 → 0.8 纠偏（旧版 1.5~4.0），连续平滑无跳变
+  2. **1.5° 死区** (`NAV_DRIVE_DEADZONE`)：忽略 IMU 噪声和微小航向波动
+  3. **max clamp 2.0** (`NAV_DRIVE_MAX_CORR`)：纠偏量不超过 base_speed(5.0) 的 40%，防止反向耦合
+  4. **差速方式叠加**：`correction` 加在左右轮同号位置（后退: left=+speed+corr, right=-speed+corr），确保 `corr>0` → 左更快后退+右更慢后退 → 右转(CW) 纠正正误差
+  5. **日志增强**：新增 `航向差` 和 `纠偏` 字段到 2s 日志中，方便现场调参
+- **参数**:
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| NAV_DRIVE_KP | 0.08 | 航向纠偏比例增益 |
+| NAV_DRIVE_MAX_CORR | 2.0 | 最大纠偏量（motor_control 速度单位） |
+| NAV_DRIVE_DEADZONE | 1.5° | 纠偏死区，小于此误差不纠偏 |
+
+- **调参指南**:
+  - 航向仍在漂（纠偏不够）→ 增大 KP（0.10→0.12）
+  - 来回小幅摆头（过度纠偏）→ 增大死区（2.0°）或减小 KP
+  - 单次纠偏太猛 → 减小 MAX_CORR（1.5）
+- **影响**: `motor_control.py` — 常量定义(3个) + DRIVE 子阶段纠偏逻辑 + 日志输出。
