@@ -54,8 +54,9 @@ DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 HEADING_ABNORMAL_THRESHOLD = 15.0  # 航向异常阈值（度），连续超限后重新校准
-INITIAL_HEADING_TARGET = 90.0   # 初始航向校验目标（度），清扫起步前IMU必须在此±容差内
-INITIAL_HEADING_TOLERANCE = 15.0  # 初始航向校验容差（度），与motor_control出仓校验一致
+# 初始航向校验（仅检查航向是否稳定无漂移，不限制固定角度——出仓后无论车头朝哪，稳住即放行）
+# 航向稳定性由 heading_callback 中的 HEADING_STABILITY_WINDOW / HEADING_STABILITY_RANGE 控制
+# INITIAL_HEADING_TARGET / INITIAL_HEADING_TOLERANCE 已废弃，不再使用固定角度判定
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
 STANLEY_MIN_SPEED = 0.15
@@ -86,10 +87,9 @@ TILT_STABILIZE_TIMEOUT = 120.0  # 跌落后INS稳定等待时间（秒），重�
 TILT_SHORT_DURATION = 10.0    # 短促倾斜阈值（秒），倾斜持续低于此值视为颠簸，跳过稳定等待
 
 # 航向稳定性检查（基于 ins_heading，静止时无漂移才放行）
+# 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 3.0       # 窗口内最大允许变化（度），超出判定漂移中
-HEADING_STABILITY_TARGET = 89.0     # 稳定航向目标（度），0-360
-HEADING_STABILITY_TOLERANCE = 5.0  # 稳定航向容差（度），即 89°±5°
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -1048,18 +1048,16 @@ class RTKNavControlNode(Node):
                 headings = [h for _, h in self._heading_stability_history]
                 h_min, h_max = min(headings), max(headings)
                 h_range = h_max - h_min
-                all_in_range = all(
-                    abs((h - HEADING_STABILITY_TARGET + 180) % 360 - 180) <= HEADING_STABILITY_TOLERANCE
-                    for h in headings
-                )
-                is_stable = h_range <= HEADING_STABILITY_RANGE and all_in_range
+                # 不限制固定角度范围：出仓后只要IMU无漂移（波动小）即视为稳定，
+                # 无论车头朝哪个方向。避免遥控接管后角度变化导致永远无法通过校验。
+                is_stable = h_range <= HEADING_STABILITY_RANGE
 
             if is_stable != self._last_heading_stable:
                 if is_stable:
                     self.get_logger().info(f"[航向稳定] ins_heading 5s内波动≤{HEADING_STABILITY_RANGE}°，"
-                                           f"稳定在{HEADING_STABILITY_TARGET}°±{HEADING_STABILITY_TOLERANCE}°")
+                                           f"无漂移判定为稳定（不限制固定角度）")
                 else:
-                    self.get_logger().warn(f"[航向不稳定] ins_heading 失去稳定")
+                    self.get_logger().warn(f"[航向不稳定] ins_heading 失去稳定（5s内波动>{HEADING_STABILITY_RANGE}°）")
             self._last_heading_stable = is_stable
 
         stable_msg = Bool()
@@ -2271,22 +2269,18 @@ class RTKNavControlNode(Node):
                     if not self.check_control_mode():
                         yield (0.0, 0.0)
                         return
-                    heading_diff = self.get_ring_angle_diff(self.imu_yaw, INITIAL_HEADING_TARGET)
-                    heading_ok = heading_diff <= INITIAL_HEADING_TOLERANCE
                     stable_ok = self._last_heading_stable
-                    if heading_ok and stable_ok:
+                    if stable_ok:
                         self.get_logger().info(
                             f"[初始航向校验] 通过：IMU航向={self.imu_yaw:.1f}°，"
-                            f"偏离目标{INITIAL_HEADING_TARGET}°仅{heading_diff:.1f}°，"
-                            f"航向稳定"
+                            f"航向稳定（5s内波动≤{HEADING_STABILITY_RANGE}°），"
+                            f"不限制固定角度，出仓后无漂移即放行"
                         )
                         break
                     reasons = []
-                    if not heading_ok:
-                        reasons.append(f"偏离{heading_diff:.1f}° > 容差{INITIAL_HEADING_TOLERANCE}°")
                     if not stable_ok:
-                        reasons.append(f"5s内航向不稳定（需稳定在{HEADING_STABILITY_TARGET}°±{HEADING_STABILITY_TOLERANCE}°"
-                                       f"且波动≤{HEADING_STABILITY_RANGE}°）")
+                        reasons.append(f"5s内航向不稳定（波动>{HEADING_STABILITY_RANGE}°），"
+                                       f"出仓后需IMU无漂移才可开始导航")
                     now = time.monotonic()
                     if now - self.last_heading_check_log_time >= 10.0:
                         self.get_logger().warn(
