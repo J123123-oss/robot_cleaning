@@ -191,6 +191,7 @@ areas:
     calib_point_b: {lon: 110.64775981630326, lat: 35.60542648814111}
     calib_point_c: {lon: 110.64742387365659, lat: 35.605425789416415}
     start_corner: "top_right"
+    reverse_end_point: True
     # [右，左]
     edge_distance_lon: [0.3, 0.1]   
     # [下，上]  
@@ -201,7 +202,7 @@ areas:
     calib_point_a: {lon: 110.64776001450005, lat: 35.605286952396405}
     calib_point_b: {lon: 110.6477602879233, lat: 35.605252466171876}
     calib_point_c: {lon: 110.64776001450005, lat: 35.605286952396405}
-    edge_distance_lat: [-0.3, 0.1]   
+    edge_distance_lat: [0.1, 0.1]   
 
   # 8南侧
   - name: "E8"
@@ -221,6 +222,7 @@ areas:
     calib_point_b: {lon: 110.64776001450005, lat: 35.605286952396405}
     calib_point_c: {lon: 110.6477602879233, lat: 35.605252466171876}
     start_corner: "top_right"
+    edge_distance_lat: [0.1, 0.2]  
 
   # back_7A-7bA
   - name: "back_7A-7bA"
@@ -229,6 +231,7 @@ areas:
     calib_point_c: {lon: 110.64776001450005, lat: 35.605286952396405}
   # [右，左]
     edge_distance_lon: [0.3, 0.3]  
+    edge_distance_lat: [0.6, 0.1]  
 
   # back_7bB-6A
   - name: "back_7bB-6A"
@@ -237,18 +240,18 @@ areas:
     calib_point_c: {lon: 110.64741521205767, lat: 35.605467251897565}
     start_corner: "top_right"
 
-  # back_6B-5A
-  - name: "back_6B-5A"
-    calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
-    calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
-    calib_point_c: {lon: 110.64741642174106, lat: 35.60568374013546}
-    start_corner: "top_right"
-  # back_5B-4A
-  - name: "back_5B-4A"
-    calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
-    calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
-    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
-    start_corner: "top_right"
+  # # back_6B-5A
+  # - name: "back_6B-5A"
+  #   calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
+  #   calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
+  #   calib_point_c: {lon: 110.64741642174106, lat: 35.60568374013546}
+  #   start_corner: "top_right"
+  # # back_5B-4A
+  # - name: "back_5B-4A"
+  #   calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+  #   calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+  #   calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+  #   start_corner: "top_right"
 
 
 default:
