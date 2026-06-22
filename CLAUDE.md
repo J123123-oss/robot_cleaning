@@ -75,7 +75,7 @@ src/
 
 `total_steering = heading_error + atan(K * lateral_error / velocity)`，clamp ±45°，差速分配。
 
-当前参数：`STANLEY_K_BASE=0.5`, `STANLEY_MIN_SPEED=0.067`, `MAX_LATERAL_ERROR=5.0`, `SPEED_CMD_TO_MPS=0.0345`，自适应 K：近距(<2m)=0.6，中距(2-5m)=0.6，远距=K_BASE×max(1,v/5)。
+当前参数：`STANLEY_K_BASE=0.5`, `STANLEY_MIN_SPEED=0.15`, `MAX_LATERAL_ERROR=1.0`, `SPEED_CMD_TO_MPS=0.0345`, `STRAIGHT_MAX_CORRECTION=1.5`，自适应 K：近距(<1.3m)=0.42，远距(≥1.3m)=0.45。航向优先抑制：`abs(hdg_err)>4°` 且横向项同向时 st_corr 减半。
 
 `path_direction` 使用固定路径段方向，投影检测越过终点时切换为指向目标。
 

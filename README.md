@@ -96,9 +96,13 @@ graph TD
     START -.->|"仅接受 HOLD / DISABLE"| START
     LOADING -.->|"仅接受 HOLD / DISABLE"| LOADING
 
+    %% ===== 出仓/进仓完成后续 =====
+    START_DONE -->|"航向稳定后<br/>自动切换"| AUTO_CLEANING
+    LOADING_DONE -->|"补发3条完成消息"| DISABLE
+
     %% ===== MQTT 遥控接管流程 =====
-    RC_ENABLE["RC_ENABLE<br/>MQTT启用遥控器"] -->|"保存当前状态<br/>开启遥控接管"| REMOTE_MODE["遥控模式<br/>REMOTE<br/>接受遥控器指令"]
-    REMOTE_MODE -->|"RC_DISABLE<br/>MQTT关闭遥控器"| RESTORE["恢复之前状态<br/>继续原流程"]
+    RC_ENABLE["RC_ENABLE<br/>MQTT启用遥控器"] -->|"保存当前状态<br/>立即停车<br/>rc_control=True"| RC_ACTIVE["遥控接管中<br/>使用NORMAL键盘逻辑<br/>优先级高于AUTO_CLEANING"]
+    RC_ACTIVE -->|"RC_DISABLE<br/>MQTT关闭遥控器"| RESTORE["恢复原控制模式<br/>继续原流程"]
 
     %% RC_ENABLE 可从任意状态进入（AUTO_CLEANING下也允许）
     HOLD -.->|"MQTT: RC_ENABLE"| RC_ENABLE
@@ -122,7 +126,7 @@ graph TD
     style U_CHECK fill:#ffeaa7,stroke:#333
     style L_CHECK fill:#ffeaa7,stroke:#333
     style RC_ENABLE fill:#e17055,stroke:#333,color:#fff
-    style REMOTE_MODE fill:#fab1a0,stroke:#e17055
+    style RC_ACTIVE fill:#fab1a0,stroke:#e17055
     style RESTORE fill:#74b9ff,stroke:#333
 ```
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Network Watchdog (wwan0 quectel-CM recovery)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/home/ztl/robot_cleaning/network_watchdog.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
