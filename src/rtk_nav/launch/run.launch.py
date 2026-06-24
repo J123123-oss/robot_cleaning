@@ -12,7 +12,7 @@ def generate_launch_description():
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan"),  # 默认值
+        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_old"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
@@ -33,7 +33,7 @@ def generate_launch_description():
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
-            {'port': '/dev/ttyS1'},
+            {'port': '/dev/ttyS4'},
             {'baud': 9600}
         ]
     )
@@ -48,18 +48,18 @@ def generate_launch_description():
         ]
     )
 
-    # 充电485节点
-    charging_node = Node(
-        package='motor_control',
-        executable='charging',
-        name='charging_485_node',
-        parameters=[
-            {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
-            {'slave_addr': 1},
-            {'battery_addr': 11},
-            {'timeout': 0.5}
-        ]
-    )
+    # # 充电485节点
+    # charging_node = Node(
+    #     package='motor_control',
+    #     executable='charging',
+    #     name='charging_485_node',
+    #     parameters=[
+    #         {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
+    #         {'slave_addr': 1},
+    #         {'battery_addr': 11},
+    #         {'timeout': 0.5}
+    #     ]
+    # )
     rtk_navigator = Node(
         package='rtk_nav',
         executable='rtk_nav',
@@ -92,8 +92,9 @@ def generate_launch_description():
         output='screen',
         parameters=[
             # {'port': '/dev/WTRTK'},
-            {'port': '/dev/ttyS2'},
-            {'baud': 230400}
+            {'port': '/dev/ttyS3'},
+            {'baud': 460800}
+            # {'baud': 230400}
         ]
     )
 
@@ -131,7 +132,7 @@ def generate_launch_description():
 
     ld.add_action(sensors_485_node)
     ld.add_action(laser_node)
-    ld.add_action(charging_node)
+    # ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(rtk_navigator)
     # 若需要启用注释的节点，取消以下对应行的注释

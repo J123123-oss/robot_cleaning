@@ -16,8 +16,8 @@ class WTRTKSerialDriver(Node):
         
         # 读取参数（默认端口和波特率）
         # self.declare_parameter('port', '/dev/WTRTK')
-        self.declare_parameter('port', '/dev/ttyS2')
-        self.declare_parameter('baud', 230400)
+        self.declare_parameter('port', '/dev/ttyS3')
+        self.declare_parameter('baud', 460800)
         self.port = self.get_parameter('port').value
         self.baud_rate = self.get_parameter('baud').value
         
