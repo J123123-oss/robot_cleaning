@@ -72,6 +72,10 @@ BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
 
 BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
+# 边界航向角闭环矫正
+TURN_AWAY_DEG = 25.0               # 偏离边缘的目标转角（度）
+BOUNDARY_SLOW_PERSIST_FRAMES = 15  # 单传感器慢速通道：持续N帧(1.5s@10Hz)触发
+BOUNDARY_CORRECTION_TIMEOUT = 15.0 # 整体纠偏超时（秒）
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
 ERROR_TILT_FAULT = 64        # 倾斜/跌落故障
@@ -185,6 +189,10 @@ class RTKNavControlNode(Node):
         self.boundary_clear_count = 0
         self.boundary_last_raw_trigger = False
         self.boundary_stop_published = False
+        self.boundary_trigger_yaw = 0.0                # 触发瞬间的IMU航向
+        self.boundary_target_yaw = 0.0                 # TURNING/RETURNING目标航向
+        self.boundary_slow_count = 0                  # 单传感器持续帧计数
+        self.boundary_correction_start_time = None    # 整体超时起点（monotonic秒）
 
         self.gps_cache = []
         # 距离历史缓存（用于异常检测）
@@ -458,129 +466,167 @@ class RTKNavControlNode(Node):
         return SetParametersResult(successful=True)
     def get_boundary_correct_speed(self):
         """
-        边界触发时的实时矫正速度计算（状态机版本）
-        逻辑：向左偏转(1s) → 后退2s → 反向偏转退回(1s)
+        边界触发时的航向角闭环矫正速度计算（状态机版本）
+        逻辑：偏转至目标航向 → 直行后退 → 旋转回原始航向
+        TURNING/RETURNING 使用 IMU 航向闭环，复用 get_adaptive_turn_speed + get_speed_correction
         """
-        
         base_correct_speed = self.correct_speed_scale * LINEAR_SPEED_BASE
         left_speed = 0.0
         right_speed = 0.0
-
         current_time = time.time()
 
-        # 检查是否需要启动新的边界矫正序列（只在非锁定状态下检测）
+        # ---- 整体超时保护 ----
+        if self.boundary_correct_locked and self.boundary_correction_start_time is not None:
+            if current_time - self.boundary_correction_start_time > BOUNDARY_CORRECTION_TIMEOUT:
+                self.get_logger().error(
+                    f"[RTKNav] 边界矫正超时({BOUNDARY_CORRECTION_TIMEOUT}s)，强制退出")
+                self._reset_boundary_correction()
+                return (0.0, 0.0)
+
+        # ---- IDLE：检测触发并启动 ----
         if self.boundary_correct_state == BoundaryCorrectState.IDLE and not self.boundary_correct_locked:
-            # if self.front_left and not self.front_right:
-            if self.mid_left and not self.mid_right:
-                self.boundary_correct_state = BoundaryCorrectState.TURNING
-                self.boundary_correct_start_time = current_time
-                self.boundary_correct_direction = 'left'
-                self.boundary_correct_locked = True  # 锁定，不受后续传感器变化影响
-                self.get_logger().info("[RTKNav] 边界矫正启动：向左偏转 [锁定]")
-            # elif self.front_right and not self.front_left:
-            elif self.mid_right and not self.mid_left:
-                self.boundary_correct_state = BoundaryCorrectState.TURNING
-                self.boundary_correct_start_time = current_time
-                self.boundary_correct_direction = 'right'
-                self.boundary_correct_locked = True  # 锁定，不受后续传感器变化影响
-                self.get_logger().info("[RTKNav] 边界矫正启动：向右偏转 [锁定]")
-            elif self.mid_left and self.mid_right:
-                self.boundary_correct_state = BoundaryCorrectState.BACKING
-                self.boundary_correct_start_time = current_time
-                self.boundary_correct_locked = True  # 锁定，不受后续传感器变化影响
-                self.get_logger().info("[RTKNav] 边界矫正启动：正前方均触发,执行后退 [锁定]")
+            direction = self._determine_boundary_direction()
+            if direction is not None:
+                self._start_boundary_correction(current_time, direction)
 
-        # 状态机处理
+        # ---- TURNING：航向角闭环旋转到 boundary_target_yaw ----
         if self.boundary_correct_state == BoundaryCorrectState.TURNING:
-            elapsed = current_time - self.boundary_correct_start_time
-            if self.boundary_correct_direction == 'left':
-                left_speed = base_correct_speed
-                right_speed = base_correct_speed
-            else:
-                left_speed = -base_correct_speed
-                right_speed = -base_correct_speed
-
-            if elapsed >= self.BOUNDARY_TURN_DURATION:
+            heading_error = self.get_heading_error(self.boundary_target_yaw)
+            if abs(heading_error) <= RTK_HEADING_TOLERANCE:
                 self.boundary_correct_state = BoundaryCorrectState.BACKING
                 self.boundary_correct_start_time = current_time
-                self.get_logger().info(f"[RTKNav] 边界矫正阶段：后退{self.BOUNDARY_BACK_DURATION}s")
+                self.get_logger().info(
+                    f"[RTKNav] 边界矫正：偏转完成(误差={heading_error:.1f}°)，进入后退")
+            else:
+                turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
+                correction = self.get_speed_correction(self.boundary_target_yaw)
+                min_positive_speed = 0.5
+                if heading_error > 0:
+                    left_speed = -max(turn_speed - correction, min_positive_speed)
+                    right_speed = -max(turn_speed - correction, min_positive_speed)
+                else:
+                    left_speed = max(turn_speed + correction, min_positive_speed)
+                    right_speed = max(turn_speed + correction, min_positive_speed)
 
+        # ---- BACKING：直行后退（时间基准） ----
         elif self.boundary_correct_state == BoundaryCorrectState.BACKING:
             elapsed = current_time - self.boundary_correct_start_time
-            left_speed = base_correct_speed
-            right_speed = -base_correct_speed
-
+            if self.boundary_correct_direction == 'behind':
+                # 后方边缘 → 前进远离（不能后退）
+                left_speed = -base_correct_speed       # -v = 前进
+                right_speed = base_correct_speed        # +v = 前进
+            else:
+                # 前方/侧方边缘 → 后退远离
+                left_speed = base_correct_speed        # +v = 后退
+                right_speed = -base_correct_speed       # -v = 后退
             if elapsed >= self.BOUNDARY_BACK_DURATION:
                 self.boundary_correct_state = BoundaryCorrectState.RETURNING
                 self.boundary_correct_start_time = current_time
-                self.get_logger().info(f"[RTKNav] 边界矫正阶段：反向偏转退回{self.BOUNDARY_RETURN_DURATION}s")
+                self.boundary_target_yaw = self.boundary_trigger_yaw
+                action = "前进" if self.boundary_correct_direction == 'behind' else "后退"
+                self.get_logger().info(
+                    f"[RTKNav] 边界矫正：{action}完成，返回原始航向{self.boundary_trigger_yaw:.1f}°")
 
+        # ---- RETURNING：航向角闭环旋转回 boundary_trigger_yaw ----
         elif self.boundary_correct_state == BoundaryCorrectState.RETURNING:
-            elapsed = current_time - self.boundary_correct_start_time
-            if self.boundary_correct_direction == 'left':
-                left_speed = -base_correct_speed
-                right_speed = -base_correct_speed
-            elif self.boundary_correct_direction == 'right':
-                left_speed = base_correct_speed
-                right_speed = base_correct_speed
+            heading_error = self.get_heading_error(self.boundary_trigger_yaw)
+            if abs(heading_error) <= RTK_HEADING_TOLERANCE:
+                self.get_logger().info(
+                    f"[RTKNav] 边界矫正完成(误差={heading_error:.1f}°)，恢复正常导航")
+                self._reset_boundary_correction()
             else:
-                left_speed = 0.0
-                right_speed = 0.0
+                turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
+                correction = self.get_speed_correction(self.boundary_trigger_yaw)
+                min_positive_speed = 0.5
+                if heading_error > 0:
+                    left_speed = -max(turn_speed - correction, min_positive_speed)
+                    right_speed = -max(turn_speed - correction, min_positive_speed)
+                else:
+                    left_speed = max(turn_speed + correction, min_positive_speed)
+                    right_speed = max(turn_speed + correction, min_positive_speed)
 
-            if elapsed >= self.BOUNDARY_RETURN_DURATION:
-                self.boundary_correct_state = BoundaryCorrectState.IDLE
-                self.boundary_correct_start_time = None
-                self.boundary_correct_direction = None
-                self.boundary_correct_locked = False  # 解除锁定
-                self.is_boundary_triggered = False
-                self.boundary_active_count = 0
-                self.boundary_clear_count = 0
-                self.boundary_stop_published = False
-                self.get_logger().info("[RTKNav] 边界矫正完成，恢复正常 [解锁]")
-
-        self.get_logger().debug(f"[RTKNav] 边界矫正状态: {self.boundary_correct_state}, 速度：左轮={left_speed:.2f},右轮={right_speed:.2f}")
+        self.get_logger().debug(
+            f"[RTKNav] 边界矫正状态: {self.boundary_correct_state}, "
+            f"target_yaw={self.boundary_target_yaw}, "
+            f"左={left_speed:.2f}, 右={right_speed:.2f}")
         return (left_speed, right_speed)
 
-    def update_boundary_trigger_state(self, raw_trigger: bool):
-        if self.current_control_mode != ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
-            self.is_boundary_triggered = False
-            self.boundary_active_count = 0
-            self.boundary_clear_count = 0
-            self.boundary_stop_published = False
-            return
+    def _determine_boundary_direction(self) -> Optional[str]:
+        """
+        根据 mid/back 共4路传感器判定边缘方向。
+        返回 'left' / 'right' / 'ahead' / 'behind'，无传感器触发返回 None。
+        """
+        left_active = self.mid_left or self.back_left
+        right_active = self.mid_right or self.back_right
 
-        if self.boundary_correct_locked:
-            return
-
-        if raw_trigger:
-            self.boundary_active_count += 1
-            self.boundary_clear_count = 0
+        if left_active and right_active:
+            # 区分前方边缘（mid触发）和后方边缘（back触发）
+            # 后方双侧触发 → 前进远离，不能后退
+            if self.back_left and self.back_right and not (self.mid_left and self.mid_right):
+                return 'behind'
+            return 'ahead'
+        elif left_active:
+            return 'left'
+        elif right_active:
+            return 'right'
         else:
-            self.boundary_clear_count += 1
-            self.boundary_active_count = 0
-            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
-                if self.is_boundary_triggered:
-                    self.get_logger().info("[RTKNav] 边界传感器释放确认，清除待处理触发")
-                self.is_boundary_triggered = False
-                self.boundary_stop_published = False
-            return
+            return None
 
-        if self.boundary_active_count < BOUNDARY_TRIGGER_CONFIRM_FRAMES:
-            return
+    def _start_boundary_correction(self, current_time: float, direction: str):
+        """初始化边界矫正状态机：捕获触发航向 → 计算目标航向 → 锁定。"""
+        self.boundary_trigger_yaw = self.imu_yaw
+        self.boundary_correction_start_time = current_time
+        self.boundary_correct_direction = direction
+        self.boundary_correct_locked = True
 
-        if self.is_boundary_triggered:
-            return
+        if direction == 'ahead':
+            self.boundary_correct_state = BoundaryCorrectState.BACKING
+            self.boundary_correct_start_time = current_time
+            self.boundary_target_yaw = self.boundary_trigger_yaw
+            self.get_logger().info(
+                f"[RTKNav] 边界矫正启动：前方双侧触发(yaw={self.boundary_trigger_yaw:.1f}°)，"
+                f"直接后退 [锁定]")
+        elif direction == 'behind':
+            self.boundary_correct_state = BoundaryCorrectState.BACKING
+            self.boundary_correct_start_time = current_time
+            self.boundary_target_yaw = self.boundary_trigger_yaw
+            self.get_logger().info(
+                f"[RTKNav] 边界矫正启动：后方双侧触发(yaw={self.boundary_trigger_yaw:.1f}°)，"
+                f"直接前进远离 [锁定]")
+        elif direction == 'left':
+            self.boundary_target_yaw = self.normalize_angle(
+                self.boundary_trigger_yaw - TURN_AWAY_DEG)
+            self.boundary_correct_state = BoundaryCorrectState.TURNING
+            self.boundary_correct_start_time = current_time
+            self.get_logger().info(
+                f"[RTKNav] 边界矫正启动：左侧触发 → 左转避障 "
+                f"(trigger={self.boundary_trigger_yaw:.1f}° → target={self.boundary_target_yaw:.1f}°) [锁定]")
+        else:  # 'right'
+            self.boundary_target_yaw = self.normalize_angle(
+                self.boundary_trigger_yaw + TURN_AWAY_DEG)
+            self.boundary_correct_state = BoundaryCorrectState.TURNING
+            self.boundary_correct_start_time = current_time
+            self.get_logger().info(
+                f"[RTKNav] 边界矫正启动：右侧触发 → 右转避障 "
+                f"(trigger={self.boundary_trigger_yaw:.1f}° → target={self.boundary_target_yaw:.1f}°) [锁定]")
 
-        self.is_boundary_triggered = True
-        self.get_logger().warn(
-            f"[RTKNav] 边界触发确认：连续{self.boundary_active_count}帧有效，"
-            f"front=({self.front_left},{self.front_right}), mid=({self.mid_left},{self.mid_right}), "
-            f"back=({self.back_left},{self.back_right})"
-        )
         if not self.boundary_stop_published:
             self.publish_stop_speed()
             self.boundary_stop_published = True
-            self.get_logger().warn("[RTKNav] 边界触发后立即停车，等待纠偏状态机接管")
+
+    def _reset_boundary_correction(self):
+        """清空所有边界矫正状态，回到 IDLE。"""
+        self.boundary_correct_state = BoundaryCorrectState.IDLE
+        self.boundary_correct_start_time = None
+        self.boundary_correct_direction = None
+        self.boundary_correct_locked = False
+        self.boundary_trigger_yaw = 0.0
+        self.boundary_target_yaw = 0.0
+        self.boundary_slow_count = 0
+        self.boundary_correction_start_time = None
+        self.boundary_stop_published = False
+        self.boundary_active_count = 0
+        self.boundary_clear_count = 0
     
     def io_data_rtk_callback(self, msg: UInt8):
 
@@ -603,20 +649,57 @@ class RTKNavControlNode(Node):
             | (int(self.back_left) << 4)
             | (int(self.back_right) << 5)
         )
-        # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
-        # raw_boundary_trigger = bool(self.mid_left or self.mid_right)
-        # if raw_boundary_trigger != self.boundary_last_raw_trigger:
-        #     self.get_logger().info(
-        #         f"[RTKNav] 边界原始信号变化: raw={raw_boundary_trigger}, "
-        #         f"mid_left={self.mid_left}, mid_right={self.mid_right}, io=0x{msg.data:02X}"
-        #     )
-        #     self.boundary_last_raw_trigger = raw_boundary_trigger
-        # self.update_boundary_trigger_state(raw_boundary_trigger)
+        # 4传感器分层触发（mid/back × 左右）
+        if self.current_control_mode == ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
+            # 空间一致性判断（同排横向 / 同侧纵向）
+            same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
+            same_side = (self.mid_left and self.back_left) or (self.mid_right and self.back_right)
+            # 统计当前触发数
+            active_list = []
+            if self.mid_left: active_list.append('mid_left')
+            if self.mid_right: active_list.append('mid_right')
+            if self.back_left: active_list.append('back_left')
+            if self.back_right: active_list.append('back_right')
+            num_active = len(active_list)
+            spatial_consensus = same_row or same_side or num_active >= 3
 
-        # self.get_logger().info(f"IO状态: {msg.data}, front_left={self.front_left}, front_right={self.front_right}, "
-        # f"mid_left={self.mid_left}, mid_right={self.mid_right}, "
-        # f"back_left={self.back_left}, back_right={self.back_right}"
-        # )
+            if spatial_consensus:
+                # 快通道：空间一致 → 立即计数
+                self.boundary_active_count += 1
+                self.boundary_clear_count = 0
+                self.boundary_slow_count = 0
+                if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES and not self.is_boundary_triggered:
+                    self.is_boundary_triggered = True
+                    self.get_logger().warn(
+                        f"[RTKNav] 边界快触发：{active_list}，"
+                        f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})"
+                    )
+            elif num_active == 1:
+                # 慢通道：单传感器 → 累积持续帧
+                self.boundary_slow_count += 1
+                self.boundary_active_count = 0
+                self.boundary_clear_count = 0
+                if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES and not self.is_boundary_triggered:
+                    self.is_boundary_triggered = True
+                    self.get_logger().warn(
+                        f"[RTKNav] 边界慢触发：{active_list[0]} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
+                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)"
+                    )
+            else:
+                # 无传感器触发 / 对角不匹配 → 重置所有计数器
+                self.boundary_active_count = 0
+                self.boundary_slow_count = 0
+                self.boundary_clear_count += 1
+                if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                    self.is_boundary_triggered = False
+                    self.boundary_stop_published = False
+        else:
+            # 不在 AUTO_CLEANING 或已锁定纠偏 → 重置计数器
+            self.boundary_active_count = 0
+            self.boundary_slow_count = 0
+            self.boundary_clear_count = 0
+            if not self.boundary_correct_locked:
+                self.is_boundary_triggered = False
     # def unloading_gps_callback(self, msg: Vector3):
     #     loading_lon = msg.x
     #     loading_lat = msg.y
@@ -2027,6 +2110,10 @@ class RTKNavControlNode(Node):
         self.boundary_active_count = 0
         self.boundary_clear_count = 0
         self.boundary_stop_published = False
+        self.boundary_trigger_yaw = 0.0
+        self.boundary_target_yaw = 0.0
+        self.boundary_slow_count = 0
+        self.boundary_correction_start_time = None
             # 重置后退纠正相关计数器
         self.last_distance_for_backup = 0.0
         self.distance_increase_count = 0
