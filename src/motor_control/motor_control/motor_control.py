@@ -123,7 +123,7 @@ class MotorControlNode(Node):
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
-        self.loading_turn_target_deg = 89.04    # 进仓转向目标角
+        self.loading_turn_target_deg = -90.96    # 进仓转向目标角（后退进仓，车头朝西≈-91°，车尾朝东≈89°对位dock）
         self.loading_backward_threshold = 10.0  # 进仓后退时长（秒）
         self.loading_turn_time = 60.0
         self.loading_phase = None
@@ -1875,12 +1875,12 @@ class MotorControlNode(Node):
             elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = self.motor_ctrl.BASE_SPEED
-                self.set_motors_speed(-base_speed, base_speed)
+                self.set_motors_speed(base_speed, -base_speed)  # 后退进仓
                 if not hasattr(self, 'last_direct_loading_log_time'):
                     self.last_direct_loading_log_time = 0.0
                 if current_time - self.last_direct_loading_log_time >= 5.0:
                     self.get_logger().warn(
-                        f"[LOADING] 激光错误进仓兜底中，已前进{elapsed_time:.1f}s/"
+                        f"[LOADING] 激光错误进仓兜底中，已后退{elapsed_time:.1f}s/"
                         f"{self.loading_direct_timeout:.0f}s"
                     )
                     self.last_direct_loading_log_time = current_time
@@ -2005,21 +2005,9 @@ class MotorControlNode(Node):
                                     self.yaw_stable_count = 0
                                     self.set_motors_speed(0.0, 0.0)
                                     return
-                            loading_error_code = self.build_error_code()
-                            if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
-                                self.loading_phase = "LOADING_DIRECT_FORWARD"
-                                self.loading_direct_start_time = current_time
-                                self.get_logger().warn(
-                                    f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
-                                    f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
-                                )
-                            else:
-                                self.loading_phase = "LOADING_FOWARD"
-                                self.loading_backward_start_time = current_time
-                                # 重置激光纠偏状态（进入新阶段，确保干净初始状态）
-                                self.in_full_correction = False
-                                self.correction_state = "IDLE"
-                                self.correction_count = 0
+                            self.loading_phase = "LOADING_DIRECT_FORWARD"
+                            self.loading_direct_start_time = current_time
+                            self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                             self.yaw_stable_count = 0
                             self.set_motors_speed(0.0, 0.0)
                     else:
@@ -2029,22 +2017,9 @@ class MotorControlNode(Node):
                     if current_time - self.loading_start_time > self.loading_turn_time:
                         self.get_logger().warn(
                             f"[LOADING] 角度调整超时({self.loading_turn_time:.0f}s)，"
-                            f"当前误差{abs(yaw_diff):.1f}°，强制进入前进阶段")
-                        loading_error_code = self.build_error_code()
-                        if loading_error_code & (ERROR_MOTOR_FAULT | ERROR_LASER_TIMEOUT):
-                            self.loading_phase = "LOADING_DIRECT_FORWARD"
-                            self.loading_direct_start_time = current_time
-                            self.get_logger().warn(
-                                f"[LOADING] 错误码0x{loading_error_code:02X}触发兜底进仓，"
-                                f"跳过激光对位，直接前进进仓，{self.loading_direct_timeout:.0f}s超时后按完成处理"
-                            )
-                        else:
-                            self.loading_phase = "LOADING_FOWARD"
-                            self.loading_backward_start_time = current_time
-                            # 重置激光纠偏状态（进入新阶段，确保干净初始状态）
-                            self.in_full_correction = False
-                            self.correction_state = "IDLE"
-                            self.correction_count = 0
+                            f"当前误差{abs(yaw_diff):.1f}°，强制进入后退进仓阶段")
+                        self.loading_phase = "LOADING_DIRECT_FORWARD"
+                        self.loading_direct_start_time = current_time
                         self.yaw_stable_count = 0
                         self.set_motors_speed(0.0, 0.0)
 
@@ -2151,242 +2126,6 @@ class MotorControlNode(Node):
                                 f"{'后退' if self._pos_recover_use_backward else '前进'}中")
                             self._last_turn_log_time = current_time
 
-                # ========== +低频日志）==========
-                elif self.loading_phase == "LOADING_FOWARD":
-                    # 初始化变量
-                    left = self.laser_distance[0]
-                    right = self.laser_distance[1]
-                    diff_dis = abs(left - right)  # 取绝对值，只关注差值大小
-                    base_speed = self.motor_ctrl.BASE_SPEED
-                    left_speed = 0.0
-                    right_speed = 0.0
-                    correction = 0.0  # 后退阶段彻底停止航向修正，解决频率混乱
-                    if self.laser_distance is None:
-                        self.get_logger().info("[LOADING] 激光测距数据不可用")
-                        return
-                    
-                    # 步骤1：激光距离<3000mm（核心条件）
-                    if left < 3000 and right < 3000:
-                        if current_time - self._last_loading_fwd_log_time >= 3.0:
-                            self.get_logger().info(f"[LOADING] 激光距离有效 - 左：{left}mm, 右：{right}mm, 差值：{diff_dis}mm")
-                            self._last_loading_fwd_log_time = current_time
-                        
-                        # 步骤2：判断激光差值是否>1000mm（大幅偏离）执行「偏转→后退2s→反向偏转检查」流程
-                        # correction_state != "IDLE" → 流程锁：已进入纠偏序列则执行到底，不受瞬时差值波动影响
-                        # diff_dis > 1000 → 新触发：差值确实超标才启动新序列
-                        if self.correction_state != "IDLE" or (diff_dis > 1000 and self.correction_count < 5):
-
-                            self.get_logger().info("[LOADING] 大幅偏离（差值>1000mm），强力旋转对准（中速）")
-                            # # 强力纠偏：左转/右转 速度为 BASE_SPEED/2.0
-                            # if (left - right) < 0:  # 左转
-                            #     left_speed = base_speed / 2.0
-                            #     right_speed = base_speed / 2.0
-                            # else:  # 右转
-                            #     left_speed = -base_speed / 2.0
-                            #     right_speed = -base_speed / 2.0
-
-                            if self.correction_state == "IDLE":
-                                self.correction_start_time = current_time
-                                self.get_logger().info(f"[LOADING] 大幅偏离，第{self.correction_count + 1}次调整-开始偏转")
-
-                                if (left - right) < 0:  # 左转
-                                    left_speed = base_speed / 4.0  # 左转：双正（低速）
-                                    right_speed = base_speed / 4.0
-                                    self.correction_state = "LEFT_DEFLECT"
-
-                                else:  # 右转
-                                    left_speed = -base_speed / 4.0  # 右转：双负（低速）
-                                    right_speed = -base_speed / 4.0
-                                    self.correction_state = "RIGHT_DEFLECT"
-                                self.last_state = self.correction_state
-                            # 阶段1续：保持偏转直到时长结束
-                            elif self.correction_state in ["LEFT_DEFLECT", "RIGHT_DEFLECT"]:
-                                if current_time - self.correction_start_time < self.correction_duration:
-                                    # 保持偏转速度
-                                    if self.correction_state == "LEFT_DEFLECT":
-                                        left_speed = base_speed / 4.0
-                                        right_speed = base_speed / 4.0
-                                    else:
-                                        left_speed = -base_speed / 4.0
-                                        right_speed = -base_speed / 4.0
-                                else:
-                                    # 偏转结束，切换到后退阶段（固定2秒）
-                                    self.correction_start_time = current_time
-                                    self.correction_state = "RETRACT"
-                                    self.get_logger().info("[LOADING] 偏转结束，开始后退2秒")
-                            
-                            # 阶段2：固定后退2秒（左负右正）
-                            elif self.correction_state == "RETRACT":
-                                if current_time - self.correction_start_time < self.retract_duration:
-                                    # 后退速度：左负右正（严格匹配你的定义）
-                                    left_speed = base_speed / 4.0
-                                    right_speed = -base_speed / 4.0
-                                else:
-                                    # 后退结束，切换到反向偏转检查阶段
-                                    self.correction_start_time = current_time
-                                    self.correction_state = "CHECK"
-                                    self.get_logger().info("[LOADING] 后退2秒完成，开始反向偏转检查")
-                            
-                            # 阶段3：反向偏转检查（修正差值）
-                            elif self.correction_state == "CHECK":
-                                # 先检查是否达标：diff < 10mm 则退出，否则反向偏转直到超时
-                                if diff_dis < 10:
-                                    self.get_logger().info(f"[LOADING] 反向检查达标（差值{diff_dis}mm<10），退出检查阶段")
-                                    self.correction_state = "IDLE"
-                                    self.last_state = None
-                                    self.correction_count += 1   # 完成一次完整纠偏周期，计数+1
-                                    left_speed = 0.0  # 停止反向偏转
-                                    right_speed = 0.0
-                                else:
-                                    # 未达标则继续反向偏转，同时增加超时保护
-                                    check_elapsed = current_time - self.correction_start_time
-                                    if check_elapsed < self.check_max_timeout:
-                                        if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                            self.get_logger().warning(f"[LOADING] 反向检查中（已持续{check_elapsed:.1f}s），当前差值{diff_dis}")
-                                            self._last_loading_fwd_log_time = current_time
-                                        # 反向偏转：原左转则右转，原右转则左转
-                                        if self.last_state == "LEFT_DEFLECT":  # 原偏左 → 反向右转（双负）
-                                            left_speed = -base_speed / 6.0
-                                            right_speed = -base_speed / 6.0
-                                        elif self.last_state == "RIGHT_DEFLECT":  # 原偏右 → 反向左转（双正）
-                                            left_speed = base_speed / 6.0
-                                            right_speed = base_speed / 6.0
-                                    else:
-                                        # 超时未达标，强制退出（避免无限检查）
-                                        self.get_logger().warning(f"[LOADING] 反向检查超时（{self.check_max_timeout}s），强制退出")
-                                        self.correction_state = "IDLE"
-                                        self.last_state = None
-                                        self.correction_count += 1
-                                        left_speed = 0.0
-                                        right_speed = 0.0
-
-                            #     if current_time - self.correction_start_time < self.correction_duration:
-                            #         # 反向偏转：原左转则右转，原右转则左转
-                            #         if self.last_state == "LEFT_DEFLECT":  # 原偏左 → 反向右转（双负）
-                            #             left_speed = -base_speed / 6.0
-                            #             right_speed = -base_speed / 6.0
-                            #         elif self.last_state == "RIGHT_DEFLECT":  # 原偏右 → 反向左转（双正）
-                            #             left_speed = base_speed / 6.0
-                            #             right_speed = base_speed / 6.0
-                            #     else:
-                            #         # 检查结束，重置状态，完成一次完整调整
-                            #         self.correction_state = "IDLE"
-                            #         self.last_state = None
-                            #         self.in_full_correction = False
-                            #         self.get_logger().info(f"[LOADING] 第{self.correction_count}次调整完成，检查差值：{diff_dis}mm")
-                            # self.get_logger().info(f"correction_state={self.correction_state}, correction_count={self.correction_count}")
-                        # 步骤3：差值≤1000mm → 中等速度纠偏直行
-                        else:
-                            # 步骤7：激光距离<230mm → 最终对位判断
-                            # if left < 230 and right < 230:
-                            if left < 375 and right < 375:
-                                if not hasattr(self, 'straight_loading_time'):
-                                    self.straight_loading_time = current_time
-                                if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                    self.get_logger().info("[LOADING] 极近距离（<375mm），判断差值是否<2mm 进行最终对位")
-                                    self._last_loading_fwd_log_time = current_time
-                                # 定时器：5秒后切换到完成阶段（确保电机停止）
-                                if self.straight_loading_time is not None:
-                                    elapsed_time = current_time - self.straight_loading_time
-                                    if elapsed_time >= 5.0 and self.complete_state == False:
-                                        # self.get_logger().info("[LOADING] 进仓完成超时，强制进入完成阶段")
-                                        # self.in_full_correction = False
-                                        # self.loading_phase = "COMPLETE"
-                                        # self.complete_state = True
-                                        self.last_backward_log_time = 0.0  # 重置日志时间
-                                        self.correction_count = 0  # 重置次数
-                                        self.straight_loading_time = None
-                                        self.get_logger().info("[LOADING] 进仓未完成，但已持续极近距离超过5秒，进入DISABLE状态，等待人工干预")
-                                        self.switch_state('z') # 切回DISABLE状态，确保电机停止
-                                # 步骤8：差值<2mm → 停止
-                                if diff_dis < 2:
-                                    self.get_logger().info("[LOADING] 对位完成，停止")
-                                    left_speed = 0.0
-                                    right_speed = 0.0
-                                    self.get_logger().info("[LOADING] 后退进仓完成，进入完成阶段")
-                                    self.loading_phase = "COMPLETE"
-                                    self.complete_state = True
-                                    self.is_charging = False  #清除充电状态，衔接后续充电
-                                    # self.battery_full_charge = False #清除充电状态，衔接后续充电
-                                    self.last_backward_log_time = 0.0  # 重置日志时间
-                                    self.correction_count = 0  # 重置次数
-                                    self.straight_loading_time = None
-                                    self.switch_state('z') # 切回DISABLE状态，确保电机停止
-                                    
-                                # 步骤9：差值≥2mm → 最终对位（低速旋转）
-                                else:
-                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                        self.get_logger().warning("[LOADING] 极近距离但差值≥2mm, 最终对位")
-                                        self._last_loading_fwd_log_time = current_time
-                                    if (left - right) < 0:
-                                        left_speed = base_speed / 10.0
-                                        right_speed = base_speed / 10.0
-                                    else:
-                                        left_speed = -base_speed / 10.0
-                                        right_speed = -base_speed / 10.0
-                                    
-                            # 步骤4：激光距离<1000mm → 进入低速纠偏阶段
-                            elif left < 1000 and right < 1000:
-                                # self.get_logger().info("[LOADING] 近距离（<1000mm），判断差值是否<5mm")
-                                # 步骤5：差值≥10mm → 低速旋转对准
-                                if diff_dis >= 10:
-                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                        self.get_logger().info("[LOADING] 中等偏差（>10mm），低速旋转对准")
-                                        self._last_loading_fwd_log_time = current_time
-                                    if (left - right) < 0:
-                                        left_speed = base_speed / 10.0
-                                        right_speed = base_speed / 10.0
-                                    else:
-                                        left_speed = -base_speed / 10.0
-                                        right_speed = -base_speed / 10.0
-                                # 步骤6：差值<10mm → 低速纠偏直行
-                                else:
-                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                        self.get_logger().info("[LOADING] 差值<10mm，直行")
-                                        self._last_loading_fwd_log_time = current_time
-                                    left_speed = -base_speed / 1.5
-                                    right_speed = base_speed / 1.5
-                            else:
-                                # self.get_logger().info(f"[LOADING] 中距离（≥1000mm），判断差值是否<10mm")
-                                # 差值≥40mm → 中速旋转对准
-                                if diff_dis >= 20:
-                                    if current_time - self._last_loading_fwd_log_time >= 3.0:
-                                        self.get_logger().info("[LOADING] 大偏差（>10mm），中速旋转对准")
-                                        self._last_loading_fwd_log_time = current_time
-                                    if (left - right) < 0:
-                                        left_speed = base_speed / 4.0
-                                        right_speed = base_speed / 4.0
-                                    else:
-                                        left_speed = -base_speed / 4.0
-                                        right_speed = -base_speed / 4.0
-                                else:
-                                    left_speed = -base_speed
-                                    right_speed = base_speed
-                                
-                        
-                        # 设置最终电机速度
-                        self.set_motors_speed(left_speed, right_speed)
-                    
-                        # 修正3：后退日志5秒1次，避免高频输出
-                        if current_time - self.last_backward_log_time >= 5.0:
-                            self.get_logger().info(f"[LOADING] 后退进仓阶段 - 已持续{current_time - self.loading_backward_start_time:.1f}秒")
-                            self.last_backward_log_time = current_time
-                    else:
-                        self.get_logger().info("[LOADING] 寻找目标")
-                        if left < 3000 and right > 3000:
-                            # 左转寻找目标
-                            left_speed = base_speed
-                            right_speed = base_speed
-                        elif left > 3000 and right < 3000:
-                            # 右转寻找目标
-                            left_speed = -base_speed
-                            right_speed = -base_speed
-                        else:
-                            # 直行寻找dock
-                            left_speed = -base_speed 
-                            right_speed = base_speed  
-                        self.set_motors_speed(left_speed, right_speed)
-                
                 # ========== 阶段3：进仓完成 ==========
                 elif self.loading_phase == "COMPLETE":
                     self.finish_loading_process()

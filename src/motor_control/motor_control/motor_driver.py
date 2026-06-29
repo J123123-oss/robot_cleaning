@@ -153,43 +153,96 @@ class CanMotorDriver(Node):
         self.get_logger().info('Motor Control Node has been started')
 
     def create_can_bus(self) -> bool:
-        """初始化CAN总线"""
-        try:
-            self.bus = can.Bus(interface='socketcan', channel=self.can_interface, bitrate=1000000)
-            self.can_initialized = True
-            self.get_logger().info(f'CAN bus {self.can_interface} initialized successfully')
-            return True
-        except Exception as e:
-            self.get_logger().error(f'Failed to initialize CAN bus: {e}')
-            self.can_initialized = False
-            return False
+        """初始化CAN总线（最多重试3次，间隔0.5s）"""
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.bus = can.Bus(interface='socketcan', channel=self.can_interface, bitrate=1000000)
+                self.can_initialized = True
+                self.get_logger().info(f'CAN bus {self.can_interface} initialized successfully')
+                return True
+            except Exception as e:
+                self.get_logger().error(
+                    f'Failed to initialize CAN bus (attempt {attempt}/{max_retries}): {e}'
+                )
+                if attempt < max_retries:
+                    time.sleep(0.5)
+
+        self.can_initialized = False
+        return False
 
     def reconnect_can_bus(self):
-        """重试CAN总线初始化"""
-        if not self.can_initialized:
-            self.get_logger().info("Retrying CAN bus initialization...")
-            self.create_can_bus()
+        """重试CAN总线初始化（含接口down/up复位，清除TX buffer和错误计数器）"""
+        if self.can_initialized:
+            return
+        self.get_logger().info("Retrying CAN bus initialization...")
+
+        # 1. 先关闭旧 bus（如果还存在）
+        if self.bus is not None:
+            try:
+                self.bus.shutdown()
+                self.get_logger().info("Old CAN bus shutdown before reconnect")
+            except Exception as e:
+                self.get_logger().warn(f"Error shutting down old CAN bus: {e}")
+            finally:
+                self.bus = None
+
+        # 2. 复位 CAN 接口：清除内核 socketcan TX/RX buffer 和错误计数器
+        try:
+            import subprocess
+            subprocess.run(
+                ["ip", "link", "set", self.can_interface, "down"],
+                capture_output=True, timeout=5.0
+            )
+            self.get_logger().info(f"CAN interface {self.can_interface} down for reset")
+            subprocess.run(
+                ["ip", "link", "set", self.can_interface, "up", "type", "can", "bitrate", "1000000"],
+                capture_output=True, timeout=5.0
+            )
+            self.get_logger().info(f"CAN interface {self.can_interface} up after reset")
+        except Exception as e:
+            self.get_logger().warn(f"Failed to reset CAN interface via ip link: {e}")
+            # 继续尝试创建 bus，可能依然有效
+
+        # 3. 等待硬件稳定
+        time.sleep(0.1)
+
+        # 4. 重建 CAN bus
+        self.create_can_bus()
 
     def send_can_frame(self, can_id: int, data: bytes) -> bool:
         """发送CAN帧"""
         if not self.bus:
             self.get_logger().error("CAN bus not initialized")
             return False
-            
+
         try:
             # 确保数据长度为8字节
             if len(data) < 8:
                 data = data.ljust(8, b'\x00')
             elif len(data) > 8:
                 data = data[:8]
-                
+
             msg = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
             self.bus.send(msg)
-            time.sleep(0.01) 
+            time.sleep(0.01)
             return True
         except Exception as e:
-            self.get_logger().error(f"Failed to send CAN frame: {e}")
+            err_str = str(e)
+            can_id_str = f"0x{can_id:08X}"
+            self.get_logger().error(f"Failed to send CAN frame (ID={can_id_str}): {err_str}")
             self.can_initialized = False
+
+            # 立即关闭当前 bus，避免新旧 socket 并存导致内核状态混乱
+            if self.bus is not None:
+                try:
+                    self.bus.shutdown()
+                    self.get_logger().info(f"CAN bus shutdown after send failure (ID={can_id_str})")
+                except Exception as se:
+                    self.get_logger().warn(f"Error during bus shutdown: {se}")
+                finally:
+                    self.bus = None
+
             return False
 
     # -------------------------------------------------------------------------
@@ -491,19 +544,24 @@ class CanMotorDriver(Node):
     def receive_can_frames(self):
         """接收CAN帧的线程函数"""
         self.get_logger().info("Starting CAN frame receiving thread...")
+        consecutive_errors = 0
+        MAX_CONSECUTIVE_ERRORS = 5
+
         while self.running:
             try:
                 if not self.can_initialized:
                     self.reconnect_can_bus()
+                    consecutive_errors = 0
                     time.sleep(1.0)
                     continue
-                    
+
                 if self.bus:
                     msg = self.bus.recv(timeout=0.1)
                     if msg is not None:
+                        consecutive_errors = 0  # 成功收到帧，清零错误计数
                         can_id = msg.arbitration_id
                         cmd_type = (can_id >> 24) & 0xFF
-                        
+
                         # 故障帧 0x15
                         if cmd_type == 0x15:
                             self.parse_motor_fault(can_id, msg.data)
@@ -512,6 +570,26 @@ class CanMotorDriver(Node):
                 else:
                     time.sleep(0.1)
             except Exception as e:
+                consecutive_errors += 1
+                err_str = str(e)
+                self.get_logger().error(
+                    f"CAN receive error (#{consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {err_str}"
+                )
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    self.get_logger().error(
+                        f"CAN receive: {consecutive_errors} consecutive errors, "
+                        "forcing CAN bus reset (bus-off recovery)"
+                    )
+                    self.can_initialized = False
+                    # 关闭旧 bus 以确保 reconnect 做完整的 down/up 复位
+                    if self.bus is not None:
+                        try:
+                            self.bus.shutdown()
+                        except Exception:
+                            pass
+                        finally:
+                            self.bus = None
+                    consecutive_errors = 0
                 time.sleep(1.0)
         self.get_logger().info("Stopped CAN frame receiving thread")
 
