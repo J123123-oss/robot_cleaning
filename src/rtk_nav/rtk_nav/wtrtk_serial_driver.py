@@ -15,8 +15,7 @@ class WTRTKSerialDriver(Node):
         super().__init__('wtrtk_serial_driver')
         
         # 读取参数（默认端口和波特率）
-        # self.declare_parameter('port', '/dev/WTRTK')
-        self.declare_parameter('port', '/dev/ttyS3')
+        self.declare_parameter('port', '/dev/WTRTK')
         self.declare_parameter('baud', 460800)
         self.port = self.get_parameter('port').value
         self.baud_rate = self.get_parameter('baud').value
@@ -35,7 +34,8 @@ class WTRTKSerialDriver(Node):
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
-
+        self.timer = self.create_timer(0.1, self.publish_latest_data)
+        
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()
         
@@ -131,13 +131,15 @@ class WTRTKSerialDriver(Node):
             fix_msg.longitude = longitude
             fix_msg.altitude = altitude
             
-            if fix_status == 0:
-                fix_msg.status.status = fix_status
-            elif fix_status == 1:
-                fix_msg.status.status = fix_status
-            elif fix_status >= 2:
-                fix_msg.status.status = fix_status
+            # ✅ 【修复核心报错】严格遵循ROS2 NavSatStatus枚举值规范
+            # if fix_status == 0:
+            #     fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
+            # elif fix_status == 1:
+            #     fix_msg.status.status = NavSatStatus.STATUS_FIX
+            # elif fix_status >= 2:
+            #     fix_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
             
+            fix_msg.status.status = fix_status
             fix_msg.status.service = NavSatStatus.SERVICE_GPS
             
             # ✅ 【修复position_covariance类型错误】强制转为numpy float64数组 + 固定9位长度
@@ -229,103 +231,86 @@ class WTRTKSerialDriver(Node):
         
         return msg
 
-    def create_fix_from_wtrtk(self, wtrtk_msg):
-        """从WTRTK消息中提取INS位置信息并创建NavSatFix"""
-        fix_msg = NavSatFix()
-        fix_msg.header = Header()
-        fix_msg.header.stamp = self.get_clock().now().to_msg()
-        fix_msg.header.frame_id = "gps"
-        
-        latitude = wtrtk_msg.ins_latitude
-        if wtrtk_msg.lat_flag == 'S':
-            latitude = -abs(latitude)
-        
-        longitude = wtrtk_msg.ins_longitude
-        if wtrtk_msg.lon_flag == 'W':
-            longitude = -abs(longitude)
-        
-        fix_msg.altitude = wtrtk_msg.ins_altitude
-        
-        fix_status = wtrtk_msg.fix_status
-        fix_msg.status.status = fix_status
-        # if fix_status == 0:
-        #     fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
-        # elif fix_status == 1:
-        #     fix_msg.status.status = NavSatStatus.STATUS_FIX
-        # elif fix_status in [2, 4, 5]:
-        #     fix_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
-        # else:
-        #     fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
-        
-        fix_msg.status.service = NavSatStatus.SERVICE_GPS
-        fix_msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
-        fix_msg.position_covariance = [
-            float(0.1), float(0.0), float(0.0),
-            float(0.0), float(0.1), float(0.0),
-            float(0.0), float(0.0), float(1.0)
-        ]
-        
-        return fix_msg
-
     def read_serial(self):
-        """持续读取串口数据并解析 - 处理所有帧"""
+        """持续读取串口数据并解析 ✅ 修复延迟和旧数据问题"""
         while rclpy.ok():
+            # 检查串口是否打开，未打开则重连
             if not self.ser or not self.ser.is_open:
                 self.get_logger().warn("Serial port closed, reconnecting...")
                 if not self.connect_serial():
-                    time.sleep(0.5)
+                    time.sleep(0.5)  # 缩短重连等待，减少阻塞
                     continue
             
             try:
+                # 读取串口最新数据
                 data = self.ser.read(1024)
                 if data:
+                    # 将新数据追加到缓冲区，并限制缓冲区长度
                     self.buffer += data.decode('utf-8', errors='replace')
                     if len(self.buffer) > self.buffer_max_len:
-                        self.buffer = self.buffer[-self.buffer_max_len:]
+                        self.buffer = self.buffer[-self.buffer_max_len:]  # 只保留末尾的最新数据
                     
+                    # 循环处理缓冲区中所有完整帧（从早到晚），避免 rfind 丢弃中间帧
                     while True:
                         gngga_idx = self.buffer.find('$GNGGA')
                         wtrtk_idx = self.buffer.find('$WTRTK')
-                        
+
                         if gngga_idx == -1 and wtrtk_idx == -1:
-                            self.buffer = ""
-                            break
-                        
-                        if gngga_idx != -1 and wtrtk_idx != -1:
-                            if gngga_idx < wtrtk_idx:
-                                target_start = gngga_idx
-                                frame_type = "GNGGA"
+                            # 没有任何帧头：跳过前导垃圾，保留可能的不完整帧头
+                            dollar_idx = self.buffer.find('$')
+                            if dollar_idx == -1:
+                                self.buffer = ""
                             else:
-                                target_start = wtrtk_idx
-                                frame_type = "WTRTK"
-                        elif gngga_idx != -1:
+                                self.buffer = self.buffer[dollar_idx:]
+                            break
+
+                        # 取最早出现的帧头
+                        if gngga_idx == -1:
+                            target_start = wtrtk_idx
+                            frame_type = "WTRTK"
+                        elif wtrtk_idx == -1:
+                            target_start = gngga_idx
+                            frame_type = "GNGGA"
+                        elif gngga_idx < wtrtk_idx:
                             target_start = gngga_idx
                             frame_type = "GNGGA"
                         else:
                             target_start = wtrtk_idx
                             frame_type = "WTRTK"
-                        
+
+                        # 查找帧尾 \r\n
                         end_idx = self.buffer.find('\r\n', target_start)
                         if end_idx == -1:
+                            # 帧不完整，保留残片等待后续数据
                             self.buffer = self.buffer[target_start:]
                             break
-                        
-                        frame = self.buffer[:end_idx]
-                        self.buffer = self.buffer[end_idx + 2:]
-                        
-                        # 实时发布：WTRTK解析成功 → 立即发布
-                        if frame_type == "WTRTK":
+
+                        # 提取完整帧
+                        frame = self.buffer[target_start:end_idx]
+
+                        if frame_type == "GNGGA":
+                            parsed_fix = self.parse_gngga(frame)
+                            if parsed_fix:
+                                self.latest_fix = parsed_fix
+                        elif frame_type == "WTRTK":
                             parsed_wtrtk = self.parse_wtrtk(frame)
                             if parsed_wtrtk:
-                                # 立刻发布 wtrtk_data
-                                self.wtrtk_pub.publish(parsed_wtrtk)
+                                self.latest_wtrtk = parsed_wtrtk
+
+                        # 跳过已处理的帧，继续处理下一帧
+                        self.buffer = self.buffer[end_idx+2:]
             
             except Exception as e:
                 self.get_logger().error(f"Serial read error: {str(e)}")
                 if self.ser:
                     self.ser.close()
-                time.sleep(0.1)
-
+                time.sleep(0.1)  # 缩短异常等待，减少阻塞
+    def publish_latest_data(self):
+        """定时器触发，每秒发布一次最新解析的数据"""
+        if self.latest_fix:
+            self.fix_pub.publish(self.latest_fix)
+        if self.latest_wtrtk:
+            self.wtrtk_pub.publish(self.latest_wtrtk)
 
 def main(args=None):
     rclpy.init(args=args)
