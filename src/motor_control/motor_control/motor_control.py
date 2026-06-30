@@ -53,6 +53,11 @@ BRUSH_SPEED = -18.0
 SPEED_CMD_TO_MPS = 0.0345  # 电机阶段速度指令 → 实际线速度 (m/s)，10 → 0.345 m/s
 MOTOR_RAD_S_TO_MPS = SPEED_CMD_TO_MPS * (10.0 / 22.0)  # 电机反馈 rad/s → 线速度 m/s，22rad/s → 0.345m/s
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
+
+# 防跌落分层触发参数（与 rtk_nav 保持一致）
+BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
+BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
+BOUNDARY_SLOW_PERSIST_FRAMES = 5  # 单传感器慢速通道：持续N帧(0.5s@10Hz)触发
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
@@ -134,6 +139,7 @@ class MotorControlNode(Node):
         self.loading_direct_timeout = 24.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
+        self.loading_skip_dock_check = True  # 跳过dock传感器检测 + 直接当作已到达GPS目标点，进入角度调整阶段
         self._nav_sub_phase = "ALIGN"      # NAV_TO_GPS 子阶段: ALIGN(航向对准) / DRIVE(直线行驶)
         self._nav_align_stable_count = 0   # 航向对准稳定计数
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
@@ -187,6 +193,12 @@ class MotorControlNode(Node):
         self.battery_temperatures = [] # 电池温度，共3个
         self.low_battery_warning = False
         self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
+        # 防跌落边界触发状态
+        self.confirmed_sensors = set()     # 已确认触发的传感器名（经debounce后）
+        self.blocked_directions = set()    # 基于confirmed_sensors计算的禁止方向
+        self.boundary_active_count = 0
+        self.boundary_clear_count = 0
+        self.boundary_slow_count = 0
 
         self.dock_sensors = 0  #停机仓传感器状态
         self._dock_sensor_blocked_logged_unloading = False
@@ -602,22 +614,25 @@ class MotorControlNode(Node):
         #         self.set_brush_speed(0.0)
 
         if self.current_control_mode == "NORMAL":
-            # 按当前状态赋值速度
-            if self.current_status == "FORWARD":
-                left_speed = -self.mqtt_control_speed
-                right_speed = self.mqtt_control_speed
+            # 防跌落：传感器触发时仅禁止对应方向，其他方向正常可用
+            if self.current_status in self.blocked_directions:
+                self.set_motors_speed(0.0, 0.0)
+                self.set_brush_speed(0.0)
+            elif self.current_status == "FORWARD":
+                left_speed = -self.mqtt_control_speed *0.2
+                right_speed = self.mqtt_control_speed *0.2
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "BACKWARD":
-                left_speed = self.mqtt_control_speed
-                right_speed = -self.mqtt_control_speed
+                left_speed = self.mqtt_control_speed *0.2 
+                right_speed = -self.mqtt_control_speed *0.2
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
-                left_speed = self.mqtt_control_speed * 0.5
-                right_speed = self.mqtt_control_speed * 0.5
+                left_speed = self.mqtt_control_speed * 0.16
+                right_speed = self.mqtt_control_speed * 0.16
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "RIGHT":
-                left_speed = -self.mqtt_control_speed * 0.5
-                right_speed = -self.mqtt_control_speed * 0.5
+                left_speed = -self.mqtt_control_speed * 0.16
+                right_speed = -self.mqtt_control_speed * 0.16
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
@@ -716,28 +731,111 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 已发布路径切换指令: {route_id} -> {route_file}")
 
     def io_data_callback(self, msg: UInt8):
-        """处理IO数据回调（可根据需要扩展功能）"""
-        if self.current_control_mode != "AUTO_CLEANING" and not self.is_in_bin_process:
-            self.front_left = (msg.data & 0x01) == 0x01
-            self.front_right = (msg.data & 0x02) == 0x02
-            self.mid_left = (msg.data & 0x04) == 0x04
-            self.mid_right = (msg.data & 0x08) == 0x08
-            self.back_left = (msg.data & 0x10) == 0x10
-            self.back_right = (msg.data & 0x20) == 0x20
-            # 按位或结果存储传感器状态
-            self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
-            self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
+        """IO数据回调：传感器解析 + 防跌落分层触发（NORMAL/REMOTE模式）"""
+        # 仅非AUTO_CLEANING且非进出仓流程时处理防跌落
+        if self.current_control_mode == "AUTO_CLEANING" or self.is_in_bin_process:
+            return
 
-            # self.front_left = (msg.data & 0x01) == 0x00 
-            # self.front_right = (msg.data & 0x02) == 0x00
-            # self.mid_left = (msg.data & 0x04) == 0x00
-            # self.mid_right = (msg.data & 0x08) == 0x00
-            # self.back_left = (msg.data & 0x10) == 0x00
-            # self.back_right = (msg.data & 0x20) == 0x00
-            # self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
-            # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
+        # 传感器位解析（低电平有效，bit=0 → 触发，与rtk_nav一致）
+        self.front_left = (msg.data & 0x01) == 0x00
+        self.front_right = (msg.data & 0x02) == 0x00
+        self.mid_left = (msg.data & 0x04) == 0x00
+        self.mid_right = (msg.data & 0x08) == 0x00
+        self.back_left = (msg.data & 0x10) == 0x00
+        self.back_right = (msg.data & 0x20) == 0x00
+        # sensors_status: bit=1 表示触发（供MQTT上报）
+        self.sensors_status = (
+            int(self.front_left)
+            | (int(self.front_right) << 1)
+            | (int(self.mid_left) << 2)
+            | (int(self.mid_right) << 3)
+            | (int(self.back_left) << 4)
+            | (int(self.back_right) << 5)
+        )
 
-            # self.get_logger().info(f"[IOData] 传感器状态：{self.sensors_status:06b}")
+        # ---- 4传感器分层触发（mid/back × 左右）----
+        same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
+        same_side = (self.mid_left and self.back_left) or (self.mid_right and self.back_right)
+        # 本帧触发的传感器列表
+        active_set = set()
+        if self.mid_left: active_set.add('mid_left')
+        if self.mid_right: active_set.add('mid_right')
+        if self.back_left: active_set.add('back_left')
+        if self.back_right: active_set.add('back_right')
+        num_active = len(active_set)
+        spatial_consensus = same_row or same_side or num_active >= 3
+
+        changed = False
+        # 已确认但当前帧不再触发的传感器 → 立即移除（去抖只防误加，不防移除）
+        stale = self.confirmed_sensors - active_set
+        if stale:
+            self.confirmed_sensors -= stale
+            changed = True
+            self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
+
+        if spatial_consensus:
+            # 快通道：空间一致 → 3帧确认
+            self.boundary_active_count += 1
+            self.boundary_clear_count = 0
+            self.boundary_slow_count = 0
+            if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+                if active_set != self.confirmed_sensors:
+                    self.confirmed_sensors = active_set
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落快触发：{sorted(active_set)}，"
+                        f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
+        elif num_active == 1:
+            # 慢通道：单传感器 → 15帧持续
+            self.boundary_slow_count += 1
+            self.boundary_active_count = 0
+            self.boundary_clear_count = 0
+            if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
+                sensor_name = next(iter(active_set))
+                if sensor_name not in self.confirmed_sensors:
+                    self.confirmed_sensors.add(sensor_name)
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
+                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
+        else:
+            # 无传感器触发 / 对角不匹配 → 重置
+            self.boundary_active_count = 0
+            self.boundary_slow_count = 0
+            self.boundary_clear_count += 1
+            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                if self.confirmed_sensors:
+                    self.confirmed_sensors.clear()
+                    changed = True
+                    self.get_logger().info("[Motor] 防跌落传感器释放，恢复所有方向")
+
+        if changed:
+            self._update_blocked_directions()
+
+    def _update_blocked_directions(self):
+        """
+        根据 confirmed_sensors 计算禁止的行驶方向。
+        - 前部传感器(mid)触发 → 禁止 FORWARD
+        - 后部传感器(back)触发 → 禁止 BACKWARD
+        - 左侧传感器触发 → 禁止 LEFT
+        - 右侧传感器触发 → 禁止 RIGHT
+        被禁止的方向在 timer_callback 中会被忽略（等同HOLD）。
+        """
+        old = self.blocked_directions
+        new = set()
+        if 'mid_left' in self.confirmed_sensors or 'mid_right' in self.confirmed_sensors:
+            new.add('FORWARD')
+        if 'back_left' in self.confirmed_sensors or 'back_right' in self.confirmed_sensors:
+            new.add('BACKWARD')
+        if 'mid_left' in self.confirmed_sensors or 'back_left' in self.confirmed_sensors:
+            new.add('LEFT')
+        if 'mid_right' in self.confirmed_sensors or 'back_right' in self.confirmed_sensors:
+            new.add('RIGHT')
+        self.blocked_directions = new
+        if old != new:
+            self.get_logger().info(
+                f"[Motor] 禁止方向更新：{sorted(old) if old else '无'} → {sorted(new) if new else '无'}，"
+                f"confirmed_sensors={sorted(self.confirmed_sensors)}")
 
     def voltage_to_soc(self, voltage):
         """
@@ -1359,6 +1457,16 @@ class MotorControlNode(Node):
                     self.handle_route_change(route_id)
                 else:
                     self.get_logger().warn("[ROSNode] CHANGE_ROUTE指令缺少route_id字段")
+            elif command == "LOADING_SKIP_DOCK":
+                # 进仓跳过 dock 传感器检测，直接当作已到达 GPS 目标点，进入角度调整阶段
+                self.loading_skip_dock_check = True
+                self.get_logger().info("[ROSNode] LOADING_SKIP_DOCK：已启用跳过dock检测，进仓将直接进入角度调整阶段")
+                self.publish_state()
+            elif command == "LOADING_NORMAL_DOCK":
+                # 恢复正常的进仓流程（需要 dock 传感器归位检测 + GPS 导航）
+                self.loading_skip_dock_check = False
+                self.get_logger().info("[ROSNode] LOADING_NORMAL_DOCK：已恢复正常进仓流程（需dock归位检测）")
+                self.publish_state()
             else:
                 self.get_logger().warn(f"[ROSNode] 不支持的command：{command} (支持: GET_STATUS/键{list(STATE_DICT.keys())}或状态名{list(STATE_DICT.values())})")
                 return
@@ -1901,51 +2009,64 @@ class MotorControlNode(Node):
         """进仓分步处理（核心修复：目标一致+稳定判定+后退停修正+频率正常）"""
         if self.bin_process_paused:
             return
-        if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
-            if not self._dock_sensor_blocked_logged_loading:
-                self.get_logger().warn("[ROSNode] 拒绝进入进仓状态，仓内限位传感器触发！！！")
-                self._dock_sensor_blocked_logged_loading = True
-            return
+        # 当 loading_skip_dock_check 标志位为 True 时，跳过 dock 传感器限位检测
+        if not self.loading_skip_dock_check:
+            if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
+                if not self._dock_sensor_blocked_logged_loading:
+                    self.get_logger().warn("[ROSNode] 拒绝进入进仓状态，仓内限位传感器触发！！！")
+                    self._dock_sensor_blocked_logged_loading = True
+                return
+            else:
+                self._dock_sensor_blocked_logged_loading = False
         else:
             self._dock_sensor_blocked_logged_loading = False
-        if self.dock_sensors & 0x02:  # dock中归位
+        # dock中归位 或 跳过dock检测标志位为True → 允许进入进仓流程
+        if (self.dock_sensors & 0x02) or self.loading_skip_dock_check:
             # 归位后首次初始化进仓流程
             if self.loading_phase is None:
-                # GPS距离检查：距进仓目标点过远则拒绝
-                gps_dist = self.haversine_distance(
-                    self.current_lon, self.current_lat,
-                    LOADING_GPS[0], LOADING_GPS[1])
-                if self.current_lon == 0.0 and self.current_lat == 0.0:
-                    if not self._loading_gps_rejected_logged:
-                        self._loading_gps_rejected_logged = True
-                        self.get_logger().warn("[LOADING] GPS坐标无效(lon=0,lat=0)，拒绝进仓")
-                    return
-                if gps_dist > LOADING_GPS_MAX_DIST:
-                    if not self._loading_gps_rejected_logged:
-                        self._loading_gps_rejected_logged = True
-                        self.get_logger().warn(
-                            f"[LOADING] 当前位置({self.current_lon:.6f},{self.current_lat:.6f})"
-                            f"距进仓点{gps_dist:.1f}m > {LOADING_GPS_MAX_DIST:.0f}m，拒绝进仓")
-                    return
-                self._loading_gps_rejected_logged = False
-                # 距离≤10m但>阈值，先导航到进仓点
-                self.loading_timeout_error = False  # 清除上一次进仓超时故障
-                if gps_dist > NAV_ARRIVE_THRESHOLD:
-                    self.loading_phase = "LOADING_NAV_TO_GPS"
-                    self.loading_nav_start_time = time.time()
-                    self._nav_sub_phase = "ALIGN"
-                    self._nav_align_stable_count = 0
-                    self._nav_align_start_time = time.time()
-                    self._nav_realign_done = (gps_dist <= NAV_REALIGN_DIST)  # 起始已近距则跳过重对准
-                    self.get_logger().info(
-                        f"[LOADING] 检测到dock归位，距进仓点{gps_dist:.1f}m，"
-                        f"先导航到目标点[{LOADING_GPS[0]:.6f},{LOADING_GPS[1]:.6f}]")
-                    self.get_logger().info(f"[LOADING] 当前阶段：{self.loading_phase}")
-                else:
-                    self.get_logger().info("[LOADING] 检测到dock归位，初始化进仓流程")
-                    self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
+                if self.loading_skip_dock_check:
+                    # 跳过 dock 传感器检测，直接当作已到达 GPS 目标点，进入角度调整阶段
+                    self.get_logger().info("[LOADING] 跳过dock传感器检测，直接进入角度调整阶段")
+                    self.loading_timeout_error = False
+                    self.loading_phase = "LOADING_TURN"
                     self.loading_start_time = time.time()
                     self.get_logger().info(f"[LOADING] 初始化完成，当前阶段：{self.loading_phase}")
+                else:
+                    # GPS距离检查：距进仓目标点过远则拒绝
+                    gps_dist = self.haversine_distance(
+                        self.current_lon, self.current_lat,
+                        LOADING_GPS[0], LOADING_GPS[1])
+                    if self.current_lon == 0.0 and self.current_lat == 0.0:
+                        if not self._loading_gps_rejected_logged:
+                            self._loading_gps_rejected_logged = True
+                            self.get_logger().warn("[LOADING] GPS坐标无效(lon=0,lat=0)，拒绝进仓")
+                        return
+                    if gps_dist > LOADING_GPS_MAX_DIST:
+                        if not self._loading_gps_rejected_logged:
+                            self._loading_gps_rejected_logged = True
+                            self.get_logger().warn(
+                                f"[LOADING] 当前位置({self.current_lon:.6f},{self.current_lat:.6f})"
+                                f"距进仓点{gps_dist:.1f}m > {LOADING_GPS_MAX_DIST:.0f}m，拒绝进仓")
+                        return
+                    self._loading_gps_rejected_logged = False
+                    # 距离≤10m但>阈值，先导航到进仓点
+                    self.loading_timeout_error = False  # 清除上一次进仓超时故障
+                    if gps_dist > NAV_ARRIVE_THRESHOLD:
+                        self.loading_phase = "LOADING_NAV_TO_GPS"
+                        self.loading_nav_start_time = time.time()
+                        self._nav_sub_phase = "ALIGN"
+                        self._nav_align_stable_count = 0
+                        self._nav_align_start_time = time.time()
+                        self._nav_realign_done = (gps_dist <= NAV_REALIGN_DIST)  # 起始已近距则跳过重对准
+                        self.get_logger().info(
+                            f"[LOADING] 检测到dock归位，距进仓点{gps_dist:.1f}m，"
+                            f"先导航到目标点[{LOADING_GPS[0]:.6f},{LOADING_GPS[1]:.6f}]")
+                        self.get_logger().info(f"[LOADING] 当前阶段：{self.loading_phase}")
+                    else:
+                        self.get_logger().info("[LOADING] 检测到dock归位，初始化进仓流程")
+                        self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
+                        self.loading_start_time = time.time()
+                        self.get_logger().info(f"[LOADING] 初始化完成，当前阶段：{self.loading_phase}")
         
             # if self.loading_phase is None:
             #     self.get_logger().warn("[ROSNode] 进仓阶段未初始化，停止定时器")
@@ -1982,29 +2103,44 @@ class MotorControlNode(Node):
                     left_speed = turn_speed + correction
                     right_speed = turn_speed + correction
                     self.set_motors_speed(left_speed, right_speed)
+                    # 诊断日志：每1s打印一次IMU更新时间差，用于排查角度更新频率问题
+                    if not hasattr(self, '_last_turn_diag_time'):
+                        self._last_turn_diag_time = 0.0
+                    if current_time - self._last_turn_diag_time >= 1.0:
+                        imu_age = current_time - self.last_imu_update_time if self.last_imu_update_time > 0 else -1
+                        actual_left = self.motor_ctrl.motors[0]["actual_velocity"]
+                        actual_right = self.motor_ctrl.motors[1]["actual_velocity"]
+                        self.get_logger().info(
+                            f"[LOADING] yaw_diff={yaw_diff:.1f}°, imu={self.imu_yaw_deg:.1f}°, "
+                            f"target={self.loading_turn_target_deg:.1f}°, "
+                            f"turn={turn_speed:.2f}, corr={correction:.2f}, "
+                            f"L={left_speed:.2f}, R={right_speed:.2f}, "
+                            f"motor_L={actual_left:.1f}, motor_R={actual_right:.1f}, "
+                            f"imu_age={imu_age:.2f}s")
+                        self._last_turn_diag_time = current_time
 
                     # 稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
                     if abs(yaw_diff) < self.yaw_diff_min:
                         self.yaw_stable_count += 1
                         if self.yaw_stable_count >= 3:
                             self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标）")
-                            # 二次判距：检查GPS是否因原地旋转打滑漂移
-                            gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
-                            if gps_valid:
-                                gps_dist = self.haversine_distance(
-                                    self.current_lon, self.current_lat,
-                                    LOADING_GPS[0], LOADING_GPS[1])
-                                if gps_dist > self._pos_recover_gps_drift_limit:
-                                    self.get_logger().warn(
-                                        f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
-                                        f"{self._pos_recover_gps_drift_limit}m，进入位置恢复")
-                                    self.loading_phase = "LOADING_POS_RECOVER"
-                                    self._pos_recover_sub_phase = "ALIGN_BEARING"
-                                    self._pos_recover_start = current_time
-                                    self._pos_recover_align_count = 0
-                                    self.yaw_stable_count = 0
-                                    self.set_motors_speed(0.0, 0.0)
-                                    return
+                            # # 二次判距：检查GPS是否因原地旋转打滑漂移
+                            # gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
+                            # if gps_valid:
+                            #     gps_dist = self.haversine_distance(
+                            #         self.current_lon, self.current_lat,
+                            #         LOADING_GPS[0], LOADING_GPS[1])
+                            #     if gps_dist > self._pos_recover_gps_drift_limit:
+                            #         self.get_logger().warn(
+                            #             f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
+                            #             f"{self._pos_recover_gps_drift_limit}m，进入位置恢复")
+                            #         self.loading_phase = "LOADING_POS_RECOVER"
+                            #         self._pos_recover_sub_phase = "ALIGN_BEARING"
+                            #         self._pos_recover_start = current_time
+                            #         self._pos_recover_align_count = 0
+                            #         self.yaw_stable_count = 0
+                            #         self.set_motors_speed(0.0, 0.0)
+                            #         return
                             self.loading_phase = "LOADING_DIRECT_FORWARD"
                             self.loading_direct_start_time = current_time
                             self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
