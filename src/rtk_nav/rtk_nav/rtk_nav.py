@@ -20,7 +20,7 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
 # 滚刷速度
-RTK_BRUSH_SPEED = -18.0 #18.0  # 负数表示正常运行速度，与前进反方向
+RTK_BRUSH_SPEED = 18.0 #18.0  # 负数表示正常运行速度，与前进反方向，安装转轴后相反
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
@@ -681,8 +681,16 @@ class RTKNavControlNode(Node):
         if nav_state in (NavState.IDLE, NavState.COMPLETED, NavState.PAUSE):
             return None
 
-        # WAYPOINT_CALIB 或其他：根据两轮速度判断旋转方向
-        # 从最近发布的电机速度获取
+        # WAYPOINT_CALIB：根据 heading_error 判断旋转方向（比轮速更准确，可在启动前判断）
+        if nav_state == NavState.WAYPOINT_CALIB:
+            target = self.nav_context.get("calib_target_heading")
+            if target is not None:
+                hdg_err = self.get_heading_error(target)
+                if abs(hdg_err) <= RTK_HEADING_TOLERANCE:
+                    return None
+                return 'RIGHT' if hdg_err > 0 else 'LEFT'
+
+        # 兜底：根据最近发布的电机速度判断
         if hasattr(self, '_last_motor_left') and hasattr(self, '_last_motor_right'):
             l, r = self._last_motor_left, self._last_motor_right
             if abs(l) < 0.1 and abs(r) < 0.1:
@@ -696,6 +704,75 @@ class RTKNavControlNode(Node):
             if l < 0 and r < 0:
                 return 'RIGHT'     # 同负 = 右转
         return None
+
+    def _retreat_to_waypoint(self, waypoint: Tuple[float, float, float],
+                             retreat_speed: float = 2.0,
+                             distance_threshold: float = 0.2,
+                             timeout: float = 30.0) -> Generator[Tuple[float, float], None, None]:
+        """
+        打滑撤退：背对航点反方向 → 后退归位。
+        校准旋转中传感器触发时调用，通过GPS距离闭环回到航点。
+
+        Args:
+            waypoint: 目标航点 (lon, lat, heading)
+            retreat_speed: 后退速度（电机指令值）
+            distance_threshold: 距离阈值(米)，小于此值视为已归位
+            timeout: 超时(秒)
+        """
+        lon, lat, heading = waypoint
+        anti_heading = self.normalize_angle(heading + 180.0)
+        start_time = time.time()
+
+        # Phase 1: 转向反方向（背对航点）
+        self.get_logger().info(f"[RTKNav] 撤退P1: 转向反方向 {anti_heading:.1f}°")
+        calib_gen = self.calibrate_heading_at_waypoint(anti_heading)
+        while True:
+            try:
+                left_speed, right_speed = next(calib_gen)
+                yield (left_speed, right_speed)
+            except StopIteration as e:
+                if not e.value:
+                    self.get_logger().warn("[RTKNav] 撤退P1转向未精确到位，继续后退")
+                break
+            if time.time() - start_time > timeout:
+                self.get_logger().error("[RTKNav] 撤退P1超时")
+                yield (0.0, 0.0)
+                return
+
+        # Phase 2: 后退归位（GPS闭环 + 距离比例速度 + 航向修正）
+        self.get_logger().info(f"[RTKNav] 撤退P2: 后退归位 (目标<{distance_threshold}m)")
+        last_dist = float('inf')
+        while True:
+            dist = self.calc_distance_to_waypoint(waypoint)
+            if dist < distance_threshold:
+                self.get_logger().info(f"[RTKNav] 撤退P2完成: dist={dist:.3f}m")
+                break
+            # 距离不收敛 → 可能打滑，降速
+            if dist > last_dist + 0.05:
+                self.get_logger().warn(f"[RTKNav] 撤退距离反向增长({last_dist:.3f}→{dist:.3f})，降速")
+            last_dist = dist
+            if time.time() - start_time > timeout:
+                self.get_logger().warn(f"[RTKNav] 撤退P2超时: dist={dist:.3f}m")
+                break
+            # 距离比例速度缩放（参考LOW_DISTANCE逻辑，避免打滑/过冲）
+            if dist < LOW_DISTANCE:
+                speed_scale = max(0.3, dist / LOW_DISTANCE * 0.7)
+            else:
+                speed_scale = 1.0
+            effective_speed = retreat_speed * speed_scale
+            # 航向修正：保持背对航点方向
+            hdg_err = self.get_heading_error(anti_heading)
+            correction = max(-1.0, min(1.0, hdg_err * 0.05))  # P项，限幅±1.0
+            left_speed = effective_speed - correction    # +v=后退, correction负→左轮慢→右转
+            right_speed = -effective_speed - correction   # -v=后退, correction负→右轮快→右转
+            # 防止换向（最低保持0.3避免完全停止）
+            left_speed = max(0.3, left_speed)
+            right_speed = min(-0.3, right_speed)
+            yield (left_speed, right_speed)
+            self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, hdg_err={hdg_err:.1f}°")
+
+        yield (0.0, 0.0)
+        self.get_logger().info("[RTKNav] 撤退完成，可重新执行校准")
 
     def io_data_rtk_callback(self, msg: UInt8):
 
@@ -2154,7 +2231,34 @@ class RTKNavControlNode(Node):
                 if self.boundary_correct_locked:
                     left_speed, right_speed = self.get_boundary_correct_speed()
                 else:
-                    left_speed, right_speed = (0.0, 0.0)
+                    # 前进中传感器触发 → GPS后退撤退，离开边缘后重试
+                    self.get_logger().warn(
+                        f"[RTKNav] 初始移动触发传感器({sorted(self.blocked_directions)})，"
+                        f"执行后退撤退")
+                    retreat_start = time.time()
+                    retreat_dist = 0.5  # 后退0.5m
+                    if self.current_gps:
+                        start_pos = self.current_gps
+                        while True:
+                            # 计算已后退距离
+                            retreat_d = self.calc_distance_to_waypoint(
+                                (start_pos[0], start_pos[1], 0.0))
+                            if retreat_d > retreat_dist:
+                                self.get_logger().info(
+                                    f"[RTKNav] 初始移动撤退完成: {retreat_d:.3f}m")
+                                break
+                            if time.time() - retreat_start > 20:
+                                self.get_logger().warn("[RTKNav] 初始移动撤退超时")
+                                break
+                            # 距离比例速度
+                            if retreat_d < LOW_DISTANCE:
+                                speed_scale = max(0.3, retreat_d / LOW_DISTANCE * 0.7)
+                            else:
+                                speed_scale = 1.0
+                            retreat_speed = LINEAR_SPEED_BASE * 0.2 * speed_scale
+                            yield (retreat_speed, -retreat_speed)
+                    yield (0.0, 0.0)
+                    continue
 
             yield (left_speed, right_speed)
 
@@ -2621,11 +2725,27 @@ class RTKNavControlNode(Node):
                     # self.get_logger().info(f"{self.current_waypoint_idx}:航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                     left_speed, right_speed = next(calib_generator)
                     if self._is_motion_blocked() or self.boundary_correct_locked:
-                        # 方向禁止或纠偏中
                         if self.boundary_correct_locked:
                             left_speed, right_speed = self.get_boundary_correct_speed()
                         else:
-                            left_speed, right_speed = (0.0, 0.0)
+                            # 旋转打滑偏移 → GPS撤退回航点，重新定位后重试
+                            self.get_logger().warn(
+                                f"[RTKNav] 校准打滑触发传感器({sorted(self.blocked_directions)})，"
+                                f"执行GPS撤退回航点{self.current_waypoint_idx}")
+                            retreat_gen = self._retreat_to_waypoint(target_waypoint)
+                            try:
+                                while True:
+                                    left_speed, right_speed = next(retreat_gen)
+                                    yield (left_speed, right_speed)
+                            except StopIteration:
+                                pass
+                            # 撤退完成，重新初始化校准
+                            target_heading = self.get_path_heading(target_waypoint)
+                            self.nav_context["calib_target_heading"] = target_heading
+                            calib_generator = self.calibrate_heading_at_waypoint(target_heading)
+                            self.nav_context["calib_generator"] = calib_generator
+                            self.get_logger().info("[RTKNav] 撤退完成，重新执行航向校准")
+                            continue
                     yield (left_speed, right_speed)
                 except StopIteration as e:
                     calib_result = e.value if hasattr(e, 'value') else False
