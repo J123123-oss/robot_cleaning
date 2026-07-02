@@ -35,13 +35,26 @@ do_l1_recovery() {
     sleep 5
 }
 
-# L2: 中恢复 —— 断开再连接
+# L2: 中恢复 —— 用已保存的连接配置重新激活
+#     nmcli device connect 不带密码，必须用 connection up 走保存的 profile
 do_l2_recovery() {
-    log "[L2] 断开 $INTERFACE 并重新连接"
+    # 断开前先记住当前连接名（保存了密码的 profile）
+    CONN_NAME=$(nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" 2>/dev/null | cut -d: -f2)
+
+    log "[L2] 断开 $INTERFACE (连接: ${CONN_NAME:-未知})"
     nmcli device disconnect "$INTERFACE" 2>/dev/null || true
     sleep 3
-    nmcli device connect "$INTERFACE" 2>/dev/null || true
-    sleep 5
+
+    if [ -n "$CONN_NAME" ]; then
+        log "[L2] 使用已保存配置重新连接: $CONN_NAME"
+        nmcli connection up "$CONN_NAME" 2>&1 | while IFS= read -r line; do log "[L2] nmcli: $line"; done
+        sleep 5
+    else
+        # 没有找到已保存的连接名，让 NM 自动处理
+        log "[L2] 无已保存连接，由 NM 自动连接"
+        nmcli device connect "$INTERFACE" 2>/dev/null || true
+        sleep 5
+    fi
 }
 
 # L3: 硬恢复 —— 内核层 down/up
