@@ -1,0 +1,14 @@
+[Unit]
+Description=Network Watchdog (wlan0 WiFi recovery)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/home/ztl/robot_cleaning/network_watchdog_wlan.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
