@@ -724,20 +724,58 @@ class RTKNavControlNode(Node):
         start_time = time.time()
 
         # Phase 1: 转向反方向（背对航点）
+        # 旋转中若被边界阻挡，根据 blocked_directions 直线远离创造空间，再继续旋转。
+        # 远离方向独立于 _determine_boundary_direction：
+        #   BACKWARD被禁 → 前进远离后方；FORWARD被禁 → 后退远离前方；仅侧方 → 前进。
+        ESCAPE_DURATION = 1.5       # 单次远离持续时间（秒）
+        ESCAPE_SPEED = 3.0          # 远离速度
         self.get_logger().info(f"[RTKNav] 撤退P1: 转向反方向 {anti_heading:.1f}°")
         calib_gen = self.calibrate_heading_at_waypoint(anti_heading)
         while True:
             try:
                 left_speed, right_speed = next(calib_gen)
-                yield (left_speed, right_speed)
             except StopIteration as e:
                 if not e.value:
                     self.get_logger().warn("[RTKNav] 撤退P1转向未精确到位，继续后退")
                 break
+
             if time.time() - start_time > timeout:
                 self.get_logger().error("[RTKNav] 撤退P1超时")
                 yield (0.0, 0.0)
                 return
+
+            # 旋转中被边界阻挡 → 根据 blocked_directions 直接选择安全远离方向
+            if self._is_motion_blocked() and not self.boundary_correct_locked:
+                if 'BACKWARD' in self.blocked_directions:
+                    escape_speeds = (-ESCAPE_SPEED, ESCAPE_SPEED)   # 前进远离后方
+                    dir_label = "前进"
+                elif 'FORWARD' in self.blocked_directions:
+                    escape_speeds = (ESCAPE_SPEED, -ESCAPE_SPEED)   # 后退远离前方
+                    dir_label = "后退"
+                else:
+                    escape_speeds = (-ESCAPE_SPEED, ESCAPE_SPEED)   # 仅侧方触发→前进
+                    dir_label = "前进"
+
+                self.get_logger().warn(
+                    f"[RTKNav] 撤退P1旋转触发传感器(blocked={sorted(self.blocked_directions)})，"
+                    f"直线{dir_label}远离{ESCAPE_DURATION}s")
+                t0 = time.time()
+                while time.time() - t0 < ESCAPE_DURATION:
+                    if time.time() - start_time > timeout:
+                        self.get_logger().error("[RTKNav] 撤退P1超时")
+                        yield (0.0, 0.0)
+                        return
+                    if self.boundary_correct_locked:
+                        yield self.get_boundary_correct_speed()
+                        continue
+                    if not self._is_motion_blocked():
+                        break  # 传感器释放，提前结束远离
+                    yield escape_speeds
+                yield (0.0, 0.0)
+                continue  # 远离完成，继续旋转（heading_error 实时重算）
+
+            yield (left_speed, right_speed)
+
 
         # Phase 2: 后退归位（GPS闭环 + 距离比例速度 + 航向修正）
         self.get_logger().info(f"[RTKNav] 撤退P2: 后退归位 (目标<{distance_threshold}m)")
@@ -1406,6 +1444,7 @@ class RTKNavControlNode(Node):
                         self.last_tilt_duration = time.monotonic() - self.last_tilt_time
                         self.clear_rtk_error_bits(ERROR_TILT_FAULT)
                         self.multi_waypoint_generator = None
+                        self.nav_running = False  # 确保重建条件成立
                         if self.last_tilt_duration < TILT_SHORT_DURATION:
                             self.get_logger().info(
                                 f"[倾斜恢复] 倾角已恢复，倾斜仅持续{self.last_tilt_duration:.1f}s"
@@ -2445,16 +2484,25 @@ class RTKNavControlNode(Node):
                                     f"[跌落稳定] 距上次倾斜故障仅{elapsed_since_tilt:.0f}s，"
                                     f"需等待{remaining:.0f}s让INS数据稳定后自动恢复清扫"
                                 )
+                                last_stabilize_log = 0.0
                                 while True:
                                     if not self.check_control_mode():
                                         yield (0.0, 0.0)
                                         return
-                                    elapsed_since_tilt = time.monotonic() - self.last_tilt_time
+                                    now = time.monotonic()
+                                    elapsed_since_tilt = now - self.last_tilt_time
                                     if elapsed_since_tilt >= TILT_STABILIZE_TIMEOUT:
                                         self.get_logger().info(
                                             f"[跌落稳定] 等待完成，已过{elapsed_since_tilt:.0f}s，恢复清扫"
                                         )
                                         break
+                                    # 每30s输出一次等待进度
+                                    if now - last_stabilize_log >= 30.0:
+                                        last_stabilize_log = now
+                                        remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
+                                        self.get_logger().info(
+                                            f"[跌落稳定] 等待INS稳定中... 剩余{remaining:.0f}s"
+                                        )
                                     self.publish_stop_speed()
                                     yield (0.0, 0.0)
 
@@ -2736,6 +2784,11 @@ class RTKNavControlNode(Node):
                             try:
                                 while True:
                                     left_speed, right_speed = next(retreat_gen)
+                                    if self._is_motion_blocked() or self.boundary_correct_locked:
+                                        if self.boundary_correct_locked:
+                                            left_speed, right_speed = self.get_boundary_correct_speed()
+                                        else:
+                                            left_speed, right_speed = (0.0, 0.0)
                                     yield (left_speed, right_speed)
                             except StopIteration:
                                 pass
