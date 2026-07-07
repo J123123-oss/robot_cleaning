@@ -661,6 +661,25 @@ class RTKNavControlNode(Node):
         motion = self._get_current_motion_direction()
         return motion is not None and motion in self.blocked_directions
 
+    def _is_speed_blocked(self, left_speed: float, right_speed: float) -> bool:
+        """根据即将发布的轮速判断该动作是否被边界传感器禁止。"""
+        motion = self._get_motion_direction_from_speed(left_speed, right_speed)
+        return motion is not None and motion in self.blocked_directions
+
+    def _get_motion_direction_from_speed(self, left_speed: float, right_speed: float) -> Optional[str]:
+        """将左右轮速度映射为车体运动方向。"""
+        if abs(left_speed) < 0.1 and abs(right_speed) < 0.1:
+            return None
+        if left_speed < 0 and right_speed > 0:
+            return 'FORWARD'
+        if left_speed > 0 and right_speed < 0:
+            return 'BACKWARD'
+        if left_speed > 0 and right_speed > 0:
+            return 'LEFT'
+        if left_speed < 0 and right_speed < 0:
+            return 'RIGHT'
+        return None
+
     def _get_current_motion_direction(self) -> Optional[str]:
         """
         基于 NavState 和两轮速度判断当前运动方向。
@@ -692,17 +711,8 @@ class RTKNavControlNode(Node):
 
         # 兜底：根据最近发布的电机速度判断
         if hasattr(self, '_last_motor_left') and hasattr(self, '_last_motor_right'):
-            l, r = self._last_motor_left, self._last_motor_right
-            if abs(l) < 0.1 and abs(r) < 0.1:
-                return None
-            if l < 0 and r > 0:
-                return 'FORWARD'   # 左负右正 = 前进
-            if l > 0 and r < 0:
-                return 'BACKWARD'  # 左正右负 = 后退
-            if l > 0 and r > 0:
-                return 'LEFT'      # 同正 = 左转
-            if l < 0 and r < 0:
-                return 'RIGHT'     # 同负 = 右转
+            return self._get_motion_direction_from_speed(
+                self._last_motor_left, self._last_motor_right)
         return None
 
     def _retreat_to_waypoint(self, waypoint: Tuple[float, float, float],
@@ -2665,11 +2675,8 @@ class RTKNavControlNode(Node):
                 try:
                     left_speed, right_speed = next(initial_move_generator)
                     if self._is_motion_blocked() or self.boundary_correct_locked:
-                        # 方向禁止或纠偏中
-                        if self.boundary_correct_locked:
-                            left_speed, right_speed = self.get_boundary_correct_speed()
-                        else:
-                            left_speed, right_speed = (0.0, 0.0)
+                        # 行进方向被禁止时，首次调用会启动边界矫正状态机
+                        left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration:
                     if len(self.waypoints) == 0:
@@ -2790,11 +2797,15 @@ class RTKNavControlNode(Node):
                             try:
                                 while True:
                                     left_speed, right_speed = next(retreat_gen)
-                                    if self._is_motion_blocked() or self.boundary_correct_locked:
-                                        if self.boundary_correct_locked:
-                                            left_speed, right_speed = self.get_boundary_correct_speed()
-                                        else:
-                                            left_speed, right_speed = (0.0, 0.0)
+                                    if self.boundary_correct_locked:
+                                        left_speed, right_speed = self.get_boundary_correct_speed()
+                                    elif self._is_speed_blocked(left_speed, right_speed):
+                                        # 撤退生成器已给出安全远离动作时直接放行；
+                                        # 只有即将发布的动作仍被禁止，才交给边界矫正接管。
+                                        self.get_logger().warn(
+                                            f"[RTKNav] 撤退动作被边界禁止({sorted(self.blocked_directions)})，"
+                                            "启动边界矫正")
+                                        left_speed, right_speed = self.get_boundary_correct_speed()
                                     yield (left_speed, right_speed)
                             except StopIteration:
                                 pass
@@ -3144,10 +3155,8 @@ class RTKNavControlNode(Node):
                 )
 
                 if self._is_motion_blocked() or self.boundary_correct_locked:
-                    if self.boundary_correct_locked:
-                        left_speed, right_speed = self.get_boundary_correct_speed()
-                    else:
-                        left_speed, right_speed = (0.0, 0.0)
+                    # 行进方向被禁止时，首次调用会启动边界矫正状态机
+                    left_speed, right_speed = self.get_boundary_correct_speed()
 
                 if abs(self.nav_context["last_distance"] - distance) > 0.5:
                     self.nav_context["last_distance"] = distance
