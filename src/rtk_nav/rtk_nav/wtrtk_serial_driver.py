@@ -8,7 +8,7 @@ import threading
 import time
 from std_msgs.msg import Header
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from custom_msgs.msg import WTRTK  # 保持自定义消息结构
+from custom_msgs.msg import WTRTK
 
 class WTRTKSerialDriver(Node):
     def __init__(self):
@@ -27,10 +27,15 @@ class WTRTKSerialDriver(Node):
         # 创建发布者 QoS设置更合理，适配GPS高频数据
         self.fix_pub = self.create_publisher(NavSatFix, '/fix', 20)
         self.wtrtk_pub = self.create_publisher(WTRTK, '/wtrtk_data', 20)
-        
+
         self.buffer = ""  # 缓存串口数据
         self.buffer_max_len = 4096  # 缓存最大长度，防止内存溢出
-        
+
+        # GNGGA 缓存值，用于覆盖 WTRTK 对应字段
+        self._gngga_lat = 0.0
+        self._gngga_lon = 0.0
+        self._gngga_fix_status = 0
+
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
@@ -86,25 +91,25 @@ class WTRTKSerialDriver(Node):
             return 0.0
 
     def parse_gngga(self, frame):
-        """解析$GNGGA帧 ✅ 修复所有核心问题"""
+        """解析$GNGGA帧"""
         if not frame.startswith("$GNGGA"):
             return None
-        
+
         star_pos = frame.find('*')
         if star_pos == -1:
             self.get_logger().warn("Invalid GNGGA frame (no checksum)")
             return None
-        
+
         fields = frame.split(',')
         if len(fields) < 15:
             self.get_logger().warn(f"Invalid GNGGA fields count: {len(fields)} (expected >=15)")
             return None
-        
+
         fix_msg = NavSatFix()
         fix_msg.header = Header()
         fix_msg.header.stamp = self.get_clock().now().to_msg()
         fix_msg.header.frame_id = "gps"
-        
+
         try:
             # 解析纬度
             lat_dms = fields[2].strip() if fields[2].strip() else "0.0"
@@ -125,36 +130,26 @@ class WTRTKSerialDriver(Node):
 
             # 定位状态
             fix_status = int(fields[6]) if fields[6].strip() else 0
-            
+
             # 填充消息
             fix_msg.latitude = latitude
             fix_msg.longitude = longitude
             fix_msg.altitude = altitude
-            
-            # ✅ 【修复核心报错】严格遵循ROS2 NavSatStatus枚举值规范
-            # if fix_status == 0:
-            #     fix_msg.status.status = NavSatStatus.STATUS_NO_FIX
-            # elif fix_status == 1:
-            #     fix_msg.status.status = NavSatStatus.STATUS_FIX
-            # elif fix_status >= 2:
-            #     fix_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
-            
+
             fix_msg.status.status = fix_status
             fix_msg.status.service = NavSatStatus.SERVICE_GPS
-            
-            # ✅ 【修复position_covariance类型错误】强制转为numpy float64数组 + 固定9位长度
-            # 彻底解决：must be a set or sequence with length 9 and each value of type 'float'
+
             fix_msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
             fix_msg.position_covariance = [
                 float(0.1), float(0.0), float(0.0),
                 float(0.0), float(0.1), float(0.0),
                 float(0.0), float(0.0), float(1.0)
             ]
-            
+
         except (ValueError, IndexError) as e:
             self.get_logger().warn(f"Failed to parse GNGGA fields: {str(e)}, frame: {frame[:60]}")
             return None
-        
+
         return fix_msg
 
     def parse_wtrtk(self, frame):
@@ -290,11 +285,18 @@ class WTRTKSerialDriver(Node):
 
                         if frame_type == "GNGGA":
                             parsed_fix = self.parse_gngga(frame)
-                            if parsed_fix:
+                            if parsed_fix is not None:
                                 self.latest_fix = parsed_fix
+                                self._gngga_lat = parsed_fix.latitude
+                                self._gngga_lon = parsed_fix.longitude
+                                self._gngga_fix_status = parsed_fix.status.status
                         elif frame_type == "WTRTK":
                             parsed_wtrtk = self.parse_wtrtk(frame)
-                            if parsed_wtrtk:
+                            if parsed_wtrtk is not None:
+                                # 用 GNGGA 经纬度 + fix_status 覆盖 WTRTK 惯导字段
+                                parsed_wtrtk.ins_latitude = self._gngga_lat
+                                parsed_wtrtk.ins_longitude = self._gngga_lon
+                                # parsed_wtrtk.fix_status = self._gngga_fix_status
                                 self.latest_wtrtk = parsed_wtrtk
 
                         # 跳过已处理的帧，继续处理下一帧
@@ -306,10 +308,10 @@ class WTRTKSerialDriver(Node):
                     self.ser.close()
                 time.sleep(0.1)  # 缩短异常等待，减少阻塞
     def publish_latest_data(self):
-        """定时器触发，每秒发布一次最新解析的数据"""
-        if self.latest_fix:
+        """定时器触发，发布最新数据"""
+        if self.latest_fix is not None:
             self.fix_pub.publish(self.latest_fix)
-        if self.latest_wtrtk:
+        if self.latest_wtrtk is not None:
             self.wtrtk_pub.publish(self.latest_wtrtk)
 
 def main(args=None):
