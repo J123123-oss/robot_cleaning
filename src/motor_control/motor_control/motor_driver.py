@@ -38,7 +38,9 @@ class CanMotorDriver(Node):
                 "actual_temperature": 0.0,      # 实际温度
                 "current_limit": 20.0,          # 电流限制（A）
                 "run_mode": 2,                  # 运行模式（2速度模式）
-                "fault_code": 0                 # 故障码
+                "fault_code": 0,                # 故障码
+                "send_errors": 0,               # 连续发送失败次数
+                "online": True                  # 电机是否在线
             },
             {
                 "id": 2,                        # 右轮电机ID
@@ -49,7 +51,9 @@ class CanMotorDriver(Node):
                 "actual_temperature": 0.0,
                 "current_limit": 20.0,
                 "run_mode": 2,
-                "fault_code": 0
+                "fault_code": 0,
+                "send_errors": 0,
+                "online": True
             },
             {
                 "id": 3,                        # 前毛刷电机ID
@@ -60,9 +64,12 @@ class CanMotorDriver(Node):
                 "actual_temperature": 0.0,
                 "current_limit": 20.0,
                 "run_mode": 2,
-                "fault_code": 0
+                "fault_code": 0,
+                "send_errors": 0,
+                "online": True
             }
         ]
+        self._send_tick = 0  # 发送周期计数，用于离线电机重试退避
         
         # 主机ID (与jifeng系统保持一致)
         self.motor_master_id = 99  # 0x63
@@ -231,18 +238,7 @@ class CanMotorDriver(Node):
             err_str = str(e)
             can_id_str = f"0x{can_id:08X}"
             self.get_logger().error(f"Failed to send CAN frame (ID={can_id_str}): {err_str}")
-            self.can_initialized = False
-
-            # 立即关闭当前 bus，避免新旧 socket 并存导致内核状态混乱
-            if self.bus is not None:
-                try:
-                    self.bus.shutdown()
-                    self.get_logger().info(f"CAN bus shutdown after send failure (ID={can_id_str})")
-                except Exception as se:
-                    self.get_logger().warn(f"Error during bus shutdown: {se}")
-                finally:
-                    self.bus = None
-
+            # 不重置 can_initialized、不关闭 bus——单路电机断线不应影响其他电机
             return False
 
     # -------------------------------------------------------------------------
@@ -260,7 +256,7 @@ class CanMotorDriver(Node):
     # 【新增】解析故障帧 0x15006301 ~ 0x15006303
     # -------------------------------------------------------------------------
     def parse_motor_fault(self, can_id: int, data: bytes):
-        motor_id = can_id & 0xFF
+        motor_id = (can_id >> 8) & 0xFF
         fault = data[0]
 
         for motor in self.motors:
@@ -400,12 +396,33 @@ class CanMotorDriver(Node):
         self.get_logger().debug(f"Updated motor velocity targets: {[m['velocity'] for m in self.motors]}")
 
     def send_speed_commands(self):
-        """发送速度命令给所有电机"""
-        current_time = time.time()
+        """发送速度命令给所有在线电机，离线电机周期性重试"""
+        SEND_ERROR_THRESHOLD = 3       # 连续失败 N 次标记离线
+        RETRY_INTERVAL_TICKS = 50      # 离线电机每 N 个周期重试一次（10Hz → 5s）
+
+        self._send_tick += 1
+
         for motor in self.motors:
+            if not motor["online"]:
+                # 离线电机：周期性重试，看是否恢复
+                if self._send_tick % RETRY_INTERVAL_TICKS != 0:
+                    continue
+                # 重试前清零速度，避免积压速度指令
+                motor["velocity"] = 0.0
+
             result = self.motor_set_speed(motor["id"], motor["velocity"])
-            if not result:
-                self.get_logger().error(f"Failed to set motor {motor['id']} speed")
+            if result:
+                if motor["send_errors"] > 0:
+                    self.get_logger().info(f"电机 {motor['id']} 发送恢复，send_errors 清零")
+                motor["send_errors"] = 0
+                motor["online"] = True
+            else:
+                motor["send_errors"] += 1
+                if motor["send_errors"] >= SEND_ERROR_THRESHOLD and motor["online"]:
+                    motor["online"] = False
+                    self.get_logger().error(
+                        f"电机 {motor['id']} 连续 {SEND_ERROR_THRESHOLD} 次发送失败，标记离线"
+                    )
 
     def query_motor_feedback(self):
         """主动查询所有电机的反馈数据"""
