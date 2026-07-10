@@ -73,7 +73,7 @@ UNLOADING_MIN_BATTERY = 91.0
 LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
 NAV_SPEED_BASE = 5.0         # 导航基础速度（motor_control 单位）
-NAV_ARRIVE_THRESHOLD = 0.1   # 到达目标点距离阈值（米）
+NAV_ARRIVE_THRESHOLD = 0.05  # 到达目标点距离阈值（米）
 NAV_REALIGN_DIST = 1.0      # DRIVE阶段距离<此值时暂停重对准，避免GPS漂移冲过头
 NAV_DRIVE_KP = 0.08          # DRIVE直线行驶航向纠偏比例增益
 NAV_DRIVE_MAX_CORR = 2.0     # DRIVE纠偏最大修正量（motor_control速度单位）
@@ -110,7 +110,7 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 初始化route_id: {self.route_id}")
 
         # 声明进仓GPS参数，提取航向角作为进仓转向目标角（后退进仓，车头朝反向）
-        self.declare_parameter("loading_gps", [120.06676041542529, 30.317518429643414, -114.0])
+        self.declare_parameter("loading_gps", [120.07062241027482, 30.321026884224207, 172.86])
         loading_gps = self.get_parameter("loading_gps").value
         if loading_gps and len(loading_gps) >= 3:
             self.loading_gps = [float(v) for v in loading_gps[:3]]
@@ -176,7 +176,7 @@ class MotorControlNode(Node):
         self._pos_recover_sub_phase = "ALIGN_BEARING"  # ALIGN_BEARING / MOVE_TO_TARGET
         self._pos_recover_start = 0.0
         self._pos_recover_align_count = 0
-        self._pos_recover_gps_drift_limit = 0.10  # GPS 漂移 > 0.10m，重新对准目标点（天线已换算到车体中心）
+        self._pos_recover_gps_drift_limit = 0.05  # GPS 漂移 > 0.10m，重新对准目标点（天线已换算到车体中心）
         self._pos_recover_retry_count = 0
         self._pos_recover_max_retries = 3       # 位置恢复最大重试次数，防止死循环
         self._pos_recover_timeout = 60.0
@@ -787,41 +787,41 @@ class MotorControlNode(Node):
             changed = True
             self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
 
-        # if spatial_consensus:
-        #     # 快通道：空间一致 → 3帧确认
-        #     self.boundary_active_count += 1
-        #     self.boundary_clear_count = 0
-        #     self.boundary_slow_count = 0
-        #     if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
-        #         if active_set != self.confirmed_sensors:
-        #             self.confirmed_sensors = active_set
-        #             changed = True
-        #             self.get_logger().warn(
-        #                 f"[Motor] 防跌落快触发：{sorted(active_set)}，"
-        #                 f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
-        # elif num_active == 1:
-        #     # 慢通道：单传感器 → 15帧持续
-        #     self.boundary_slow_count += 1
-        #     self.boundary_active_count = 0
-        #     self.boundary_clear_count = 0
-        #     if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
-        #         sensor_name = next(iter(active_set))
-        #         if sensor_name not in self.confirmed_sensors:
-        #             self.confirmed_sensors.add(sensor_name)
-        #             changed = True
-        #             self.get_logger().warn(
-        #                 f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
-        #                 f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
-        # else:
-        #     # 无传感器触发 / 对角不匹配 → 重置
-        #     self.boundary_active_count = 0
-        #     self.boundary_slow_count = 0
-        #     self.boundary_clear_count += 1
-        #     if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
-        #         if self.confirmed_sensors:
-        #             self.confirmed_sensors.clear()
-        #             changed = True
-        #             self.get_logger().info("[Motor] 防跌落传感器释放，恢复所有方向")
+        if spatial_consensus:
+            # 快通道：空间一致 → 3帧确认
+            self.boundary_active_count += 1
+            self.boundary_clear_count = 0
+            self.boundary_slow_count = 0
+            if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+                if active_set != self.confirmed_sensors:
+                    self.confirmed_sensors = active_set
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落快触发：{sorted(active_set)}，"
+                        f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
+        elif num_active == 1:
+            # 慢通道：单传感器 → 持续若干帧确认
+            self.boundary_slow_count += 1
+            self.boundary_active_count = 0
+            self.boundary_clear_count = 0
+            if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
+                sensor_name = next(iter(active_set))
+                if sensor_name not in self.confirmed_sensors:
+                    self.confirmed_sensors.add(sensor_name)
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
+                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
+        else:
+            # 无传感器触发 / 对角不匹配 → 重置
+            self.boundary_active_count = 0
+            self.boundary_slow_count = 0
+            self.boundary_clear_count += 1
+            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                if self.confirmed_sensors:
+                    self.confirmed_sensors.clear()
+                    changed = True
+                    self.get_logger().info("[Motor] 防跌落传感器释放，恢复所有方向")
 
         if changed:
             self._update_blocked_directions()
@@ -850,6 +850,11 @@ class MotorControlNode(Node):
             self.get_logger().info(
                 f"[Motor] 禁止方向更新：{sorted(old) if old else '无'} → {sorted(new) if new else '无'}，"
                 f"confirmed_sensors={sorted(self.confirmed_sensors)}")
+        if self.current_status in self.blocked_directions:
+            self.get_logger().warn(
+                f"[Motor] 当前状态{self.current_status}已被传感器禁止，立即停车")
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
 
     def voltage_to_soc(self, voltage):
         """
@@ -2005,13 +2010,36 @@ class MotorControlNode(Node):
             elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = self.motor_ctrl.BASE_SPEED
-                self.set_motors_speed(base_speed, -base_speed)  # 后退进仓
+
+                # ── 航向差速纠偏：后退时根据偏角修正左右轮差速 ──
+                if self.imu_yaw_deg is not None:
+                    heading_err = self.get_heading_error(self.loading_turn_target_deg)
+                    if abs(heading_err) < NAV_DRIVE_DEADZONE:
+                        correction = 0.0
+                    else:
+                        correction = heading_err * NAV_DRIVE_KP
+                        correction = max(-NAV_DRIVE_MAX_CORR, min(NAV_DRIVE_MAX_CORR, correction))
+                    # 后退：左正右负（left=+v=后退, right=-v=后退）
+                    # heading_err>0(目标在右)→correction>0→左慢右快→右转(CW) ✓
+                    left_speed = base_speed - correction
+                    right_speed = -base_speed - correction
+                else:
+                    heading_err = 0.0
+                    correction = 0.0
+                    left_speed = base_speed
+                    right_speed = -base_speed
+
+                self.set_motors_speed(left_speed, right_speed)
+
                 if not hasattr(self, 'last_direct_loading_log_time'):
                     self.last_direct_loading_log_time = 0.0
                 if current_time - self.last_direct_loading_log_time >= 5.0:
                     self.get_logger().warn(
                         f"[LOADING] 激光错误进仓兜底中，已后退{elapsed_time:.1f}s/"
-                        f"{self.loading_direct_timeout:.0f}s"
+                        f"{self.loading_direct_timeout:.0f}s, "
+                        f"航向{self.imu_yaw_deg:.1f}°, "
+                        f"目标{self.loading_turn_target_deg:.1f}°, "
+                        f"偏角{heading_err:+.1f}°, 纠偏{correction:+.2f}"
                     )
                     self.last_direct_loading_log_time = current_time
                 return
