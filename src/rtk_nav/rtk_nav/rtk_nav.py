@@ -54,6 +54,9 @@ DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
 HEADING_ABNORMAL_THRESHOLD = 15.0  # 航向异常阈值（度），连续超限后重新校准
+FORCE_BEARING_MAX_RECALIB = 3  # force_bearing 反复原地对准上限，超限判定为极限环并暂停上报
+FORCE_BEARING_DIVERGE_DIST = 0.5  # force_bearing 背离目标阈值（米），比历史最近点远出此值开始计数
+FORCE_BEARING_DIVERGE_COUNT = 10  # force_bearing 连续背离帧数上限（10Hz≈1s），超限暂停上报
 # 初始航向校验（仅检查航向是否稳定无漂移，不限制固定角度——出仓后无论车头朝哪，稳住即放行）
 # 航向稳定性由 heading_callback 中的 HEADING_STABILITY_WINDOW / HEADING_STABILITY_RANGE 控制
 # INITIAL_HEADING_TARGET / INITIAL_HEADING_TOLERANCE 已废弃，不再使用固定角度判定
@@ -255,6 +258,9 @@ class RTKNavControlNode(Node):
             "waypoint_recalib_count": 0,  # 同航点校准次数（打滑检测）
             "force_bearing_mode": False,  # 跳过循迹，直接用方位角直行
             "force_bearing_target": None,  # 激活时缓存的固定方位角，防止追尾螺旋
+            "force_bearing_recalib_count": 0,  # force_bearing 原地对准反复触发计数（极限环兜底）
+            "force_bearing_min_distance": float('inf'),  # force_bearing 期间到目标的历史最近距离（背离检测基准）
+            "distance_increase_count": 0,  # force_bearing 连续背离目标帧数（背离兜底）
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
             "tilt_confirm_count": 0,     # 连续倾斜帧数（触发确认）
             "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
@@ -810,7 +816,7 @@ class RTKNavControlNode(Node):
                 break
             # 距离比例速度缩放（参考LOW_DISTANCE逻辑，避免打滑/过冲）
             if dist < LOW_DISTANCE:
-                speed_scale = max(0.3, dist / LOW_DISTANCE * 0.7)
+                speed_scale = max(0.5, dist / LOW_DISTANCE)
             else:
                 speed_scale = 1.0
             effective_speed = retreat_speed * speed_scale
@@ -1794,6 +1800,24 @@ class RTKNavControlNode(Node):
         ap_dy = cy - ay
         return (ap_dx * dx + ap_dy * dy) / len_sq
 
+    def _force_bearing_diverging(self, distance: float) -> bool:
+        """force_bearing 直行时检测是否持续背离目标。
+
+        以历史最近距离为基准：显著接近(>0.2m)则刷新基准并清零；
+        比历史最近点远出 FORCE_BEARING_DIVERGE_DIST 则累计，连续超
+        FORCE_BEARING_DIVERGE_COUNT 帧判定为背离（返回 True，调用方暂停上报）。
+        用历史最近点而非上一帧作基准，避免 GPS 抖动误判。
+        """
+        min_d = self.nav_context.get("force_bearing_min_distance", float('inf'))
+        if distance < min_d - 0.2:
+            self.nav_context["force_bearing_min_distance"] = distance
+            self.nav_context["distance_increase_count"] = 0
+        elif distance > min_d + FORCE_BEARING_DIVERGE_DIST:
+            self.nav_context["distance_increase_count"] += 1
+            if self.nav_context["distance_increase_count"] > FORCE_BEARING_DIVERGE_COUNT:
+                return True
+        return False
+
     def get_adaptive_stanley_k(self, velocity, distance_to_target):
         if distance_to_target < 1.3:
             return 0.42
@@ -1805,19 +1829,28 @@ class RTKNavControlNode(Node):
                                  path_end: Tuple[float, float],
                                  path_direction: float,
                                  velocity: float,
-                                 distance_to_target: float = float('inf')) -> Tuple[float, float]:
+                                 distance_to_target: float = float('inf'),
+                                 bearing_only: bool = False) -> Tuple[float, float]:
         """
         Stanley控制器计算左右轮速度
         使用自适应K值和横向误差限幅
         velocity: 电机指令值（非真实速度 m/s）
+        bearing_only: force_bearing 方位角直行模式，抑制横向项，只用航向误差
+                      （path_direction 已是实时指向目标的方位角，横向项基于旧固定
+                       路径段会与之冲突，导致自激极限环，故置零）
         """
-        lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
-        lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
         heading_error = self.normalize_angle(path_direction - current_heading)
         real_velocity = velocity * SPEED_CMD_TO_MPS
         self.real_velocity = real_velocity
-        k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
-        steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
+        if bearing_only:
+            lateral_error = 0.0
+            steering_correction = 0.0
+            k = 0.0
+        else:
+            lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
+            lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
+            k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
+            steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
         total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5
@@ -2174,6 +2207,23 @@ class RTKNavControlNode(Node):
                 current_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                 bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
                 if bearing_err > 15.0:
+                    self.nav_context["force_bearing_recalib_count"] += 1
+                    if self.nav_context["force_bearing_recalib_count"] > FORCE_BEARING_MAX_RECALIB:
+                        self.get_logger().error(
+                            f"[Stanley] force_bearing 原地对准反复触发{self.nav_context['force_bearing_recalib_count']}次"
+                            f"（疑似极限环），暂停导航等待人工介入"
+                        )
+                        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                        self.nav_context["calib_generator"] = None
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.nav_context["pre_pause_state"] = NavState.INITIAL_MOVE
+                        self.nav_context["pause_reason"] = "force_bearing_limit_cycle"
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_running = False
+                        self.publish_nav_state(NavState.PAUSE)
+                        self.publish_stop_speed()
+                        yield (0.0, 0.0)
+                        return False
                     self.get_logger().warn(
                         f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
                     calib_gen = self.calibrate_heading_at_waypoint(current_bearing)
@@ -2189,6 +2239,22 @@ class RTKNavControlNode(Node):
                         except StopIteration:
                             break
                     continue
+                if self._force_bearing_diverging(distance):
+                    self.get_logger().error(
+                        f"[Stanley] force_bearing 持续背离目标（距最近点+{FORCE_BEARING_DIVERGE_DIST}m超"
+                        f"{FORCE_BEARING_DIVERGE_COUNT}帧，当前{distance:.2f}m），暂停导航等待人工介入"
+                    )
+                    self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                    self.nav_context["calib_generator"] = None
+                    self.nav_context["nav_state"] = NavState.PAUSE
+                    self.nav_context["pre_pause_state"] = NavState.INITIAL_MOVE
+                    self.nav_context["pause_reason"] = "force_bearing_diverge"
+                    self.nav_context["brush_active"] = self.brush_active
+                    self.nav_running = False
+                    self.publish_nav_state(NavState.PAUSE)
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    return False
                 path_direction = current_bearing
             elif t > 1.0:
                 self.nav_context["force_bearing_mode"] = True
@@ -2208,7 +2274,8 @@ class RTKNavControlNode(Node):
                 path_end=path_end,
                 path_direction=path_direction,
                 velocity=current_base_speed,
-                distance_to_target=distance
+                distance_to_target=distance,
+                bearing_only=self.nav_context.get("force_bearing_mode", False)
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
@@ -2341,6 +2408,9 @@ class RTKNavControlNode(Node):
             "waypoint_recalib_count": 0,
             "force_bearing_mode": False,
             "force_bearing_target": None,
+            "force_bearing_recalib_count": 0,
+            "force_bearing_min_distance": float('inf'),
+            "distance_increase_count": 0,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
             "tilt_confirm_count": 0,
@@ -2679,6 +2749,11 @@ class RTKNavControlNode(Node):
                         left_speed, right_speed = self.get_boundary_correct_speed()
                     yield (left_speed, right_speed)
                 except StopIteration:
+                    # force_bearing 极限环兜底：子生成器已置 PAUSE 并停车，
+                    # 不能落入下方"到达第一航点"逻辑误切 WAYPOINT_MOVE
+                    if self.nav_context.get("nav_state") == NavState.PAUSE:
+                        yield (0.0, 0.0)
+                        return
                     if len(self.waypoints) == 0:
                         self.get_logger().error("[ROSNode] 初始移动StopIteration：无航点数据，终止导航")
                         self.nav_running = False
@@ -2912,6 +2987,9 @@ class RTKNavControlNode(Node):
                         self.nav_context["waypoint_recalib_count"] = 0
                         self.nav_context["force_bearing_mode"] = False
                         self.nav_context["force_bearing_target"] = None
+                        self.nav_context["force_bearing_recalib_count"] = 0
+                        self.nav_context["force_bearing_min_distance"] = float('inf')
+                        self.nav_context["distance_increase_count"] = 0
                         self.nav_context["bearing_mode_locked"] = False
                         # 仅在正常航点切换时获取新航点
                         target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
@@ -3070,6 +3148,23 @@ class RTKNavControlNode(Node):
                     current_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                     bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
                     if bearing_err > 15.0:
+                        self.nav_context["force_bearing_recalib_count"] += 1
+                        if self.nav_context["force_bearing_recalib_count"] > FORCE_BEARING_MAX_RECALIB:
+                            self.get_logger().error(
+                                f"[Stanley] force_bearing 原地对准反复触发{self.nav_context['force_bearing_recalib_count']}次"
+                                f"（疑似极限环），暂停导航等待人工介入"
+                            )
+                            self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                            self.nav_context["calib_generator"] = None
+                            self.nav_context["nav_state"] = NavState.PAUSE
+                            self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
+                            self.nav_context["pause_reason"] = "force_bearing_limit_cycle"
+                            self.nav_context["brush_active"] = self.brush_active
+                            self.nav_running = False
+                            self.publish_nav_state(NavState.PAUSE)
+                            self.publish_stop_speed()
+                            yield (0.0, 0.0)
+                            return
                         # 航向偏差大→先原地旋转对准目标，防止追尾螺旋
                         self.get_logger().warn(
                             f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
@@ -3082,6 +3177,22 @@ class RTKNavControlNode(Node):
                                 break
                         continue
                     # 偏差可接受→用实时方位角（偏差小不会螺旋，且自适应车体位移）
+                    if self._force_bearing_diverging(distance):
+                        self.get_logger().error(
+                            f"[Stanley] force_bearing 持续背离目标（距最近点+{FORCE_BEARING_DIVERGE_DIST}m超"
+                            f"{FORCE_BEARING_DIVERGE_COUNT}帧，当前{distance:.2f}m），暂停导航等待人工介入"
+                        )
+                        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                        self.nav_context["calib_generator"] = None
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
+                        self.nav_context["pause_reason"] = "force_bearing_diverge"
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_running = False
+                        self.publish_nav_state(NavState.PAUSE)
+                        self.publish_stop_speed()
+                        yield (0.0, 0.0)
+                        return
                     path_direction = current_bearing
                 elif t > 1.0:
                     self.nav_context["force_bearing_mode"] = True
@@ -3164,7 +3275,8 @@ class RTKNavControlNode(Node):
                     path_end=path_end,
                     path_direction=path_direction,
                     velocity=current_base_speed,
-                    distance_to_target=distance
+                    distance_to_target=distance,
+                    bearing_only=in_bearing_mode
                 )
 
                 if self._is_motion_blocked() or self.boundary_correct_locked:
