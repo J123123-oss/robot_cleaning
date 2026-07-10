@@ -3037,6 +3037,7 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     continue
 
+                path_initialized_now = False
                 if not hasattr(self, 'stanley_path_start') or self.stanley_path_start is None:
                     if self.last_waypoint_cache:
                         path_start_lon, path_start_lat = self.last_waypoint_cache[0], self.last_waypoint_cache[1]
@@ -3054,6 +3055,7 @@ class RTKNavControlNode(Node):
                         f"({path_start_lon:.6f}, {path_start_lat:.6f}) → ({target_lon:.6f}, {target_lat:.6f}), "
                         f"方向={self.stanley_path_direction:.1f}°"
                     )
+                    path_initialized_now = True
 
                 if distance < LOW_DISTANCE:
                     speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
@@ -3095,6 +3097,17 @@ class RTKNavControlNode(Node):
                 heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                 # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
                 in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
+                if (path_initialized_now
+                        and not in_bearing_mode
+                        and abs(heading_err) > HEADING_ABNORMAL_THRESHOLD):
+                    self.start_heading_recalibration(
+                        path_direction,
+                        heading_err,
+                        "新航段首帧航向差过大，先停车校准"
+                    )
+                    current_nav_state = NavState.WAYPOINT_CALIB
+                    yield (0.0, 0.0)
+                    continue
                 if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
                     if not in_bearing_mode:
                         self.nav_context["angle_abnormal_count"] += 1

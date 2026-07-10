@@ -1059,6 +1059,13 @@ class MotorControlNode(Node):
         #     self.get_logger().warn("[ROSNode] 当前为遥控器模式，禁止设置状态")
         #     return
         # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式
+        if new_state in self.blocked_directions:
+            self.get_logger().warn(
+                f"[Motor] 传感器已禁用{new_state}方向，拒绝状态切换并保持停车")
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
+            self.publish_state()
+            return
         if new_state == self.current_status:
             if new_state == "HOLD" and self.current_control_mode == "AUTO_CLEANING":
                 self.get_logger().info(f"[ROSNode] AUTO_CLEANING模式下重复设置HOLD，允许执行")
