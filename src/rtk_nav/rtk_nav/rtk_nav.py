@@ -1329,9 +1329,9 @@ class RTKNavControlNode(Node):
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
 
-        # —— 航向稳定性追踪（仅 IDLE/PAUSE/COMPLETED 时更新，导航中冻结）——
+        # —— 航向稳定性追踪（排除主动旋转的状态：航点校准）——
         nav_state = self.nav_context.get("nav_state", NavState.IDLE)
-        tracking_active = nav_state in (NavState.IDLE, NavState.PAUSE, NavState.COMPLETED)
+        tracking_active = nav_state != NavState.WAYPOINT_CALIB
 
         if tracking_active:
             now = time.monotonic()
