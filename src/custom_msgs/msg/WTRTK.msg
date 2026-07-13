@@ -8,6 +8,8 @@ float64 angle_x         # 角度X:度
 float64 angle_y         # 角度Y:度
 float64 angle_z         # 角度Z:度
 int32 fix_status        # 定向状态:0:初始化,1:单点,2:码差分,4:固定解,5:浮点解
+int32 position_status   # GPGGA/GNGGA定位状态:0:未定位,1:单点,2:差分,4:RTK固定,5:RTK浮动
+bool position_data_valid # 已收到GGA且数据未超时
 int32 wireless_status   # 无线连接状态:21:已连接
 int32 ntrip_status      # Ntrip连接状态:5:连接成功
 int32 signal_quality    # 无线信号质量:0-31

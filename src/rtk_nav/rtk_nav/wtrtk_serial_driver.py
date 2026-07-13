@@ -17,8 +17,10 @@ class WTRTKSerialDriver(Node):
         # 读取参数（默认端口和波特率）
         self.declare_parameter('port', '/dev/WTRTK')
         self.declare_parameter('baud', 460800)
+        self.declare_parameter('gga_timeout', 2.0)
         self.port = self.get_parameter('port').value
         self.baud_rate = self.get_parameter('baud').value
+        self.gga_timeout = max(0.1, float(self.get_parameter('gga_timeout').value))
         
         # 初始化串口
         self.ser = None
@@ -31,20 +33,24 @@ class WTRTKSerialDriver(Node):
         self.buffer = ""  # 缓存串口数据
         self.buffer_max_len = 4096  # 缓存最大长度，防止内存溢出
 
-        # GNGGA 缓存值，用于覆盖 WTRTK 对应字段
-        self._gngga_lat = 0.0
-        self._gngga_lon = 0.0
-        self._gngga_fix_status = 0
+        # GPGGA/GNGGA 缓存值，用于补充 WTRTK 的定位数据
+        self._gga_lat = 0.0
+        self._gga_lon = 0.0
+        self._gga_position_status = 0
+        self._last_gga_time = None
 
         # 缓存最新解析的消息
         self.latest_fix = None
         self.latest_wtrtk = None
+        self._fix_updated = False
+        self._wtrtk_updated = False
+        self.data_lock = threading.Lock()
         self.timer = self.create_timer(0.1, self.publish_latest_data)
         
         self.read_thread = threading.Thread(target=self.read_serial, daemon=True)
         self.read_thread.start()
         
-        self.get_logger().info("GNGGA + WTRTK serial driver started successfully")
+        self.get_logger().info("GPGGA/GNGGA + WTRTK serial driver started successfully")
 
     def connect_serial(self):
         """连接串口设备"""
@@ -90,19 +96,20 @@ class WTRTKSerialDriver(Node):
                 self.get_logger().warn(f"经纬度转换失败: '{dms_str}', 错误: {e}，重置为0.0")
             return 0.0
 
-    def parse_gngga(self, frame):
-        """解析$GNGGA帧"""
-        if not frame.startswith("$GNGGA"):
+    def parse_gga(self, frame):
+        """解析$GPGGA或$GNGGA帧。"""
+        if not frame.startswith(("$GPGGA", "$GNGGA")):
             return None
 
         star_pos = frame.find('*')
         if star_pos == -1:
-            self.get_logger().warn("Invalid GNGGA frame (no checksum)")
+            self.get_logger().warn("Invalid GGA frame (no checksum)")
             return None
 
         fields = frame.split(',')
-        if len(fields) < 15:
-            self.get_logger().warn(f"Invalid GNGGA fields count: {len(fields)} (expected >=15)")
+        # 仅字段0-9是当前解析所必需的；部分设备会省略末尾差分时间等空字段。
+        if len(fields) < 10:
+            self.get_logger().warn(f"Invalid GGA fields count: {len(fields)} (expected >=10)")
             return None
 
         fix_msg = NavSatFix()
@@ -147,7 +154,7 @@ class WTRTKSerialDriver(Node):
             ]
 
         except (ValueError, IndexError) as e:
-            self.get_logger().warn(f"Failed to parse GNGGA fields: {str(e)}, frame: {frame[:60]}")
+            self.get_logger().warn(f"Failed to parse GGA fields: {str(e)}, frame: {frame[:60]}")
             return None
 
         return fix_msg
@@ -172,6 +179,11 @@ class WTRTKSerialDriver(Node):
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "wtrtk_link"
+        msg.position_status = self._gga_position_status
+        msg.position_data_valid = (
+            self._last_gga_time is not None
+            and time.monotonic() - self._last_gga_time <= self.gga_timeout
+        )
         
         try:
             # 1. 差分相关字段（0-3）
@@ -247,10 +259,17 @@ class WTRTKSerialDriver(Node):
                     
                     # 循环处理缓冲区中所有完整帧（从早到晚），避免 rfind 丢弃中间帧
                     while True:
-                        gngga_idx = self.buffer.find('$GNGGA')
-                        wtrtk_idx = self.buffer.find('$WTRTK')
+                        frame_candidates = []
+                        for frame_header, frame_type in (
+                            ('$GPGGA', 'GGA'),
+                            ('$GNGGA', 'GGA'),
+                            ('$WTRTK', 'WTRTK'),
+                        ):
+                            frame_idx = self.buffer.find(frame_header)
+                            if frame_idx != -1:
+                                frame_candidates.append((frame_idx, frame_type))
 
-                        if gngga_idx == -1 and wtrtk_idx == -1:
+                        if not frame_candidates:
                             # 没有任何帧头：跳过前导垃圾，保留可能的不完整帧头
                             dollar_idx = self.buffer.find('$')
                             if dollar_idx == -1:
@@ -259,19 +278,8 @@ class WTRTKSerialDriver(Node):
                                 self.buffer = self.buffer[dollar_idx:]
                             break
 
-                        # 取最早出现的帧头
-                        if gngga_idx == -1:
-                            target_start = wtrtk_idx
-                            frame_type = "WTRTK"
-                        elif wtrtk_idx == -1:
-                            target_start = gngga_idx
-                            frame_type = "GNGGA"
-                        elif gngga_idx < wtrtk_idx:
-                            target_start = gngga_idx
-                            frame_type = "GNGGA"
-                        else:
-                            target_start = wtrtk_idx
-                            frame_type = "WTRTK"
+                        # 取最早出现的受支持帧头
+                        target_start, frame_type = min(frame_candidates, key=lambda item: item[0])
 
                         # 查找帧尾 \r\n
                         end_idx = self.buffer.find('\r\n', target_start)
@@ -283,21 +291,26 @@ class WTRTKSerialDriver(Node):
                         # 提取完整帧
                         frame = self.buffer[target_start:end_idx]
 
-                        if frame_type == "GNGGA":
-                            parsed_fix = self.parse_gngga(frame)
+                        if frame_type == "GGA":
+                            parsed_fix = self.parse_gga(frame)
                             if parsed_fix is not None:
-                                self.latest_fix = parsed_fix
-                                self._gngga_lat = parsed_fix.latitude
-                                self._gngga_lon = parsed_fix.longitude
-                                self._gngga_fix_status = parsed_fix.status.status
+                                with self.data_lock:
+                                    self.latest_fix = parsed_fix
+                                    self._gga_lat = parsed_fix.latitude
+                                    self._gga_lon = parsed_fix.longitude
+                                    self._gga_position_status = parsed_fix.status.status
+                                    self._last_gga_time = time.monotonic()
+                                    self._fix_updated = True
                         elif frame_type == "WTRTK":
                             parsed_wtrtk = self.parse_wtrtk(frame)
                             if parsed_wtrtk is not None:
-                                # 用 GNGGA 经纬度 + fix_status 覆盖 WTRTK 惯导字段
-                                parsed_wtrtk.ins_latitude = self._gngga_lat
-                                parsed_wtrtk.ins_longitude = self._gngga_lon
-                                # parsed_wtrtk.fix_status = self._gngga_fix_status
-                                self.latest_wtrtk = parsed_wtrtk
+                                # 定向状态保留在 fix_status，定位状态来自最新GGA帧。
+                                if self.latest_fix is not None:
+                                    parsed_wtrtk.ins_latitude = self._gga_lat
+                                    parsed_wtrtk.ins_longitude = self._gga_lon
+                                with self.data_lock:
+                                    self.latest_wtrtk = parsed_wtrtk
+                                    self._wtrtk_updated = True
 
                         # 跳过已处理的帧，继续处理下一帧
                         self.buffer = self.buffer[end_idx+2:]
@@ -308,11 +321,17 @@ class WTRTKSerialDriver(Node):
                     self.ser.close()
                 time.sleep(0.1)  # 缩短异常等待，减少阻塞
     def publish_latest_data(self):
-        """定时器触发，发布最新数据"""
-        if self.latest_fix is not None:
-            self.fix_pub.publish(self.latest_fix)
-        if self.latest_wtrtk is not None:
-            self.wtrtk_pub.publish(self.latest_wtrtk)
+        """仅发布新解析的数据，避免旧帧掩盖串口断流。"""
+        with self.data_lock:
+            fix_msg = self.latest_fix if self._fix_updated else None
+            wtrtk_msg = self.latest_wtrtk if self._wtrtk_updated else None
+            self._fix_updated = False
+            self._wtrtk_updated = False
+
+        if fix_msg is not None:
+            self.fix_pub.publish(fix_msg)
+        if wtrtk_msg is not None:
+            self.wtrtk_pub.publish(wtrtk_msg)
 
 def main(args=None):
     rclpy.init(args=args)

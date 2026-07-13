@@ -282,6 +282,9 @@ class RTKNavControlNode(Node):
         self.last_wtrtk_time = time.monotonic()
         self.rtk_data_timed_out = False
         self.last_gps_status = -1
+        self.last_orientation_status = -1
+        self.position_data_valid = False
+        self.rtk_solution_ready = False
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
         self.last_heading_check_log_time = 0.0
@@ -1430,28 +1433,41 @@ class RTKNavControlNode(Node):
         stable_msg.data = self._last_heading_stable
         self.heading_stable_pub.publish(stable_msg)
 
-        fix_status = msg.fix_status
+        position_status = msg.position_status
+        orientation_status = msg.fix_status
+        position_data_valid = msg.position_data_valid
 
-        if fix_status < 0:
+        if position_status < 0:
             self.get_logger().warn("GPS信号无效")
             self.last_gps_status = -1
 
         status_map = {0: "未定位", 1: "单点", 2: "差分", 5: "RTK Float", 4: "RTK Fixed"}
-        if fix_status != self.last_gps_status:
-            # self.get_logger().info(f"GPS状态：{status_map[fix_status]}")
-            self.last_gps_status = fix_status
+        if position_status != self.last_gps_status:
+            # self.get_logger().info(f"GPS状态：{status_map[position_status]}")
+            self.last_gps_status = position_status
+        self.last_orientation_status = orientation_status
+        self.position_data_valid = position_data_valid
+        self.rtk_solution_ready = (
+            position_data_valid
+            and position_status == 4
+            and orientation_status == 4
+        )
 
         if not self.rtk_data_timed_out and not self.heading_timed_out:
             self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
 
-        is_fixed = (fix_status == 4)
-        if not is_fixed:
+        if not self.rtk_solution_ready:
             self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
             if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                 self.nav_context["pause_reason"] = "rtk_not_fixed"
                 self.nav_context["brush_active"] = self.brush_active
-                self.get_logger().warn(f"[RTK状态] 当前状态：{status_map.get(fix_status, '未知')}，非固定解，暂停导航（保存状态：{self.nav_context['pre_pause_state']}）")
+                self.get_logger().warn(
+                    f"[RTK状态] 定位={status_map.get(position_status, '未知')}，"
+                    f"定向={status_map.get(orientation_status, '未知')}，"
+                    f"GGA有效={position_data_valid}，暂停导航"
+                    f"（保存状态：{self.nav_context['pre_pause_state']}）"
+                )
                 self.nav_context["nav_state"] = NavState.PAUSE
                 self.nav_running = False
                 stop_speed = Vector3()
@@ -1466,7 +1482,9 @@ class RTKNavControlNode(Node):
                 self.nav_running = False
                 self.publish_stop_speed()
                 self.get_logger().warn(
-                    f"[RTK状态] 数据已恢复但当前为{status_map.get(fix_status, '未知')}，"
+                    f"[RTK状态] 数据已恢复但定位={status_map.get(position_status, '未知')}，"
+                    f"定向={status_map.get(orientation_status, '未知')}，"
+                    f"GGA有效={position_data_valid}，"
                     "暂停原因切换为rtk_not_fixed"
                 )
         else:
@@ -1478,7 +1496,7 @@ class RTKNavControlNode(Node):
                 and self.nav_context["nav_state"] == NavState.PAUSE
                 and self.nav_context.get("pause_reason") == "rtk_not_fixed"
             ):
-                self.get_logger().info("[RTK状态] 恢复RTK固定解，自动恢复导航")
+                self.get_logger().info("[RTK状态] 定位与定向均恢复固定解，自动恢复导航")
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
                 self.nav_context["pause_reason"] = None
                 self.brush_active = self.nav_context.get("brush_active", False)
@@ -1592,7 +1610,7 @@ class RTKNavControlNode(Node):
         # 发布车体中心GPS
         car_gps_msg = NavSatFix()
         car_gps_msg.header = msg.header
-        car_gps_msg.status.status = msg.fix_status
+        car_gps_msg.status.status = msg.position_status
         car_gps_msg.status.service = NavSatStatus.SERVICE_GPS
         car_gps_msg.latitude = car_lat
         car_gps_msg.longitude = car_lon
@@ -2620,9 +2638,11 @@ class RTKNavControlNode(Node):
                 elif pause_reason == "heading_timeout" and self.heading_timed_out:
                     self.get_logger().warn("[ROSNode] 航向超时仍活跃，保持PAUSE等待航向恢复")
                     fault_active = True
-                elif pause_reason == "rtk_not_fixed" and self.last_gps_status != 4:
+                elif pause_reason == "rtk_not_fixed" and not self.rtk_solution_ready:
                     self.get_logger().warn(
-                        f"[ROSNode] RTK仍非固定解(status={self.last_gps_status})，保持PAUSE等待Fixed"
+                        f"[ROSNode] RTK未就绪(position={self.last_gps_status}, "
+                        f"orientation={self.last_orientation_status}, "
+                        f"gga_valid={self.position_data_valid})，保持PAUSE"
                     )
                     fault_active = True
                 elif pause_reason == "rtk_timeout" and self.rtk_data_timed_out:
@@ -3443,6 +3463,10 @@ class RTKNavControlNode(Node):
             "is_angle_recalib": self.nav_context.get("is_angle_recalib", False),
             "heading_timed_out": self.heading_timed_out,
             "rtk_data_timed_out": self.rtk_data_timed_out,
+            "position_status": self.last_gps_status,
+            "orientation_status": self.last_orientation_status,
+            "position_data_valid": self.position_data_valid,
+            "rtk_solution_ready": self.rtk_solution_ready,
             "control_mode": self.current_control_mode,
             "brush_active": self.brush_active,
             "ts": time.strftime("%H:%M:%S"),
@@ -3675,6 +3699,14 @@ class RTKNavControlNode(Node):
                 return
 
             if self.handle_rtk_data_timeout():
+                return
+
+            # 自动导航仅在GGA定位固定、WTRTK定向固定且数据有效时启动/继续。
+            if not self.rtk_solution_ready:
+                self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
+                self.multi_waypoint_generator = None
+                self.nav_running = False
+                self.publish_stop_speed()
                 return
 
             # 新增：启动/恢复导航前，强制校验航点有效性

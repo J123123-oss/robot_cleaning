@@ -25,8 +25,11 @@ class WTRTKFileParser(Node):
         self.wtrtk_pub = self.create_publisher(WTRTK, '/wtrtk_data', 10)
         
         self.buffer = ""  # 缓存文件读取的数据
-        self.latest_fix = None  # 最新GNGGA解析结果
+        self.latest_fix = None  # 最新GPGGA/GNGGA解析结果
         self.latest_wtrtk = None  # 最新WTRTK解析结果
+        self._fix_updated = False
+        self._wtrtk_updated = False
+        self.data_lock = threading.Lock()
         
         # 线程与事件
         self.publish_event = threading.Event()
@@ -36,7 +39,7 @@ class WTRTKFileParser(Node):
         self.read_thread.start()
         
         self.get_logger().info(
-            f"GNGGA + WTRTK file parser started. Reading from: {self.file_path}, "
+            f"GPGGA/GNGGA + WTRTK file parser started. Reading from: {self.file_path}, "
             f"play rate: {self.play_rate}s/line"
         )
 
@@ -67,21 +70,22 @@ class WTRTKFileParser(Node):
                 self.get_logger().warn(f"经纬度转换失败: '{dms_str}', 错误: {e}，重置为0.0")
             return 0.0
 
-    def parse_gngga(self, frame):
-        """解析$GNGGA帧"""
-        if not frame.startswith("$GNGGA"):
+    def parse_gga(self, frame):
+        """解析$GPGGA或$GNGGA帧。"""
+        if not frame.startswith(("$GPGGA", "$GNGGA")):
             return None
         
         star_pos = frame.find('*')
         if star_pos == -1:
-            self.get_logger().warn("Invalid GNGGA frame (no checksum)")
+            self.get_logger().warn("Invalid GGA frame (no checksum)")
             return None
         
         content = frame[7:star_pos]
         fields = content.split(',')
         
-        if len(fields) < 14:
-            self.get_logger().warn(f"Invalid GNGGA fields count: {len(fields)} (expected >=14)")
+        # content已移除帧头，字段0-8是当前解析所必需的。
+        if len(fields) < 9:
+            self.get_logger().warn(f"Invalid GGA fields count: {len(fields)} (expected >=9)")
             return None
         
         fix_msg = NavSatFix()
@@ -126,7 +130,7 @@ class WTRTKFileParser(Node):
             ]
             
         except (ValueError, IndexError) as e:
-            self.get_logger().warn(f"Failed to parse GNGGA fields: {str(e)}")
+            self.get_logger().warn(f"Failed to parse GGA fields: {str(e)}")
             return None
         
         return fix_msg
@@ -152,6 +156,8 @@ class WTRTKFileParser(Node):
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "wtrtk_link"
+        msg.position_status = self.latest_fix.status.status if self.latest_fix is not None else 0
+        msg.position_data_valid = self.latest_fix is not None
         
         try:
             # 差分相关字段（0-3）
@@ -208,33 +214,33 @@ class WTRTKFileParser(Node):
 
     def publish_loop(self):
         """1Hz频率发布数据"""
-        last_fix = None
-        last_wtrtk = None
         while rclpy.ok():
-            self.publish_event.wait(timeout=1.0)
-            self.publish_event.clear()
+            if not self.publish_event.wait(timeout=1.0):
+                continue
+
+            with self.data_lock:
+                fix_msg = self.latest_fix if self._fix_updated else None
+                wtrtk_msg = self.latest_wtrtk if self._wtrtk_updated else None
+                self._fix_updated = False
+                self._wtrtk_updated = False
+                self.publish_event.clear()
             
-            if self.latest_fix:
-                last_fix = self.latest_fix
-            if self.latest_wtrtk:
-                last_wtrtk = self.latest_wtrtk
-            
-            # 发布GNGGA解析结果
-            if last_fix:
-                last_fix.header.stamp = self.get_clock().now().to_msg()
-                # self.fix_pub.publish(last_fix)
+            # 发布GGA解析结果
+            if fix_msg:
+                fix_msg.header.stamp = self.get_clock().now().to_msg()
+                # self.fix_pub.publish(fix_msg)
                 self.get_logger().debug(
-                    f"Published GNGGA: lat={last_fix.latitude:.6f}, "
-                    f"lon={last_fix.longitude:.6f}, alt={last_fix.altitude:.2f}"
+                    f"Published GGA: lat={fix_msg.latitude:.6f}, "
+                    f"lon={fix_msg.longitude:.6f}, alt={fix_msg.altitude:.2f}"
                 )
             
             # 发布WTRTK解析结果
-            if last_wtrtk:
-                last_wtrtk.header.stamp = self.get_clock().now().to_msg()
-                self.wtrtk_pub.publish(last_wtrtk)
+            if wtrtk_msg:
+                wtrtk_msg.header.stamp = self.get_clock().now().to_msg()
+                self.wtrtk_pub.publish(wtrtk_msg)
                 self.get_logger().debug(
-                    f"Published WTRTK: ins_lat={last_wtrtk.ins_latitude:.6f}, "
-                    f"ins_lon={last_wtrtk.ins_longitude:.6f}"
+                    f"Published WTRTK: ins_lat={wtrtk_msg.ins_latitude:.6f}, "
+                    f"ins_lon={wtrtk_msg.ins_longitude:.6f}"
                 )
             
             time.sleep(1.0)  # 1Hz
@@ -271,23 +277,29 @@ class WTRTKFileParser(Node):
     def parse_buffer(self):
         """解析缓存中的完整帧"""
         while True:
+            gpgga_start = self.buffer.find('$GPGGA')
             gngga_start = self.buffer.find('$GNGGA')
             wtrtk_start = self.buffer.find('$WTRTK')
-            
-            if gngga_start == -1 and wtrtk_start == -1:
+
+            gga_starts = [idx for idx in (gpgga_start, gngga_start) if idx != -1]
+            gga_start = min(gga_starts) if gga_starts else -1
+
+            if gga_start == -1 and wtrtk_start == -1:
                 break
-            
-            if gngga_start != -1 and (wtrtk_start == -1 or gngga_start < wtrtk_start):
-                # 处理GNGGA帧
-                start_idx = gngga_start
+
+            if gga_start != -1 and (wtrtk_start == -1 or gga_start < wtrtk_start):
+                # 处理GPGGA/GNGGA帧
+                start_idx = gga_start
                 end_idx = self.buffer.find('\r\n', start_idx)
                 if end_idx == -1:
                     break
                 frame = self.buffer[start_idx:end_idx]
                 self.buffer = self.buffer[end_idx+2:]
-                parsed_fix = self.parse_gngga(frame)
+                parsed_fix = self.parse_gga(frame)
                 if parsed_fix:
-                    self.latest_fix = parsed_fix
+                    with self.data_lock:
+                        self.latest_fix = parsed_fix
+                        self._fix_updated = True
                     self.publish_event.set()
             else:
                 # 处理WTRTK帧
@@ -299,7 +311,9 @@ class WTRTKFileParser(Node):
                 self.buffer = self.buffer[end_idx+2:]
                 parsed_wtrtk = self.parse_wtrtk(frame)
                 if parsed_wtrtk:
-                    self.latest_wtrtk = parsed_wtrtk
+                    with self.data_lock:
+                        self.latest_wtrtk = parsed_wtrtk
+                        self._wtrtk_updated = True
                     self.publish_event.set()
 
 def main(args=None):
