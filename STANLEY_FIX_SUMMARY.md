@@ -905,3 +905,39 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **行为约束**: 行进态仍由外层 `INITIAL_MOVE` / `WAYPOINT_MOVE` 调用 `get_boundary_correct_speed()` 做方向纠偏；原地旋转态统一执行“超声触发 → GPS撤退归位 → 重新校准”。
 - **影响**: `rtk_nav.py` — 原地校准统一保护 helper、初始移动子生成器、主 `WAYPOINT_CALIB`/`force_bearing` 相关校准入口。
 - **验证**: `python -B -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 与 `git diff --check -- src/rtk_nav/rtk_nav/rtk_nav.py` 均通过。
+
+## 2026-07-13 固定进仓航向收敛 + AUTO入口航向安全门控
+
+### 75. loading_gps 航向存在隐式180度换算
+
+- **问题**: `run.launch.py` 需要把实际进仓车头航向先加 `180°`，`motor_control.py` 再减 `180°` 得到最终目标。配置语义不直观，现场设置 `172.52°` 时容易得到错误的反向目标。
+- **修复**:
+  1. `loading_gps` 第三项统一定义为“后退进仓时的车头目标航向”
+  2. `run.launch.py` 直接配置 `172.52°`，不再写 `172.52 + 180.0`
+  3. `motor_control.py` 只将参数归一化到 `[-180°, 180°)`，不再额外反向
+- **行为**: 配置 `loading_gps=[lon, lat, 172.52]` 后，进仓转向目标和后退纠偏目标均为 `172.52°`；后退进仓的轮速方向保持不变。
+- **影响**: `run.launch.py`、`motor_control.py`。
+
+### 76. 固定进仓点启用后仍保留 /unloading_gps 冗余通道
+
+- **问题**: `rtk_nav` 已使用固定 `loading_gps`，但 `motor_control` 仍在出仓完成后等待 RTK Fixed 和航向稳定，再发布 `/unloading_gps`；`rtk_nav` 仍保留对应订阅和只打印日志的 callback。该通道不再改变进仓点，却延迟出仓完成并保留无效超时错误路径。
+- **修复**:
+  1. 删除 `motor_control` 的 `/unloading_gps` publisher、消息构造和两处发布逻辑
+  2. 删除仅用于该发布的 `heading_stable` 订阅、GPS/航向等待计时、超时错误位和缓存变量
+  3. 出仓运动完成后直接完成 `HOLD → AUTO_CLEANING` 模式切换
+  4. 删除 `rtk_nav` 的 `/unloading_gps` subscription、`unloading_gps_callback()` 及旧解析注释
+- **职责边界**: `motor_control` 负责出仓动作和模式切换；`rtk_nav` 只从 launch 注入的 `loading_gps` 获取固定进仓点，并独立负责 RTK/航向安全判断。
+- **影响**: `motor_control.py`、`rtk_nav.py`。
+
+### 77. AUTO_CLEANING 入口可能复用旧航向稳定结果
+
+- **问题**: 删除 `motor_control` 的航向等待后，`rtk_nav` 虽有5秒航向稳定检查，但进入 `AUTO_CLEANING` 时没有清空 `_heading_stability_history` 和 `_last_heading_stable`。若旧结果仍为 `True`，首次启动或暂停恢复可能直接通过门控，无法保证使用切换后的新样本确认无漂移。
+- **修复**:
+  1. 新增 AUTO 航向门控状态；每次进入 `AUTO_CLEANING` 清空旧样本、强制稳定结果为 `False`
+  2. `/motor/state` 和 `/control/mode` 两个入口共用门控准备函数，并用一次性标志避免消息到达顺序不同导致重复重置
+  3. `rtk_timer_callback()` 在创建或恢复导航生成器前统一等待新的5秒窗口满足波动 `≤3°`，等待期间持续发布停车速度
+  4. 门控覆盖 `IDLE` 首次启动以及 `WAYPOINT_MOVE`、`WAYPOINT_CALIB` 等恢复路径；恢复校准期间也允许在停车状态重新采集稳定样本
+  5. `/rtk/nav_context` 增加 `heading_stable`、`auto_heading_gate_pending`、`heading_stability_samples`，便于现场确认等待原因和采样进度
+- **预期日志**: `[AUTO航向门控] ...已清空旧航向样本` → `等待航向稳定` → `航向稳定检查通过，允许启动/恢复导航`。
+- **影响**: `rtk_nav.py` — 航向稳定追踪、双入口模式回调、10Hz导航启动门控和调试上下文。
+- **验证**: bundled Python 对 `motor_control.py`、`rtk_nav.py`、`run.launch.py` 执行 `py_compile` 通过；AUTO门控静态检查和 `git diff --check` 通过。

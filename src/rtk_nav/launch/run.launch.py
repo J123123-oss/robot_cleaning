@@ -6,9 +6,9 @@ from launch.actions import DeclareLaunchArgument
 def generate_launch_description():
     # 全局路径配置
     rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/065_20260708_154944.txt'
-    # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
+    # 固定进仓RTK航点：[经度, 纬度, 车头进仓航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
     # loading_gps = [110.647415, 35.605940, 89.80]
-    loading_gps = [120.07062241027482, 30.321026884224207, 172.86+180.0]
+    loading_gps = [120.07061963994207, 30.320991691985643, 172.52]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(

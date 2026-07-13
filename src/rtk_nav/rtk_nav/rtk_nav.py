@@ -158,6 +158,8 @@ class RTKNavControlNode(Node):
         self.imu_initialized = False
         self._heading_stability_history = deque()  # (timestamp, vehicle_heading_360)
         self._last_heading_stable = False
+        self._auto_heading_gate_prepared = False
+        self._auto_heading_gate_pending = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
         self.integral_yaw = 0.0
@@ -178,7 +180,7 @@ class RTKNavControlNode(Node):
         # 新增：跨文件缓存（保存上一个文件的最后一个航点，用于计算跨文件偏角）
         self.cross_file_last_waypoint = None  # 格式：(lon, lat, heading)
 
-        # 固定进仓点（不再跟随每次出仓完成时的实时/unloading_gps漂移）
+        # 固定进仓点，由 loading_gps 参数提供
         self.declare_parameter("loading_gps", list(BUILTIN_LOADING_GPS))
         self.loading_waypoint = self.load_builtin_loading_gps()  # 格式：(lon, lat, heading)
         self.return_to_loading_added = False  # 出仓点是否已追加标志
@@ -315,7 +317,6 @@ class RTKNavControlNode(Node):
         # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
-        self.unloading_gps_sub = self.create_subscription(Vector3, '/unloading_gps', self.unloading_gps_callback, 10)
         self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
         self.route_change_sub = self.create_subscription(String, "/rtk/route_change", self.route_change_callback, 10)
 
@@ -986,12 +987,6 @@ class RTKNavControlNode(Node):
                 if self.confirmed_sensors:
                     self.confirmed_sensors.clear()
                     self._update_blocked_directions()
-    # def unloading_gps_callback(self, msg: Vector3):
-    #     loading_lon = msg.x
-    #     loading_lat = msg.y
-    #     heading = msg.z
-    #     self.loading_waypoint = (loading_lon, loading_lat, heading)
-    #     self.get_logger().info(f"[RTKNav] 收到出仓GPS坐标: 经度={loading_lon}, 纬度={loading_lat}")
     def load_builtin_loading_gps(self) -> Optional[Tuple[float, float, float]]:
         loading_gps = self.get_parameter("loading_gps").value
         if not isinstance(loading_gps, (list, tuple)) or len(loading_gps) != 3:
@@ -1012,52 +1007,6 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[RTKNav] 已加载固定进仓GPS: 经度={lon:.6f}, 纬度={lat:.6f}, 航向={heading:.2f}°")
         return (lon, lat, heading)
 
-    def unloading_gps_callback(self, msg: Vector3):
-        self.get_logger().info(
-            f"[RTKNav] 收到出仓GPS坐标但不再作为进仓航点: 经度={msg.x:.6f}, 纬度={msg.y:.6f}, 航向={msg.z:.2f}°；"
-            f"固定进仓点={self.loading_waypoint}"
-        )
-        # # 步骤1：首次接收出仓点，缓存为基准点（不计算偏移）
-        # if self.base_loading_waypoint is None:
-        #     self.base_loading_waypoint = current_loading
-        #     self.get_logger().info(f"[RTKNav] 缓存基准出仓点：{self.base_loading_waypoint}")
-        #     self.offset_calculated = False
-        #     return
-        
-        # # 步骤2：非首次接收，计算当前出仓点与基准点的偏移量
-        # if not self.offset_calculated:
-        #     base_lon, base_lat, base_heading = self.base_loading_waypoint
-            
-        #     # 2.1 计算经纬度偏移（直接差值，单位：°）
-        #     lon_offset = loading_lon - base_lon
-        #     lat_offset = loading_lat - base_lat
-            
-        #     # 2.2 计算航向角偏移（归一化到[-180°, 180°]）
-        #     heading_offset = loading_heading - base_heading
-        #     heading_offset = math.fmod(heading_offset + 180.0, 360.0) - 180.0
-            
-        #     # 2.3 保存偏移量
-        #     self.waypoint_offset = {
-        #         "lon_offset": lon_offset,
-        #         "lat_offset": lat_offset,
-        #         "heading_offset": heading_offset
-        #     }
-        #     self.offset_calculated = True
-        #     self.get_logger().info(
-        #         f"[RTKNav] 计算出仓点偏移量：经度{lon_offset:.6f}°, 纬度{lat_offset:.6f}°, 航向{heading_offset:.2f}°"
-        #     )
-        #     # 在偏移量计算后检查是否过大
-        #     max_offset_deg = 0.00001  # 最大允许偏移（约1米）
-        #     if abs(lon_offset) > max_offset_deg or abs(lat_offset) > max_offset_deg or abs(heading_offset) > 1.0:
-        #         self.get_logger().warn(f"[RTKNav] 出仓点偏移过大（超过{max_offset_deg}°），请检查出仓点准确性")
-        #         self.waypoint_offset = {
-        #             "lon_offset": 0.0,
-        #             "lat_offset": 0.0,
-        #             "heading_offset": 0.0
-        #         }
-        #         self.offset_calculated = False
-        #         self.get_logger().info("[RTKNav] 已重置偏移量，后续航点将不进行修正")
-    
     def correct_waypoint_by_offset(self, raw_lon: float, raw_lat: float, raw_heading: float) -> Tuple[float, float, float]:
         """
         根据出仓点偏移量，修正航点的经纬度和航向角
@@ -1399,7 +1348,8 @@ class RTKNavControlNode(Node):
 
         # —— 航向稳定性追踪（排除主动旋转的状态：航点校准）——
         nav_state = self.nav_context.get("nav_state", NavState.IDLE)
-        tracking_active = nav_state != NavState.WAYPOINT_CALIB
+        # AUTO入口门控期间机器人保持停车，即使准备恢复到WAYPOINT_CALIB也要重新采集稳定窗口。
+        tracking_active = self._auto_heading_gate_pending or nav_state != NavState.WAYPOINT_CALIB
 
         if tracking_active:
             now = time.monotonic()
@@ -2784,7 +2734,7 @@ class RTKNavControlNode(Node):
                                     break
                                 self.publish_stop_speed()
                                 yield (0.0, 0.0)
-                # 初始航向校验：IMU在90°±15°范围内 + 5s无漂移
+                # 初始航向校验：5s内无漂移，不限制固定角度
                 while True:
                     if not self.check_control_mode():
                         yield (0.0, 0.0)
@@ -3468,6 +3418,9 @@ class RTKNavControlNode(Node):
             "position_data_valid": self.position_data_valid,
             "rtk_solution_ready": self.rtk_solution_ready,
             "control_mode": self.current_control_mode,
+            "heading_stable": self._last_heading_stable,
+            "auto_heading_gate_pending": self._auto_heading_gate_pending,
+            "heading_stability_samples": len(self._heading_stability_history),
             "brush_active": self.brush_active,
             "ts": time.strftime("%H:%M:%S"),
         }
@@ -3489,6 +3442,29 @@ class RTKNavControlNode(Node):
 
     def clear_rtk_error_bits(self, error_bits: int):
         self.rtk_error_code = self.rtk_error_code & ~int(error_bits)
+
+    def _prepare_auto_cleaning_heading_gate(self, source: str):
+        """每次进入AUTO_CLEANING时清除旧样本，强制重新采集完整航向稳定窗口。"""
+        if self._auto_heading_gate_prepared:
+            return
+
+        self._heading_stability_history.clear()
+        self._last_heading_stable = False
+        self.last_heading_check_log_time = 0.0
+        self._auto_heading_gate_prepared = True
+        self._auto_heading_gate_pending = True
+
+        stable_msg = Bool()
+        stable_msg.data = False
+        self.heading_stable_pub.publish(stable_msg)
+        self.get_logger().info(
+            f"[AUTO航向门控] {source}触发AUTO_CLEANING，已清空旧航向样本，"
+            f"重新采集{HEADING_STABILITY_WINDOW:.0f}s稳定窗口"
+        )
+
+    def _disarm_auto_cleaning_heading_gate(self):
+        self._auto_heading_gate_prepared = False
+        self._auto_heading_gate_pending = False
 
     def get_cleaning_area_for_waypoint(self, idx: int = None) -> str:
         idx = self.current_waypoint_idx if idx is None else idx
@@ -3514,6 +3490,9 @@ class RTKNavControlNode(Node):
 
     def state_callback(self, msg: String):
         """电机状态回调函数：监听控制状态变化"""
+        if msg.data != "AUTO_CLEANING":
+            self._disarm_auto_cleaning_heading_gate()
+
         if msg.data == "HOLD" and self.last_state != "HOLD":
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
@@ -3529,6 +3508,7 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
+            self._prepare_auto_cleaning_heading_gate("/motor/state")
             if self._is_manual_intervention_pause():
                 if not self._resume_manual_intervention_pause():
                     self.get_logger().error(
@@ -3632,6 +3612,7 @@ class RTKNavControlNode(Node):
         #     self.multi_waypoint_generator = None
         #     self.nav_running = False
         if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
+            self._prepare_auto_cleaning_heading_gate("/control/mode")
             if self.waiting_for_next_unloading:
                 self.waiting_for_next_unloading = False
                 self.get_logger().info("[RTKNav] 检测到下一次UNLOADING后的AUTO_CLEANING，允许启动预加载路径")
@@ -3655,6 +3636,7 @@ class RTKNavControlNode(Node):
 
         # 切换非RTK模式时, 保存导航状态, 停止导航
         if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            self._disarm_auto_cleaning_heading_gate()
             if (self._is_manual_intervention_pause()
                     and not self.nav_context.get("manual_intervention_seen", False)):
                 self.nav_context["manual_intervention_seen"] = True
@@ -3717,6 +3699,26 @@ class RTKNavControlNode(Node):
                 self.reset_nav_context()  # 重置导航状态为IDLE
                 self.publish_nav_state(NavState.IDLE)
                 return
+
+            # 每次进入AUTO_CLEANING都必须使用进入后的新样本重新确认5s航向稳定性。
+            # 门控覆盖首次启动及WAYPOINT_MOVE/WAYPOINT_CALIB等恢复路径。
+            if self._auto_heading_gate_pending:
+                if not self._last_heading_stable:
+                    now = time.monotonic()
+                    if now - self.last_heading_check_log_time >= 10.0:
+                        self.get_logger().warn(
+                            f"[AUTO航向门控] 等待航向稳定：IMU={self.imu_yaw:.1f}°，"
+                            f"要求{HEADING_STABILITY_WINDOW:.0f}s内波动≤{HEADING_STABILITY_RANGE}°，保持停车"
+                        )
+                        self.last_heading_check_log_time = now
+                    self.publish_stop_speed()
+                    return
+
+                self._auto_heading_gate_pending = False
+                self.get_logger().info(
+                    f"[AUTO航向门控] 航向稳定检查通过：IMU={self.imu_yaw:.1f}°，允许启动/恢复导航"
+                )
+
             # 初始化多点导航生成器（首次进入/导航完成后重新初始化, 解决重复进入初始点）
             if not self.multi_waypoint_generator and not self.nav_running:
                 # 判断是否需要恢复导航
