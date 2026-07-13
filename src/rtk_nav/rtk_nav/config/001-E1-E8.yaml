@@ -240,18 +240,18 @@ areas:
     calib_point_c: {lon: 110.64741521205767, lat: 35.605467251897565}
     start_corner: "top_right"
 
-  # # back_6B-5A
-  # - name: "back_6B-5A"
-  #   calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
-  #   calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
-  #   calib_point_c: {lon: 110.64741642174106, lat: 35.60568374013546}
-  #   start_corner: "top_right"
-  # # back_5B-4A
-  # - name: "back_5B-4A"
-  #   calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
-  #   calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
-  #   calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
-  #   start_corner: "top_right"
+  # back_6B-5A
+  - name: "back_6B-5A"
+    calib_point_a: {lon: 110.64741642174106, lat: 35.60568374013546}
+    calib_point_b: {lon: 110.64741639744143, lat: 35.60571753896705}
+    calib_point_c: {lon: 110.64741642174106, lat: 35.60568374013546}
+    start_corner: "top_right"
+  # back_5B-4A
+  - name: "back_5B-4A"
+    calib_point_a: {lon: 110.64741549006075, lat: 35.60589856772437}
+    calib_point_b: {lon: 110.64741564488955, lat: 35.605933355288805}
+    calib_point_c: {lon: 110.64741549006075, lat: 35.60589856772437}
+    start_corner: "top_right"
 
 
 default:
