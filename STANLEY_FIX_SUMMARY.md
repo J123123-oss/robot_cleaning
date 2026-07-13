@@ -855,3 +855,53 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - `_update_blocked_directions()` 发现当前状态落入禁用方向时立即停车
   - `switch_state()` 在状态切换入口拒绝已禁用方向，并保持电机/滚刷停止
 - **影响**: `motor_control.py` — 普通模式超声确认、禁用方向立即停车、命令入口门控。
+
+## 2026-07-13 人工介入暂停原航点续扫 + RTK恢复条件拆分
+
+### 72. 人工介入暂停只能重新下发路径，无法从当前航点继续清扫
+
+- **问题**: `calib_stuck`、`force_bearing_limit_cycle`、`force_bearing_diverge` 进入人工锁定 PAUSE 后，原恢复方案要求重新下发路径。`route_change_callback()` 会把 `current_waypoint_idx` 重置为 0，导致任务从头开始，丢失原清扫进度。
+- **修复**:
+  1. 新增 `manual_intervention_seen` 锁存位。人工故障发生时置为 `False`，普通 RTK/航向恢复和生成器重建不能解除锁定
+  2. 切换到 `HOLD`、`NORMAL` 或其他非 `AUTO_CLEANING` 模式时置为 `True`，表示已经人工接管处理
+  3. 再次进入 `AUTO_CLEANING` 时调用统一恢复函数，不重新加载路径，保留 `current_waypoint_idx` 和滚刷进度
+  4. 恢复状态统一设为 `WAYPOINT_MOVE`，目标为 `waypoints[current_waypoint_idx]`；即使故障发生在 `WAYPOINT_CALIB`，也先重新靠近当前航点，再按正常到点流程进入校准，避免人工移动车辆后在错误位置校准并跳点
+  5. 清零校准生成器、卡滞重试、force_bearing 模式、极限环/背离计数和航向异常瞬态，清除 `ERROR_CALIB_TIMEOUT`
+  6. 航点索引为 0 时清空 `last_waypoint_cache`，让下一轮使用当前 GPS 作为 Stanley 路径起点，避免“航点0→航点0”的零长度路径
+  7. `/motor/state` 与 `/control/mode` 两个入口均复用同一恢复函数，兼容两话题到达顺序不同的情况
+- **恢复状态机**: `人工锁定PAUSE → 切出AUTO_CLEANING人工处理 → 再次进入AUTO_CLEANING → WAYPOINT_MOVE(current_waypoint_idx)`。
+- **可观测性**: `/rtk/nav_context` 增加 `manual_intervention_seen`，可区分“等待人工接管”和“已处理、等待重新进入自动模式”。
+- **影响**: `rtk_nav.py` — `nav_context`、三类人工暂停入口、人工恢复函数、`state_callback()`、`mode_callback()` 和暂停日志。
+
+### 73. rtk_not_fixed 与 rtk_timeout 共用超时标志导致非固定解误恢复
+
+- **问题**: PAUSE 生成器把 `rtk_not_fixed` 和 `rtk_timeout` 合并使用 `rtk_data_timed_out` 判断。RTK 数据持续更新但定位仍为 Float/单点解时，`rtk_data_timed_out=False`，生成器会错误恢复导航，随后下一帧又被非固定解暂停，形成 PAUSE/恢复抖动。
+- **修复**:
+  1. `rtk_not_fixed` 只使用最新 `fix_status` 判断：`last_gps_status != 4` 时保持 PAUSE，只有 RTK Fixed 才恢复
+  2. `rtk_timeout` 只使用 `rtk_data_timed_out` 判断：超过 `RTK_DATA_TIMEOUT` 未收到 `/wtrtk_data` 时保持 PAUSE，数据重新到达后恢复
+  3. 初始化并持续更新 `last_gps_status`；`fix_status < 0` 也按非固定解处理，不再因收到无效数据而误判为可恢复
+  4. 组合故障处理：若先发生 `rtk_timeout`，数据恢复时定位仍非固定解，则把 `pause_reason` 从 `rtk_timeout` 切换为 `rtk_not_fixed`，保留原 `pre_pause_state` 并继续停车
+  5. Fixed 状态回调只直接恢复 `rtk_not_fixed`；`rtk_timeout` 由数据超时标志解除后通过生成器恢复，两个恢复条件不再交叉
+- **恢复条件**:
+
+| pause_reason | 保持暂停条件 | 恢复条件 |
+|---|---|---|
+| `rtk_not_fixed` | `last_gps_status != 4` | `fix_status == 4` |
+| `rtk_timeout` | `rtk_data_timed_out == True` | 重新收到 `/wtrtk_data`，超时标志清除 |
+
+- **影响**: `rtk_nav.py` — RTK状态初始化、`heading_callback()` 非固定解/Fixed处理、PAUSE生成器恢复判断。
+- **验证**: `python -B -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 与 `git diff --check` 均通过。
+
+### 74. 原地旋转校准路径绕过超声保护
+
+- **问题**: 超声触发逻辑已按 `WAYPOINT_MOVE` 和 `WAYPOINT_CALIB` 分流，但仍有多处直接调用 `calibrate_heading_at_waypoint()` 后立即 `yield` 轮速的路径。这些路径虽然实际动作是原地旋转，却不经过 `WAYPOINT_CALIB` 的“旋转打滑 → `_retreat_to_waypoint()` → 重新校准”保护，导致初始航向对准、首航点最终校准、`force_bearing` 原地对准等场景可能绕过超声检测。
+- **修复**:
+  1. 新增 `_calibrate_with_boundary_retreat(target_heading, target_waypoint, label)`，作为所有原地航向校准的统一保护入口
+  2. helper 在校准期间临时把 `nav_state` 和 `calib_target_heading` 设置为 `WAYPOINT_CALIB` 语义，使 `_is_motion_blocked()` 能按当前旋转方向判断左/右侧超声触发
+  3. 旋转校准中触发超声且有目标航点时，执行 `_retreat_to_waypoint()` 回到航点附近后重新校准；无目标航点时交给 `get_boundary_correct_speed()` 启动边界纠偏
+  4. 撤退过程中继续用 `_is_speed_blocked(left_speed, right_speed)` 检查候选轮速，若撤退动作本身仍被禁止，则切换到边界纠偏
+  5. 初始航向对准、第一个航点最终校准、`INITIAL_MOVE` 的 `force_bearing` 原地对准、初始段航向异常校准、`WAYPOINT_MOVE` 的 `force_bearing` 原地对准全部改为走统一 helper
+  6. 删除 `move_to_first_waypoint()` 内部旧的“行进触发后 GPS 后退 0.5m”逻辑，避免和外层 `INITIAL_MOVE` 的 `get_boundary_correct_speed()` 重复抢状态
+- **行为约束**: 行进态仍由外层 `INITIAL_MOVE` / `WAYPOINT_MOVE` 调用 `get_boundary_correct_speed()` 做方向纠偏；原地旋转态统一执行“超声触发 → GPS撤退归位 → 重新校准”。
+- **影响**: `rtk_nav.py` — 原地校准统一保护 helper、初始移动子生成器、主 `WAYPOINT_CALIB`/`force_bearing` 相关校准入口。
+- **验证**: `python -B -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 与 `git diff --check -- src/rtk_nav/rtk_nav/rtk_nav.py` 均通过。
