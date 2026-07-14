@@ -62,6 +62,22 @@ def generate_launch_description():
     #         {'timeout': 0.5}
     #     ]
     # )
+
+    # 摄像头遥控器解析节点（串口文本协议 [Web] angle → 差速速度指令）
+    camera_remote_control_node = Node(
+        package='motor_control',
+        executable='camera_remote_control_node',
+        name='camera_remote_control_node',
+        parameters=[
+            {'port': '/dev/camera_remote'},  # 替换为实际串口设备路径
+            {'baudrate': 115200},
+            {'max_speed': 5.0},              # 最大电机速度指令 (double)
+            {'publish_rate': 0.05},          # 发布周期 秒 (double)
+            {'angle_timeout': 20.0},         # 超时停车阈值 秒 (double)
+            {'disable_dtr_rts': True},       # 禁用 DTR/RTS 避免 ESP32 复位 (bool)
+            {'esp32_boot_wait': 2.0},        # ESP32 上电等待时间 秒 (double)
+        ]
+    )
     rtk_navigator = Node(
         package='rtk_nav',
         executable='rtk_nav',
@@ -134,6 +150,7 @@ def generate_launch_description():
 
     ld.add_action(sensors_485_node)
     ld.add_action(laser_node)
+    ld.add_action(camera_remote_control_node)
     # ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(rtk_navigator)
