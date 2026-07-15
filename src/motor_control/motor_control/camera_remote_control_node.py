@@ -213,29 +213,32 @@ class CameraRemoteController(Node):
                     self.is_connected = False
                     continue
 
-                bytes_waiting = ser.in_waiting
-                if bytes_waiting > 0:
-                    raw_data = ser.read(bytes_waiting)
-                    last_data_time = time.time()
+                if ser.in_waiting > 0:
+                    # 逐行读取，避免串口数据在任意字节处被截断
+                    while ser.in_waiting > 0:
+                        raw_data = ser.readline()
+                        if not raw_data:
+                            break
+                        last_data_time = time.time()
 
-                    # 过滤空闲噪声：剔除全零字节（Linux 浮空引脚噪声）
-                    raw_data = raw_data.replace(b'\x00', b'')
-                    if len(raw_data) == 0:
-                        continue
+                        # 过滤空闲噪声：剔除全零字节（Linux 浮空引脚噪声）
+                        raw_data = raw_data.replace(b'\x00', b'')
+                        if len(raw_data) == 0:
+                            continue
 
-                    # 打印原始串口数据
-                    try:
-                        raw_text = raw_data.decode('utf-8', errors='replace')
-                    except Exception:
-                        raw_text = raw_data.decode('latin-1', errors='replace')
-                    self.get_logger().info(f"[Serial] raw({len(raw_data)}B): {raw_text.strip()!r}")
+                        # 打印原始串口数据（readline 保证每行完整）
+                        try:
+                            raw_text = raw_data.decode('utf-8', errors='replace')
+                        except Exception:
+                            raw_text = raw_data.decode('latin-1', errors='replace')
+                        self.get_logger().info(f"[Serial] raw({len(raw_data)}B): {raw_text.strip()!r}")
 
-                    try:
-                        text = raw_data.decode('utf-8', errors='ignore')
-                    except Exception:
-                        text = raw_data.decode('latin-1', errors='ignore')
+                        try:
+                            text = raw_data.decode('utf-8', errors='ignore')
+                        except Exception:
+                            text = raw_data.decode('latin-1', errors='ignore')
 
-                    buffer += text
+                        buffer += text
 
                     # ── 帧解析：[Web] 作为每条消息的起始标记 ──
                     while True:
@@ -474,27 +477,24 @@ class CameraRemoteController(Node):
                 self.state_pub.publish(msg)
             except Exception:
                 pass
-        # self._serial_write(f"电量：1%\n\r")
+
     # ==================== 电池数据订阅 ====================
 
     def _battery_callback(self, msg: Float32MultiArray):
-        """订阅 /battery_data，提取电量百分比并通过串口发送"""
+        """订阅 /battery_data，提取电量百分比并通过串口发送（低频，锁保护）"""
         if len(msg.data) < 1:
             return
-        percentage = msg.data[0]
-        self.battery_percentage = percentage
-
-        # 通过串口发送电量信息（线程安全）
-        self._serial_write(f"电量：{percentage:.0f}%\n\r")
+        self.battery_percentage = msg.data[0]
+        self._serial_write(f"电量：{self.battery_percentage:.0f}%\r\n")
 
     def _serial_write(self, text: str):
-        """线程安全串口写入"""
-        # with self.lock:
-        if self.serial_conn and self.serial_conn.is_open:
-            try:
-                self.serial_conn.write(text.encode('utf-8'))
-            except serial.SerialException as e:
-                self.get_logger().error(f"❌ 串口写入失败: {e}")
+        """线程安全串口写入（与解析线程互斥）"""
+        with self.lock:
+            if self.serial_conn and self.serial_conn.is_open:
+                try:
+                    self.serial_conn.write(text.encode('utf-8'))
+                except serial.SerialException as e:
+                    self.get_logger().error(f"❌ 串口写入失败: {e}")
 
     # ==================== 生命周期 ====================
 
