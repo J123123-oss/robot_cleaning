@@ -908,16 +908,6 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 ## 2026-07-13 固定进仓航向收敛 + AUTO入口航向安全门控
 
-### 75. loading_gps 航向存在隐式180度换算
-
-- **问题**: `run.launch.py` 需要把实际进仓车头航向先加 `180°`，`motor_control.py` 再减 `180°` 得到最终目标。配置语义不直观，现场设置 `172.52°` 时容易得到错误的反向目标。
-- **修复**:
-  1. `loading_gps` 第三项统一定义为“后退进仓时的车头目标航向”
-  2. `run.launch.py` 直接配置 `172.52°`，不再写 `172.52 + 180.0`
-  3. `motor_control.py` 只将参数归一化到 `[-180°, 180°)`，不再额外反向
-- **行为**: 配置 `loading_gps=[lon, lat, 172.52]` 后，进仓转向目标和后退纠偏目标均为 `172.52°`；后退进仓的轮速方向保持不变。
-- **影响**: `run.launch.py`、`motor_control.py`。
-
 ### 76. 固定进仓点启用后仍保留 /unloading_gps 冗余通道
 
 - **问题**: `rtk_nav` 已使用固定 `loading_gps`，但 `motor_control` 仍在出仓完成后等待 RTK Fixed 和航向稳定，再发布 `/unloading_gps`；`rtk_nav` 仍保留对应订阅和只打印日志的 callback。该通道不再改变进仓点，却延迟出仓完成并保留无效超时错误路径。
@@ -941,3 +931,56 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **预期日志**: `[AUTO航向门控] ...已清空旧航向样本` → `等待航向稳定` → `航向稳定检查通过，允许启动/恢复导航`。
 - **影响**: `rtk_nav.py` — 航向稳定追踪、双入口模式回调、10Hz导航启动门控和调试上下文。
 - **验证**: bundled Python 对 `motor_control.py`、`rtk_nav.py`、`run.launch.py` 执行 `py_compile` 通过；AUTO门控静态检查和 `git diff --check` 通过。
+
+## 2026-07-13 进出仓失败收敛 + AUTO航向门控超时恢复（保留当前仍生效条目）
+
+### 81. 航向稳定范围未按圆周计算 + 初始校准失败仍继续行驶
+
+- **问题**:
+  1. `max(heading)-min(heading)` 会把 `359.8°/0.2°` 误判为约 `359.6°` 波动
+  2. 初始航向校准返回失败后仍进入Stanley直线行驶
+- **修复**:
+  1. 航向波动改用圆周角最小覆盖范围：`360° - 最大相邻空隙`
+  2. 初始校准异常或超时且误差未达标时，设置 `ERROR_CALIB_TIMEOUT`、发布零速并进入PAUSE
+  3. 暂停原因记录为 `initial_heading_calib_failed`，按人工介入锁定流程处理
+- **影响**: `rtk_nav.py` — 航向稳定判定和INITIAL_MOVE初始校准失败路径。
+
+### 82. AUTO航向门控无限等待
+
+- **问题**: AUTO入口航向持续漂移时只会无限保持门控等待，没有明确PAUSE状态；现场无法区分正常5秒采样和长期异常。
+- **修复**:
+  1. 新增 `AUTO_HEADING_GATE_TIMEOUT=60s`
+  2. 超时后保存原导航状态，清理生成器，发布零速并进入 `PAUSE(auto_heading_gate_timeout)`
+  3. 门控在PAUSE期间继续采样；新的完整窗口恢复到波动≤3°后，自动恢复超时前状态并重建导航生成器
+  4. `/rtk/nav_context` 增加 `auto_heading_gate_elapsed`
+- **恢复状态机**: `AUTO门控等待 → 60s仍不稳定 → PAUSE → 新5s窗口稳定 → 自动恢复原导航状态`。
+- **未改范围**: 按现场要求，本轮不启用进出仓期间边界传感器，也不处理START完成阶段的阻塞sleep；Fixed样本限制由后续第83项补充。
+- **影响**: `rtk_nav.py` — AUTO入口门控、PAUSE与自动恢复。
+
+### 83. AUTO门控可能累计非Fixed阶段的航向样本
+
+- **问题**: `heading_callback()` 原先先把本帧航向加入稳定窗口，随后才解析 `position_status`、`fix_status` 和 `position_data_valid`。AUTO门控等待期间，Float、定向非Fixed或无效GGA样本可能被累计，并在恢复Fixed后过早通过5秒门控。
+- **修复**:
+  1. 回调入口先解析本帧RTK质量，再处理航向稳定窗口
+  2. AUTO门控期间仅接受 `position_status == 4`、`fix_status == 4` 且 `position_data_valid == True` 的航向样本
+  3. 任一条件不满足时立即清空整个稳定窗口，并将 `heading_stable` 置为 `False`
+  4. Fixed恢复后必须重新连续采集完整约5秒窗口，不能复用失锁前样本
+- **预期日志**: `[AUTO航向门控] RTK质量丢失，清空航向稳定窗口...`，随后Fixed恢复并重新累计样本。
+- **影响**: `rtk_nav.py` — `/wtrtk_data` 航向稳定采样顺序和AUTO入口门控。
+
+## 2026-07-16 进出仓安全状态机回归修复
+
+### 84. 重新收敛 START 停车条件和 LOADING 对准超时
+
+- **问题**:
+  1. START 运行期间限位传感器触发会直接返回而不下发零速；归位位 `0x02` 清除后，后退计时逻辑也被整个条件块跳过，可能保持最后一次后退速度。
+  2. LOADING 的 NAV 对准、最终角度对准和 GPS 位置恢复超时仍可能继续 DRIVE、固定后退或重新循环。
+- **修复**:
+  1. START 限位位 `0x04/0x08` 在任意阶段立即停车；归位位只作为启动门槛，进入 `UNLOADING_BACKWARD` 后不再依赖 `0x02` 推进计时。
+  2. NAV 对准、最终角度对准和 `LOADING_POS_RECOVER` 超时统一调用 `fail_loading_process()`，停车、保持 `HOLD`、设置 `ERROR_LOADING_TIMEOUT(32)` 并立即发布故障状态。
+- **回归确认**:
+  - 圆周航向最小覆盖范围仍由 `rtk_nav.py::_circular_heading_span()` 使用
+  - 初始航向失败仍进入 `PAUSE(initial_heading_calib_failed)`
+  - AUTO 门控仍保留 60 秒超时、`PAUSE(auto_heading_gate_timeout)` 及稳定后自动恢复
+- **未改范围**: 按要求不改变进出仓期间边界传感器整体旁路、固定24秒后退策略和START完成阶段阻塞sleep。
+- **影响**: `motor_control.py` — START/LOADING 安全收口；`rtk_nav.py` — 4/6/8 回归保持。
