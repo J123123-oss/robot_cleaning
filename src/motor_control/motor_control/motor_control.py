@@ -684,7 +684,7 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            self.set_brush_speed(18.0)
+            self.set_brush_speed(0.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -1291,7 +1291,7 @@ class MotorControlNode(Node):
             self.loading_start_time = None  # 暂不记录启动时间
             self.loading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
-            self.set_brush_speed(18.0)  # 测试部分，进仓开启滚刷
+            # self.set_brush_speed(18.0)  # 测试部分，进仓开启滚刷
             
             # self.get_logger().info("[ROSNode] 进入进仓状态，启动进仓定时器")
             # self.current_status = new_state
