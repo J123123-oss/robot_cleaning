@@ -158,6 +158,7 @@ class MotorControlNode(Node):
         self._pos_recover_gps_drift_limit = 0.03  # GPS 漂移 > 0.03m，重新对准目标点（天线已换算到车体中心）
         self._pos_recover_retry_count = 0
         self._pos_recover_max_retries = 3       # 位置恢复最大重试次数，防止死循环
+        self._pos_recover_abort_dist = 0.15     # 重试耗尽后GPS偏移超过此值(m)放弃进仓
         self._pos_recover_timeout = 60.0
         self._pos_recover_use_backward = False
         self._last_turn_log_time = 0.0
@@ -683,7 +684,7 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            self.set_brush_speed(0.0)
+            self.set_brush_speed(18.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -1290,7 +1291,7 @@ class MotorControlNode(Node):
             self.loading_start_time = None  # 暂不记录启动时间
             self.loading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
-            # self.set_brush_speed(18.0)  # 测试部分，进仓开启滚刷
+            self.set_brush_speed(18.0)  # 测试部分，进仓开启滚刷
             
             # self.get_logger().info("[ROSNode] 进入进仓状态，启动进仓定时器")
             # self.current_status = new_state
@@ -2188,16 +2189,24 @@ class MotorControlNode(Node):
                                 gps_dist = self.haversine_distance(
                                     self.current_lon, self.current_lat,
                                     self.loading_gps[0], self.loading_gps[1])
-                                if gps_dist >= self._pos_recover_gps_drift_limit:
+                                if gps_dist > self._pos_recover_gps_drift_limit:
                                     if self._pos_recover_retry_count >= self._pos_recover_max_retries:
+                                        if gps_dist > self._pos_recover_abort_dist:
+                                            # 严重偏移：放弃进仓，停车并上报进仓超时故障
+                                            self.fail_loading_process(
+                                                f"[LOADING] 位置恢复已重试{self._pos_recover_retry_count}次，"
+                                                f"GPS偏移{gps_dist:.2f}m > {self._pos_recover_abort_dist}m，"
+                                                f"放弃进仓，上报进仓超时故障")
+                                            return
                                         self.get_logger().warn(
                                             f"[LOADING] 位置恢复已重试{self._pos_recover_retry_count}次，"
-                                            f"放弃恢复(gps={gps_dist:.2f}m)，直接后退进仓")
+                                            f"放弃恢复(gps={gps_dist:.2f}m <= "
+                                            f"{self._pos_recover_abort_dist}m)，直接后退进仓")
                                         self._pos_recover_retry_count = 0
                                     else:
                                         self._pos_recover_retry_count += 1
                                         self.get_logger().warn(
-                                            f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m >= "
+                                            f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
                                             f"{self._pos_recover_gps_drift_limit}m，"
                                             f"进入位置恢复(第{self._pos_recover_retry_count}次)")
                                         self.loading_phase = "LOADING_POS_RECOVER"

@@ -975,9 +975,11 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **问题**:
   1. START 运行期间限位传感器触发会直接返回而不下发零速；归位位 `0x02` 清除后，后退计时逻辑也被整个条件块跳过，可能保持最后一次后退速度。
   2. LOADING 的 NAV 对准、最终角度对准和 GPS 位置恢复超时仍可能继续 DRIVE、固定后退或重新循环。
+  3. 位置恢复重试耗尽（`_pos_recover_max_retries=3`）后无条件"放弃恢复、直接后退进仓"，GPS 严重偏移时仍会盲退。
 - **修复**:
   1. START 限位位 `0x04/0x08` 在任意阶段立即停车；归位位只作为启动门槛，进入 `UNLOADING_BACKWARD` 后不再依赖 `0x02` 推进计时。
   2. NAV 对准、最终角度对准和 `LOADING_POS_RECOVER` 超时统一调用 `fail_loading_process()`，停车、保持 `HOLD`、设置 `ERROR_LOADING_TIMEOUT(32)` 并立即发布故障状态。
+  3. 重试耗尽后按 `gps_dist` 门控（新增 `_pos_recover_abort_dist=0.15m`）：偏移 ≤0.15m 才继续后退进仓；>0.15m 放弃进仓，走 `fail_loading_process()`（停车、`complete_state=False`、上报 `ERROR_LOADING_TIMEOUT`）。
 - **回归确认**:
   - 圆周航向最小覆盖范围仍由 `rtk_nav.py::_circular_heading_span()` 使用
   - 初始航向失败仍进入 `PAUSE(initial_heading_calib_failed)`
