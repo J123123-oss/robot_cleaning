@@ -62,6 +62,7 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "initial_heading_calib_failed",
     "force_bearing_limit_cycle",
     "force_bearing_diverge",
+    "boundary_retreat_timeout",
 })
 # 初始航向校验（仅检查航向是否稳定无漂移，不限制固定角度——出仓后无论车头朝哪，稳住即放行）
 # 航向稳定性由 heading_callback 中的 HEADING_STABILITY_WINDOW / HEADING_STABILITY_RANGE 控制
@@ -125,6 +126,13 @@ class BoundaryCorrectState:
     TURNING = "TURNING"
     BACKING = "BACKING"
     RETURNING = "RETURNING"
+
+
+class RetreatResult:
+    """GPS撤退生成器的显式完成结果。"""
+    SUCCESS = "success"
+    P1_TIMEOUT = "p1_timeout"
+    P2_TIMEOUT = "p2_timeout"
 # -------------------------- 合并后的RTK控制+导航节点 --------------------------
 class RTKNavControlNode(Node):
     def __init__(self):
@@ -738,7 +746,7 @@ class RTKNavControlNode(Node):
     def _retreat_to_waypoint(self, waypoint: Tuple[float, float, float],
                              retreat_speed: float = 2.0,
                              distance_threshold: float = 0.2,
-                             timeout: float = 30.0) -> Generator[Tuple[float, float], None, None]:
+                             timeout: float = 30.0) -> Generator[Tuple[float, float], None, str]:
         """
         打滑撤退：背对航点反方向 → 后退归位。
         校准旋转中传感器触发时调用，通过GPS距离闭环回到航点。
@@ -777,7 +785,7 @@ class RTKNavControlNode(Node):
                 if time.time() - start_time > timeout:
                     self.get_logger().error("[RTKNav] 撤退P1超时")
                     yield (0.0, 0.0)
-                    return
+                    return RetreatResult.P1_TIMEOUT
 
                 # 旋转中被边界阻挡 → 根据 blocked_directions 直接选择安全远离方向
                 if self._is_motion_blocked() and not self.boundary_correct_locked:
@@ -799,7 +807,7 @@ class RTKNavControlNode(Node):
                         if time.time() - start_time > timeout:
                             self.get_logger().error("[RTKNav] 撤退P1超时")
                             yield (0.0, 0.0)
-                            return
+                            return RetreatResult.P1_TIMEOUT
                         if self.boundary_correct_locked:
                             yield self.get_boundary_correct_speed()
                             continue
@@ -820,14 +828,17 @@ class RTKNavControlNode(Node):
             dist = self.calc_distance_to_waypoint(waypoint)
             if dist < distance_threshold:
                 self.get_logger().info(f"[RTKNav] 撤退P2完成: dist={dist:.3f}m")
-                break
+                yield (0.0, 0.0)
+                self.get_logger().info("[RTKNav] 撤退完成，可重新执行校准")
+                return RetreatResult.SUCCESS
             # 距离不收敛 → 可能打滑，降速
             if dist > last_dist + 0.05:
                 self.get_logger().warn(f"[RTKNav] 撤退距离反向增长({last_dist:.3f}→{dist:.3f})，降速")
             last_dist = dist
             if time.time() - start_time > timeout:
                 self.get_logger().warn(f"[RTKNav] 撤退P2超时: dist={dist:.3f}m")
-                break
+                yield (0.0, 0.0)
+                return RetreatResult.P2_TIMEOUT
             # 距离比例速度缩放（参考LOW_DISTANCE逻辑，避免打滑/过冲）
             if dist < LOW_DISTANCE:
                 speed_scale = max(0.5, dist / LOW_DISTANCE)
@@ -844,9 +855,6 @@ class RTKNavControlNode(Node):
             right_speed = min(-0.3, right_speed)
             yield (left_speed, right_speed)
             self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, hdg_err={hdg_err:.1f}°")
-
-        yield (0.0, 0.0)
-        self.get_logger().info("[RTKNav] 撤退完成，可重新执行校准")
 
     def _calibrate_with_boundary_retreat(
             self,
@@ -895,16 +903,21 @@ class RTKNavControlNode(Node):
                                             f"({sorted(self.blocked_directions)})，启动边界矫正")
                                         left_speed, right_speed = self.get_boundary_correct_speed()
                                     yield (left_speed, right_speed)
-                            except StopIteration:
-                                pass
+                            except StopIteration as e:
+                                retreat_result = e.value
+                            if retreat_result != RetreatResult.SUCCESS:
+                                self._pause_boundary_retreat_timeout(retreat_result, label)
+                                yield (0.0, 0.0)
+                                return False
                             self.get_logger().info(f"[RTKNav] {label}撤退完成，重新执行航向校准")
                             break
 
                     yield (left_speed, right_speed)
             return False
         finally:
-            self.nav_context["nav_state"] = saved_nav_state
-            self.nav_context["calib_target_heading"] = saved_calib_target
+            if self.nav_context.get("pause_reason") != "boundary_retreat_timeout":
+                self.nav_context["nav_state"] = saved_nav_state
+                self.nav_context["calib_target_heading"] = saved_calib_target
 
     def io_data_rtk_callback(self, msg: UInt8):
 
@@ -2178,6 +2191,25 @@ class RTKNavControlNode(Node):
         self.publish_stop_speed()
         self.get_logger().error(f"[初始航向对准] {detail}，已停车并进入PAUSE等待人工处理")
 
+    def _pause_boundary_retreat_timeout(self, result: str, label: str) -> None:
+        """GPS撤退超时后锁定停车，等待人工排除边界风险。"""
+        phase = {
+            RetreatResult.P1_TIMEOUT: "P1",
+            RetreatResult.P2_TIMEOUT: "P2",
+        }.get(result, str(result))
+        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+        self.nav_context["calib_generator"] = None
+        self.nav_context["nav_state"] = NavState.PAUSE
+        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
+        self.nav_context["pause_reason"] = "boundary_retreat_timeout"
+        self.nav_context["manual_intervention_seen"] = False
+        self.nav_context["brush_active"] = self.brush_active
+        self.nav_running = False
+        self.publish_nav_state(NavState.PAUSE)
+        self.publish_stop_speed()
+        self.get_logger().error(
+            f"[RTKNav] {label} GPS撤退{phase}超时，已停车并进入PAUSE等待人工处理")
+
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
         if not self.waypoints:
             self.get_logger().error("无航点数据, 无法执行初始移动")
@@ -2977,8 +3009,13 @@ class RTKNavControlNode(Node):
                                             "启动边界矫正")
                                         left_speed, right_speed = self.get_boundary_correct_speed()
                                     yield (left_speed, right_speed)
-                            except StopIteration:
-                                pass
+                            except StopIteration as e:
+                                retreat_result = e.value
+                            if retreat_result != RetreatResult.SUCCESS:
+                                self._pause_boundary_retreat_timeout(
+                                    retreat_result, "航向校准")
+                                yield (0.0, 0.0)
+                                return
                             # 撤退完成，重新初始化校准
                             target_heading = self.get_path_heading(target_waypoint)
                             self.nav_context["calib_target_heading"] = target_heading

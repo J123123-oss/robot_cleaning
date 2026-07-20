@@ -986,3 +986,15 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - AUTO 门控仍保留 60 秒超时、`PAUSE(auto_heading_gate_timeout)` 及稳定后自动恢复
 - **未改范围**: 按要求不改变进出仓期间边界传感器整体旁路、固定24秒后退策略和START完成阶段阻塞sleep。
 - **影响**: `motor_control.py` — START/LOADING 安全收口；`rtk_nav.py` — 4/6/8 回归保持。
+
+## 2026-07-20 GPS撤退超时不得误判为成功
+
+### 85. P1/P2撤退超时后仍重新执行航向校准
+
+- **问题**: `_retreat_to_waypoint()` 在P1或P2超时后只停止生成器；两个调用方未读取 `StopIteration.value`，统一打印“撤退完成，重新执行航向校准”并重启校准，存在持续原地旋转的风险。
+- **修复**:
+  1. 新增 `RetreatResult`，让撤退生成器显式返回 `SUCCESS`、`P1_TIMEOUT` 或 `P2_TIMEOUT`。
+  2. 两个撤退调用方仅在 `SUCCESS` 时重新执行航向校准；P1/P2超时改为调用统一暂停入口。
+  3. 超时入口设置 `ERROR_CALIB_TIMEOUT`、`PAUSE`、`pre_pause_state=WAYPOINT_CALIB` 和 `pause_reason=boundary_retreat_timeout`，发布零速并纳入人工介入恢复流程。
+- **行为约束**: 超时后 `/rtk/nav_state` 保持 `PAUSE`，`/rtk/motor_speed` 持续为零；必须先切出再重新进入 `AUTO_CLEANING`，才会从当前航点按 `WAYPOINT_MOVE` 恢复。
+- **影响**: `rtk_nav.py`：GPS撤退结果、航向校准撤退消费点和人工暂停原因。
