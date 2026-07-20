@@ -998,3 +998,11 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   3. 超时入口设置 `ERROR_CALIB_TIMEOUT`、`PAUSE`、`pre_pause_state=WAYPOINT_CALIB` 和 `pause_reason=boundary_retreat_timeout`，发布零速并纳入人工介入恢复流程。
 - **行为约束**: 超时后 `/rtk/nav_state` 保持 `PAUSE`，`/rtk/motor_speed` 持续为零；必须先切出再重新进入 `AUTO_CLEANING`，才会从当前航点按 `WAYPOINT_MOVE` 恢复。
 - **影响**: `rtk_nav.py`：GPS撤退结果、航向校准撤退消费点和人工暂停原因。
+
+### 86. 校准卡滞重试后退未按候选速度检查边界
+
+- **问题**: 后退脱困使用当前旋转方向的 `_is_motion_blocked()` 判断，而实际将发布的动作是差速后退；传感器禁止后退时仍可能下发后退速度。代码参数也漂移为 `1.0/-1.0`、`1.5s`，与既有 `0.4/-0.4`、`1s` 约定不一致。
+- **修复**:
+  1. 新增 `CALIB_RETRY_BACKUP_SPEED=0.4` 与 `CALIB_RETRY_BACKUP_DURATION=1.0`，使实现和既有参数约定一致。
+  2. 每帧用 `_is_speed_blocked(*backup_speeds)` 检查即将发布的后退速度；候选后退被禁止或边界矫正已锁定时，交给 `get_boundary_correct_speed()`，不再下发后退速度。
+- **影响**: `rtk_nav.py`：`WAYPOINT_CALIB` 的 `calib_stuck` 重试脱困分支。

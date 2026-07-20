@@ -36,6 +36,8 @@ HEADING_CALIBRATION_TIMEOUT = 40.0
 HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时后暂停导航
 HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
 CALIB_STUCK_MAX_RETRIES = 3  # 校准卡滞最大重试次数，超此次数后才永久暂停
+CALIB_RETRY_BACKUP_SPEED = 0.4  # 校准卡滞重试的差速后退速度
+CALIB_RETRY_BACKUP_DURATION = 1.0  # 校准卡滞重试的后退脱困时长（秒）
 
 TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
@@ -3037,16 +3039,23 @@ class RTKNavControlNode(Node):
                             )
                             # 第2次及以上重试：先短暂后退脱困，再重新校准
                             if retry_count >= 2:
-                                self.get_logger().info("[航向校准] 后退1.5s脱困...")
+                                backup_speeds = (
+                                    CALIB_RETRY_BACKUP_SPEED,
+                                    -CALIB_RETRY_BACKUP_SPEED,
+                                )
+                                self.get_logger().info(
+                                    f"[航向校准] 后退{CALIB_RETRY_BACKUP_DURATION:.1f}s脱困...")
                                 backup_start = self.get_clock().now()
-                                while (self.get_clock().now() - backup_start).nanoseconds / 1e9 < 1.5:
-                                    if self._is_motion_blocked() or self.boundary_correct_locked:
-                                        if self.boundary_correct_locked:
-                                            yield self.get_boundary_correct_speed()
-                                        else:
-                                            yield (0.0, 0.0)
+                                while ((self.get_clock().now() - backup_start).nanoseconds / 1e9
+                                       < CALIB_RETRY_BACKUP_DURATION):
+                                    if self.boundary_correct_locked:
+                                        yield self.get_boundary_correct_speed()
+                                    elif self._is_speed_blocked(*backup_speeds):
+                                        self.get_logger().warn(
+                                            "[航向校准] 后退脱困动作被边界禁止，启动边界矫正")
+                                        yield self.get_boundary_correct_speed()
                                     else:
-                                        yield (1.0, -1.0) # 后退速度
+                                        yield backup_speeds
                                 yield (0.0, 0.0)
                             self.heading_abnormal_start_time = None
                             self.heading_timed_out = False
