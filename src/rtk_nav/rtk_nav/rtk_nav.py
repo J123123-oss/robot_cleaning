@@ -135,6 +135,7 @@ class RetreatResult:
     SUCCESS = "success"
     P1_TIMEOUT = "p1_timeout"
     P2_TIMEOUT = "p2_timeout"
+    P2_BACK_BLOCKED = "p2_back_blocked"  # 后退时后方传感器触发，中止撤退
 # -------------------------- 合并后的RTK控制+导航节点 --------------------------
 class RTKNavControlNode(Node):
     def __init__(self):
@@ -847,16 +848,35 @@ class RTKNavControlNode(Node):
             else:
                 speed_scale = 1.0
             effective_speed = retreat_speed * speed_scale
-            # 航向修正：保持背对航点方向
-            hdg_err = self.get_heading_error(anti_heading)
-            correction = max(-1.0, min(1.0, hdg_err * 0.05))  # P项，限幅±1.0
-            left_speed = effective_speed - correction    # +v=后退, correction负→左轮慢→右转
-            right_speed = -effective_speed - correction   # -v=后退, correction负→右轮快→右转
-            # 防止换向（最低保持0.3避免完全停止）
+            # Phase 2 传感器安全检查：后退中触发传感器 → 动态调整
+            if self._is_motion_blocked() and not self.boundary_correct_locked:
+                if 'BACKWARD' in self.blocked_directions:
+                    # 后方出现边缘 → 停止后退，前进远离（后方边缘时后退=跌落）
+                    self.get_logger().warn(
+                        f"[RTKNav] 撤退P2后方触发传感器(blocked={sorted(self.blocked_directions)})，立即停止后退")
+                    yield (0.0, 0.0)
+                    return RetreatResult.P2_BACK_BLOCKED
+                # 前方或侧方仍触发 → 预期内（远离边缘中），但禁止航向修正偏入危险侧
+                if 'LEFT' in self.blocked_directions:
+                    left_speed = effective_speed       # 左轮不可慢于右轮（禁止左偏）
+                    right_speed = -effective_speed
+                elif 'RIGHT' in self.blocked_directions:
+                    left_speed = effective_speed
+                    right_speed = -effective_speed     # 右轮不可慢于左轮（禁止右偏）
+                else:
+                    left_speed = effective_speed
+                    right_speed = -effective_speed
+            else:
+                # 无传感器禁止 → 正常后退 + 航向修正
+                hdg_err = self.get_heading_error(anti_heading)
+                correction = max(-1.0, min(1.0, hdg_err * 0.05))
+                left_speed = effective_speed - correction
+                right_speed = -effective_speed - correction
+            # 防止换向
             left_speed = max(0.3, left_speed)
             right_speed = min(-0.3, right_speed)
             yield (left_speed, right_speed)
-            self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, hdg_err={hdg_err:.1f}°")
+            self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, blocked={sorted(self.blocked_directions)}")
 
     def _calibrate_with_boundary_retreat(
             self,
