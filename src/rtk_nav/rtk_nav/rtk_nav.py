@@ -36,8 +36,8 @@ HEADING_CALIBRATION_TIMEOUT = 40.0
 HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时后暂停导航
 HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
 CALIB_STUCK_MAX_RETRIES = 3  # 校准卡滞最大重试次数，超此次数后才永久暂停
-CALIB_RETRY_BACKUP_SPEED = 0.4  # 校准卡滞重试的差速后退速度
-CALIB_RETRY_BACKUP_DURATION = 1.0  # 校准卡滞重试的后退脱困时长（秒）
+CALIB_RETRY_BACKUP_SPEED = 1.0  # 校准卡滞重试的差速后退速度
+CALIB_RETRY_BACKUP_DURATION = 1.5  # 校准卡滞重试的后退脱困时长（秒）
 
 TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
