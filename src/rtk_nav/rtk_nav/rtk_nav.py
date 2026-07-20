@@ -882,14 +882,18 @@ class RTKNavControlNode(Node):
                         return bool(e.value)
 
                     if self._is_motion_blocked() or self.boundary_correct_locked:
-                        if self.boundary_correct_locked:
-                            left_speed, right_speed = self.get_boundary_correct_speed()
-                        elif target_waypoint is None:
+                        if target_waypoint is None:
                             self.get_logger().warn(
                                 f"[RTKNav] {label}触发传感器({sorted(self.blocked_directions)})，"
                                 "无目标航点，启动边界矫正")
                             left_speed, right_speed = self.get_boundary_correct_speed()
                         else:
+                            if self.boundary_correct_locked:
+                                self.get_logger().warn(
+                                    f"[RTKNav] {label}中止已锁定的边界矫正，"
+                                    "停车一帧后执行GPS撤退回航点")
+                                yield (0.0, 0.0)
+                                self._reset_boundary_correction()
                             self.get_logger().warn(
                                 f"[RTKNav] {label}触发传感器({sorted(self.blocked_directions)})，"
                                 "执行GPS撤退回航点")
@@ -2991,40 +2995,43 @@ class RTKNavControlNode(Node):
                     left_speed, right_speed = next(calib_generator)
                     if self._is_motion_blocked() or self.boundary_correct_locked:
                         if self.boundary_correct_locked:
-                            left_speed, right_speed = self.get_boundary_correct_speed()
-                        else:
-                            # 旋转打滑偏移 → GPS撤退回航点，重新定位后重试
                             self.get_logger().warn(
-                                f"[RTKNav] 校准打滑触发传感器({sorted(self.blocked_directions)})，"
-                                f"执行GPS撤退回航点{self.current_waypoint_idx}")
-                            retreat_gen = self._retreat_to_waypoint(target_waypoint)
-                            try:
-                                while True:
-                                    left_speed, right_speed = next(retreat_gen)
-                                    if self.boundary_correct_locked:
-                                        left_speed, right_speed = self.get_boundary_correct_speed()
-                                    elif self._is_speed_blocked(left_speed, right_speed):
-                                        # 撤退生成器已给出安全远离动作时直接放行；
-                                        # 只有即将发布的动作仍被禁止，才交给边界矫正接管。
-                                        self.get_logger().warn(
-                                            f"[RTKNav] 撤退动作被边界禁止({sorted(self.blocked_directions)})，"
-                                            "启动边界矫正")
-                                        left_speed, right_speed = self.get_boundary_correct_speed()
-                                    yield (left_speed, right_speed)
-                            except StopIteration as e:
-                                retreat_result = e.value
-                            if retreat_result != RetreatResult.SUCCESS:
-                                self._pause_boundary_retreat_timeout(
-                                    retreat_result, "航向校准")
-                                yield (0.0, 0.0)
-                                return
-                            # 撤退完成，重新初始化校准
-                            target_heading = self.get_path_heading(target_waypoint)
-                            self.nav_context["calib_target_heading"] = target_heading
-                            calib_generator = self.calibrate_heading_at_waypoint(target_heading)
-                            self.nav_context["calib_generator"] = calib_generator
-                            self.get_logger().info("[RTKNav] 撤退完成，重新执行航向校准")
-                            continue
+                                "[RTKNav] 校准中止已锁定的边界矫正，"
+                                "停车一帧后执行GPS撤退回航点")
+                            yield (0.0, 0.0)
+                            self._reset_boundary_correction()
+                        # 旋转打滑偏移 → GPS撤退回航点，重新定位后重试
+                        self.get_logger().warn(
+                            f"[RTKNav] 校准打滑触发传感器({sorted(self.blocked_directions)})，"
+                            f"执行GPS撤退回航点{self.current_waypoint_idx}")
+                        retreat_gen = self._retreat_to_waypoint(target_waypoint)
+                        try:
+                            while True:
+                                left_speed, right_speed = next(retreat_gen)
+                                if self.boundary_correct_locked:
+                                    left_speed, right_speed = self.get_boundary_correct_speed()
+                                elif self._is_speed_blocked(left_speed, right_speed):
+                                    # 撤退生成器已给出安全远离动作时直接放行；
+                                    # 只有即将发布的动作仍被禁止，才交给边界矫正接管。
+                                    self.get_logger().warn(
+                                        f"[RTKNav] 撤退动作被边界禁止({sorted(self.blocked_directions)})，"
+                                        "启动边界矫正")
+                                    left_speed, right_speed = self.get_boundary_correct_speed()
+                                yield (left_speed, right_speed)
+                        except StopIteration as e:
+                            retreat_result = e.value
+                        if retreat_result != RetreatResult.SUCCESS:
+                            self._pause_boundary_retreat_timeout(
+                                retreat_result, "航向校准")
+                            yield (0.0, 0.0)
+                            return
+                        # 撤退完成，重新初始化校准
+                        target_heading = self.get_path_heading(target_waypoint)
+                        self.nav_context["calib_target_heading"] = target_heading
+                        calib_generator = self.calibrate_heading_at_waypoint(target_heading)
+                        self.nav_context["calib_generator"] = calib_generator
+                        self.get_logger().info("[RTKNav] 撤退完成，重新执行航向校准")
+                        continue
                     yield (left_speed, right_speed)
                 except StopIteration as e:
                     calib_result = e.value if hasattr(e, 'value') else False

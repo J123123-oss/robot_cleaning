@@ -1001,8 +1001,17 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 ### 86. 校准卡滞重试后退未按候选速度检查边界
 
-- **问题**: 后退脱困使用当前旋转方向的 `_is_motion_blocked()` 判断，而实际将发布的动作是差速后退；传感器禁止后退时仍可能下发后退速度。代码参数也漂移为 `1.0/-1.0`、`1.5s`，与既有 `0.4/-0.4`、`1s` 约定不一致。
+- **问题**: 后退脱困使用当前旋转方向的 `_is_motion_blocked()` 判断，而实际将发布的动作是差速后退；传感器禁止后退时仍可能下发后退速度。
 - **修复**:
-  1. 新增 `CALIB_RETRY_BACKUP_SPEED=0.4` 与 `CALIB_RETRY_BACKUP_DURATION=1.0`，使实现和既有参数约定一致。
+  1. 将后退速度和时长收敛为 `CALIB_RETRY_BACKUP_SPEED=1.0`、`CALIB_RETRY_BACKUP_DURATION=1.5` 两个命名参数。
   2. 每帧用 `_is_speed_blocked(*backup_speeds)` 检查即将发布的后退速度；候选后退被禁止或边界矫正已锁定时，交给 `get_boundary_correct_speed()`，不再下发后退速度。
 - **影响**: `rtk_nav.py`：`WAYPOINT_CALIB` 的 `calib_stuck` 重试脱困分支。
+
+### 87. 原地校准被已锁定的固定边界纠偏接管
+
+- **问题**: `boundary_correct_locked` 表示此前已启动固定的“偏转→行进→回正”流程。原地校准若直接继续该流程，会把固定行走纠偏混入旋转打滑恢复；纠偏后也不会按 GPS 回到目标航点。
+- **修复**:
+  1. 有目标航点的旋转校准检测到锁定时，先 `yield (0, 0)` 停车一帧，再调用 `_reset_boundary_correction()` 清除固定纠偏状态和锁定。
+  2. 不清除已确认传感器和禁止方向；随后立即进入 `_retreat_to_waypoint()`，使 P1/P2 继续按候选速度方向做边界检查。
+  3. 无目标航点保留固定边界纠偏作为降级处理。
+- **影响**: `rtk_nav.py`：`_calibrate_with_boundary_retreat()` 与主 `WAYPOINT_CALIB` 的锁定边界处理；`README.md` 状态图。

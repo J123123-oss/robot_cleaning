@@ -133,10 +133,20 @@ graph TD
 ```mermaid
 graph TD
     subgraph 外部事件中断
-        GPS_NONFIX["GPS非固定解"] --> PAUSE["PAUSE暂停导航"]
-        PAUSE --> GPS_FIX["GPS恢复固定解"] --> RESUME["恢复pre_pause_state<br/>heading_timed_out时拒绝恢复"]
-        RTK_TIMEOUT["RTK数据断流>1s"] --> PAUSE_STOP["立即停车 PAUSE<br/>数据恢复后自动恢复"]
-        HDG_TIMEOUT["航向异常>15s"] --> PAUSE_STOP2["立即停车 PAUSE<br/>IMU恢复后自动恢复"]
+        GPS_NONFIX["定位或定向非Fixed"] --> PAUSE_AUTO["PAUSE<br/>rtk_not_fixed"]
+        RTK_TIMEOUT["RTK数据断流>1s"] --> PAUSE_AUTO2["PAUSE<br/>rtk_timeout"]
+        HDG_GATE_TIMEOUT["AUTO航向门控60s未稳定"] --> PAUSE_AUTO3["PAUSE<br/>auto_heading_gate_timeout"]
+        PAUSE_AUTO --> GPS_FIX["定位与定向恢复Fixed"] --> RESUME["恢复pre_pause_state"]
+        PAUSE_AUTO2 --> RTK_FRESH["/wtrtk_data恢复新鲜"] --> RESUME
+        PAUSE_AUTO3 --> HDG_STABLE["新5s航向稳定窗口通过"] --> RESUME
+
+        CALIB_STUCK["校准卡滞重试耗尽"] --> PAUSE_MANUAL["PAUSE<br/>calib_stuck"]
+        RETREAT_TIMEOUT["GPS撤退P1/P2超时"] --> PAUSE_MANUAL2["PAUSE<br/>boundary_retreat_timeout"]
+        FORCE_LIMIT["force_bearing极限环/背离"] --> PAUSE_MANUAL3["PAUSE<br/>force_bearing_* "]
+        PAUSE_MANUAL --> TAKEOVER["切出AUTO_CLEANING<br/>人工处理"]
+        PAUSE_MANUAL2 --> TAKEOVER
+        PAUSE_MANUAL3 --> TAKEOVER
+        TAKEOVER --> REENTER_AUTO["重新进入AUTO_CLEANING"] --> RESUME_WP["WAYPOINT_MOVE<br/>从当前航点恢复"]
         HOLD["电机状态HOLD"] --> STOP_NAV["强制停止导航"]
         MODE_SWITCH["控制模式切换"] --> STOP_NAV
         ROUTE_CHANGE["路径切换/rtk/route_change"] --> RELOAD["重新加载航点文件<br/>清零航向异常计时器"]
@@ -218,6 +228,42 @@ graph TD
     CHECK_ANGLE2 -- 是 --> RESET_COUNT["清零 waypoint_recalib_count<br/>current_waypoint_idx++"]
     RESET_COUNT --> NEXT_WP
 ```
+
+### 航向校准与边界撤退安全分支
+
+```mermaid
+graph TD
+    ENTER["进入 WAYPOINT_CALIB<br/>原地旋转校准"] --> ROTATE["calibrate_heading_at_waypoint"]
+    ROTATE --> SENSOR{"旋转动作被边界禁止?"}
+    SENSOR -- 否 --> ANGLE{"误差小于1°?"}
+    ANGLE -- 是 --> SUCCESS["校准成功<br/>推进或继续当前航点"]
+    ANGLE -- 否 --> ROTATE
+
+    SENSOR -- 是 --> RETREAT["停车一帧、清除固定纠偏锁定<br/>GPS撤退回目标航点"]
+    RETREAT --> P1["P1: 转向远离航点方向<br/>传感器阻挡时先远离"]
+    P1 --> RETREAT_TIMEOUT{"总时长超过30s?"}
+    RETREAT_TIMEOUT -- 否 --> P2["P2: 倒车归位<br/>距离闭环"]
+    P2 --> RETREAT_OK{"距离小于阈值?"}
+    RETREAT_OK -- 是 --> ROTATE
+    RETREAT_OK -- 否 --> RETREAT_TIMEOUT
+    RETREAT_TIMEOUT -- 是 --> PAUSE_RETREAT["PAUSE<br/>boundary_retreat_timeout<br/>持续发布零速度"]
+    PAUSE_RETREAT --> MANUAL["切出AUTO_CLEANING人工处理"]
+    MANUAL --> RESUME_CURRENT["重新进入AUTO_CLEANING<br/>WAYPOINT_MOVE当前航点"]
+
+    ANGLE -- 校准超时/失败 --> RETRY{"重试次数不超过3?"}
+    RETRY -- 否 --> PAUSE_STUCK["PAUSE<br/>calib_stuck"]
+    RETRY -- 是 --> RETRY_NUM{"第2次及以上?"}
+    RETRY_NUM -- 否 --> RESET_CALIB["重建校准生成器"] --> ROTATE
+    RETRY_NUM -- 是 --> BACKUP["后退脱困<br/>速度=+1.0/-1.0，时长=1.5s"]
+    BACKUP --> BACKUP_BLOCKED{"候选后退速度被边界禁止?"}
+    BACKUP_BLOCKED -- 是 --> BOUNDARY_CORRECT["get_boundary_correct_speed"] --> RESET_CALIB
+    BACKUP_BLOCKED -- 否 --> RESET_CALIB
+
+    style PAUSE_RETREAT fill:#e17055,stroke:#333,color:#fff
+    style PAUSE_STUCK fill:#e17055,stroke:#333,color:#fff
+    style SUCCESS fill:#b8e6c8,stroke:#6bcb77
+```
+
 ### 边界矫正状态机
 ```mermaid
 graph TD
@@ -338,4 +384,3 @@ python batch_generate_paths.py
 - 遍历 `config/` 下所有 `*.yaml` 配置文件
 - 每个配置文件生成一个 `{配置名}.txt` 密集点路径文件
 - 图片绘制已注释，需要时取消注释 `plot_multi_area_path` 和 matplotlib 导入即可
-
