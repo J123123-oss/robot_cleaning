@@ -65,6 +65,7 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "force_bearing_limit_cycle",
     "force_bearing_diverge",
     "boundary_retreat_timeout",
+    "boundary_sensor_blocked",
 })
 # 初始航向校验（仅检查航向是否稳定无漂移，不限制固定角度——出仓后无论车头朝哪，稳住即放行）
 # 航向稳定性由 heading_callback 中的 HEADING_STABILITY_WINDOW / HEADING_STABILITY_RANGE 控制
@@ -134,6 +135,7 @@ class RetreatResult:
     """GPS撤退生成器的显式完成结果。"""
     SUCCESS = "success"
     P1_TIMEOUT = "p1_timeout"
+    P1_SENSOR_BLOCKED = "p1_sensor_blocked"
     P2_TIMEOUT = "p2_timeout"
     P2_BACK_BLOCKED = "p2_back_blocked"  # 后退时后方传感器触发，中止撤退
 # -------------------------- 合并后的RTK控制+导航节点 --------------------------
@@ -751,7 +753,7 @@ class RTKNavControlNode(Node):
                              distance_threshold: float = 0.2,
                              timeout: float = 30.0) -> Generator[Tuple[float, float], None, str]:
         """
-        打滑撤退：背对航点反方向 → 后退归位。
+        打滑撤退：P1背对航点反方向 → P2后退归位。
         校准旋转中传感器触发时调用，通过GPS距离闭环回到航点。
 
         Args:
@@ -818,7 +820,12 @@ class RTKNavControlNode(Node):
                             break  # 传感器释放，提前结束远离
                         yield escape_speeds
                     yield (0.0, 0.0)
-                    continue  # 远离完成，继续旋转（heading_error 实时重算）
+                    if self.confirmed_sensors:
+                        self.get_logger().error(
+                            f"[RTKNav] 撤退P1安全后退{ESCAPE_DURATION:.1f}s后传感器仍触发"
+                            f"({sorted(self.confirmed_sensors)})，停止继续转向")
+                        return RetreatResult.P1_SENSOR_BLOCKED
+                    continue  # 传感器已释放，继续旋转（heading_error实时重算）
 
                 yield (left_speed, right_speed)
         finally:
@@ -934,7 +941,8 @@ class RTKNavControlNode(Node):
                     yield (left_speed, right_speed)
             return False
         finally:
-            if self.nav_context.get("pause_reason") != "boundary_retreat_timeout":
+            if self.nav_context.get("pause_reason") not in (
+                    "boundary_retreat_timeout", "boundary_sensor_blocked"):
                 self.nav_context["nav_state"] = saved_nav_state
                 self.nav_context["calib_target_heading"] = saved_calib_target
 
@@ -2211,23 +2219,34 @@ class RTKNavControlNode(Node):
         self.get_logger().error(f"[初始航向对准] {detail}，已停车并进入PAUSE等待人工处理")
 
     def _pause_boundary_retreat_timeout(self, result: str, label: str) -> None:
-        """GPS撤退超时后锁定停车，等待人工排除边界风险。"""
+        """GPS撤退失败后锁定停车，等待人工排除边界风险。"""
         phase = {
             RetreatResult.P1_TIMEOUT: "P1",
+            RetreatResult.P1_SENSOR_BLOCKED: "P1",
             RetreatResult.P2_TIMEOUT: "P2",
         }.get(result, str(result))
+        pause_reason = (
+            "boundary_sensor_blocked"
+            if result == RetreatResult.P1_SENSOR_BLOCKED
+            else "boundary_retreat_timeout"
+        )
         self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
         self.nav_context["calib_generator"] = None
         self.nav_context["nav_state"] = NavState.PAUSE
         self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
-        self.nav_context["pause_reason"] = "boundary_retreat_timeout"
+        self.nav_context["pause_reason"] = pause_reason
         self.nav_context["manual_intervention_seen"] = False
         self.nav_context["brush_active"] = self.brush_active
         self.nav_running = False
         self.publish_nav_state(NavState.PAUSE)
         self.publish_stop_speed()
-        self.get_logger().error(
-            f"[RTKNav] {label} GPS撤退{phase}超时，已停车并进入PAUSE等待人工处理")
+        if result == RetreatResult.P1_SENSOR_BLOCKED:
+            self.get_logger().error(
+                f"[RTKNav] {label} GPS撤退{phase}传感器仍触发，"
+                "已安全停车并进入PAUSE等待人工处理")
+        else:
+            self.get_logger().error(
+                f"[RTKNav] {label} GPS撤退{phase}超时，已停车并进入PAUSE等待人工处理")
 
     def move_to_first_waypoint(self) -> Generator[Tuple[float, float], None, bool]:
         if not self.waypoints:
