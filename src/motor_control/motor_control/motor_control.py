@@ -763,8 +763,19 @@ class MotorControlNode(Node):
                 self.set_brush_speed(0.0)
 
     def rtk_nav_status_callback(self, msg: String):
-        """订阅RTK导航状态消息（备用）"""
-        self.nav_status = msg.data.strip()
+        """同步RTK导航状态，并把自动导航的暂停收口为底盘HOLD。"""
+        nav_status = msg.data.strip()
+        if nav_status == "PAUSE" and self.current_control_mode == "AUTO_CLEANING":
+            # rtk_nav保留PAUSE及pause_reason用于故障诊断和恢复；底盘必须退出自动
+            # 控制，避免RTK、航向或校准故障恢复时在无人确认下继续行驶。
+            self.nav_status = "HOLD"
+            self.get_logger().warn(
+                "[RTKNavStatus] 自动导航请求PAUSE，切换到底盘HOLD，"
+                "等待人工重新进入AUTO_CLEANING")
+            self.switch_state('h')
+            return
+
+        self.nav_status = nav_status
         # self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
         if self.nav_status == "COMPLETED" and not self.is_in_bin_process:
             self.get_logger().info(f"[RTKNavStatus] RTK导航完成，切换到LOADING状态")
