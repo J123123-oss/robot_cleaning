@@ -1015,3 +1015,21 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   2. 不清除已确认传感器和禁止方向；随后立即进入 `_retreat_to_waypoint()`，使 P1/P2 继续按候选速度方向做边界检查。
   3. 无目标航点保留固定边界纠偏作为降级处理。
 - **影响**: `rtk_nav.py`：`_calibrate_with_boundary_retreat()` 与主 `WAYPOINT_CALIB` 的锁定边界处理；`README.md` 状态图。
+
+## 2026-07-22 几何撤退锚点与 P1 安全候选收口
+
+### 88. 初始航向对准未使用几何撤退，且撤退输出可能被普通边界矫正覆盖
+
+- **问题**:
+  1. `INITIAL_ALIGN` 虽经 `_calibrate_with_boundary_retreat()` 进行传感器保护，但未授权保存当前坐标并进入 `_retreat_to_waypoint()`；初始对准打滑后不能按“回到转向前坐标”的语义处理。
+  2. 几何撤退生成器的外层仍会以 `get_boundary_correct_speed()` 覆盖 P1/P2 输出，导致 P1 无安全候选或 P1 转向受阻时，不能直接按撤退失败进入暂停。
+- **修复**:
+  1. 以 `calib_origin` 而非 `nav_state` 决定是否启用几何撤退；`INITIAL_ALIGN` 和 `WAYPOINT_FINAL` 均保存当前 GPS 为 `retreat_anchor`，边界触发后执行 `_retreat_to_waypoint()`。
+  2. P1 从当前位置到锚点计算前进/倒车两种候选航向，过滤被 `blocked_directions` 禁止的行进方向和原地转向方向，再选最小安全转角；P2 保持所选行进模式，按当前位置到锚点的实时方位闭环归位。
+  3. 移除几何撤退调用点对 P1/P2 输出的普通边界矫正覆盖。`P1_NO_SAFE_CANDIDATE` 或 `P1_SENSOR_BLOCKED` 统一停车并进入 `PAUSE`，不执行 `get_boundary_correct_speed()`。
+  4. `HEADING_RECOVERY`、`FORCE_BEARING` 或无目标航点的校准不具有回到锚点的业务语义，仍使用普通边界矫正状态机；这条降级路径不适用于已启用的 P1/P2。
+- **行为约束**:
+  - `nav_state` 始终保留真实导航阶段；`calibration_active` 与 `calib_target_heading` 只用于识别当前原地转向及其左右方向。
+  - RTK Float 恢复期间保留 `retreat_active/anchor/drive_mode/phase`；恢复 Fixed 后先重新进行传感器安全检查，并从当前坐标重新规划 P1/P2，不能直接回到普通校准。
+- **验证**: bundled Python 执行 `py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 通过；`git diff --check -- src/rtk_nav/rtk_nav/rtk_nav.py STANLEY_FIX_SUMMARY.md` 通过。未进行 ROS/实车验证。
+- **影响**: `rtk_nav.py`：统一原地校准保护、初始航向对准、P1/P2 安全分流和 RTK 恢复；`STANLEY_FIX_SUMMARY.md`：第 88 项。
