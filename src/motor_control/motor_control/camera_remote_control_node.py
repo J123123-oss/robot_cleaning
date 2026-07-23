@@ -38,9 +38,9 @@ class CameraRemoteController(Node):
         self.declare_parameter("baudrate", 115200)
         self.declare_parameter("max_speed", 5.0)
         self.declare_parameter("publish_rate", 0.05)
-        self.declare_parameter("angle_timeout", 20.0)
+        self.declare_parameter("angle_timeout", 2.0)
         self.declare_parameter("disable_dtr_rts", True)
-        self.declare_parameter("esp32_boot_wait", 2.0)
+        self.declare_parameter("esp32_boot_wait", 0.5)
 
         self.port = self.get_parameter("port").get_parameter_value().string_value
         self.baudrate = self.get_parameter("baudrate").get_parameter_value().integer_value

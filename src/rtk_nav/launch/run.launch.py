@@ -73,9 +73,9 @@ def generate_launch_description():
             {'baudrate': 115200},
             {'max_speed': 5.0},              # 最大电机速度指令 (double)
             {'publish_rate': 0.05},          # 发布周期 秒 (double)
-            {'angle_timeout': 20.0},         # 超时停车阈值 秒 (double)
+            {'angle_timeout': 2.0},         # 超时停车阈值 秒 (double)
             {'disable_dtr_rts': True},       # 禁用 DTR/RTS 避免 ESP32 复位 (bool)
-            {'esp32_boot_wait': 2.0},        # ESP32 上电等待时间 秒 (double)
+            {'esp32_boot_wait': 0.5},        # ESP32 上电等待时间 秒 (double)
         ]
     )
     rtk_navigator = Node(

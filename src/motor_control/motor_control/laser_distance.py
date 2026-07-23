@@ -8,6 +8,8 @@ import serial
 import time
 import threading
 import struct
+import os
+from datetime import datetime
 
 # Modbus CRC16校验函数.
 def mb_crc_calculate(data):
@@ -28,9 +30,17 @@ class LaserDistanceNode(Node):
         # 1. 声明并获取串口参数（支持launch配置）
         self.declare_parameter('serial_port', '/dev/laser')
         self.declare_parameter('baud_rate', 115200)
-        
+        self.declare_parameter('laser_log_dir', '/home/ztl/robot_cleaning/motor_start_log/laser_log')
+
         self.serial_port = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baud_rate = self.get_parameter('baud_rate').get_parameter_value().integer_value
+        self.laser_log_dir = self.get_parameter('laser_log_dir').get_parameter_value().string_value
+
+        # 初始化激光调试日志文件（直接文件写入，绕过 rclpy logging 冲突）
+        os.makedirs(self.laser_log_dir, exist_ok=True)
+        self._laser_log_path = os.path.join(self.laser_log_dir, 'laser_debug.log')
+        self._laser_log_fd = open(self._laser_log_path, 'a')  # 追加模式
+        self._laser_log("激光调试日志启动")
         
         # 2. 初始化串口
         self.ser = None
@@ -64,6 +74,13 @@ class LaserDistanceNode(Node):
         # 4. 创建定时器（100ms读取一次数据）
         self.timer = self.create_timer(0.1, self.read_laser_data)
 
+    def _laser_log(self, msg):
+        """写激光调试日志到文件，每次立即刷新"""
+        now = datetime.now()
+        line = f"{now.strftime('%Y-%m-%d %H:%M:%S')}.{now.microsecond // 1000:03d} {msg}\n"
+        self._laser_log_fd.write(line)
+        self._laser_log_fd.flush()
+
     def send_laser_command(self, cmd):
         """发送激光传感器指令（0x01/0x02）"""
         if not self.ser or not self.ser.is_open:
@@ -85,6 +102,7 @@ class LaserDistanceNode(Node):
             
             # 发送数据
             self.ser.write(send_buf)
+            # self._laser_log(f"发送指令 0x{cmd:02X}: {send_buf.hex(' ')}")
             return True
         except Exception as e:
             self.get_logger().warn(f"发送指令0x{cmd:02X}失败: {str(e)}")
@@ -115,6 +133,10 @@ class LaserDistanceNode(Node):
                             register2 = (rx_buf[5] << 8) | rx_buf[6]
                             # 强制限定数值在0-5000范围
                             register2 = register2 if register2 <= 5000 else 5000
+                            self._laser_log(
+                                f"收到响应 0x{expected_cmd:02X}: 原始={rx_buf.hex(' ')}, "
+                                f"距离={register2} mm"
+                            )
                             return register2
                         else:
                             self.get_logger().warn(f"0x{expected_cmd:02X}数据CRC校验失败: 计算值0x{crc_calculated:04X}, 接收值0x{crc_received:04X}")
@@ -192,6 +214,9 @@ class LaserDistanceNode(Node):
         if self.ser and self.ser.is_open:
             self.ser.close()
             self.get_logger().info("串口已关闭")
+        # 关闭激光调试日志文件
+        self._laser_log("激光调试日志关闭")
+        self._laser_log_fd.close()
         super().destroy_node()
 
 def main(args=None):

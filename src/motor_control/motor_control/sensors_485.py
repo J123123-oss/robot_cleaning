@@ -44,7 +44,7 @@ class Sensors_485(Node):
         self.data_timeout = 3.0  # 数据超时时间(秒)
 
         # 轮询状态管理
-        self.io_polling_interval = 0.25  # IO查询间隔（2Hz）- 降低频率以避免干扰电池通信
+        self.io_polling_interval = 0.05  # IO查询间隔（20Hz）- 降低频率以避免干扰电池通信
         self.last_io_poll_time = 0
         self.battery_base_polling_interval = 10.0  # 电池基础参数查询间隔
         self.last_base_poll_time = 0
