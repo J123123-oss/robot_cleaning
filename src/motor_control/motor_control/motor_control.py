@@ -815,12 +815,9 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 已发布路径切换指令: {route_id} -> {route_file}")
 
     def io_data_callback(self, msg: UInt8):
-        """IO数据回调：传感器解析 + 防跌落分层触发（NORMAL/REMOTE模式）"""
-        # 仅非AUTO_CLEANING且非进出仓流程时处理防跌落
-        if self.current_control_mode == "AUTO_CLEANING" or self.is_in_bin_process:
-            return
-
-        # 传感器位解析（低电平有效，bit=0 → 触发，与rtk_nav一致）
+        """实时更新传感器状态，并为手动控制执行边界保护。"""
+        # 传感器位解析必须在所有控制模式下执行，sensors_status不能沿用旧值。
+        # 低电平有效，bit=0表示触发，与rtk_nav保持一致。
         self.front_left = (msg.data & 0x01) == 0x00
         self.front_right = (msg.data & 0x02) == 0x00
         self.mid_left = (msg.data & 0x04) == 0x00
@@ -836,6 +833,13 @@ class MotorControlNode(Node):
             | (int(self.back_left) << 4)
             | (int(self.back_right) << 5)
         )
+
+        # 进出仓不在motor_control中判断防跌落；AUTO_CLEANING由rtk_nav的
+        # io_data_rtk_callback独占判断，避免两个节点同时改写自动导航运行状态。
+        if self.is_in_bin_process or self.current_control_mode == "AUTO_CLEANING":
+            self.confirmed_sensors.clear()
+            self.blocked_directions.clear()
+            return
 
         # ---- 4传感器分层触发（mid/back × 左右）----
         same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
