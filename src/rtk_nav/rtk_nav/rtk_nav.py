@@ -198,8 +198,6 @@ class RTKNavControlNode(Node):
         self.last_state = None  # 电机状态（用于监听HOLD切换）
 
         # Sensor 
-        self.front_left = None # test, None origin
-        self.front_right = None
         self.mid_left = None
         self.mid_right = None
         self.back_left = None
@@ -861,6 +859,15 @@ class RTKNavControlNode(Node):
             phase = self.nav_context.get("retreat_phase")
             if phase == RetreatPhase.P1_PLAN:
                 if self.calc_distance_to_waypoint(anchor_waypoint) < distance_threshold:
+                    # 到达锚点但边界仍在触发时不能伪造 SUCCESS：调用方若立即
+                    # 重建校准生成器，会在下一帧再次进入撤退并形成零速死循环。
+                    if self._is_calibration_boundary_active():
+                        self.nav_context["calibration_active"] = False
+                        self.get_logger().error(
+                            f"[RTKNav] 撤退P1已接近锚点但边界传感器仍触发"
+                            f"(blocked={sorted(self.blocked_directions)})，停止撤退并暂停导航")
+                        yield (0.0, 0.0)
+                        return RetreatResult.P1_SENSOR_BLOCKED
                     self._clear_retreat_context()
                     yield (0.0, 0.0)
                     return RetreatResult.SUCCESS
@@ -1065,24 +1072,16 @@ class RTKNavControlNode(Node):
 
     def io_data_rtk_callback(self, msg: UInt8):
 
-        # 按位或结果存储传感器状态
-        # self.sensors_status = self.front_left | self.front_right<<1 | self.mid_left<<2 | self.mid_right<<3 | self.back_left<<4 | self.back_right<<5 
-        # self.sensors_status = ~self.sensors_status & 0x3F  # 取反并保留6位
-        # self.get_logger().info(f"[RTKNav] 收到IO数据: {msg.data}")
-        # 位0 (1<<0 = 0x01)：前左
-        self.front_left = (msg.data & 0x01) == 0x00
-        self.front_right = (msg.data & 0x02) == 0x00
-        self.mid_left = (msg.data & 0x04) == 0x00
-        self.mid_right = (msg.data & 0x08) == 0x00
-        self.back_left = (msg.data & 0x10) == 0x00
-        self.back_right = (msg.data & 0x20) == 0x00
+        # 4路传感器低电平有效：mid_left, mid_right, back_left, back_right。
+        self.mid_left = (msg.data & 0x01) == 0x00
+        self.mid_right = (msg.data & 0x02) == 0x00
+        self.back_left = (msg.data & 0x04) == 0x00
+        self.back_right = (msg.data & 0x08) == 0x00
         self.sensors_status = (
-            int(self.front_left)
-            | (int(self.front_right) << 1)
-            | (int(self.mid_left) << 2)
-            | (int(self.mid_right) << 3)
-            | (int(self.back_left) << 4)
-            | (int(self.back_right) << 5)
+            int(self.mid_left)
+            | (int(self.mid_right) << 1)
+            | (int(self.back_left) << 2)
+            | (int(self.back_right) << 3)
         )
         # 4传感器分层触发（mid/back × 左右）
         if self.current_control_mode == ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
@@ -3225,6 +3224,13 @@ class RTKNavControlNode(Node):
                         if retreat_result != RetreatResult.SUCCESS:
                             self._pause_boundary_retreat_timeout(
                                 retreat_result, "航向校准")
+                            yield (0.0, 0.0)
+                            return
+                        # SUCCESS 还必须满足边界已经释放；否则下一帧的校准
+                        # 触发会重新调用撤退，造成无轮速输出的重复 SUCCESS。
+                        if self._is_calibration_boundary_active():
+                            self._pause_boundary_retreat_timeout(
+                                RetreatResult.P1_SENSOR_BLOCKED, "航向校准")
                             yield (0.0, 0.0)
                             return
                         # 撤退完成，重新初始化校准

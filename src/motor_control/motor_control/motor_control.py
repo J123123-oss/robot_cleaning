@@ -201,7 +201,7 @@ class MotorControlNode(Node):
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
         self.low_battery_warning = False
-        self.sensors_status = 0b000000  # 6个传感器状态位（初始全无障碍）
+        self.sensors_status = 0b0000  # 4个传感器状态位（初始全无障碍）
         # 防跌落边界触发状态
         self.confirmed_sensors = set()     # 已确认触发的传感器名（经debounce后）
         self.blocked_directions = set()    # 基于confirmed_sensors计算的禁止方向
@@ -818,20 +818,16 @@ class MotorControlNode(Node):
         """实时更新传感器状态，并为手动控制执行边界保护。"""
         # 传感器位解析必须在所有控制模式下执行，sensors_status不能沿用旧值。
         # 低电平有效，bit=0表示触发，与rtk_nav保持一致。
-        self.front_left = (msg.data & 0x01) == 0x00
-        self.front_right = (msg.data & 0x02) == 0x00
-        self.mid_left = (msg.data & 0x04) == 0x00
-        self.mid_right = (msg.data & 0x08) == 0x00
-        self.back_left = (msg.data & 0x10) == 0x00
-        self.back_right = (msg.data & 0x20) == 0x00
+        self.mid_left = (msg.data & 0x01) == 0x00
+        self.mid_right = (msg.data & 0x02) == 0x00
+        self.back_left = (msg.data & 0x04) == 0x00
+        self.back_right = (msg.data & 0x08) == 0x00
         # sensors_status: bit=1 表示触发（供MQTT上报）
         self.sensors_status = (
-            int(self.front_left)
-            | (int(self.front_right) << 1)
-            | (int(self.mid_left) << 2)
-            | (int(self.mid_right) << 3)
-            | (int(self.back_left) << 4)
-            | (int(self.back_right) << 5)
+            int(self.mid_left)
+            | (int(self.mid_right) << 1)
+            | (int(self.back_left) << 2)
+            | (int(self.back_right) << 3)
         )
 
         # 进出仓不在motor_control中判断防跌落；AUTO_CLEANING由rtk_nav的
@@ -861,41 +857,41 @@ class MotorControlNode(Node):
             changed = True
             self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
 
-        # if spatial_consensus:
-        #     # 快通道：空间一致 → 3帧确认
-        #     self.boundary_active_count += 1
-        #     self.boundary_clear_count = 0
-        #     self.boundary_slow_count = 0
-        #     if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
-        #         if active_set != self.confirmed_sensors:
-        #             self.confirmed_sensors = active_set
-        #             changed = True
-        #             self.get_logger().warn(
-        #                 f"[Motor] 防跌落快触发：{sorted(active_set)}，"
-        #                 f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
-        # elif num_active == 1:
-        #     # 慢通道：单传感器 → 持续若干帧确认
-        #     self.boundary_slow_count += 1
-        #     self.boundary_active_count = 0
-        #     self.boundary_clear_count = 0
-        #     if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
-        #         sensor_name = next(iter(active_set))
-        #         if sensor_name not in self.confirmed_sensors:
-        #             self.confirmed_sensors.add(sensor_name)
-        #             changed = True
-        #             self.get_logger().warn(
-        #                 f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
-        #                 f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
-        # else:
-        #     # 无传感器触发 / 对角不匹配 → 重置
-        #     self.boundary_active_count = 0
-        #     self.boundary_slow_count = 0
-        #     self.boundary_clear_count += 1
-        #     if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
-        #         if self.confirmed_sensors:
-        #             self.confirmed_sensors.clear()
-        #             changed = True
-        #             self.get_logger().info("[Motor] 防跌落传感器释放，恢复所有方向")
+        if spatial_consensus:
+            # 快通道：空间一致 → 3帧确认
+            self.boundary_active_count += 1
+            self.boundary_clear_count = 0
+            self.boundary_slow_count = 0
+            if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+                if active_set != self.confirmed_sensors:
+                    self.confirmed_sensors = active_set
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落快触发：{sorted(active_set)}，"
+                        f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
+        elif num_active == 1:
+            # 慢通道：单传感器 → 持续若干帧确认
+            self.boundary_slow_count += 1
+            self.boundary_active_count = 0
+            self.boundary_clear_count = 0
+            if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
+                sensor_name = next(iter(active_set))
+                if sensor_name not in self.confirmed_sensors:
+                    self.confirmed_sensors.add(sensor_name)
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
+                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
+        else:
+            # 无传感器触发 / 对角不匹配 → 重置
+            self.boundary_active_count = 0
+            self.boundary_slow_count = 0
+            self.boundary_clear_count += 1
+            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                if self.confirmed_sensors:
+                    self.confirmed_sensors.clear()
+                    changed = True
+                    self.get_logger().info("[Motor] 防跌落传感器释放，恢复所有方向")
 
         if changed:
             self._update_blocked_directions()
@@ -1235,8 +1231,8 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(5.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为5秒")
+                self.state_publish_timer = self.create_timer(2.0, self.publish_state)
+                self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
 
         elif new_state == "FORWARD":
             # 前进：双电机正转
@@ -1283,8 +1279,8 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(5.0, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为5秒")
+                self.state_publish_timer = self.create_timer(2.0, self.publish_state)
+                self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为2秒")
 
             self.complete_state = False
             self.current_status = new_state
@@ -1765,14 +1761,14 @@ class MotorControlNode(Node):
             return
         self._dock_sensor_blocked_logged_unloading = False
 
-        # 归位位只作为启动门槛。进入UNLOADING_BACKWARD后，计时不再依赖
+        # 归位位只作为启动门槛。进入UNLOADING_FORWARD后，计时不再依赖
         # dock_sensors & 0x02，避免归位位在出仓后释放导致状态机停在最后速度。
         if self.unloading_phase is None:
             if not (self.dock_sensors & 0x02):
                 self.set_motors_speed(0.0, 0.0)
                 return
             self.get_logger().info("[START] 检测到dock归位，锁存并初始化出仓流程")
-            self.unloading_phase = "UNLOADING_BACKWARD"
+            self.unloading_phase = "UNLOADING_FORWARD"
             self.unloading_start_time = time.time()
             self.get_logger().info(f"[START] 初始化完成，当前阶段：{self.unloading_phase}")
 
@@ -1781,11 +1777,11 @@ class MotorControlNode(Node):
             self.yaw_stable_count_unloading = 0
 
         # ========== 阶段1：后退出仓 ==========
-        if self.unloading_phase == "UNLOADING_BACKWARD":
+        if self.unloading_phase == "UNLOADING_FORWARD":
             if current_time - self.unloading_start_time < self.unloading_forword_threshold:
                 correction = 0  # 直线纠偏待添加
-                left_speed = self.motor_ctrl.BASE_SPEED + correction
-                right_speed = -self.motor_ctrl.BASE_SPEED + correction
+                left_speed = -self.motor_ctrl.BASE_SPEED + correction
+                right_speed = self.motor_ctrl.BASE_SPEED + correction
                 self.set_motors_speed(left_speed, right_speed)
             else:
                 self.set_motors_speed(0.0, 0.0)
@@ -2033,7 +2029,7 @@ class MotorControlNode(Node):
                         f"航向差{heading_err:.1f}°, 纠偏{correction:+.2f}")
                 return
 
-        if self.loading_phase == "LOADING_DIRECT_FORWARD":
+        if self.loading_phase == "LOADING_DIRECT_BACKWARD":
             current_time = time.time()
             if self.loading_direct_start_time is None:
                 self.loading_direct_start_time = current_time
@@ -2231,7 +2227,7 @@ class MotorControlNode(Node):
                                         self.yaw_stable_count = 0
                                         self.set_motors_speed(0.0, 0.0)
                                         return
-                            self.loading_phase = "LOADING_DIRECT_FORWARD"
+                            self.loading_phase = "LOADING_DIRECT_BACKWARD"
                             self.loading_direct_start_time = current_time
                             self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                             self.yaw_stable_count = 0
