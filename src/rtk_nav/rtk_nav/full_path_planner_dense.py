@@ -13,6 +13,14 @@ import os
 import yaml
 import numpy as np
 
+DEFAULT_DENSE_SPACING = 15.0
+
+
+def get_dense_spacing(area):
+    """Return a region's dense-point spacing, defaulting to 15 metres."""
+    return area.get('dense_spacing', DEFAULT_DENSE_SPACING)
+
+
 # 设置中文字体 + 解决负号显示问题
 matplotlib.rcParams['axes.unicode_minus'] = False
 # try:
@@ -666,6 +674,7 @@ class MultiAreaCleaningPathPlanner(Node):
                 area_params['end_corner_mode'] = area['end_corner_mode']
             if 'reverse_end_point' in area:
                 area_params['reverse_end_point'] = area['reverse_end_point']
+            area_params['dense_spacing'] = get_dense_spacing(area)
             
             area_name = area.get('name', f'area_{i}')
             self.get_logger().info(f"加载区域 {i}: {area_name}")
@@ -773,7 +782,12 @@ class MultiAreaCleaningPathPlanner(Node):
                 # 记录每个区域的路径点索引范围，供绘图标注区域名称使用
                 area_start_idx = len(merged_path_latlon) - len(path_latlon)
                 area_end_idx = len(merged_path_latlon) - 1
-                area_index_ranges.append((area_start_idx, area_end_idx, area['name']))
+                area_index_ranges.append((
+                    area_start_idx,
+                    area_end_idx,
+                    area['name'],
+                    area['param']['dense_spacing'],
+                ))
                 
                 # 新增：转换当前区域ABC点为UTM并存入列表，供绘图使用
                 a_lon, a_lat = calib_a
@@ -799,13 +813,11 @@ class MultiAreaCleaningPathPlanner(Node):
                 file_prefix = f"{self.seq_num}_{timestamp}"
 
             # ---------------------- 保存密集点路径文件 ----------------------
-            dense_spacing = 15.0  # 密集点间隔（米）
-            
             dense_latlon = []
             dense_area_names = []
             
             # 为每个区域单独生成密集点
-            for area_idx, (start_idx, end_idx, area_name) in enumerate(area_index_ranges):
+            for area_idx, (start_idx, end_idx, area_name, dense_spacing) in enumerate(area_index_ranges):
                 area_path_utm = merged_path_utm[start_idx:end_idx + 1]
                 
                 # 生成当前区域的密集点

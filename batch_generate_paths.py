@@ -23,6 +23,7 @@ from full_path_planner_dense import (
     generate_cleaning_path_with_rotation_3points,
     calculate_heading_angles,
     generate_dense_from_utm,
+    get_dense_spacing,
     get_utm_coords,
     get_latlon_from_utm,
     # add_direction_arrows,
@@ -75,6 +76,7 @@ def load_areas_from_yaml(config_file):
             area_params['end_corner_mode'] = area['end_corner_mode']
         if 'reverse_end_point' in area:
             area_params['reverse_end_point'] = area['reverse_end_point']
+        area_params['dense_spacing'] = get_dense_spacing(area)
 
         area_name = area.get('name', f'area_{i}')
         print(f"  加载区域 {i}: {area_name}")
@@ -225,7 +227,12 @@ def process_config(config_file, output_dir):
 
         area_start_idx = len(merged_path_latlon) - len(path_latlon)
         area_end_idx = len(merged_path_latlon) - 1
-        area_index_ranges.append((area_start_idx, area_end_idx, name))
+        area_index_ranges.append((
+            area_start_idx,
+            area_end_idx,
+            name,
+            param['dense_spacing'],
+        ))
 
         a_lon, a_lat = calib_a
         b_lon, b_lat = calib_b
@@ -242,11 +249,10 @@ def process_config(config_file, output_dir):
     print(f"\n所有区域路径合并完成，总点数: {len(merged_path_latlon)}")
 
     # 生成并保存密集点路径文件
-    dense_spacing = 15.0
     dense_latlon = []
     dense_area_names = []
 
-    for area_idx, (start_idx, end_idx, area_name) in enumerate(area_index_ranges):
+    for area_idx, (start_idx, end_idx, area_name, dense_spacing) in enumerate(area_index_ranges):
         area_path_utm = merged_path_utm[start_idx:end_idx + 1]
         area_dense_utm = generate_dense_from_utm(area_path_utm, dense_spacing)
 
