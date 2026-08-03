@@ -64,6 +64,7 @@ RC_CH_MAX_VALUE = 1722
 
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 91.0
+UNLOADING_SETTLE_DURATION = 2.0
 
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
 LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
@@ -130,6 +131,7 @@ class MotorControlNode(Node):
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
+        self.unloading_settle_start_time = None  # 出仓后停止结算开始时间
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
@@ -1106,6 +1108,25 @@ class MotorControlNode(Node):
         self.last_yaw_error = yaw_error
         return correction_clamped
 
+    def _cancel_bin_process_timers(self) -> None:
+        """停止进出仓 timer，防止旧回调在终止后继续下发速度。"""
+        for timer_name in ("loading_timer", "unloading_timer"):
+            timer = getattr(self, timer_name, None)
+            if timer is not None:
+                timer.cancel()
+                setattr(self, timer_name, None)
+
+    def _abort_bin_process(self, reason: str) -> None:
+        """终止当前进出仓流程并清除其运行状态。"""
+        self._cancel_bin_process_timers()
+        self.is_in_bin_process = False
+        self.bin_process_origin_mode = None
+        self.bin_process_paused = False
+        self.unloading_phase = None
+        self.unloading_settle_start_time = None
+        self.loading_phase = None
+        self.get_logger().info(f"[ROSNode] 进/出仓流程被{reason}指令终止，定时器已关闭")
+
     def switch_state(self, key: str) -> None:
         """状态机切换逻辑（新增进出仓状态标记）"""
         if key not in STATE_DICT:
@@ -1125,10 +1146,12 @@ class MotorControlNode(Node):
             self.set_brush_speed(0.0)
             self.publish_state()
             return
-        # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式
+        # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式。
+        # 出仓结算阶段的HOLD也必须继续处理，才能让人工HOLD真正终止流程。
         if new_state == self.current_status:
-            if new_state == "HOLD" and self.current_control_mode == "AUTO_CLEANING":
-                self.get_logger().info(f"[ROSNode] AUTO_CLEANING模式下重复设置HOLD，允许执行")
+            if new_state in ["HOLD", "DISABLE"] and (
+                    self.current_control_mode == "AUTO_CLEANING" or self.is_in_bin_process):
+                self.get_logger().info(f"[ROSNode] 重复设置{new_state}，继续执行安全停止")
             else:
                 self.get_logger().info(f"[ROSNode] 已处于{new_state}状态，无需切换")
                 return
@@ -1139,6 +1162,14 @@ class MotorControlNode(Node):
                 self.get_logger().warn(f"[ROSNode] 正在执行进\出仓流程，仅支持HOLD或DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
                 return
             # 若是HOLD指令，正常执行，后续会重置进出仓标记
+
+        # START 只能从静止准备态发起，不能把运行、暂停或流程完成后的状态
+        # 重新解释为一次新的出仓任务。
+        if new_state == "START" and self.current_status not in ["DISABLE", "ENABLE"]:
+            self.get_logger().warn(
+                f"[START] 当前状态={self.current_status}，仅允许从DISABLE或ENABLE发起出仓，忽略重复START")
+            self.publish_state()
+            return
 
         if new_state == "START" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
             self.low_battery_warning = True
@@ -1158,21 +1189,11 @@ class MotorControlNode(Node):
             self.bin_process_origin_mode = self.current_control_mode
             self.bin_process_paused = False
             self.is_in_bin_process = True
-        elif new_state == "HOLD" and self.is_in_bin_process:
-            self.is_in_bin_process = False
-            self.bin_process_origin_mode = None
-            self.bin_process_paused = False
-            # 额外：终止进出仓定时器，防止定时器继续执行逻辑
-            if self.loading_timer is not None:
-                self.loading_timer.cancel()
-                # self.loading_timer = None
-            if self.unloading_timer is not None:
-                self.unloading_timer.cancel()
-                # self.unloading_timer = None
+        elif new_state in ["HOLD", "DISABLE"] and self.is_in_bin_process:
+            self._abort_bin_process(new_state)
             if self.direction_timer is not None:
                 self.direction_timer.cancel()
                 self.direction_timer = None
-            self.get_logger().info("[ROSNode] 进/出仓流程被HOLD指令强制终止，定时器已关闭")
 
         # 状态执行逻辑
         if new_state == "DISABLE":
@@ -1285,9 +1306,10 @@ class MotorControlNode(Node):
             self.complete_state = False
             self.current_status = new_state
             # 初始化出仓阶段（仅初始化，不启动定时器）
+            self._cancel_bin_process_timers()
             self.unloading_phase = None  # 先置空，等待归位后再初始化
             self.unloading_start_time = None  # 暂不记录启动时间
-            self.unloading_timer = None  # 定时器先置空
+            self.unloading_settle_start_time = None
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
@@ -1748,6 +1770,12 @@ class MotorControlNode(Node):
 
     def handle_unloading_step(self):
         """出仓分步处理（修正：适配IMU更新频率，修复角度计算）"""
+        # timer 取消后可能仍有已排队回调；它不能在其他状态继续写速度。
+        settling = self.unloading_phase == "UNLOADING_SETTLING"
+        if not self.is_in_bin_process or (
+                self.current_status != "START" and not settling):
+            return
+
         # 如果流程被暂停，短路返回，等待恢复
         if self.bin_process_paused:
             return
@@ -1786,19 +1814,38 @@ class MotorControlNode(Node):
             else:
                 self.set_motors_speed(0.0, 0.0)
                 self.get_logger().info("[START] 出仓运动完成")
-                self.unloading_phase = "COMPLETE"
-                self.unloading_turn_start_time = current_time
+                # 先向RTK发布HOLD，再以非阻塞的结算阶段等待其停止处理。
+                # 此时仍保持is_in_bin_process=True，拒绝新的START或控制权切换。
+                self.unloading_phase = "UNLOADING_SETTLING"
+                self.unloading_settle_start_time = current_time
+                self.current_status = "HOLD"
+                self.current_control_mode = "NORMAL"
+                self.set_brush_speed(0.0)
+                state_msg = String()
+                state_msg.data = self.current_status
+                self.state_pub.publish(state_msg)
+                self.get_logger().info(
+                    f"[START] 进入出仓结算阶段，保持HOLD {UNLOADING_SETTLE_DURATION:.1f}s")
 
-        # ========== 阶段2：完成 ==========
-        elif self.unloading_phase == "COMPLETE":
-            self.get_logger().info("[START] 出仓流程完成")
-            self.switch_state('h')  # 切回HOLD状态，确保电机停止
-            time.sleep(2.0)  # 确保状态切换生效
+        # ========== 阶段2：非阻塞结算并切入自动导航 ==========
+        elif self.unloading_phase == "UNLOADING_SETTLING":
+            self.set_motors_speed(0.0, 0.0)
+            settle_start = self.unloading_settle_start_time or current_time
+            if current_time - settle_start < UNLOADING_SETTLE_DURATION:
+                return
+
+            self.get_logger().info("[START] 出仓结算完成，切换到AUTO_CLEANING")
+            self._cancel_bin_process_timers()
+            self.is_in_bin_process = False
+            self.bin_process_origin_mode = None
+            self.bin_process_paused = False
+            self.unloading_phase = None
+            self.unloading_settle_start_time = None
             self.current_control_mode = "AUTO_CLEANING"
-            self.switch_state('r')  # RTK导航模式，准备接受RTK速度指令
-            self.unloading_timer.cancel()
-            self.unloading_timer = None
-            self.is_in_bin_process = False  # 重置进出仓标记
+            self.current_status = "AUTO_CLEANING"
+            state_msg = String()
+            state_msg.data = self.current_status
+            self.state_pub.publish(state_msg)
 
 
             
@@ -1891,6 +1938,10 @@ class MotorControlNode(Node):
         self.publish_state()
 
     def handle_loading_step(self):
+        # timer 取消后可能仍有已排队回调；它不能在其他状态继续写速度。
+        if not self.is_in_bin_process or self.current_status != "LOADING":
+            return
+
         # ========== 阶段0：导航到进仓目标GPS点（不依赖dock传感器） ==========
         # 参考 rtk_nav move_to_first_waypoint: 先航向对准，再 Stanley 直线行驶
         if self.loading_phase == "LOADING_NAV_TO_GPS":
