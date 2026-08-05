@@ -1033,3 +1033,29 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   - RTK Float 恢复期间保留 `retreat_active/anchor/drive_mode/phase`；恢复 Fixed 后先重新进行传感器安全检查，并从当前坐标重新规划 P1/P2，不能直接回到普通校准。
 - **验证**: bundled Python 执行 `py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 通过；`git diff --check -- src/rtk_nav/rtk_nav/rtk_nav.py STANLEY_FIX_SUMMARY.md` 通过。未进行 ROS/实车验证。
 - **影响**: `rtk_nav.py`：统一原地校准保护、初始航向对准、P1/P2 安全分流和 RTK 恢复；`STANLEY_FIX_SUMMARY.md`：第 88 项。
+
+## 2026-08-02 撤退成功假象导致校准死循环
+
+### 89. 锚点距离达标但传感器仍触发时禁止伪造撤退成功
+
+- **问题**: `run20260802.log` 中 `校准打滑触发传感器` 出现 23947 次，而 `撤退完成，重新执行航向校准` 出现 23946 次；实际 `撤退P1` 仅 1 次、`撤退P2` 为 0 次。航点距离已小于 0.2m 时，撤退生成器直接返回 `SUCCESS`，但 `confirmed_sensors` 仍保持 active，主校准循环不断重新创建校准生成器并再次调用撤退，车辆实际保持静止。
+- **修复**:
+  1. `_retreat_to_waypoint()` 在 P1 已接近锚点时增加边界释放检查；只要确认传感器、原始传感器或锁定的边界矫正仍 active，就返回 `P1_SENSOR_BLOCKED`，输出零速并进入统一 `PAUSE/HOLD`。
+  2. 主 `WAYPOINT_CALIB` 撤退调用点在 `SUCCESS` 后再次检查边界状态，禁止将仍触发的撤退结果带回航向校准。
+  3. 不清空仍然有效的传感器确认状态，等待传感器真实释放后由正常回调清理，避免通过清状态掩盖物理边界风险。
+- **行为约束**: 撤退 `SUCCESS` 必须同时满足“GPS 距离锚点达标”和“边界传感器已释放”；任一条件不满足都必须停车暂停，不能继续原地校准循环。
+- **验证**: bundled Python 执行 `py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 通过；`git diff --check` 通过。未进行 ROS/实车验证。
+- **影响**: `rtk_nav.py`：`_retreat_to_waypoint()` P1 快速完成路径和主 `WAYPOINT_CALIB` 撤退成功消费点；`STANLEY_FIX_SUMMARY.md`：第 89 项。
+
+## 2026-08-05 几何 P1 入口被持续传感器状态误阻断
+
+### 90. P1 按计划方向判断阻断，保留无候选暂停
+
+- **问题**: 几何回退由边界触发启动时，原始/确认传感器通常仍保持 active；P1 若把任一 active 直接视为阻断，会在安全候选转向前立即返回 `P1_SENSOR_BLOCKED`，几何回退无法实际执行。
+- **修复**:
+  1. 新增即时方向集合，将确认传感器与当前原始 IO 合并，供 P1/P2 方向安全判断使用。
+  2. P1 仅在当前计划的左/右转向被对应方向阻断时停止；持续触发但不阻断计划转向的传感器不会覆盖 P1 输出。
+  3. `_select_retreat_plan()` 和 P2 驱动同时过滤即时前进/后退/转向禁行方向；没有安全候选仍返回 `P1_NO_SAFE_CANDIDATE` 并进入 `PAUSE`。
+  4. 到达锚点时仍要求边界传感器释放，避免把“原地未脱困”报告为撤退成功。
+- **验证**: bundled Python 契约断言 12/12 通过；`py_compile` 和 `git diff --check` 通过。未进行 ROS/实车验证。
+- **影响**: `rtk_nav.py` 的几何 P1/P2 安全方向判断；`src/rtk_nav/test/test_boundary_calibration_contract.py` 增加对应静态契约覆盖。
