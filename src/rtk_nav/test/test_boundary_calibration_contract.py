@@ -182,3 +182,29 @@ def test_geometric_retreat_is_enabled_for_heading_recovery_sources():
     ]
     assert "HEADING_RECOVERY" in tuple_values
     assert "FORCE_BEARING" in tuple_values
+
+
+def test_anchor_sensor_trigger_has_bounded_escape_phase():
+    source, tree = _source_tree()
+    retreat = _function(tree, "_retreat_to_waypoint")
+    retreat_source = ast.unparse(retreat)
+    assert "P1_ESCAPE" in source
+    assert "_select_escape_plan" in source
+    assert "RETREAT_ESCAPE_DURATION" in source
+    assert "retreat_escape_start_time" in retreat_source
+
+
+def test_anchor_escape_stops_without_safe_linear_direction():
+    source, tree = _source_tree()
+    selector = _function(tree, "_select_escape_plan")
+    selector_source = ast.unparse(selector)
+    assert "FORWARD" in selector_source
+    assert "BACKWARD" in selector_source
+    assert "return False" in selector_source
+    assert "P1_NO_SAFE_CANDIDATE" in source
+
+
+def test_geometric_escape_does_not_delegate_to_boundary_correction():
+    _, tree = _source_tree()
+    retreat = _function(tree, "_retreat_to_waypoint")
+    assert "get_boundary_correct_speed" not in ast.unparse(retreat)

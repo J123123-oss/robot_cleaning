@@ -1059,3 +1059,13 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   4. 到达锚点时仍要求边界传感器释放，避免把“原地未脱困”报告为撤退成功。
 - **验证**: bundled Python 契约断言 12/12 通过；`py_compile` 和 `git diff --check` 通过。未进行 ROS/实车验证。
 - **影响**: `rtk_nav.py` 的几何 P1/P2 安全方向判断；`src/rtk_nav/test/test_boundary_calibration_contract.py` 增加对应静态契约覆盖。
+## 2026-08-05 原地旋转传感器触发时增加有限 P1 脱困
+
+### 91. 锚点附近传感器触发不再直接判定 P1 失败
+
+- **问题**：原地航向校准在航点附近触发传感器时，`_retreat_to_waypoint()` 先命中距离阈值，直接返回 `P1_SENSOR_BLOCKED`，没有实际输出几何脱困速度，导致立即 `PAUSE/HOLD`。
+- **修复**：新增 `RetreatPhase.P1_ESCAPE`。按实时 `FORWARD/BACKWARD` 禁止方向选择线性脱困方向：前方 `mid_*` 触发优先后退，后方 `back_*` 触发优先前进；每次最多运行 `RETREAT_ESCAPE_DURATION=2.0s`，最多两次尝试。
+- **安全边界**：前进和后退均被实时传感器禁止时返回 `P1_NO_SAFE_CANDIDATE`；两次脱困后传感器仍未释放时返回 `P1_ESCAPE_TIMEOUT`，由统一撤退失败入口停车并进入 `PAUSE`。P1/P2 几何输出不调用普通 `get_boundary_correct_speed()` 覆盖。
+- **转向覆盖**：几何回退自身的 P1 原地转向在锚点附近再次触发传感器时回到 `P1_PLAN`，复用同一有限脱困流程；传感器释放后清理撤退上下文并由校准保护入口从当前位置重建航向校准。
+- **验证**：契约测试 15/15 通过，`python -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 和 `git diff --check` 通过；未进行 ROS/实车验证。
+- **影响**：`rtk_nav.py` 的 P1 锚点传感器处理、有限线性脱困和失败结果映射；`src/rtk_nav/test/test_boundary_calibration_contract.py` 增加 P1_ESCAPE 契约覆盖。
