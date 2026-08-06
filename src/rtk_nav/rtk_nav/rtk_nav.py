@@ -30,6 +30,7 @@ LINEAR_SPEED_BASE = 10.0   # origin 8.0
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 RTK_DATA_TIMEOUT = 1.0
+RTK_ZERO_ANGLE_TIMEOUT = RTK_DATA_TIMEOUT  # angle_x/angle_y持续为0时视为RTK数据异常
 RTK_TIMEOUT_LOG_INTERVAL = 2.0
 IMU_CALIBRATION_TIMEOUT = 3.0
 HEADING_CALIBRATION_TIMEOUT = 40.0
@@ -333,6 +334,7 @@ class RTKNavControlNode(Node):
         self.nav_generator: Optional[Generator] = None
         self.nav_running = False
         self.last_wtrtk_time = time.monotonic()
+        self.zero_angle_start_time = None
         self.rtk_data_timed_out = False
         self.last_gps_status = -1
         self.last_orientation_status = -1
@@ -1716,9 +1718,15 @@ class RTKNavControlNode(Node):
     def handle_rtk_data_timeout(self) -> bool:
         """RTK数据超时 + 航向角异常超时检测，触发时停车并暂停导航"""
         now = time.monotonic()
+        zero_angle_elapsed = (
+            now - self.zero_angle_start_time
+            if self.zero_angle_start_time is not None
+            else 0.0
+        )
+        zero_angle_timed_out = zero_angle_elapsed > RTK_ZERO_ANGLE_TIMEOUT
 
         # —— 航向角异常超时检测（独立于RTK数据超时） ——
-        if self.heading_abnormal_start_time is not None:
+        if not zero_angle_timed_out and self.heading_abnormal_start_time is not None:
             heading_abnormal_elapsed = now - self.heading_abnormal_start_time
             if heading_abnormal_elapsed > HEADING_ABNORMAL_TIMEOUT:
                 if not self.heading_timed_out:
@@ -1775,12 +1783,19 @@ class RTKNavControlNode(Node):
                 return True
 
         # —— RTK数据超时检测 ——
-        if self.last_wtrtk_time is None:
+        if self.last_wtrtk_time is None and self.zero_angle_start_time is None:
             return False
 
-        elapsed = now - self.last_wtrtk_time
-        if elapsed <= RTK_DATA_TIMEOUT:
+        elapsed = now - self.last_wtrtk_time if self.last_wtrtk_time is not None else 0.0
+        if elapsed <= RTK_DATA_TIMEOUT and not zero_angle_timed_out:
             return False
+
+        timeout_elapsed = zero_angle_elapsed if zero_angle_timed_out else elapsed
+        timeout_detail = (
+            f"angle_x/angle_y持续为0 {timeout_elapsed:.2f}s"
+            if zero_angle_timed_out
+            else f"{elapsed:.2f}s未收到/wtrtk_data"
+        )
 
         if not self.rtk_data_timed_out:
             if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
@@ -1793,13 +1808,13 @@ class RTKNavControlNode(Node):
             self.rtk_data_timed_out = True
             self.publish_stop_speed()
             self.get_logger().warn(
-                f"[RTK数据超时] {elapsed:.2f}s未收到/wtrtk_data，已停车并暂停导航"
+                f"[RTK数据超时] {timeout_detail}，已停车并暂停导航"
             )
             self.last_rtk_timeout_log_time = now
         elif now - self.last_rtk_timeout_log_time >= RTK_TIMEOUT_LOG_INTERVAL:
             self.publish_stop_speed()
             self.get_logger().warn(
-                f"[RTK数据超时] 仍未收到/wtrtk_data，已持续{elapsed:.2f}s，保持停车"
+                f"[RTK数据超时] {timeout_detail}，保持停车"
             )
             self.last_rtk_timeout_log_time = now
 
@@ -1813,6 +1828,9 @@ class RTKNavControlNode(Node):
         只检查 IMU 数据是否仍在更新：数据新鲜说明 IMU 未死机/卡死，
         Stanley 控制器或航向重校准可主动纠正漂移误差。
         """
+        if self.zero_angle_start_time is not None:
+            if time.monotonic() - self.zero_angle_start_time > RTK_ZERO_ANGLE_TIMEOUT:
+                return False
         if self.last_wtrtk_time is not None:
             return (time.monotonic() - self.last_wtrtk_time) <= RTK_DATA_TIMEOUT
         return True  # 无法判断时假定正常，避免永久阻塞
@@ -1829,8 +1847,15 @@ class RTKNavControlNode(Node):
         return 360.0 - max(gaps)
 
     def heading_callback(self, msg: WTRTK) -> None:
-        self.last_wtrtk_time = time.monotonic()
-        if self.rtk_data_timed_out:
+        now = time.monotonic()
+        self.last_wtrtk_time = now
+        zero_angle_data = msg.angle_x == 0.0 and msg.angle_y == 0.0
+        if zero_angle_data:
+            if self.zero_angle_start_time is None:
+                self.zero_angle_start_time = now
+        else:
+            self.zero_angle_start_time = None
+        if self.rtk_data_timed_out and not zero_angle_data:
             self.get_logger().info("[RTK数据恢复] 已重新收到/wtrtk_data")
             self.rtk_data_timed_out = False
 
