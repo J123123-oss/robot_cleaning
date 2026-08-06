@@ -112,7 +112,9 @@ TILT_SHORT_DURATION = 10.0    # 短促倾斜阈值（秒），倾斜持续低于
 # 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
-AUTO_HEADING_GATE_TIMEOUT = 60.0    # AUTO入口持续不稳定时进入可自动恢复的PAUSE
+HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
+HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
+AUTO_HEADING_GATE_TIMEOUT = 180.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -201,6 +203,7 @@ class RTKNavControlNode(Node):
         self._auto_heading_gate_start_time = None
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_path_alignment_pending = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
         self.integral_yaw = 0.0
@@ -1877,13 +1880,10 @@ class RTKNavControlNode(Node):
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
 
-        # —— 航向稳定性追踪（排除主动旋转的状态：航点校准）——
-        nav_state = self.nav_context.get("nav_state", NavState.IDLE)
-        # AUTO入口门控期间机器人保持停车，即使准备恢复到WAYPOINT_CALIB也要重新采集稳定窗口。
-        tracking_active = self._auto_heading_gate_pending or nav_state != NavState.WAYPOINT_CALIB
+        # AUTO门控期间机器人保持停车，只在此阶段采集稳定性样本。
+        tracking_active = self._auto_heading_gate_pending
 
         if tracking_active:
-            now = time.monotonic()
             can_track_heading = True
             if self._auto_heading_gate_pending:
                 if not current_sample_fixed:
@@ -1896,6 +1896,7 @@ class RTKNavControlNode(Node):
                     self._last_heading_stable = False
                     self._auto_heading_gate_quality_fixed = False
                     self._auto_heading_gate_fixed_since = None
+                    self._auto_heading_gate_start_time = None
                     is_stable = False
                     can_track_heading = False
                     if window_invalidated:
@@ -1910,35 +1911,58 @@ class RTKNavControlNode(Node):
                     self._last_heading_stable = False
                     self._auto_heading_gate_quality_fixed = True
                     self._auto_heading_gate_fixed_since = now
+                    self._auto_heading_gate_start_time = now
                     self.get_logger().info(
                         "[AUTO航向门控] 定位与定向均为Fixed，"
-                        f"开始重新采集{HEADING_STABILITY_WINDOW:.0f}s航向稳定窗口"
+                        f"开始重新采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
+                        f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
                     )
 
             if can_track_heading:
                 vehicle_heading_360 = (self.imu_yaw + 360) % 360
                 self._heading_stability_history.append((now, vehicle_heading_360))
                 while (self._heading_stability_history
-                       and now - self._heading_stability_history[0][0] > HEADING_STABILITY_WINDOW):
+                       and now - self._heading_stability_history[0][0] > HEADING_STABILITY_SETTLE_WINDOW):
                     self._heading_stability_history.popleft()
 
                 is_stable = False
-                window_dur = now - self._heading_stability_history[0][0] if self._heading_stability_history else 0.0
-                samples_enough = len(self._heading_stability_history) >= 20
-                time_enough = window_dur >= HEADING_STABILITY_WINDOW - 0.5
-                if samples_enough and time_enough:
-                    headings = [h for _, h in self._heading_stability_history]
-                    h_range = self._circular_heading_span(headings)
-                    # 不限制固定角度范围：出仓后只要IMU无漂移（波动小）即视为稳定，
-                    # 无论车头朝哪个方向。避免遥控接管后角度变化导致永远无法通过校验。
-                    is_stable = h_range <= HEADING_STABILITY_RANGE
+                short_history = [sample for sample in self._heading_stability_history
+                                 if now - sample[0] <= HEADING_STABILITY_WINDOW]
+                short_window_dur = now - short_history[0][0] if short_history else 0.0
+                settle_window_dur = (now - self._heading_stability_history[0][0]
+                                     if self._heading_stability_history else 0.0)
+                short_range = float("inf")
+                settle_range = float("inf")
+                short_ready = (
+                    len(short_history) >= 20
+                    and short_window_dur >= HEADING_STABILITY_WINDOW - 0.5
+                )
+                settle_ready = (
+                    len(self._heading_stability_history) >= 20
+                    and settle_window_dur >= HEADING_STABILITY_SETTLE_WINDOW - 0.5
+                )
+                if short_ready:
+                    short_range = self._circular_heading_span([h for _, h in short_history])
+                if settle_ready:
+                    settle_range = self._circular_heading_span(
+                        [h for _, h in self._heading_stability_history]
+                    )
+                is_stable = (
+                    short_range <= HEADING_STABILITY_RANGE
+                    and settle_range <= HEADING_STABILITY_SETTLE_RANGE
+                )
 
             if is_stable != self._last_heading_stable:
                 if is_stable:
-                    self.get_logger().info(f"[航向稳定] ins_heading 5s内波动≤{HEADING_STABILITY_RANGE}°，"
-                                           f"无漂移判定为稳定（不限制固定角度）")
+                    self.get_logger().info(
+                        f"[航向稳定] 5s波动={short_range:.2f}°，"
+                        f"30s收敛波动={settle_range:.2f}°，通过AUTO门控"
+                    )
                 else:
-                    self.get_logger().warn(f"[航向不稳定] ins_heading 失去稳定（5s内波动>{HEADING_STABILITY_RANGE}°）")
+                    self.get_logger().warn(
+                        f"[航向不稳定] 5s波动={short_range:.2f}°，"
+                        f"30s收敛波动={settle_range:.2f}°"
+                    )
             self._last_heading_stable = is_stable
 
         stable_msg = Bool()
@@ -4149,6 +4173,7 @@ class RTKNavControlNode(Node):
             "control_mode": self.current_control_mode,
             "heading_stable": self._last_heading_stable,
             "auto_heading_gate_pending": self._auto_heading_gate_pending,
+            "auto_heading_gate_path_alignment_pending": self._auto_heading_gate_path_alignment_pending,
             "heading_stability_samples": len(self._heading_stability_history),
             "auto_heading_gate_elapsed": (
                 time.monotonic() - self._auto_heading_gate_start_time
@@ -4191,25 +4216,72 @@ class RTKNavControlNode(Node):
         self._last_heading_stable = False
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_path_alignment_pending = False
         self.last_heading_check_log_time = 0.0
         self._auto_heading_gate_prepared = True
         self._auto_heading_gate_pending = True
-        self._auto_heading_gate_start_time = time.monotonic()
+        self._auto_heading_gate_start_time = None
 
         stable_msg = Bool()
         stable_msg.data = False
         self.heading_stable_pub.publish(stable_msg)
         self.get_logger().info(
             f"[AUTO航向门控] {source}触发AUTO_CLEANING，已清空旧航向样本，"
-            f"重新采集{HEADING_STABILITY_WINDOW:.0f}s稳定窗口"
+            f"重新采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
+            f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
         )
 
     def _disarm_auto_cleaning_heading_gate(self):
+        self._heading_stability_history.clear()
+        self._last_heading_stable = False
         self._auto_heading_gate_prepared = False
         self._auto_heading_gate_pending = False
         self._auto_heading_gate_start_time = None
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_path_alignment_pending = False
+
+    def _start_auto_heading_gate_path_alignment(self) -> bool:
+        """在门控放行后先静止对齐当前路径，避免直接进入Stanley巡迹。"""
+        if not self._auto_heading_gate_path_alignment_pending:
+            return True
+
+        if self.nav_context.get("nav_state") != NavState.WAYPOINT_MOVE:
+            self._auto_heading_gate_path_alignment_pending = False
+            return True
+
+        target_waypoint = self.nav_context.get("target_waypoint")
+        if target_waypoint is None:
+            target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
+            self.nav_context["target_waypoint"] = target_waypoint
+        if target_waypoint is None or not self.current_gps:
+            self.get_logger().warn("[AUTO航向门控] 等待当前路径目标，保持停车")
+            return False
+
+        if self.stanley_path_direction is not None:
+            path_direction = self.stanley_path_direction
+        else:
+            target_lon, target_lat, _ = target_waypoint
+            current_lon, current_lat = self.current_gps
+            path_direction = self.calculate_bearing(
+                current_lat, current_lon, target_lat, target_lon
+            )
+
+        heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+        self.start_heading_recalibration(
+            path_direction,
+            heading_err,
+            "AUTO航向门控放行后先对齐路径"
+        )
+        self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
+        self._auto_heading_gate_path_alignment_pending = False
+        self.publish_nav_state(NavState.WAYPOINT_CALIB)
+        self.get_logger().info(
+            f"[AUTO航向门控] 收敛后先原地对齐路径："
+            f"目标={path_direction:.1f}°，当前={self.imu_yaw:.1f}°，"
+            f"误差={heading_err:.1f}°"
+        )
+        return True
 
     def get_cleaning_area_for_waypoint(self, idx: int = None) -> str:
         idx = self.current_waypoint_idx if idx is None else idx
@@ -4445,7 +4517,7 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.IDLE)
                 return
 
-            # 每次进入AUTO_CLEANING都必须使用进入后的新样本重新确认5s航向稳定性。
+            # 每次进入AUTO_CLEANING都必须使用进入后的新样本重新确认航向收敛。
             # 门控覆盖首次启动及WAYPOINT_MOVE/WAYPOINT_CALIB等恢复路径。
             if self._auto_heading_gate_pending:
                 if not self._last_heading_stable:
@@ -4481,7 +4553,9 @@ class RTKNavControlNode(Node):
                     if now - self.last_heading_check_log_time >= 10.0:
                         self.get_logger().warn(
                             f"[AUTO航向门控] 等待航向稳定：IMU={self.imu_yaw:.1f}°，"
-                            f"要求{HEADING_STABILITY_WINDOW:.0f}s内波动≤{HEADING_STABILITY_RANGE}°，"
+                            f"要求{HEADING_STABILITY_WINDOW:.0f}s波动≤{HEADING_STABILITY_RANGE}°且"
+                            f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛≤"
+                            f"{HEADING_STABILITY_SETTLE_RANGE}°，"
                             f"已等待{gate_elapsed:.0f}/{AUTO_HEADING_GATE_TIMEOUT:.0f}s，保持停车"
                         )
                         self.last_heading_check_log_time = now
@@ -4503,6 +4577,14 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(
                         f"[AUTO航向门控] 航向稳定检查通过：IMU={self.imu_yaw:.1f}°，允许启动/恢复导航"
                     )
+
+                if self.nav_context.get("nav_state") == NavState.WAYPOINT_MOVE:
+                    self._auto_heading_gate_path_alignment_pending = True
+
+            if self._auto_heading_gate_path_alignment_pending:
+                if not self._start_auto_heading_gate_path_alignment():
+                    self.publish_stop_speed()
+                    return
 
             # 初始化多点导航生成器（首次进入/导航完成后重新初始化, 解决重复进入初始点）
             if not self.multi_waypoint_generator and not self.nav_running:

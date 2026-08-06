@@ -1069,3 +1069,17 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **转向覆盖**：几何回退自身的 P1 原地转向在锚点附近再次触发传感器时回到 `P1_PLAN`，复用同一有限脱困流程；传感器释放后清理撤退上下文并由校准保护入口从当前位置重建航向校准。
 - **验证**：契约测试 15/15 通过，`python -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 和 `git diff --check` 通过；未进行 ROS/实车验证。
 - **影响**：`rtk_nav.py` 的 P1 锚点传感器处理、有限线性脱困和失败结果映射；`src/rtk_nav/test/test_boundary_calibration_contract.py` 增加 P1_ESCAPE 契约覆盖。
+
+## 2026-08-05 双 Fixed 恢复后的航向慢漂移门控
+
+### 92. 5 秒窗口会放行缓慢单向漂移并直接进入 Stanley 巡迹
+
+- **问题**：长时间无 Fixed 后，定位与定向恢复 Fixed 时 INS 航向仍可能持续缓慢收敛。仅以最近 5 秒跨度 `<= 1°` 判断时，慢漂移可通过门控；恢复路径随后直接回到 `WAYPOINT_MOVE`，只有路径误差超过 15° 才会触发重校准，较小但持续的误差会进入 Stanley 造成左右扭动。
+- **修复**：
+  1. AUTO 门控只在等待期间采样，并同时要求最近 5 秒及连续 30 秒的圆周航向跨度均 `<= 1°`。
+  2. 任一 `position_status == 4`、`fix_status == 4`、`position_data_valid` 条件丢失时，立即清空样本、稳定结果和双 Fixed 计时；下一次双 Fixed 首帧才重新开始采样与超时计时。
+  3. `AUTO_HEADING_GATE_TIMEOUT` 从 60 秒调整为 180 秒，以覆盖现场约 2-3 分钟的收敛过程；超时仍进入可自动恢复的 `PAUSE(auto_heading_gate_timeout)`。
+  4. 门控放行到 `WAYPOINT_MOVE` 时，先切换至 `WAYPOINT_CALIB` 并调用现有 `start_heading_recalibration()` 对齐当前路径方向，完成原地对齐后才允许 Stanley 输出巡迹速度。
+  5. `/rtk/nav_context` 新增 `auto_heading_gate_path_alignment_pending`，用于现场确认是否正在等待恢复后的路径对齐。
+- **未改范围**：`motor_control.py` 的 `rtk_status` 格式保持不变。
+- **验证**：新增 `test_heading_recovery_gate_contract.py`，覆盖双窗口参数、双窗口判定、质量丢失重置计时，以及路径对齐必须先于导航生成器创建；未进行 ROS/实车验证。
