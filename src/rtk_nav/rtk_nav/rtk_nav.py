@@ -847,11 +847,12 @@ class RTKNavControlNode(Node):
         return (
             self.boundary_correct_locked
             or bool(self.confirmed_sensors)
-            or (
-                not suppression_active
-                and any((self.mid_left, self.mid_right, self.back_left, self.back_right))
-            )
+            or (not suppression_active and self._has_raw_boundary_trigger())
         )
+
+    def _has_raw_boundary_trigger(self) -> bool:
+        """返回当前原始边界 IO 是否有触发，供零速闸门使用。"""
+        return any((self.mid_left, self.mid_right, self.back_left, self.back_right))
 
     def _get_live_blocked_directions(self):
         """返回确认传感器和当前原始 IO 合并后的即时禁止方向。"""
@@ -1302,6 +1303,17 @@ class RTKNavControlNode(Node):
         """在不推进航向校准生成器的前提下处理一次边界保护。"""
         if not self._is_calibration_boundary_active():
             return "clear"
+
+        # 原始 IO 首帧只执行硬停车，不能因为一次抖动直接启动 P1。
+        # 连续确认后再进入几何撤退，避免日志中的 "传感器([])" 误触发。
+        if (
+            not self.boundary_correct_locked
+            and not self.confirmed_sensors
+            and self._has_raw_boundary_trigger()
+        ):
+            self.publish_stop_speed()
+            yield (0.0, 0.0)
+            return "wait"
 
         use_geometric_retreat = self._maybe_enable_geometric_retreat(target_waypoint)
         if use_geometric_retreat and target_waypoint is None:
@@ -4077,7 +4089,16 @@ class RTKNavControlNode(Node):
                     bearing_only=in_bearing_mode
                 )
 
-                if self._is_motion_blocked() or self.boundary_correct_locked:
+                # 正常行驶时原始 IO 首帧立即零速，等待确认后再进入边界矫正/P1。
+                raw_boundary_stop = (
+                    self._has_raw_boundary_trigger()
+                    and not self.confirmed_sensors
+                    and not self.nav_context.get("retreat_active")
+                )
+                if raw_boundary_stop:
+                    left_speed, right_speed = 0.0, 0.0
+                    self.publish_stop_speed()
+                elif self._is_motion_blocked() or self.boundary_correct_locked:
                     # 行进方向被禁止时，首次调用会启动边界矫正状态机
                     left_speed, right_speed = self.get_boundary_correct_speed()
                     if self.nav_context.get("nav_state") == NavState.PAUSE:
