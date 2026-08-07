@@ -63,7 +63,7 @@ DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
 
 LASER_DATA_TIMEOUT = 1.0
-UNLOADING_MIN_BATTERY = 91.0
+UNLOADING_MIN_BATTERY = 90.0
 UNLOADING_SETTLE_DURATION = 2.0
 
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
@@ -145,7 +145,7 @@ class MotorControlNode(Node):
         self.loading_direct_timeout = 24.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
-        self.loading_skip_dock_check = True  # 跳过dock传感器门控检测（限位+归位），GPS导航照常执行
+        self.loading_skip_dock_check = False  # 跳过dock传感器门控检测（限位+归位），GPS导航照常执行
         self._nav_sub_phase = "ALIGN"      # NAV_TO_GPS 子阶段: ALIGN(航向对准) / DRIVE(直线行驶)
         self._nav_align_stable_count = 0   # 航向对准稳定计数
         self._nav_align_start_time = 0.0   # 航向对准子阶段开始时间
@@ -223,7 +223,7 @@ class MotorControlNode(Node):
         self.loading_timeout_error = False  # 进仓导航超时故障标志
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
-        self.charge_resume_threshold = 92   #old:98 # 恢复充电的电量阈值（百分比）
+        self.charge_resume_threshold = 90   #old:98 # 恢复充电的电量阈值（百分比）
         self.is_charge_paused = True  # 充电是否已暂停（充满后暂停）
         self.last_charge_stop_time = 0.0  # 上次停止充电的时间戳
         self.charge_resume_count = 0  # 恢复充电的次数
@@ -239,7 +239,8 @@ class MotorControlNode(Node):
         #     self.get_logger().warn("[ROSNode] 遥控器串口初始化失败，仅支持RTK和键盘控制")
         
         self.current_location = None
-        self.rtk_status = 0  # 初始化RTK状态为0（无效状态）
+        self.rtk_position_status = 0
+        self.rtk_orientation_status = 0
         self.rtk_error_code = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
@@ -341,6 +342,7 @@ class MotorControlNode(Node):
         self.speed_pub = self.create_publisher(Vector3, "/motor/current_speed", 10)  # 电机当前速度
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
         self.route_change_pub = self.create_publisher(String, "/rtk/route_change", 10)  # 路径切换话题
+        self.skip_area_pub = self.create_publisher(String, "/rtk/skip_to_area", 10)  # 区域跳转话题
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # robot mqtt msg
         self.dock_state_pub = self.create_publisher(String, "/dock_state", 10)  # dock mqtt msg
         self.rc_channels_pub = self.create_publisher(Float32MultiArray, "/rc_channels", 10)
@@ -444,14 +446,16 @@ class MotorControlNode(Node):
         if msg.status.status in status_map:
             self.get_logger().debug(f"GPS状态：{status_map[msg.status.status]}")
 
-        self.rtk_status = msg.status.status
+        self.rtk_position_status = msg.status.status
         self.current_lon = msg.longitude
         self.current_lat = msg.latitude
 
     def wtrtk_callback(self, msg: WTRTK) -> None:
-        """订阅 /wtrtk_data，提取 angle_x 和 angle_y"""
+        """订阅 /wtrtk_data，提取姿态与定位/定向状态。"""
         self.angle_x = msg.angle_x
         self.angle_y = msg.angle_y
+        self.rtk_position_status = msg.position_status
+        self.rtk_orientation_status = msg.fix_status
 
     def haversine_distance(self, lon1: float, lat1: float, lon2: float, lat2: float) -> float:
         """计算两个GPS坐标的大圆距离（米）"""
@@ -815,6 +819,21 @@ class MotorControlNode(Node):
         self.route_id = route_id
         self.route_change_pub.publish(route_msg)
         self.get_logger().info(f"[ROSNode] 已发布路径切换指令: {route_id} -> {route_file}")
+
+    def handle_skip_to_area(self, area_name: str):
+        """处理区域跳转指令：将区域名转发给 rtk_nav 执行航点跳转。
+
+        与 handle_route_change 不同，skip_to_area 不要求 DISABLE 状态，
+        因为在 HOLD 状态下即可下发跳转，等 AUTO_CLEANING 恢复后从目标区域开始导航。
+        """
+        if not area_name:
+            self.get_logger().warn("[ROSNode] skip_to_area: 区域名为空")
+            return
+
+        area_msg = String()
+        area_msg.data = area_name
+        self.skip_area_pub.publish(area_msg)
+        self.get_logger().info(f"[ROSNode] 已发布区域跳转指令: skip_to_area -> {area_name}")
 
     def io_data_callback(self, msg: UInt8):
         """实时更新传感器状态，并为手动控制执行边界保护。"""
@@ -1375,7 +1394,10 @@ class MotorControlNode(Node):
                 "battery_current": self.battery_current,
                 "battery_temperatures": self.battery_temperatures,
                 "imu_yaw": self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00,
-                "rtk_status": self.rtk_status,
+                "rtk_status": (
+                    f"{self.rtk_position_status} / "
+                    f"Ori {self.rtk_orientation_status}"
+                ),
                 "current_lon": self.current_lon if self.current_lon > 0.1 else None,
                 "current_lat": self.current_lat if self.current_lat > 0.1 else None,
                 "route_id": self.route_id if self.route_id is not None else "default",
@@ -1465,6 +1487,13 @@ class MotorControlNode(Node):
                         self.handle_route_change(route_id)
                     else:
                         self.get_logger().warn("[ROSNode] route_id字段为空")
+                # 检查是否是区域跳转消息 {"skip_to_area": "back_9A-8B"}
+                elif "skip_to_area" in cmd_obj:
+                    area_name = cmd_obj.get("skip_to_area", "")
+                    if area_name:
+                        self.handle_skip_to_area(area_name)
+                    else:
+                        self.get_logger().warn("[ROSNode] skip_to_area字段为空")
                 else:
                     self.get_logger().warn(f"[ROSNode] 未找到command字段: {msg_data}")
                 return
@@ -2251,7 +2280,7 @@ class MotorControlNode(Node):
                                 gps_dist = self.haversine_distance(
                                     self.current_lon, self.current_lat,
                                     self.loading_gps[0], self.loading_gps[1])
-                                if gps_dist > self._pos_recover_gps_drift_limit:
+                                if gps_dist > self._pos_recover_gps_drift_limit + 1e-6:
                                     if self._pos_recover_retry_count >= self._pos_recover_max_retries:
                                         if gps_dist > self._pos_recover_abort_dist:
                                             # 严重偏移：放弃进仓，停车并上报进仓超时故障

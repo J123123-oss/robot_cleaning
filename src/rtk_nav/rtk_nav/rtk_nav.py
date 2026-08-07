@@ -384,7 +384,7 @@ class RTKNavControlNode(Node):
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
         self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
         self.route_change_sub = self.create_subscription(String, "/rtk/route_change", self.route_change_callback, 10)
-
+        self.skip_area_sub = self.create_subscription(String, "/rtk/skip_to_area", self.skip_to_area_callback, 10)
 
         # 定时器（10Hz驱动导航逻辑）
         self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)
@@ -4634,6 +4634,136 @@ class RTKNavControlNode(Node):
             self.get_logger().info(f"[RTKNav] 路径切换成功，共 {len(self.waypoints)} 个航点")
         else:
             self.get_logger().error(f"[RTKNav] 路径切换失败，无法加载航点")
+
+    def skip_to_area_callback(self, msg: String):
+        """跳转到指定区域名的第一个航点，用于故障后快速返回。
+
+        接收区域名（如 "back_9A-8B"、"E10"），在 waypoint_areas 中搜索匹配项，
+        设置 current_waypoint_idx 跳转，重置导航上下文，待 AUTO_CLEANING 恢复后从该航点继续。
+
+        匹配策略（按优先级）：
+        1. 精确匹配：area == target
+        2. 前缀匹配：area 以 target 开头（如 target="E4" 匹配 "E4-E4out1"，但不匹配 "bridge_E4out1-E4"）
+        3. 包含匹配：target 与 area 互为子串（如 target="7b" 匹配 "bridge_7bA-7A"）
+        """
+        target_area = msg.data.strip()
+        if not target_area:
+            self.get_logger().warn("[RTKNav] skip_to_area: 收到空区域名，忽略")
+            return
+
+        if not self.waypoints or not self.waypoint_areas:
+            self.get_logger().warn("[RTKNav] skip_to_area: 无可用的航点/区域数据，忽略")
+            return
+
+        unique_areas = list(dict.fromkeys(self.waypoint_areas))
+
+        # 1) 精确匹配
+        for i, area in enumerate(self.waypoint_areas):
+            if area == target_area:
+                self._apply_skip_to_area(i, target_area, area, "精确")
+                return
+
+        # 2) 前缀匹配：area 以 target 开头
+        prefix_candidates = []
+        for i, area in enumerate(self.waypoint_areas):
+            if area.startswith(target_area):
+                prefix_candidates.append((i, area))
+        if prefix_candidates:
+            idx, matched = prefix_candidates[0]
+            if len(prefix_candidates) > 1:
+                names = [a for _, a in prefix_candidates]
+                self.get_logger().warn(
+                    f"[RTKNav] skip_to_area: 前缀匹配'{target_area}'有{len(prefix_candidates)}个候选"
+                    f" {names}，使用第一个'{matched}'"
+                )
+            self._apply_skip_to_area(idx, target_area, matched, "前缀")
+            return
+
+        # 3) 包含匹配（双向子串）
+        contain_candidates = []
+        for i, area in enumerate(self.waypoint_areas):
+            if target_area in area or area in target_area:
+                contain_candidates.append((i, area))
+        if contain_candidates:
+            idx, matched = contain_candidates[0]
+            if len(contain_candidates) > 1:
+                names = [a for _, a in contain_candidates]
+                self.get_logger().warn(
+                    f"[RTKNav] skip_to_area: 包含匹配'{target_area}'有{len(contain_candidates)}个候选"
+                    f" {names}，使用第一个'{matched}'"
+                )
+            self._apply_skip_to_area(idx, target_area, matched, "包含")
+            return
+
+        # 未匹配
+        self.get_logger().error(
+            f"[RTKNav] skip_to_area: 未找到匹配'{target_area}'的区域，"
+            f"可用区域: {unique_areas}"
+        )
+
+    def _apply_skip_to_area(self, index: int, target: str, matched_area: str, match_type: str):
+        """执行航点跳转：重置导航上下文，设置目标航点索引。
+
+        Args:
+            index: 目标航点索引
+            target: 用户查询的区域名
+            matched_area: 实际匹配到的区域名
+            match_type: 匹配类型（精确/前缀/包含），仅用于日志
+        """
+        self.current_waypoint_idx = index
+        self.multi_waypoint_generator = None
+        self.nav_running = False
+        self.stanley_path_start = None
+        self._auto_heading_gate_path_alignment_pending = False
+
+        # 设置前置航点缓存（Stanley 控制器需要）
+        if index > 0 and index < len(self.waypoints):
+            self.last_waypoint_cache = self.waypoints[index - 1]
+        elif index < len(self.waypoints):
+            self.last_waypoint_cache = self.waypoints[index]
+        else:
+            self.last_waypoint_cache = None
+
+        # 根据航点索引重新计算滚刷状态（复用现有索引队列机制，
+        # check_and_control_brush 会弹出过期索引并按需开关滚刷）
+        self.check_and_control_brush()
+
+        # 清除校准、力对准、边界矫正等上下文
+        self.heading_abnormal_start_time = None
+        self.heading_timed_out = False
+        self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
+        self.nav_context["target_waypoint"] = self.waypoints[index]
+        self.nav_context["pre_pause_state"] = None
+        self.nav_context["pause_reason"] = None
+        self.nav_context["manual_intervention_seen"] = False
+        self.nav_context["calib_generator"] = None
+        self.nav_context["calib_retry_count"] = 0
+        self.nav_context["calibration_active"] = False
+        self.nav_context["force_bearing_mode"] = False
+        self.nav_context["force_bearing_target"] = None
+        self.nav_context["force_bearing_recalib_count"] = 0
+        self.nav_context["force_bearing_min_distance"] = float('inf')
+        self.nav_context["distance_increase_count"] = 0
+        self.nav_context["bearing_mode_locked"] = False
+        self.nav_context["angle_abnormal_count"] = 0
+        self.nav_context["is_angle_recalib"] = False
+        self.nav_context["waypoint_recalib_count"] = 0
+        self.nav_context["retreat_enabled"] = False
+        self._clear_retreat_context()
+        self._reset_boundary_correction()
+        self._reset_boundary_cycle_tracking()
+        self.clear_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+
+        self.publish_nav_state(NavState.WAYPOINT_MOVE)
+        self.publish_current_route_id()
+
+        self.get_logger().info(
+            f"[RTKNav] skip_to_area ({match_type}匹配): 查询'{target}' → 区域'{matched_area}'，"
+            f"航点索引{index}/{len(self.waypoints)}，"
+            f"坐标({self.waypoints[index][0]:.8f},{self.waypoints[index][1]:.8f})，"
+            f"滚刷={'开' if self.brush_active else '关'}，"
+            f"已重置导航上下文，等待AUTO_CLEANING恢复"
+        )
 
     def mode_callback(self, msg: String):
         """接收电机节点的控制模式, 更新自身状态"""
