@@ -31,7 +31,7 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
 
         self.assertIn("HEADING_STABILITY_SETTLE_WINDOW = 30.0", source)
         self.assertIn("HEADING_STABILITY_SETTLE_RANGE = 1.0", source)
-        self.assertIn("AUTO_HEADING_GATE_TIMEOUT = 180.0", source)
+        self.assertIn("AUTO_HEADING_GATE_TIMEOUT = 600.0", source)
 
     def test_heading_gate_requires_short_and_settle_windows(self):
         _, tree = _source_tree()
@@ -79,6 +79,20 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertLess(alignment_call, generator_create)
         self.assertIn("self.start_heading_recalibration", helper)
         self.assertIn("self.nav_context['nav_state'] = NavState.WAYPOINT_CALIB", helper)
+
+    def test_waypoint_attitude_change_restarts_auto_heading_gate(self):
+        source, tree = _source_tree()
+        callback = ast.unparse(_function(tree, "heading_callback"))
+        checker = ast.unparse(_function(tree, "_check_waypoint_attitude_change"))
+
+        self.assertIn("WAYPOINT_ATTITUDE_CHANGE_THRESHOLD = 15.0", source)
+        self.assertIn("self._check_waypoint_attitude_change(msg, now)", callback)
+        self.assertIn("NavState.WAYPOINT_MOVE", checker)
+        self.assertIn("msg.angle_x", checker)
+        self.assertIn("msg.angle_y", checker)
+        self.assertIn("self.publish_stop_speed()", checker)
+        self.assertIn("self._prepare_auto_cleaning_heading_gate", checker)
+        self.assertIn("self.multi_waypoint_generator = None", checker)
 
 
 if __name__ == "__main__":

@@ -109,6 +109,11 @@ HEADING_QUALITY_GAP_MAX = 3.0          # 超过此时长的非Fixed间隔清空�
 HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 恢复双Fixed后保持停车确认时间（秒）
 AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
 
+# 仅在直线航段运行中监视姿态角突变。触发后复用AUTO入口的航向稳定门控。
+WAYPOINT_ATTITUDE_WINDOW = 1.0
+WAYPOINT_ATTITUDE_CHANGE_THRESHOLD = 15.0
+WAYPOINT_ATTITUDE_CONFIRM_FRAMES = 3
+
 # 控制模式（与电机节点保持一致）
 class ControlMode:
     REMOTE = "REMOTE"
@@ -192,6 +197,8 @@ class RTKNavControlNode(Node):
         self.offset_calculated = False  # 偏移量是否已计算（避免重复计算）
 
         self.imu_initialized = False
+        self._waypoint_attitude_history = deque()  # (timestamp, angle_x, angle_y)
+        self._waypoint_attitude_abnormal_count = 0
         self._heading_stability_history = deque()  # (timestamp, vehicle_heading_360)
         self._last_heading_stable = False
         self._auto_heading_gate_prepared = False
@@ -1868,6 +1875,63 @@ class RTKNavControlNode(Node):
             return (time.monotonic() - self.last_wtrtk_time) <= RTK_DATA_TIMEOUT
         return True  # 无法判断时假定正常，避免永久阻塞
 
+    def _check_waypoint_attitude_change(self, msg: WTRTK, now: float) -> None:
+        """Stop and restart the existing AUTO heading gate after an attitude jump."""
+        tracking_active = (
+            self.current_control_mode == ControlMode.AUTO_CLEANING
+            and self.nav_context.get("nav_state") == NavState.WAYPOINT_MOVE
+            and not self._auto_heading_gate_pending
+        )
+        if not tracking_active:
+            self._waypoint_attitude_history.clear()
+            self._waypoint_attitude_abnormal_count = 0
+            return
+
+        angle_x = float(msg.angle_x)
+        angle_y = float(msg.angle_y)
+        if not math.isfinite(angle_x) or not math.isfinite(angle_y):
+            return
+
+        self._waypoint_attitude_history.append((now, angle_x, angle_y))
+        while (
+            self._waypoint_attitude_history
+            and now - self._waypoint_attitude_history[0][0] > WAYPOINT_ATTITUDE_WINDOW
+        ):
+            self._waypoint_attitude_history.popleft()
+        if len(self._waypoint_attitude_history) < 3:
+            return
+
+        latest_x, latest_y = angle_x, angle_y
+        change_x = max(
+            abs(self.normalize_angle(latest_x - sample_x))
+            for _, sample_x, _ in self._waypoint_attitude_history
+        )
+        change_y = max(
+            abs(self.normalize_angle(latest_y - sample_y))
+            for _, _, sample_y in self._waypoint_attitude_history
+        )
+        if max(change_x, change_y) <= WAYPOINT_ATTITUDE_CHANGE_THRESHOLD:
+            self._waypoint_attitude_abnormal_count = 0
+            return
+
+        self._waypoint_attitude_abnormal_count += 1
+        if self._waypoint_attitude_abnormal_count < WAYPOINT_ATTITUDE_CONFIRM_FRAMES:
+            return
+
+        self.publish_stop_speed()
+        self.multi_waypoint_generator = None
+        self.nav_running = False
+        self._prepare_auto_cleaning_heading_gate(
+            "WAYPOINT_MOVE姿态角突变", force=True
+        )
+        self.get_logger().warn(
+            f"[姿态角突变] angle_x={angle_x:.2f}°, angle_y={angle_y:.2f}°, "
+            f"{WAYPOINT_ATTITUDE_WINDOW:.1f}s波动x={change_x:.1f}°, "
+            f"y={change_y:.1f}°，已停车并重新进行航向稳定性校验"
+        )
+        self._waypoint_attitude_history.clear()
+        self._waypoint_attitude_abnormal_count = 0
+
     @staticmethod
     def _circular_heading_span(headings: List[float]) -> float:
         """返回一组0~360度航向在圆周上的最小覆盖范围。"""
@@ -1906,6 +1970,7 @@ class RTKNavControlNode(Node):
         self.imu_yaw = ins_heading_deg  + self.rtk_install_offset # + x degree
         self.imu_yaw = math.fmod(self.imu_yaw + 180.0, 360.0) - 180.0
         self.imu_initialized = True
+        self._check_waypoint_attitude_change(msg, now)
         imu_msg= Float32()
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
@@ -4523,11 +4588,17 @@ class RTKNavControlNode(Node):
                 prefix_candidates.append((i, area))
         if prefix_candidates:
             idx, matched = prefix_candidates[0]
-            if len(prefix_candidates) > 1:
-                names = [a for _, a in prefix_candidates]
+            prefix_area_names = list(dict.fromkeys(a for _, a in prefix_candidates))
+            if len(prefix_area_names) > 1:
                 self.get_logger().warn(
-                    f"[RTKNav] skip_to_area: 前缀匹配'{target_area}'有{len(prefix_candidates)}个候选"
-                    f" {names}，使用第一个'{matched}'"
+                    f"[RTKNav] skip_to_area: 前缀匹配'{target_area}'有"
+                    f"{len(prefix_area_names)}个区域候选（{len(prefix_candidates)}个航点记录）"
+                    f" {prefix_area_names}，使用第一个'{matched}'"
+                )
+            elif len(prefix_candidates) > 1:
+                self.get_logger().debug(
+                    f"[RTKNav] skip_to_area: 区域'{matched}'覆盖"
+                    f"{len(prefix_candidates)}个连续航点，使用首航点索引{idx}"
                 )
             self._apply_skip_to_area(idx, target_area, matched, "前缀")
             return
@@ -4539,11 +4610,17 @@ class RTKNavControlNode(Node):
                 contain_candidates.append((i, area))
         if contain_candidates:
             idx, matched = contain_candidates[0]
-            if len(contain_candidates) > 1:
-                names = [a for _, a in contain_candidates]
+            contain_area_names = list(dict.fromkeys(a for _, a in contain_candidates))
+            if len(contain_area_names) > 1:
                 self.get_logger().warn(
-                    f"[RTKNav] skip_to_area: 包含匹配'{target_area}'有{len(contain_candidates)}个候选"
-                    f" {names}，使用第一个'{matched}'"
+                    f"[RTKNav] skip_to_area: 包含匹配'{target_area}'有"
+                    f"{len(contain_area_names)}个区域候选（{len(contain_candidates)}个航点记录）"
+                    f" {contain_area_names}，使用第一个'{matched}'"
+                )
+            elif len(contain_candidates) > 1:
+                self.get_logger().debug(
+                    f"[RTKNav] skip_to_area: 区域'{matched}'覆盖"
+                    f"{len(contain_candidates)}个连续航点，使用首航点索引{idx}"
                 )
             self._apply_skip_to_area(idx, target_area, matched, "包含")
             return
