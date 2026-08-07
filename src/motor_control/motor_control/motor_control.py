@@ -83,7 +83,6 @@ ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
 ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
-ERROR_TILT_FAULT = 64     # 倾斜/跌落故障（来自RTK角度检测）
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 
 #PID参数
@@ -182,6 +181,8 @@ class MotorControlNode(Node):
         self.imu_update_interval = 0.2  # 要求IMU至少100ms更新一次（适配常见IMU发布频率）
 
         self.nav_status = None
+        self._last_rtk_nav_state_seq = -1
+        self._rtk_auto_pause = False
         self.cleaning_area = ""
         self.complete_state = False
         self.is_charging = None # 新增：电池是否正在充电
@@ -486,7 +487,7 @@ class MotorControlNode(Node):
             error |= ERROR_MOTOR_FAULT
         if self.laser_no_response or self.is_laser_timeout():
             error |= ERROR_LASER_TIMEOUT
-        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT | ERROR_CALIB_TIMEOUT)
+        error |= self.rtk_error_code & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_CALIB_TIMEOUT)
         if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
@@ -695,8 +696,13 @@ class MotorControlNode(Node):
             # stop brush
 
         elif self.current_control_mode == "AUTO_CLEANING":
-            left_speed = self.rtk_left_speed
-            right_speed = self.rtk_right_speed
+            if self._rtk_auto_pause:
+                left_speed = 0.0
+                right_speed = 0.0
+                self.set_brush_speed(0.0)
+            else:
+                left_speed = self.rtk_left_speed
+                right_speed = self.rtk_right_speed
             self.set_motors_speed(left_speed, right_speed)
             self.get_logger().debug(f"[RTKControl] 左轮：{left_speed:.2f}，右轮：{right_speed:.2f}")
         state_msg = String()
@@ -769,18 +775,53 @@ class MotorControlNode(Node):
                 self.set_brush_speed(0.0)
 
     def rtk_nav_status_callback(self, msg: String):
-        """同步RTK导航状态，并把自动导航的暂停收口为底盘HOLD。"""
-        nav_status = msg.data.strip()
-        if nav_status == "PAUSE" and self.current_control_mode == "AUTO_CLEANING":
-            # rtk_nav保留PAUSE及pause_reason用于故障诊断和恢复；底盘必须退出自动
-            # 控制，避免RTK、航向或校准故障恢复时在无人确认下继续行驶。
-            self.nav_status = "HOLD"
-            self.get_logger().warn(
-                "[RTKNavStatus] 自动导航请求PAUSE，切换到底盘HOLD，"
-                "等待人工重新进入AUTO_CLEANING")
-            self.switch_state('h')
-            return
+        """按结构化RTK状态区分可自动恢复和人工介入暂停。"""
+        try:
+            payload = json.loads(msg.data)
+            nav_status = str(payload["nav_state"]).strip()
+            seq = payload["seq"]
+            if isinstance(seq, bool) or not isinstance(seq, int):
+                raise ValueError("seq must be an integer")
+            if seq <= self._last_rtk_nav_state_seq:
+                self.get_logger().debug(
+                    f"[RTKNavStatus] 忽略过期导航状态: seq={seq}, "
+                    f"last_seq={self._last_rtk_nav_state_seq}")
+                return
+            self._last_rtk_nav_state_seq = seq
+            pause_reason = payload.get("pause_reason")
+            auto_resume = bool(payload.get("auto_resume", False))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # 与仍发布纯字符串的旧版 rtk_nav 共存时，PAUSE 保持人工介入的保守策略。
+            if self._last_rtk_nav_state_seq >= 0:
+                self.get_logger().warn("[RTKNavStatus] 忽略缺少序号的旧导航状态")
+                return
+            nav_status = msg.data.strip()
+            pause_reason = "legacy_unstructured_pause" if nav_status == "PAUSE" else None
+            auto_resume = False
 
+        if nav_status == "PAUSE":
+            if auto_resume:
+                self.nav_status = "PAUSE"
+                self._rtk_auto_pause = True
+                self.rtk_left_speed = 0.0
+                self.rtk_right_speed = 0.0
+                self.set_motors_speed(0.0, 0.0)
+                self.set_brush_speed(0.0)
+                self.get_logger().warn(
+                    f"[RTKNavStatus] 自动恢复暂停: {pause_reason or 'unknown'}，"
+                    "保持AUTO_CLEANING并输出零速度")
+                return
+
+            self._rtk_auto_pause = False
+            if self.current_control_mode == "AUTO_CLEANING":
+                self.nav_status = "HOLD"
+                self.get_logger().warn(
+                    f"[RTKNavStatus] 人工介入暂停: {pause_reason or 'unknown'}，"
+                    "切换到底盘HOLD")
+                self.switch_state('h')
+                return
+
+        self._rtk_auto_pause = False
         self.nav_status = nav_status
         # self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
         if self.nav_status == "COMPLETED" and not self.is_in_bin_process:
@@ -789,7 +830,7 @@ class MotorControlNode(Node):
             self.switch_state('l')
 
     def rtk_error_callback(self, msg: Int16):
-        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_TILT_FAULT | ERROR_CALIB_TIMEOUT)
+        self.rtk_error_code = msg.data & (ERROR_RTK_NOT_FIXED | ERROR_RTK_TIMEOUT | ERROR_CALIB_TIMEOUT)
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
@@ -2249,7 +2290,7 @@ class MotorControlNode(Node):
                     correction = self.get_speed_correction(self.loading_turn_target_deg)
                     yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
                     # 差值小于0，左转；差值大于0，右转，保持方向正确
-                    turn_speed = self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
+                    turn_speed = 0.5 * self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
                     left_speed = turn_speed + correction
                     right_speed = turn_speed + correction
                     self.set_motors_speed(left_speed, right_speed)

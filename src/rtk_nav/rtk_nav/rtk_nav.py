@@ -96,17 +96,7 @@ BOUNDARY_SLOW_PERSIST_FRAMES = 15  # 单传感器慢速通道：持续N帧(1.5s@
 BOUNDARY_CORRECTION_TIMEOUT = 15.0 # 整体纠偏超时（秒）
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8
-ERROR_TILT_FAULT = 64        # 倾斜/跌落故障
 ERROR_CALIB_TIMEOUT = 256    # 航向校准超时
-
-# 倾斜检测配置
-TILT_ANGLE_THRESHOLD = 15.0  # 倾角阈值（度），abs(angle_x)或abs(angle_y)超此值判定倾斜
-TILT_CONFIRM_FRAMES = 30     # 连续倾斜帧数确认（防抖），避免颠簸误报，约3秒
-TILT_RECOVERY_FRAMES = 5     # 连续正常帧数清除故障
-TILT_SUDDEN_DELTA = 5.0      # 突变阈值（度），1s内角度变化超此值才视为真实倾斜，过滤IMU零偏漂移
-TILT_BASELINE_SAMPLES = 10   # 基线窗口样本数（1秒@10Hz），取中位数作为漂移基线
-TILT_STABILIZE_TIMEOUT = 120.0  # 跌落后INS稳定等待时间（秒），重新AUTO_CLEANING后等待此时间再开始
-TILT_SHORT_DURATION = 10.0    # 短促倾斜阈值（秒），倾斜持续低于此值视为颠簸，跳过稳定等待
 
 # 航向稳定性检查（基于 ins_heading，静止时无漂移才放行）
 # 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
@@ -117,7 +107,7 @@ HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（�
 # 短时定向失锁期间仍可保留航向稳定资格，但恢复后必须先确认连续双Fixed。
 HEADING_QUALITY_GAP_MAX = 3.0          # 超过此时长的非Fixed间隔清空航向窗口（秒）
 HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 恢复双Fixed后保持停车确认时间（秒）
-AUTO_HEADING_GATE_TIMEOUT = 180.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE
+AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -323,9 +313,6 @@ class RTKNavControlNode(Node):
             "force_bearing_min_distance": float('inf'),  # force_bearing 期间到目标的历史最近距离（背离检测基准）
             "distance_increase_count": 0,  # force_bearing 连续背离目标帧数（背离兜底）
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
-            "tilt_confirm_count": 0,     # 连续倾斜帧数（触发确认）
-            "tilt_normal_count": 0,      # 连续正常帧数（恢复确认）
-            "tilt_fault": False,         # 倾斜故障标志
             "calib_retry_count": 0,      # 校准卡滞重试次数
             "calib_target_heading": None,  # 当前校准目标航向（重试/恢复时复用，保证一致性）
             "calibration_active": False,
@@ -357,10 +344,6 @@ class RTKNavControlNode(Node):
         self.last_heading_check_log_time = 0.0
         self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
         self.heading_timed_out = False  # 航向角异常导致的超时标志
-        self.last_tilt_time = 0.0       # 最后一次倾斜故障确认时间，用于跌落后稳定等待
-        self.last_tilt_duration = 0.0  # 上一次倾斜故障的持续时间（秒），用于判断是否短促颠簸
-        self._angle_x_history = deque(maxlen=TILT_BASELINE_SAMPLES)  # 倾角基线窗口，滤IMU漂移
-        self._angle_y_history = deque(maxlen=TILT_BASELINE_SAMPLES)
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
@@ -369,6 +352,7 @@ class RTKNavControlNode(Node):
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
+        self._nav_state_seq = 0
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
         self.current_route_pub = self.create_publisher(String, "/rtk/current_route_id", 10)
         self.rtk_error_pub = self.create_publisher(Int16, "/rtk/error_status", 10)
@@ -1808,10 +1792,6 @@ class RTKNavControlNode(Node):
                         self.heading_abnormal_start_time = None
                         self.heading_timed_out = False
                         self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
-                        # 检查跌落故障是否活跃，避免倾斜状态下恢复导航
-                        if self.nav_context.get("tilt_fault", False):
-                            self.get_logger().warn("[航向恢复] 航向已恢复但跌落故障仍活跃，保持PAUSE等待倾斜恢复")
-                            return False
                         if (
                             self.nav_context["nav_state"] == NavState.PAUSE
                             and self.nav_context.get("pause_reason") == "heading_timeout"
@@ -2088,6 +2068,7 @@ class RTKNavControlNode(Node):
                 self.nav_context["nav_state"] = NavState.PAUSE
                 self.nav_running = False
                 stop_speed = Vector3()
+                self.publish_nav_state(NavState.PAUSE)
                 self.publish_stop_speed()
             elif (
                 hasattr(self, 'nav_context')
@@ -2097,6 +2078,7 @@ class RTKNavControlNode(Node):
                 # 数据恢复但定位仍非固定解：由超时暂停转为非固定解暂停，继续停车。
                 self.nav_context["pause_reason"] = "rtk_not_fixed"
                 self.nav_running = False
+                self.publish_nav_state(NavState.PAUSE)
                 self.publish_stop_speed()
                 self.get_logger().warn(
                     f"[RTK状态] 数据已恢复但定位={status_map.get(position_status, '未知')}，"
@@ -2119,6 +2101,7 @@ class RTKNavControlNode(Node):
                     self._prepare_auto_cleaning_heading_gate("RTK双Fixed恢复")
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
                 self.nav_context["pause_reason"] = None
+                self.publish_nav_state(self.nav_context["nav_state"])
                 self.brush_active = self.nav_context.get("brush_active", False)
                 if self.brush_active:
                     self.publish_brush_speed(RTK_BRUSH_SPEED)
@@ -2128,67 +2111,6 @@ class RTKNavControlNode(Node):
                 # 由10Hz主循环统一按恢复后的nav_state重建并推进生成器。
                 self.multi_waypoint_generator = None
                 self.nav_running = False
-
-        # —— 倾斜/跌落检测（基于 angle_x/angle_y），仅在 AUTO_CLEANING 模式生效 ——
-        if self.current_control_mode == ControlMode.AUTO_CLEANING:
-            self._angle_x_history.append(msg.angle_x)
-            self._angle_y_history.append(msg.angle_y)
-
-            over_x = abs(msg.angle_x) > TILT_ANGLE_THRESHOLD
-            over_y = abs(msg.angle_y) > TILT_ANGLE_THRESHOLD
-            over_threshold = over_x or over_y
-
-            # 突变检测：当前值 vs 1s滑动窗口中位数，过滤IMU零偏缓慢漂移
-            already_counting = self.nav_context["tilt_confirm_count"] > 0
-            sudden = False
-            if len(self._angle_x_history) >= TILT_BASELINE_SAMPLES:
-                sorted_x = sorted(self._angle_x_history)
-                sorted_y = sorted(self._angle_y_history)
-                baseline_x = sorted_x[len(sorted_x) // 2]
-                baseline_y = sorted_y[len(sorted_y) // 2]
-                sudden = (abs(msg.angle_x - baseline_x) > TILT_SUDDEN_DELTA
-                          or abs(msg.angle_y - baseline_y) > TILT_SUDDEN_DELTA)
-
-            # 倾斜判定：超阈值 AND (突变 OR 已在计数中，锁存防止持续倾斜时基线追上)
-            is_tilted = over_threshold and (sudden or already_counting)
-
-            if is_tilted:
-                self.nav_context["tilt_normal_count"] = 0
-                self.nav_context["tilt_confirm_count"] += 1
-                if self.nav_context["tilt_confirm_count"] >= TILT_CONFIRM_FRAMES and not self.nav_context["tilt_fault"]:
-                    self.nav_context["tilt_fault"] = True
-                    self.last_tilt_time = time.monotonic()
-                    if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
-                        self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
-                        self.nav_context["pause_reason"] = "tilt_fault"
-                        self.nav_context["brush_active"] = self.brush_active
-                        self.nav_context["nav_state"] = NavState.PAUSE
-                        self.publish_nav_state(NavState.PAUSE)
-                    self.nav_running = False
-                    self.publish_stop_speed()
-                    self.set_rtk_error_bits(ERROR_TILT_FAULT)
-                    self.get_logger().error(
-                        f"[倾斜故障] angle_x={msg.angle_x:.2f}°, angle_y={msg.angle_y:.2f}° "
-                        f"连续{self.nav_context['tilt_confirm_count']}帧超阈值({TILT_ANGLE_THRESHOLD}°)，已停车并暂停导航"
-                    )
-            else:
-                self.nav_context["tilt_confirm_count"] = 0
-                if self.nav_context["tilt_fault"]:
-                    self.nav_context["tilt_normal_count"] += 1
-                    if self.nav_context["tilt_normal_count"] >= TILT_RECOVERY_FRAMES:
-                        self.nav_context["tilt_fault"] = False
-                        self.nav_context["tilt_normal_count"] = 0
-                        self.last_tilt_duration = time.monotonic() - self.last_tilt_time
-                        self.clear_rtk_error_bits(ERROR_TILT_FAULT)
-                        self.multi_waypoint_generator = None
-                        self.nav_running = False  # 确保重建条件成立
-                        if self.last_tilt_duration < TILT_SHORT_DURATION:
-                            self.get_logger().info(
-                                f"[倾斜恢复] 倾角已恢复，倾斜仅持续{self.last_tilt_duration:.1f}s"
-                                f"(<{TILT_SHORT_DURATION}s)，将跳过稳定等待"
-                            )
-                        else:
-                            self.get_logger().info("[倾斜恢复] 倾角已恢复正常，等待生成器重建进入稳定等待流程")
 
         raw_lon = msg.ins_longitude
         raw_lat = msg.ins_latitude
@@ -3120,9 +3042,6 @@ class RTKNavControlNode(Node):
             "distance_increase_count": 0,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
-            "tilt_confirm_count": 0,
-            "tilt_normal_count": 0,
-            "tilt_fault": False,
             "calib_retry_count": 0,
             "calib_target_heading": None,
             "calibration_active": False,
@@ -3135,7 +3054,6 @@ class RTKNavControlNode(Node):
             "retreat_target_heading": None,
             "retreat_resume_pending": False,
         }
-        self.clear_rtk_error_bits(ERROR_TILT_FAULT)  # 同步清除，防止tilt_fault与rtk_error_code脱钩
         self.heading_abnormal_start_time = None  # 重置航向异常计时
         self.heading_timed_out = False
         self.return_to_loading_added = False  # 重置出仓点追加标志
@@ -3329,10 +3247,7 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     return
                 fault_active = False
-                if pause_reason == "tilt_fault" and self.nav_context.get("tilt_fault", False):
-                    self.get_logger().warn("[ROSNode] 跌落故障仍活跃，保持PAUSE等待倾斜恢复")
-                    fault_active = True
-                elif pause_reason == "heading_timeout" and self.heading_timed_out:
+                if pause_reason == "heading_timeout" and self.heading_timed_out:
                     self.get_logger().warn("[ROSNode] 航向超时仍活跃，保持PAUSE等待航向恢复")
                     fault_active = True
                 elif pause_reason == "rtk_not_fixed" and not self.rtk_solution_ready:
@@ -3351,43 +3266,6 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(f"[ROSNode] 从RTK暂停状态恢复，恢复到：{pre_pause_state}")
                     current_nav_state = pre_pause_state
                     self.nav_context["nav_state"] = current_nav_state
-
-                    # 跌落后稳定等待：倾斜故障导致的暂停恢复后，需等待INS数据稳定
-                    if pause_reason == "tilt_fault" and self.last_tilt_time > 0:
-                        if self.last_tilt_duration > 0 and self.last_tilt_duration < TILT_SHORT_DURATION:
-                            self.get_logger().info(
-                                f"[跌落稳定] 倾斜仅持续{self.last_tilt_duration:.1f}s"
-                                f"(<{TILT_SHORT_DURATION}s)，短促颠簸，跳过稳定等待"
-                            )
-                        else:
-                            elapsed_since_tilt = time.monotonic() - self.last_tilt_time
-                            if elapsed_since_tilt < TILT_STABILIZE_TIMEOUT:
-                                remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
-                                self.get_logger().warn(
-                                    f"[跌落稳定] 距上次倾斜故障仅{elapsed_since_tilt:.0f}s，"
-                                    f"需等待{remaining:.0f}s让INS数据稳定后自动恢复清扫"
-                                )
-                                last_stabilize_log = 0.0
-                                while True:
-                                    if not self.check_control_mode():
-                                        yield (0.0, 0.0)
-                                        return
-                                    now = time.monotonic()
-                                    elapsed_since_tilt = now - self.last_tilt_time
-                                    if elapsed_since_tilt >= TILT_STABILIZE_TIMEOUT:
-                                        self.get_logger().info(
-                                            f"[跌落稳定] 等待完成，已过{elapsed_since_tilt:.0f}s，恢复清扫"
-                                        )
-                                        break
-                                    # 每30s输出一次等待进度
-                                    if now - last_stabilize_log >= 30.0:
-                                        last_stabilize_log = now
-                                        remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
-                                        self.get_logger().info(
-                                            f"[跌落稳定] 等待INS稳定中... 剩余{remaining:.0f}s"
-                                        )
-                                    self.publish_stop_speed()
-                                    yield (0.0, 0.0)
 
                     # 撤退未完成时优先从当前位置重新规划，不能覆盖为普通校准。
                     if self.nav_context.get("retreat_active"):
@@ -3466,33 +3344,6 @@ class RTKNavControlNode(Node):
         else:
             # 只有导航状态为IDLE时, 才重新初始化初始移动（解决重复进入第一个航点）
             if self.nav_context["nav_state"] == NavState.IDLE:
-                # 跌落后稳定等待：倾斜故障后首次AUTO_CLEANING需等待INS数据稳定
-                if self.last_tilt_time > 0:
-                    if self.last_tilt_duration > 0 and self.last_tilt_duration < TILT_SHORT_DURATION:
-                        self.get_logger().info(
-                            f"[跌落稳定] 倾斜仅持续{self.last_tilt_duration:.1f}s"
-                            f"(<{TILT_SHORT_DURATION}s)，短促颠簸，跳过稳定等待"
-                        )
-                    else:
-                        elapsed_since_tilt = time.monotonic() - self.last_tilt_time
-                        if elapsed_since_tilt < TILT_STABILIZE_TIMEOUT:
-                            remaining = TILT_STABILIZE_TIMEOUT - elapsed_since_tilt
-                            self.get_logger().warn(
-                                f"[跌落稳定] 距上次倾斜故障仅{elapsed_since_tilt:.0f}s，"
-                                f"需等待{remaining:.0f}s让INS数据稳定后自动开始清扫"
-                            )
-                            while True:
-                                if not self.check_control_mode():
-                                    yield (0.0, 0.0)
-                                    return
-                                elapsed_since_tilt = time.monotonic() - self.last_tilt_time
-                                if elapsed_since_tilt >= TILT_STABILIZE_TIMEOUT:
-                                    self.get_logger().info(
-                                        f"[跌落稳定] 等待完成，已过{elapsed_since_tilt:.0f}s，开始清扫"
-                                    )
-                                    break
-                                self.publish_stop_speed()
-                                yield (0.0, 0.0)
                 # 初始航向校验：5s内无漂移，不限制固定角度
                 while True:
                     if not self.check_control_mode():
@@ -4221,10 +4072,22 @@ class RTKNavControlNode(Node):
             self.brush_stop_indices.pop(0)
 
     def publish_nav_state(self, state: NavState):
-        """发布当前导航状态"""
+        """发布带原因和序号的导航状态，避免底盘消费延迟的旧暂停消息。"""
         state_msg = String()
-        state_msg.data = state if isinstance(state, str) else state.value
-        if state_msg.data in (
+        nav_state = state if isinstance(state, str) else state.value
+        pause_reason = self.nav_context.get("pause_reason") if nav_state == NavState.PAUSE else None
+        state_msg.data = json.dumps({
+            "nav_state": nav_state,
+            "pause_reason": pause_reason,
+            "auto_resume": bool(
+                nav_state == NavState.PAUSE
+                and pause_reason
+                and pause_reason not in MANUAL_INTERVENTION_PAUSE_REASONS
+            ),
+            "seq": self._nav_state_seq + 1,
+        }, ensure_ascii=False, separators=(",", ":"))
+        self._nav_state_seq += 1
+        if nav_state in (
                 NavState.PAUSE,
                 NavState.IDLE,
                 NavState.COMPLETED,
@@ -4233,7 +4096,7 @@ class RTKNavControlNode(Node):
             # 暂停/离开自动航段时丢弃旧屏蔽会话；重新进入 AUTO 后，
             # 只有当前区域和状态仍满足配置时才会重新建立会话。
             self._exit_ultrasonic_suppression(
-                f"nav_state={state_msg.data}"
+                f"nav_state={nav_state}"
             )
         self.nav_state_pub.publish(state_msg)
 
@@ -4245,9 +4108,6 @@ class RTKNavControlNode(Node):
             "total_waypoints": len(self.waypoints),
             "nav_running": self.nav_running,
             "rtk_error_code": self.rtk_error_code,
-            "tilt_fault": self.nav_context.get("tilt_fault", False),
-            "tilt_confirm_count": self.nav_context.get("tilt_confirm_count", 0),
-            "tilt_normal_count": self.nav_context.get("tilt_normal_count", 0),
             "pre_pause_state": self.nav_context.get("pre_pause_state"),
             "pause_reason": self.nav_context.get("pause_reason"),
             "manual_intervention_seen": self.nav_context.get("manual_intervention_seen", False),
@@ -4551,13 +4411,6 @@ class RTKNavControlNode(Node):
                         f"（pause_reason={self.nav_context.get('pause_reason')}）"
                     )
                     self.publish_stop_speed()
-            elif (hasattr(self, 'nav_context')
-                  and self.nav_context["nav_state"] == NavState.PAUSE
-                  and self.nav_context.get("tilt_fault", False)):
-                self.get_logger().warn(
-                    f"[RTKNav] AUTO_CLEANING请求但跌落故障仍活跃，保持PAUSE"
-                    f"（pause_reason={self.nav_context.get('pause_reason')}）"
-                )
             else:
                 self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
                 if self.waiting_for_next_unloading:
@@ -4714,10 +4567,36 @@ class RTKNavControlNode(Node):
         self.multi_waypoint_generator = None
         self.nav_running = False
         self.stanley_path_start = None
+        # 跳转区域可能使机器人远离目标航点前一段，禁止沿用旧路径方向。
+        self.stanley_path_direction = None
         self._auto_heading_gate_path_alignment_pending = False
 
-        # 设置前置航点缓存（Stanley 控制器需要）
-        if index > 0 and index < len(self.waypoints):
+        # 以跳转时的当前位置作为临时接入段起点，避免直接套用目标航点前一段。
+        current_rejoin_origin = None
+        if (
+            self.current_gps
+            and len(self.current_gps) >= 2
+            and all(math.isfinite(float(value)) for value in self.current_gps[:2])
+            and any(abs(float(value)) > 1e-9 for value in self.current_gps[:2])
+        ):
+            current_rejoin_origin = (
+                float(self.current_gps[0]),
+                float(self.current_gps[1]),
+            )
+
+        if current_rejoin_origin is not None:
+            self.last_waypoint_cache = (
+                current_rejoin_origin[0],
+                current_rejoin_origin[1],
+                float(self.imu_yaw),
+            )
+            self.get_logger().info(
+                f"[RTKNav] 区域跳转使用当前位置接入路径："
+                f"({current_rejoin_origin[0]:.8f},{current_rejoin_origin[1]:.8f})"
+                f" → 目标航点{index}"
+            )
+        # 无有效当前位置时保留原有前置航点兜底。
+        elif index > 0 and index < len(self.waypoints):
             self.last_waypoint_cache = self.waypoints[index - 1]
         elif index < len(self.waypoints):
             self.last_waypoint_cache = self.waypoints[index]
@@ -4756,6 +4635,8 @@ class RTKNavControlNode(Node):
 
         self.publish_nav_state(NavState.WAYPOINT_MOVE)
         self.publish_current_route_id()
+        # 立即发布当前区域名，让 MQTT state 中的 "areas" 字段即时更新
+        self.update_cleaning_area(force=True)
 
         self.get_logger().info(
             f"[RTKNav] skip_to_area ({match_type}匹配): 查询'{target}' → 区域'{matched_area}'，"
