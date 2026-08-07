@@ -114,6 +114,9 @@ HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
 HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
 HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
+# 短时定向失锁期间仍可保留航向稳定资格，但恢复后必须先确认连续双Fixed。
+HEADING_QUALITY_GAP_MAX = 3.0          # 超过此时长的非Fixed间隔清空航向窗口（秒）
+HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 恢复双Fixed后保持停车确认时间（秒）
 AUTO_HEADING_GATE_TIMEOUT = 180.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE
 
 # 控制模式（与电机节点保持一致）
@@ -175,6 +178,9 @@ class RTKNavControlNode(Node):
         self.current_waypoint_idx = 0
         self.current_cleaning_area = ""
         self.last_published_cleaning_area = None
+        self.ultrasonic_suppression_areas = set()
+        self.ultrasonic_suppression_active = False
+        self.ultrasonic_suppression_area = ""
         self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
         self.current_lon = 0.0
         self.current_lat = 0.0
@@ -203,6 +209,9 @@ class RTKNavControlNode(Node):
         self._auto_heading_gate_start_time = None
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_quality_lost_since = None
+        self._auto_heading_gate_quality_gap_invalidated = False
+        self._auto_heading_gate_seen_fixed = False
         self._auto_heading_gate_path_alignment_pending = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
@@ -446,6 +455,8 @@ class RTKNavControlNode(Node):
             self.waypoints = []
             self.waypoint_areas = []
             self.current_waypoint_idx = 0
+            self.ultrasonic_suppression_areas = set()
+            self._reset_ultrasonic_suppression_runtime()
             current_area = ""
             
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -457,6 +468,25 @@ class RTKNavControlNode(Node):
                     
                     # 检查是否为注释行（包含#）
                     if line.startswith('#'):
+                        if line.startswith('#@ultrasonic_suppression='):
+                            metadata = line.split('=', 1)[1].strip()
+                            try:
+                                suppression = json.loads(metadata)
+                                areas = suppression.get('areas', [])
+                                if isinstance(areas, list):
+                                    self.ultrasonic_suppression_areas = {
+                                        str(name).strip() for name in areas
+                                        if str(name).strip()
+                                    }
+                                self.get_logger().info(
+                                    f"[RTKNav] 已加载区域超声波屏蔽配置: "
+                                    f"areas={sorted(self.ultrasonic_suppression_areas)}"
+                                )
+                            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                                self.get_logger().error(
+                                    f"[RTKNav] 区域超声波屏蔽元数据无效: {exc}"
+                                )
+                            continue
                         comment = line[1:].strip().lower()
                         if 'start' in comment:
                             start_idx = len(self.waypoints)
@@ -816,10 +846,20 @@ class RTKNavControlNode(Node):
 
     def _is_calibration_boundary_active(self) -> bool:
         """原地校准期间的即时边界保护，不等待常规传感器防抖。"""
+        # In a configured bridge area, suppression also covers the immediate
+        # calibration guard. Raw IO remains updated for telemetry, but a new
+        # raw trigger must not start P1 while the suppression session is valid.
+        # Existing confirmed sensors and any retreat/boundary action retain
+        # priority because the gate then returns False and live sensor checks
+        # remain active.
+        suppression_active = self._is_ultrasonic_suppression_allowed()
         return (
             self.boundary_correct_locked
             or bool(self.confirmed_sensors)
-            or any((self.mid_left, self.mid_right, self.back_left, self.back_right))
+            or (
+                not suppression_active
+                and any((self.mid_left, self.mid_right, self.back_left, self.back_right))
+            )
         )
 
     def _get_live_blocked_directions(self):
@@ -1412,6 +1452,16 @@ class RTKNavControlNode(Node):
             | (int(self.back_left) << 2)
             | (int(self.back_right) << 3)
         )
+        # 屏蔽不清除原始 IO 和 sensors_status；它抑制新的边界事件，
+        # 即时校准保护也通过同一门控忽略屏蔽期间的新原始触发。
+        # 已有 confirmed_sensors 不得被区域配置强制清除。
+        if (self._is_ultrasonic_suppression_allowed()
+                and not self.confirmed_sensors
+                and not self.boundary_correct_locked):
+            self.boundary_active_count = 0
+            self.boundary_slow_count = 0
+            self.boundary_clear_count = 0
+            return
         # 4传感器分层触发（mid/back × 左右）
         if self.current_control_mode == ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
             same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
@@ -1880,6 +1930,21 @@ class RTKNavControlNode(Node):
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
 
+        # RTK失锁时先建立一个新的航向门控采样期。机器人仍会停车，
+        # 但短时Float期间的连续IMU航向可用于恢复后的稳定性复核。
+        if (
+            not current_sample_fixed
+            and self.current_control_mode == ControlMode.AUTO_CLEANING
+            and hasattr(self, "nav_context")
+            and self.nav_context.get("nav_state") not in (
+                NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
+            )
+            and not self._auto_heading_gate_pending
+        ):
+            self._prepare_auto_cleaning_heading_gate(
+                "RTK质量丢失", force=True, preserve_heading_history=True
+            )
+
         # AUTO门控期间机器人保持停车，只在此阶段采集稳定性样本。
         tracking_active = self._auto_heading_gate_pending
 
@@ -1887,35 +1952,56 @@ class RTKNavControlNode(Node):
             can_track_heading = True
             if self._auto_heading_gate_pending:
                 if not current_sample_fixed:
+                    if self._auto_heading_gate_quality_lost_since is None:
+                        self._auto_heading_gate_quality_lost_since = now
+                    gap_elapsed = now - self._auto_heading_gate_quality_lost_since
                     window_invalidated = (
-                        self._auto_heading_gate_quality_fixed
-                        or bool(self._heading_stability_history)
-                        or self._last_heading_stable
+                        gap_elapsed > HEADING_QUALITY_GAP_MAX
+                        and not self._auto_heading_gate_quality_gap_invalidated
                     )
-                    self._heading_stability_history.clear()
-                    self._last_heading_stable = False
+                    if window_invalidated:
+                        self._heading_stability_history.clear()
+                        self._last_heading_stable = False
+                        self._auto_heading_gate_start_time = None
+                        self.get_logger().warn(
+                            f"[AUTO航向门控] RTK质量失锁{gap_elapsed:.1f}s，"
+                            "超过短时桥接窗口，清空航向稳定窗口"
+                        )
+                        self._auto_heading_gate_quality_gap_invalidated = True
                     self._auto_heading_gate_quality_fixed = False
                     self._auto_heading_gate_fixed_since = None
-                    self._auto_heading_gate_start_time = None
                     is_stable = False
-                    can_track_heading = False
-                    if window_invalidated:
-                        self.get_logger().warn(
-                            f"[AUTO航向门控] RTK质量丢失，清空航向稳定窗口："
-                            f"position={position_status}, orientation={orientation_status}, "
-                            f"gga_valid={position_data_valid}"
-                        )
                 elif not self._auto_heading_gate_quality_fixed:
-                    # 双Fixed恢复是新的稳定性起点，不能复用失锁前或出仓转向时的样本。
-                    self._heading_stability_history.clear()
-                    self._last_heading_stable = False
+                    gap_elapsed = (
+                        now - self._auto_heading_gate_quality_lost_since
+                        if self._auto_heading_gate_quality_lost_since is not None
+                        else float("inf")
+                    )
+                    # 首次获得Fixed不能使用启动前的Float样本；短时失锁恢复则保留窗口。
+                    if (
+                        not self._auto_heading_gate_seen_fixed
+                        or gap_elapsed > HEADING_QUALITY_GAP_MAX
+                    ):
+                        self._heading_stability_history.clear()
+                        self._last_heading_stable = False
+                        self._auto_heading_gate_start_time = now
+                    elif self._auto_heading_gate_start_time is None:
+                        self._auto_heading_gate_start_time = now
+                    self._auto_heading_gate_seen_fixed = True
                     self._auto_heading_gate_quality_fixed = True
                     self._auto_heading_gate_fixed_since = now
-                    self._auto_heading_gate_start_time = now
+                    self._auto_heading_gate_quality_lost_since = None
+                    self._auto_heading_gate_quality_gap_invalidated = False
                     self.get_logger().info(
                         "[AUTO航向门控] 定位与定向均为Fixed，"
-                        f"开始重新采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
-                        f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
+                        + (
+                            f"保留短时失锁前的航向窗口，确认{HEADING_FIXED_CONFIRM_WINDOW:.1f}s后复核"
+                            if gap_elapsed <= HEADING_QUALITY_GAP_MAX
+                            and self._auto_heading_gate_seen_fixed
+                            and bool(self._heading_stability_history)
+                            else f"开始采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
+                            f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
+                        )
                     )
 
             if can_track_heading:
@@ -1980,6 +2066,9 @@ class RTKNavControlNode(Node):
         self.last_orientation_status = orientation_status
         self.position_data_valid = position_data_valid
         self.rtk_solution_ready = current_sample_fixed
+        if not self.rtk_solution_ready:
+            # RTK 一旦离开双 Fixed，立即结束区域屏蔽；后续 IO 帧恢复正常边界判定。
+            self._exit_ultrasonic_suppression("rtk_not_fixed")
 
         if not self.rtk_data_timed_out and not self.heading_timed_out:
             self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
@@ -2026,7 +2115,8 @@ class RTKNavControlNode(Node):
             ):
                 self.get_logger().info("[RTK状态] 定位与定向均恢复固定解，自动恢复导航")
                 if self.current_control_mode == ControlMode.AUTO_CLEANING:
-                    self._prepare_auto_cleaning_heading_gate("RTK双Fixed恢复", force=True)
+                    # heading_callback 已保留短时失锁期间的航向窗口；这里只确保门控处于等待态。
+                    self._prepare_auto_cleaning_heading_gate("RTK双Fixed恢复")
                 self.nav_context["nav_state"] = self.nav_context["pre_pause_state"]
                 self.nav_context["pause_reason"] = None
                 self.brush_active = self.nav_context.get("brush_active", False)
@@ -3009,6 +3099,7 @@ class RTKNavControlNode(Node):
     def reset_nav_context(self):
         """重置导航状态"""
         self.current_waypoint_idx = 0
+        self._reset_ultrasonic_suppression_runtime()
         self._reset_boundary_cycle_tracking()
         self.nav_context = {
             "nav_state": NavState.IDLE,
@@ -4133,6 +4224,17 @@ class RTKNavControlNode(Node):
         """发布当前导航状态"""
         state_msg = String()
         state_msg.data = state if isinstance(state, str) else state.value
+        if state_msg.data in (
+                NavState.PAUSE,
+                NavState.IDLE,
+                NavState.COMPLETED,
+                NavState.INITIAL_MOVE,
+        ):
+            # 暂停/离开自动航段时丢弃旧屏蔽会话；重新进入 AUTO 后，
+            # 只有当前区域和状态仍满足配置时才会重新建立会话。
+            self._exit_ultrasonic_suppression(
+                f"nav_state={state_msg.data}"
+            )
         self.nav_state_pub.publish(state_msg)
 
     def publish_nav_context(self):
@@ -4159,6 +4261,8 @@ class RTKNavControlNode(Node):
             "calib_target_heading": self.nav_context.get("calib_target_heading"),
             "retreat_enabled": self.nav_context.get("retreat_enabled", False),
             "retreat_active": self.nav_context.get("retreat_active", False),
+            "ultrasonic_suppression_active": self.ultrasonic_suppression_active,
+            "ultrasonic_suppression_area": self.ultrasonic_suppression_area,
             "retreat_phase": self.nav_context.get("retreat_phase", RetreatPhase.IDLE),
             "retreat_anchor": self.nav_context.get("retreat_anchor"),
             "retreat_drive_mode": self.nav_context.get("retreat_drive_mode"),
@@ -4207,28 +4311,47 @@ class RTKNavControlNode(Node):
     def clear_rtk_error_bits(self, error_bits: int):
         self.rtk_error_code = self.rtk_error_code & ~int(error_bits)
 
-    def _prepare_auto_cleaning_heading_gate(self, source: str, force: bool = False):
-        """每次进入AUTO_CLEANING时清除旧样本，强制重新采集完整航向稳定窗口。"""
+    def _prepare_auto_cleaning_heading_gate(
+        self, source: str, force: bool = False, preserve_heading_history: bool = False
+    ):
+        """Prepare the heading gate, optionally bridging a short RTK quality gap."""
         if self._auto_heading_gate_prepared and not force:
             return
 
-        self._heading_stability_history.clear()
-        self._last_heading_stable = False
+        if not preserve_heading_history:
+            self._heading_stability_history.clear()
+            self._last_heading_stable = False
+            self._auto_heading_gate_start_time = None
+            self._auto_heading_gate_seen_fixed = False
+        else:
+            # 运行中短时失锁：历史只作为恢复后的航向资格，移动仍由
+            # rtk_solution_ready 门控禁止，不能在Float期间继续导航。
+            self._auto_heading_gate_seen_fixed = bool(self._heading_stability_history)
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_quality_lost_since = time.monotonic()
+        self._auto_heading_gate_quality_gap_invalidated = False
         self._auto_heading_gate_path_alignment_pending = False
         self.last_heading_check_log_time = 0.0
         self._auto_heading_gate_prepared = True
         self._auto_heading_gate_pending = True
-        self._auto_heading_gate_start_time = None
+        if not preserve_heading_history:
+            self._auto_heading_gate_start_time = None
 
         stable_msg = Bool()
         stable_msg.data = False
         self.heading_stable_pub.publish(stable_msg)
         self.get_logger().info(
-            f"[AUTO航向门控] {source}触发AUTO_CLEANING，已清空旧航向样本，"
-            f"重新采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
-            f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
+            (
+                f"[AUTO航向门控] {source}触发AUTO_CLEANING，"
+                + (
+                    "保留短时失锁前航向样本，"
+                    if preserve_heading_history
+                    else "已清空旧航向样本，"
+                )
+                + f"重新采集{HEADING_STABILITY_WINDOW:.0f}s短窗和"
+                f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛窗"
+            )
         )
 
     def _disarm_auto_cleaning_heading_gate(self):
@@ -4239,6 +4362,9 @@ class RTKNavControlNode(Node):
         self._auto_heading_gate_start_time = None
         self._auto_heading_gate_quality_fixed = False
         self._auto_heading_gate_fixed_since = None
+        self._auto_heading_gate_quality_lost_since = None
+        self._auto_heading_gate_quality_gap_invalidated = False
+        self._auto_heading_gate_seen_fixed = False
         self._auto_heading_gate_path_alignment_pending = False
 
     def _start_auto_heading_gate_path_alignment(self) -> bool:
@@ -4283,6 +4409,96 @@ class RTKNavControlNode(Node):
         )
         return True
 
+    def _reset_ultrasonic_suppression_runtime(self) -> None:
+        """Clear the current bridge suppression session."""
+        self.ultrasonic_suppression_active = False
+        self.ultrasonic_suppression_area = ""
+
+    def _exit_ultrasonic_suppression(self, reason: str) -> None:
+        if self.ultrasonic_suppression_active:
+            self.get_logger().warn(
+                f"[RTKNav] 退出区域超声波屏蔽: reason={reason}, "
+                f"area={self.ultrasonic_suppression_area or 'unknown'}"
+            )
+        self._reset_ultrasonic_suppression_runtime()
+
+    @staticmethod
+    def _suppression_area_matches(area: str, configured_areas) -> bool:
+        area = (area or "").strip()
+        if not area:
+            return False
+        configured = {str(name).strip() for name in (configured_areas or set())}
+        return area in configured or (
+            area.endswith("_mid") and area[:-4] in configured
+        )
+
+    @staticmethod
+    def _suppression_area_identity(area: str) -> str:
+        area = (area or "").strip()
+        return area[:-4] if area.endswith("_mid") else area
+
+    def _rtk_ready_for_ultrasonic_suppression(self) -> bool:
+        last_wtrtk_time = getattr(self, "last_wtrtk_time", None)
+        data_fresh = (
+            last_wtrtk_time is not None
+            and not self.rtk_data_timed_out
+            and time.monotonic() - last_wtrtk_time <= RTK_DATA_TIMEOUT
+        )
+        return bool(
+            self.rtk_solution_ready
+            and self.position_data_valid
+            and self.last_gps_status == 4
+            and self.last_orientation_status == 4
+            and data_fresh
+        )
+
+    def _is_ultrasonic_suppression_allowed(self) -> bool:
+        """Return whether this area/state may ignore new ultrasonic triggers.
+
+        Raw IO and ``sensors_status`` are always updated.  This gate only
+        controls creation of debounced navigation boundary events.
+        """
+        nav_state = self.nav_context.get("nav_state")
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            self._exit_ultrasonic_suppression("control_mode")
+            return False
+        if not self._rtk_ready_for_ultrasonic_suppression():
+            self._exit_ultrasonic_suppression("rtk_not_fixed")
+            return False
+        area = self.current_cleaning_area or self.get_cleaning_area_for_waypoint()
+        area_identity = self._suppression_area_identity(area)
+
+        if self.nav_context.get("retreat_active") or self.boundary_correct_locked:
+            self._exit_ultrasonic_suppression("retreat_or_boundary_action")
+            return False
+
+        if nav_state not in (NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB):
+            self._exit_ultrasonic_suppression(f"nav_state={nav_state}")
+            return False
+        if not self._suppression_area_matches(area, self.ultrasonic_suppression_areas):
+            self._exit_ultrasonic_suppression(f"area={area or 'unknown'}")
+            return False
+
+        if (self.ultrasonic_suppression_active
+                and self.ultrasonic_suppression_area != area):
+            active_identity = self._suppression_area_identity(
+                self.ultrasonic_suppression_area
+            )
+            if active_identity == area_identity:
+                # A planner-generated ``*_mid`` label is the same physical
+                # bridge area; keep the current suppression session across it.
+                self.ultrasonic_suppression_area = area
+            else:
+                self._exit_ultrasonic_suppression("area_changed")
+        if not self.ultrasonic_suppression_active:
+            self.ultrasonic_suppression_active = True
+            self.ultrasonic_suppression_area = area
+            self.get_logger().warn(
+                f"[RTKNav] 进入区域超声波屏蔽: area={area}, nav_state={nav_state}, "
+                f"calibration={nav_state == NavState.WAYPOINT_CALIB}"
+            )
+        return True
+
     def get_cleaning_area_for_waypoint(self, idx: int = None) -> str:
         idx = self.current_waypoint_idx if idx is None else idx
         if 0 <= idx < len(self.waypoint_areas):
@@ -4309,6 +4525,7 @@ class RTKNavControlNode(Node):
         """电机状态回调函数：监听控制状态变化"""
         if msg.data != "AUTO_CLEANING":
             self._disarm_auto_cleaning_heading_gate()
+            self._exit_ultrasonic_suppression(f"motor_state={msg.data}")
 
         if msg.data == "HOLD" and self.last_state != "HOLD":
             self.current_control_mode = ControlMode.NORMAL
@@ -4325,6 +4542,7 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
         elif msg.data == "AUTO_CLEANING" and self.last_state != "AUTO_CLEANING":
             self.current_control_mode = ControlMode.AUTO_CLEANING
+            self._exit_ultrasonic_suppression("enter_auto_cleaning")
             self._prepare_auto_cleaning_heading_gate("/motor/state")
             if self._is_manual_intervention_pause():
                 if not self._resume_manual_intervention_pause():
@@ -4429,6 +4647,7 @@ class RTKNavControlNode(Node):
         #     self.multi_waypoint_generator = None
         #     self.nav_running = False
         if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
+            self._exit_ultrasonic_suppression("enter_auto_cleaning")
             self._prepare_auto_cleaning_heading_gate("/control/mode")
             if self.waiting_for_next_unloading:
                 self.waiting_for_next_unloading = False
@@ -4454,6 +4673,9 @@ class RTKNavControlNode(Node):
         # 切换非RTK模式时, 保存导航状态, 停止导航
         if self.current_control_mode != ControlMode.AUTO_CLEANING:
             self._disarm_auto_cleaning_heading_gate()
+            self._exit_ultrasonic_suppression(
+                f"control_mode={self.current_control_mode}"
+            )
             if (self._is_manual_intervention_pause()
                     and not self.nav_context.get("manual_intervention_seen", False)):
                 self.nav_context["manual_intervention_seen"] = True
@@ -4481,6 +4703,9 @@ class RTKNavControlNode(Node):
             self.publish_nav_context()
 
         self.update_cleaning_area()
+        if self.ultrasonic_suppression_active:
+            # 即使暂时没有新的 IO 帧，也由10Hz定时器检查状态/RTK/区域变化。
+            self._is_ultrasonic_suppression_allowed()
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
@@ -4517,9 +4742,19 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.IDLE)
                 return
 
-            # 每次进入AUTO_CLEANING都必须使用进入后的新样本重新确认航向收敛。
+            # 首次进入AUTO_CLEANING必须使用进入后的新样本确认航向收敛；
+            # 运行中短时RTK失锁则复用桥接期间仍有效的稳定窗口。
             # 门控覆盖首次启动及WAYPOINT_MOVE/WAYPOINT_CALIB等恢复路径。
             if self._auto_heading_gate_pending:
+                now = time.monotonic()
+                if (
+                    self._auto_heading_gate_fixed_since is not None
+                    and now - self._auto_heading_gate_fixed_since
+                    < HEADING_FIXED_CONFIRM_WINDOW
+                ):
+                    # 双Fixed刚恢复时先保持停车，避免单帧状态抖动直接放行。
+                    self.publish_stop_speed()
+                    return
                 if not self._last_heading_stable:
                     now = time.monotonic()
                     gate_start = self._auto_heading_gate_start_time or now

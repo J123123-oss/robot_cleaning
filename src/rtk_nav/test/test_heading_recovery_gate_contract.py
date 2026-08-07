@@ -49,6 +49,24 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertIn("self._auto_heading_gate_start_time = None", callback)
         self.assertIn("self._auto_heading_gate_start_time = now", callback)
 
+    def test_short_quality_gap_bridges_heading_qualification(self):
+        source, tree = _source_tree()
+        callback = ast.unparse(_function(tree, "heading_callback"))
+        helper = ast.unparse(_function(tree, "_prepare_auto_cleaning_heading_gate"))
+
+        self.assertIn("HEADING_QUALITY_GAP_MAX = 3.0", source)
+        self.assertIn("HEADING_FIXED_CONFIRM_WINDOW = 1.0", source)
+        self.assertIn("gap_elapsed > HEADING_QUALITY_GAP_MAX", callback)
+        self.assertIn("preserve_heading_history", helper)
+        self.assertIn("force=True", callback)
+
+    def test_fixed_recovery_has_confirmation_delay(self):
+        _, tree = _source_tree()
+        timer = ast.unparse(_function(tree, "rtk_timer_callback"))
+
+        self.assertIn("HEADING_FIXED_CONFIRM_WINDOW", timer)
+        self.assertIn("self.publish_stop_speed()", timer)
+
     def test_gate_release_aligns_waypoint_move_before_generator_creation(self):
         source, tree = _source_tree()
         self.assertIn("def _start_auto_heading_gate_path_alignment", source)
