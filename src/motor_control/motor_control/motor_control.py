@@ -864,11 +864,16 @@ class MotorControlNode(Node):
     def handle_skip_to_area(self, area_name: str):
         """处理区域跳转指令：将区域名转发给 rtk_nav 执行航点跳转。
 
-        与 handle_route_change 不同，skip_to_area 不要求 DISABLE 状态，
-        因为在 HOLD 状态下即可下发跳转，等 AUTO_CLEANING 恢复后从目标区域开始导航。
+        仅允许在 HOLD 状态下下发跳转，等 AUTO_CLEANING 恢复后从目标区域开始导航。
         """
         if not area_name:
             self.get_logger().warn("[ROSNode] skip_to_area: 区域名为空")
+            return
+        if self.current_status != "HOLD":
+            self.get_logger().warn(
+                f"[ROSNode] skip_to_area: 当前状态={self.current_status}，"
+                "仅允许在HOLD状态下跳转，已拒绝"
+            )
             return
 
         area_msg = String()

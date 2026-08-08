@@ -66,6 +66,22 @@ class NavPauseProtocolContractTest(unittest.TestCase):
         self.assertIn("self.stanley_path_direction = None", skip)
         self.assertIn("self.last_waypoint_cache = (", skip)
 
+    def test_skip_to_area_requires_hold_at_both_entry_points(self):
+        motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
+        rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+        motor_tree = ast.parse(motor_source)
+        rtk_tree = ast.parse(rtk_source)
+        motor_skip = ast.unparse(_function(motor_tree, "handle_skip_to_area"))
+        rtk_skip = ast.unparse(_function(rtk_tree, "skip_to_area_callback"))
+
+        self.assertIn("self.current_status != 'HOLD'", motor_skip)
+        self.assertIn("self.skip_area_pub.publish(area_msg)", motor_skip)
+        self.assertIn("self.last_state != 'HOLD'", rtk_skip)
+        self.assertLess(
+            rtk_skip.index("self.last_state != 'HOLD'"),
+            rtk_skip.index("self._apply_skip_to_area")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

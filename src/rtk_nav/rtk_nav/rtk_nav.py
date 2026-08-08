@@ -103,10 +103,10 @@ ERROR_CALIB_TIMEOUT = 256    # 航向校准超时
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
 HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
-HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
-# 短时定向失锁期间仍可保留航向稳定资格，但恢复后必须先确认连续双Fixed。
-HEADING_QUALITY_GAP_MAX = 3.0          # 超过此时长的非Fixed间隔清空航向窗口（秒）
-HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 恢复双Fixed后保持停车确认时间（秒）
+HEADING_STABILITY_SETTLE_RANGE = 2.0    # 收敛窗口内最大允许变化（度）
+# 短时定向失锁可保留航向稳定资格；Float 持续超过 3 秒才清空窗口并重新等待 30 秒。
+HEADING_QUALITY_GAP_MAX = 3.0          # 可桥接的最长非 Fixed 间隔（秒）
+HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）
 AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
 
 # 仅在直线航段运行中监视姿态角突变。触发后复用AUTO入口的航向稳定门控。
@@ -1987,8 +1987,8 @@ class RTKNavControlNode(Node):
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
 
-        # RTK失锁时先建立一个新的航向门控采样期。机器人仍会停车，
-        # 但短时Float期间的连续IMU航向可用于恢复后的稳定性复核。
+        # RTK 失锁后立即停车并进入航向门控。Float 不超过 3 秒时可以复用
+        # 原有收敛历史；超过 3 秒时清空历史，恢复双 Fixed 后重新采样 30 秒。
         if (
             not current_sample_fixed
             and self.current_control_mode == ControlMode.AUTO_CLEANING
@@ -2022,7 +2022,8 @@ class RTKNavControlNode(Node):
                         self._auto_heading_gate_start_time = None
                         self.get_logger().warn(
                             f"[AUTO航向门控] RTK质量失锁{gap_elapsed:.1f}s，"
-                            "超过短时桥接窗口，清空航向稳定窗口"
+                            "超过3秒桥接窗口，清空航向稳定窗口；"
+                            "恢复双Fixed后需重新连续采样30秒"
                         )
                         self._auto_heading_gate_quality_gap_invalidated = True
                     self._auto_heading_gate_quality_fixed = False
@@ -2034,7 +2035,8 @@ class RTKNavControlNode(Node):
                         if self._auto_heading_gate_quality_lost_since is not None
                         else float("inf")
                     )
-                    # 首次获得Fixed不能使用启动前的Float样本；短时失锁恢复则保留窗口。
+                    # 首次 Fixed 或 Float 超过 3 秒后，必须开始一轮新的收敛采样。
+                    # 3 秒内的短时 Float 保留历史，仅增加 1 秒双 Fixed 确认。
                     if (
                         not self._auto_heading_gate_seen_fixed
                         or gap_elapsed > HEADING_QUALITY_GAP_MAX
@@ -2052,7 +2054,8 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(
                         "[AUTO航向门控] 定位与定向均为Fixed，"
                         + (
-                            f"保留短时失锁前的航向窗口，确认{HEADING_FIXED_CONFIRM_WINDOW:.1f}s后复核"
+                            f"保留{gap_elapsed:.1f}s短时Float前的航向窗口，"
+                            f"确认{HEADING_FIXED_CONFIRM_WINDOW:.1f}s后复核"
                             if gap_elapsed <= HEADING_QUALITY_GAP_MAX
                             and self._auto_heading_gate_seen_fixed
                             and bool(self._heading_stability_history)
@@ -2082,7 +2085,7 @@ class RTKNavControlNode(Node):
                 )
                 settle_ready = (
                     len(self._heading_stability_history) >= 20
-                    and settle_window_dur >= HEADING_STABILITY_SETTLE_WINDOW - 0.5
+                    and settle_window_dur >= HEADING_STABILITY_SETTLE_WINDOW
                 )
                 if short_ready:
                     short_range = self._circular_heading_span([h for _, h in short_history])
@@ -4296,9 +4299,6 @@ class RTKNavControlNode(Node):
         self.last_heading_check_log_time = 0.0
         self._auto_heading_gate_prepared = True
         self._auto_heading_gate_pending = True
-        if not preserve_heading_history:
-            self._auto_heading_gate_start_time = None
-
         stable_msg = Bool()
         stable_msg.data = False
         self.heading_stable_pub.publish(stable_msg)
@@ -4306,7 +4306,7 @@ class RTKNavControlNode(Node):
             (
                 f"[AUTO航向门控] {source}触发AUTO_CLEANING，"
                 + (
-                    "保留短时失锁前航向样本，"
+                    "保留短时Float前航向样本，"
                     if preserve_heading_history
                     else "已清空旧航向样本，"
                 )
@@ -4605,6 +4605,15 @@ class RTKNavControlNode(Node):
             self.get_logger().warn("[RTKNav] skip_to_area: 收到空区域名，忽略")
             return
 
+        # /rtk/skip_to_area 是独立话题，不能只依赖 MQTT 入口的状态校验。
+        # 只有已确认底盘处于 HOLD 时才能改变航点和导航上下文。
+        if self.last_state != "HOLD":
+            self.get_logger().warn(
+                f"[RTKNav] skip_to_area: 电机状态={self.last_state or '未知'}，"
+                "仅允许在HOLD状态下跳转，已拒绝"
+            )
+            return
+
         if not self.waypoints or not self.waypoint_areas:
             self.get_logger().warn("[RTKNav] skip_to_area: 无可用的航点/区域数据，忽略")
             return
@@ -4867,8 +4876,8 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.IDLE)
                 return
 
-            # 首次进入AUTO_CLEANING必须使用进入后的新样本确认航向收敛；
-            # 运行中短时RTK失锁则复用桥接期间仍有效的稳定窗口。
+            # 首次进入 AUTO_CLEANING 必须采集新的稳定窗口；运行中短时 Float
+            # （不超过3秒）可桥接旧窗口，超时则自动重新采集30秒。
             # 门控覆盖首次启动及WAYPOINT_MOVE/WAYPOINT_CALIB等恢复路径。
             if self._auto_heading_gate_pending:
                 now = time.monotonic()
@@ -4877,7 +4886,7 @@ class RTKNavControlNode(Node):
                     and now - self._auto_heading_gate_fixed_since
                     < HEADING_FIXED_CONFIRM_WINDOW
                 ):
-                    # 双Fixed刚恢复时先保持停车，避免单帧状态抖动直接放行。
+                    # 3秒内短时Float恢复时，先确认连续双Fixed，避免单帧抖动放行。
                     self.publish_stop_speed()
                     return
                 if not self._last_heading_stable:
