@@ -4090,10 +4090,14 @@ class RTKNavControlNode(Node):
                 )
 
                 # 正常行驶时原始 IO 首帧立即零速，等待确认后再进入边界矫正/P1。
+                # 配置的超声波屏蔽区域是明确的例外：IO 仍保留用于遥测，
+                # 但不能让原始首帧硬停车，否则会出现 Stanley 持续计算而底盘实际停住。
+                suppression_active = self._is_ultrasonic_suppression_allowed()
                 raw_boundary_stop = (
                     self._has_raw_boundary_trigger()
                     and not self.confirmed_sensors
                     and not self.nav_context.get("retreat_active")
+                    and not suppression_active
                 )
                 if raw_boundary_stop:
                     left_speed, right_speed = 0.0, 0.0
