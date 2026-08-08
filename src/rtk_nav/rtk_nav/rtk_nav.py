@@ -4138,28 +4138,39 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[RTKNav] 设置滚刷状态: {'开启' if self.brush_active else '关闭'}")
 
     def check_and_control_brush(self):
-        """根据当前航点索引控制滚刷开关，支持多段区域"""
+        """根据当前航点索引控制滚刷开关，支持跳入任意滚刷区间。
+
+        一次跳转可能跨过多个起止标记，必须按航点索引顺序应用所有已到达
+        事件；跨过 ``#start`` 不能被当作过期事件丢弃，否则跳入开启区间
+        时滚刷会错误保持关闭。
+        """
         if not hasattr(self, 'brush_start_indices') or not hasattr(self, 'brush_stop_indices'):
             return
 
         idx = self.current_waypoint_idx
 
-        # 清理已过期的开启索引（因 _mid 等含 start 子串的注释产生的冗余条目）
-        while self.brush_start_indices and idx > self.brush_start_indices[0]:
-            stale = self.brush_start_indices.pop(0)
-            self.get_logger().warn(f"[RTKNav] 跳过过期滚刷开启索引 {stale}（当前航点{idx}）")
+        while self.brush_start_indices or self.brush_stop_indices:
+            next_start = (
+                self.brush_start_indices[0]
+                if self.brush_start_indices
+                else float('inf')
+            )
+            next_stop = (
+                self.brush_stop_indices[0]
+                if self.brush_stop_indices
+                else float('inf')
+            )
+            if min(next_start, next_stop) > idx:
+                break
 
-        if self.brush_start_indices and idx >= self.brush_start_indices[0] and not self.brush_active:
-            self.publish_brush_speed(RTK_BRUSH_SPEED)
-            self.brush_start_indices.pop(0)
-
-        while self.brush_stop_indices and idx > self.brush_stop_indices[0]:
-            stale = self.brush_stop_indices.pop(0)
-            self.get_logger().warn(f"[RTKNav] 跳过过期滚刷关闭索引 {stale}（当前航点{idx}）")
-
-        if self.brush_stop_indices and idx >= self.brush_stop_indices[0] and self.brush_active:
-            self.publish_brush_speed(0.0)
-            self.brush_stop_indices.pop(0)
+            if next_start <= next_stop:
+                self.brush_start_indices.pop(0)
+                if not self.brush_active:
+                    self.publish_brush_speed(RTK_BRUSH_SPEED)
+            else:
+                self.brush_stop_indices.pop(0)
+                if self.brush_active:
+                    self.publish_brush_speed(0.0)
 
     def publish_nav_state(self, state: NavState):
         """发布带原因和序号的导航状态，避免底盘消费延迟的旧暂停消息。"""
@@ -4705,9 +4716,10 @@ class RTKNavControlNode(Node):
         else:
             self.last_waypoint_cache = None
 
-        # 根据航点索引重新计算滚刷状态（复用现有索引队列机制，
-        # check_and_control_brush 会弹出过期索引并按需开关滚刷）
+        # 根据航点索引重新计算滚刷状态。跳转后 AUTO_CLEANING 会从
+        # nav_context 恢复滚刷状态，因此必须同步本次计算结果，避免被旧值覆盖。
         self.check_and_control_brush()
+        self.nav_context["brush_active"] = self.brush_active
 
         # 清除校准、力对准、边界矫正等上下文
         self.heading_abnormal_start_time = None
