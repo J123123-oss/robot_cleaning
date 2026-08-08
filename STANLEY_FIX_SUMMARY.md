@@ -1083,3 +1083,15 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   5. `/rtk/nav_context` 新增 `auto_heading_gate_path_alignment_pending`，用于现场确认是否正在等待恢复后的路径对齐。
 - **未改范围**：`motor_control.py` 的 `rtk_status` 格式保持不变。
 - **验证**：新增 `test_heading_recovery_gate_contract.py`，覆盖双窗口参数、双窗口判定、质量丢失重置计时，以及路径对齐必须先于导航生成器创建；未进行 ROS/实车验证。
+
+## 2026-08-08 区域跳转 HOLD 门控与 RTK 恢复收口
+
+### 95. `skip_to_area` 只能在安全停车后改变导航上下文
+
+- **问题**：`motor_control.py::handle_skip_to_area()` 原先只校验区域名，收到 MQTT `{"skip_to_area": "bridge_E3-E3out2"}` 后会立刻发布 `/rtk/skip_to_area`。导航节点随后重置航点索引、Stanley 接入段、边界矫正状态和滚刷区间；若机器人仍处于 `AUTO_CLEANING`，轨迹会在行驶中被替换。
+- **电机侧修复**：以 `current_status` 作为控制权的本地权威状态。仅 `HOLD` 时才发布区域跳转话题；`AUTO_CLEANING`、`ENABLE`、手动方向、`START`、`LOADING` 与 `DISABLE` 全部记录拒绝日志并原样返回，因此不会产生任何导航侧副作用。
+- **导航侧纵深防护**：`rtk_nav.py::skip_to_area_callback()` 同时要求最近收到的 `/motor/state` 为 `HOLD`。这阻断了绕过 MQTT/电机节点、直接向 `/rtk/skip_to_area` 发布的调用方；校验发生在匹配区域和调用 `_apply_skip_to_area()` 之前。
+- **时序约束**：`/motor/state` 与 `/rtk/skip_to_area` 属于不同 ROS 话题，跨话题没有到达顺序保证。上层应在确认状态已上报为 `HOLD` 后再下发跳转；若导航节点仍未收到 `HOLD` 而拒绝，必须重发跳转，不能放宽校验。
+- **关联恢复规则**：RTK Float 不超过 3 秒时保留既有航向历史，恢复双 Fixed 后再确认 1 秒；超过 3 秒则清空历史，并要求严格满 30 秒且航向收敛跨度 `<=2°` 后才放行。
+- **验证**：`test_nav_pause_protocol_contract.py` 新增双入口 HOLD 门控断言；与 RTK 恢复、滚刷区间契约合计 16 项通过，两个 Python 节点 `py_compile` 通过。未进行 ROS/实车验证。
+- **提交**：`3dafc4f fix: gate area jumps and RTK recovery`。
