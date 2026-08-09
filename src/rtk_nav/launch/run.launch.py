@@ -5,15 +5,14 @@ from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
     # 全局路径配置
-    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/065_20260708_154944.txt'
-    # 固定进仓RTK航点：[经度, 纬度, 车头进仓航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
-    # loading_gps = [110.647415, 35.605940, 89.80]
-    loading_gps = [120.07061963994207, 30.320991691985643, 172.52]
+    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001-E1-E8.txt'
+    # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
+    loading_gps = [110.64741424789473, 35.60594097811998, -90.0]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_old"),  # 默认值
+        default_value=TextSubstitution(text="HEJIN_Huaxinyuan"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
@@ -35,7 +34,7 @@ def generate_launch_description():
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
-            {'port': '/dev/ttyS4'},
+            {'port': '/dev/ttyS1'},
             {'baud': 9600}
         ]
     )
@@ -50,32 +49,16 @@ def generate_launch_description():
         ]
     )
 
-    # # 充电485节点
-    # charging_node = Node(
-    #     package='motor_control',
-    #     executable='charging',
-    #     name='charging_485_node',
-    #     parameters=[
-    #         {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
-    #         {'slave_addr': 1},
-    #         {'battery_addr': 11},
-    #         {'timeout': 0.5}
-    #     ]
-    # )
-
-    # 摄像头遥控器解析节点（串口文本协议 [Web] angle → 差速速度指令）
-    camera_remote_control_node = Node(
+    # 充电485节点
+    charging_node = Node(
         package='motor_control',
-        executable='camera_remote_control_node',
-        name='camera_remote_control_node',
+        executable='charging',
+        name='charging_485_node',
         parameters=[
-            {'port': '/dev/camera_remote'},  # 替换为实际串口设备路径
-            {'baudrate': 115200},
-            {'max_speed': 5.0},              # 最大电机速度指令 (double)
-            {'publish_rate': 0.05},          # 发布周期 秒 (double)
-            {'angle_timeout': 2.0},         # 超时停车阈值 秒 (double)
-            {'disable_dtr_rts': True},       # 禁用 DTR/RTS 避免 ESP32 复位 (bool)
-            {'esp32_boot_wait': 0.5},        # ESP32 上电等待时间 秒 (double)
+            {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
+            {'slave_addr': 1},
+            {'battery_addr': 11},
+            {'timeout': 0.5}
         ]
     )
     rtk_navigator = Node(
@@ -109,10 +92,9 @@ def generate_launch_description():
         name='wtrtk_serial_driver',
         output='screen',
         parameters=[
-            {'port': '/dev/WTRTK'},
-            # {'port': '/dev/ttyS3'},
-            {'baud': 460800}
-            # {'baud': 230400}
+            # {'port': '/dev/WTRTK'},
+            {'port': '/dev/ttyS2'},
+            {'baud': 230400}
         ]
     )
 
@@ -150,8 +132,7 @@ def generate_launch_description():
 
     ld.add_action(sensors_485_node)
     ld.add_action(laser_node)
-    ld.add_action(camera_remote_control_node)
-    # ld.add_action(charging_node)
+    ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(rtk_navigator)
     # 若需要启用注释的节点，取消以下对应行的注释
