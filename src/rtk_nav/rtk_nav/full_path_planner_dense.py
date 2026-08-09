@@ -11,6 +11,7 @@ import datetime
 from matplotlib.patches import FancyArrowPatch
 import os
 import yaml
+import json
 import numpy as np
 
 DEFAULT_DENSE_SPACING = 15.0
@@ -518,6 +519,9 @@ class MultiAreaCleaningPathPlanner(Node):
     def __init__(self):
         super().__init__('full_path')
         self.seq_num = 0
+        self.ultrasonic_suppression = {
+            'areas': set(),
+        }
         
         # 声明配置文件路径参数和 headless 参数
         self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/002-E9-E11.yaml')
@@ -634,6 +638,26 @@ class MultiAreaCleaningPathPlanner(Node):
         if not config or 'areas' not in config:
             self.get_logger().error("配置文件缺少 'areas' 键")
             return []
+
+        suppression_config = config.get('ultrasonic_suppression', {})
+        if not isinstance(suppression_config, dict):
+            self.get_logger().warning(
+                "ultrasonic_suppression 配置不是字典，使用空屏蔽策略"
+            )
+            suppression_config = {}
+
+        def _suppression_names(key):
+            value = suppression_config.get(key, [])
+            if not isinstance(value, (list, tuple, set)):
+                self.get_logger().warning(
+                    f"ultrasonic_suppression.{key} 必须是列表，已忽略"
+                )
+                return set()
+            return {str(name).strip() for name in value if str(name).strip()}
+
+        self.ultrasonic_suppression = {
+            'areas': _suppression_names('areas'),
+        }
         
         default_params = config.get('default', {})
         areas_list = config['areas']
@@ -846,6 +870,15 @@ class MultiAreaCleaningPathPlanner(Node):
             dense_filename = os.path.join(save_dir, f"{file_prefix}.txt")
             with open(dense_filename, "w", encoding="utf-8") as f:
                 f.write("序号,经度,纬度,航向角(度)\n")
+
+                suppression_meta = {
+                    'areas': sorted(self.ultrasonic_suppression.get('areas', set())),
+                }
+                f.write(
+                    "#@ultrasonic_suppression="
+                    + json.dumps(suppression_meta, ensure_ascii=False, separators=(',', ':'))
+                    + "\n"
+                )
                 
                 # 按区域写入路径点
                 current_area_name = None

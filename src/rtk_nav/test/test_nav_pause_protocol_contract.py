@@ -64,6 +64,15 @@ class NavPauseProtocolContractTest(unittest.TestCase):
         self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT = 64", motor_source)
         self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT", motor_source)
 
+    def test_rtk_and_motor_share_calibration_error_bit_128(self):
+        rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+        motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("ERROR_RTK_TIMEOUT = 8  # RTK断流/零角度超过1s", rtk_source)
+        self.assertIn("ERROR_RTK_TIMEOUT = 8  # RTK断流/零角度超过1s", motor_source)
+        self.assertIn("ERROR_CALIB_TIMEOUT = 128", rtk_source)
+        self.assertIn("ERROR_CALIB_TIMEOUT = 128", motor_source)
+
     def test_tilt_fault_is_not_published_as_an_rtk_error(self):
         rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
         motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")

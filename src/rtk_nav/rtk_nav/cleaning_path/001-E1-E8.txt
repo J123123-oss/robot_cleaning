@@ -1,4 +1,5 @@
 序号,经度,纬度,航向角(度)
+#@ultrasonic_suppression={"areas":["E4-E4out1","bridge_E3-E3out2","bridge_E3out2-E3","bridge_E4out1-E4"]}
 #bridge_E4midA-B
 1,110.64741349,35.60595949,359.73
 2,110.64741311,35.60602610,359.81

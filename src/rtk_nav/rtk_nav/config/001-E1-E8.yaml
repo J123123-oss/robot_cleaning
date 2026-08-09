@@ -1,6 +1,15 @@
 # 区域配置文件
 # 添加/删除区域只需修改此文件，无需修改代码或launch文件
 
+# 桥架区域的超声波屏蔽策略：
+# areas 同时允许 WAYPOINT_MOVE 和 WAYPOINT_CALIB 期间屏蔽新的超声波边界触发。
+ultrasonic_suppression:
+  areas:
+    - "E4-E4out1"
+    - "bridge_E3out2-E3"
+    - "bridge_E3-E3out2"
+    - "bridge_E4out1-E4"
+
 areas:
   # bridge_E4midA-B   
   - name: "bridge_E4midA-B"

@@ -133,10 +133,10 @@ class LaserDistanceNode(Node):
                             register2 = (rx_buf[5] << 8) | rx_buf[6]
                             # 强制限定数值在0-5000范围
                             register2 = register2 if register2 <= 5000 else 5000
-                            self._laser_log(
-                                f"收到响应 0x{expected_cmd:02X}: 原始={rx_buf.hex(' ')}, "
-                                f"距离={register2} mm"
-                            )
+                            # self._laser_log(
+                            #     f"收到响应 0x{expected_cmd:02X}: 原始={rx_buf.hex(' ')}, "
+                            #     f"距离={register2} mm"
+                            # )
                             return register2
                         else:
                             self.get_logger().warn(f"0x{expected_cmd:02X}数据CRC校验失败: 计算值0x{crc_calculated:04X}, 接收值0x{crc_received:04X}")
@@ -149,35 +149,35 @@ class LaserDistanceNode(Node):
         """读取两路激光传感器数据"""
         status = 0
         # 读取第一路激光数据（0x01指令,修改为01）
-        if self.send_laser_command(0x01):
-            distance1 = self.read_serial_response(0x01)
+        if self.send_laser_command(0x02):
+            distance1 = self.read_serial_response(0x02)
             if distance1 is not None:
                 with self.mutex:
-                    self.laser_distance[0] = distance1
+                    self.laser_distance[1] = distance1
             else:
-                status |= 0x01
+                status |= 0x02
             #     self.get_logger().info(f"激光1距离: {distance1} mm")
             # else:
             #     self.get_logger().warn("激光1数据读取失败")
         else:
-            status |= 0x01
+            status |= 0x02
         
         # 短暂延时，避免两路指令冲突
-        time.sleep(0.02)
+        time.sleep(0.05)
         
         # 读取第二路激光数据（0x02指令）
-        if self.send_laser_command(0x02):
-            distance2 = self.read_serial_response(0x02)
+        if self.send_laser_command(0x01):
+            distance2 = self.read_serial_response(0x01)
             if distance2 is not None:
                 with self.mutex:
-                    self.laser_distance[1] = distance2
+                    self.laser_distance[0] = distance2
             else:
-                status |= 0x02
+                status |= 0x01
             #     self.get_logger().info(f"激光2距离: {distance2} mm")
             # else:
             #     self.get_logger().warn("激光2数据读取失败")
         else:
-            status |= 0x02
+            status |= 0x01
 
         with self.mutex:
             self.laser_status = status

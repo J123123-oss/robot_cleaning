@@ -6,7 +6,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/home/ztl/Downloads/network_watchdog.sh
+ExecStart=/home/ztl/Downloads/network_watchdog_wwan.sh
 Restart=always
 RestartSec=10
 

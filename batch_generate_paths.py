@@ -10,6 +10,7 @@ import os
 import math
 import glob
 import yaml
+import json
 import datetime
 # import matplotlib
 # import matplotlib.pyplot as plt
@@ -48,6 +49,15 @@ def load_areas_from_yaml(config_file):
     default_params = config.get('default', {})
     areas_list = config['areas']
     all_areas = []
+    suppression_config = config.get('ultrasonic_suppression', {})
+    if not isinstance(suppression_config, dict):
+        suppression_config = {}
+    suppression_areas = suppression_config.get('areas', [])
+    if not isinstance(suppression_areas, (list, tuple, set)):
+        suppression_areas = []
+    suppression_areas = {
+        str(name).strip() for name in suppression_areas if str(name).strip()
+    }
 
     for i, area in enumerate(areas_list):
         area_params = default_params.copy()
@@ -91,7 +101,7 @@ def load_areas_from_yaml(config_file):
         })
 
     print(f"  共加载 {len(all_areas)} 个区域")
-    return all_areas, default_params
+    return all_areas, default_params, suppression_areas
 
 
 # def plot_multi_area_path(merged_path_utm, all_orig_corners, all_inner_corners,
@@ -183,7 +193,7 @@ def process_config(config_file, output_dir):
     print(f"Config: {config_file}")
     print(f"{'='*60}")
 
-    all_areas, default_params = load_areas_from_yaml(config_file)
+    all_areas, default_params, suppression_areas = load_areas_from_yaml(config_file)
     # # 批量模式下始终 headless，忽略 YAML 中的 headless 设置
     # headless = True
 
@@ -276,6 +286,14 @@ def process_config(config_file, output_dir):
     dense_filename = os.path.join(output_dir, f"{basename}.txt")
     with open(dense_filename, "w", encoding="utf-8") as f:
         f.write("序号,经度,纬度,航向角(度)\n")
+        suppression_meta = {
+            'areas': sorted(suppression_areas),
+        }
+        f.write(
+            "#@ultrasonic_suppression="
+            + json.dumps(suppression_meta, ensure_ascii=False, separators=(',', ':'))
+            + "\n"
+        )
         current_area_name = None
         for global_idx, ((lon, lat), hdg, area_name) in enumerate(
                 zip(dense_latlon, dense_headings, dense_area_names)):

@@ -34,7 +34,6 @@ areas:
     calib_point_a: {lon: 110.64776183179559, lat: 35.604852917286685}
     calib_point_b: {lon: 110.64776265157377, lat: 35.60475014299974}
     calib_point_c: {lon: 110.64776183179559, lat: 35.604852917286685}
-    start_corner: "top_right" 
   # bridge_11A-12B
   - name: "bridge_11A-12B"
     calib_point_a: {lon: 110.64776313280512, lat: 35.60452749634761}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Manual Test Loop Service
+After=sysinit.target network.target systemd-modules-load.service
+ConditionPathExists=/sys/class/net/
+
+[Service]
+Type=simple
+User=ztl
+ExecStart=/home/ztl/robot_cleaning/manual_test_start.sh
+
+[Install]
+WantedBy=multi-user.target

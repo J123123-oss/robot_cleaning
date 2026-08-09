@@ -8,6 +8,9 @@ from pathlib import Path
 
 
 SOURCE_PATH = Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py"
+PLANNER_PATH = Path(__file__).parents[1] / "rtk_nav" / "full_path_planner_dense.py"
+BATCH_PLANNER_PATH = Path(__file__).parents[3] / "batch_generate_paths.py"
+BRIDGE_CONFIG_PATH = Path(__file__).parents[1] / "rtk_nav" / "config" / "001-E1-E8.yaml"
 
 
 def _source_tree():
@@ -208,3 +211,75 @@ def test_geometric_escape_does_not_delegate_to_boundary_correction():
     _, tree = _source_tree()
     retreat = _function(tree, "_retreat_to_waypoint")
     assert "get_boundary_correct_speed" not in ast.unparse(retreat)
+
+
+def test_bridge_suppression_covers_move_and_calibration_with_one_area_list():
+    _, tree = _source_tree()
+    gate = _function(tree, "_is_ultrasonic_suppression_allowed")
+    source = ast.unparse(gate)
+    assert "NavState.WAYPOINT_MOVE" in source
+    assert "NavState.WAYPOINT_CALIB" in source
+    assert "ultrasonic_suppression_areas" in source
+    assert "configured_areas" not in source
+    assert "_rtk_ready_for_ultrasonic_suppression" in source
+    rtk_gate = _function(tree, "_rtk_ready_for_ultrasonic_suppression")
+    rtk_source = ast.unparse(rtk_gate)
+    assert "last_wtrtk_time" in rtk_source
+    assert "rtk_data_timed_out" in rtk_source
+    assert "RTK_DATA_TIMEOUT" in rtk_source
+
+
+def test_bridge_suppression_covers_immediate_calibration_sensor_guard():
+    _, tree = _source_tree()
+    boundary_guard = _function(tree, "_is_calibration_boundary_active")
+    source = ast.unparse(boundary_guard)
+    assert "_is_ultrasonic_suppression_allowed" in source
+    assert "not suppression_active" in source
+    assert "confirmed_sensors" in source
+    assert "mid_left" in source
+
+
+def test_bridge_suppression_has_no_configured_time_or_distance_limit():
+    _, tree = _source_tree()
+    gate = _function(tree, "_is_ultrasonic_suppression_allowed")
+    source = ast.unparse(gate)
+    assert "ultrasonic_suppression_max_duration_s" not in source
+    assert "ultrasonic_suppression_max_distance_m" not in source
+
+
+def test_bridge_suppression_exits_for_retreat_and_non_auto_states():
+    source, tree = _source_tree()
+    gate = _function(tree, "_is_ultrasonic_suppression_allowed")
+    gate_source = ast.unparse(gate)
+    assert "retreat_active" in gate_source
+    assert "boundary_correct_locked" in gate_source
+    assert "ControlMode.AUTO_CLEANING" in gate_source
+    assert "_suppression_area_identity" in gate_source
+    assert "ultrasonic_suppression_active" in source
+
+
+def test_bridge_suppression_session_resets_on_pause_and_auto_reentry():
+    _, tree = _source_tree()
+    publish_state = _function(tree, "publish_nav_state")
+    state_callback = _function(tree, "state_callback")
+    mode_callback = _function(tree, "mode_callback")
+    publish_source = ast.unparse(publish_state)
+    assert "NavState.PAUSE" in publish_source
+    assert "_exit_ultrasonic_suppression" in publish_source
+    assert "enter_auto_cleaning" in ast.unparse(state_callback)
+    assert "enter_auto_cleaning" in ast.unparse(mode_callback)
+
+
+def test_bridge_suppression_metadata_is_persisted_in_generated_path():
+    planner_source = PLANNER_PATH.read_text(encoding="utf-8")
+    batch_source = BATCH_PLANNER_PATH.read_text(encoding="utf-8")
+    config_source = BRIDGE_CONFIG_PATH.read_text(encoding="utf-8")
+    assert "ultrasonic_suppression" in planner_source
+    assert "json.dumps(suppression_meta" in planner_source
+    assert "json.dumps(suppression_meta" in batch_source
+    assert "suppression_areas" in batch_source
+    assert '"bridge_E3-E3out2"' in config_source
+    assert '"bridge_E4out1-E4"' in config_source
+    assert "calibration_areas" not in config_source
+    assert "max_duration_s" not in config_source
+    assert "max_distance_m" not in config_source

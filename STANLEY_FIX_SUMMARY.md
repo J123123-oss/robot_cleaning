@@ -45,6 +45,19 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 
 ## 修复清单
 
+## 当前运行时故障码契约
+
+以下表格以当前活动代码 `rtk_nav.py` 和 `motor_control.py` 为准；后续历史修复条目中的旧位值不代表当前运行时协议。
+
+| 故障码 | 当前含义 | 当前处理 |
+|---:|---|---|
+| 4 | RTK 定位或定向非 Fixed，或 GGA 数据无效 | 停止导航，等待双 Fixed 恢复并重新通过航向门控 |
+| 8 | `/wtrtk_data` 断流超过 1 秒、angle_x/angle_y 持续为 0 超过 1 秒，或运行中航向误差超过 15° 持续 15 秒 | 停车暂停；断流等待数据恢复，航向异常恢复只检查数据新鲜度 |
+| 16 | START 时电量低于 90% 启动阈值 | 拒绝出仓，保持当前状态 |
+| 32 | 进仓导航、航向对准或位置恢复超时 | 停车并进入 HOLD |
+| 64 | AUTO 航向门控 600 秒仍未达到 5 秒短窗和 30 秒收敛条件 | 设置错误码并进入 HOLD，重新进入 AUTO 后重采集 |
+| 128 | 航向校准卡滞/超时及相关人工介入导航故障 | 停车并等待人工处理，从当前航点恢复 |
+
 ### 1. 转向符号反转（fc2c98a）
 - **问题**: `speed_diff = steering_factor * STRAIGHT_MAX_CORRECTION` 导致纠偏方向与实际需求相反
 - **修复**: `speed_diff = -steering_factor * STRAIGHT_MAX_CORRECTION`
@@ -1070,6 +1083,17 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **验证**：契约测试 15/15 通过，`python -m py_compile src/rtk_nav/rtk_nav/rtk_nav.py` 和 `git diff --check` 通过；未进行 ROS/实车验证。
 - **影响**：`rtk_nav.py` 的 P1 锚点传感器处理、有限线性脱困和失败结果映射；`src/rtk_nav/test/test_boundary_calibration_contract.py` 增加 P1_ESCAPE 契约覆盖。
 
+## 2026-08-06 桥架区域超声波屏蔽边界
+
+### 93. WAYPOINT_MOVE/WAYPOINT_CALIB 分离配置并增加退出上限
+
+- **配置**：`001-E1-E8.yaml` 增加 `ultrasonic_suppression.areas` 和显式的 `calibration_areas`，并配置最大持续时间、最大距离。
+- **传播**：`full_path_planner_dense.py` 将配置写入生成 TXT 的 `#@ultrasonic_suppression={...}` 元数据；`rtk_nav` 加载 TXT 时恢复配置，避免运行时只剩 TXT 后丢失 YAML 策略。
+- **部署**：修改 YAML 后需重新运行 `full_path_planner_dense.py` 生成路径 TXT；未包含该元数据的旧 TXT 默认不启用桥架屏蔽。
+- **行为**：普通区域名单允许 `WAYPOINT_MOVE` 屏蔽；只有 `calibration_areas` 中的区域才允许 `WAYPOINT_CALIB` 屏蔽。`INITIAL_MOVE`、P1/P2、边界矫正和人工模式不屏蔽。
+- **安全退出**：RTK 双 Fixed 条件失效、屏蔽时间超限或从锚点移动距离超限时立即退出屏蔽；达到时间/距离上限后锁定当前物理区域（含 `_mid` 标签），不能在下一帧重新开始计时；原始 IO 和 `sensors_status` 始终实时更新，后续帧恢复正常边界确认。
+- **验证**：契约测试 19/19 通过，两个导航 Python 文件 `py_compile` 通过，目标文件 `git diff --check` 通过；未进行 ROS/实车验证。
+
 ## 2026-08-05 双 Fixed 恢复后的航向慢漂移门控
 
 ### 92. 5 秒窗口会放行缓慢单向漂移并直接进入 Stanley 巡迹
@@ -1083,6 +1107,14 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
   5. `/rtk/nav_context` 新增 `auto_heading_gate_path_alignment_pending`，用于现场确认是否正在等待恢复后的路径对齐。
 - **未改范围**：`motor_control.py` 的 `rtk_status` 格式保持不变。
 - **验证**：新增 `test_heading_recovery_gate_contract.py`，覆盖双窗口参数、双窗口判定、质量丢失重置计时，以及路径对齐必须先于导航生成器创建；未进行 ROS/实车验证。
+## 2026-08-06 超声波屏蔽配置统一及批量路径生成
+
+### 94. 单一 `areas` 同时覆盖移动和航向校准
+
+- **配置**：`ultrasonic_suppression.areas` 是唯一屏蔽区域名单，同时适用于 `WAYPOINT_MOVE` 和 `WAYPOINT_CALIB`；删除 `calibration_areas`、持续时间和距离配置。
+- **生成链路**：`full_path_planner_dense.py` 与根目录 `batch_generate_paths.py` 都把该名单写入 TXT 的 `#@ultrasonic_suppression={...}` 元数据，批量生成后运行导航即可读取。
+- **保护**：`INITIAL_MOVE`、P1/P2 几何回退、边界矫正、非 AUTO 模式和 RTK 非 Fixed 仍然不屏蔽传感器。
+- **验证**：20 个契约测试、三个 Python 文件语法解析和目标文件 `git diff --check` 通过；未进行 ROS/实车验证。
 
 ## 2026-08-08 区域跳转 HOLD 门控与 RTK 恢复收口
 
@@ -1095,3 +1127,16 @@ fc2c98a fix: Stanley 控制器横向纠偏符号反转及航点切换路径方�
 - **关联恢复规则**：RTK Float 不超过 3 秒时保留既有航向历史，恢复双 Fixed 后再确认 1 秒；超过 3 秒则清空历史，并要求严格满 30 秒且航向收敛跨度 `<=2°` 后才放行。
 - **验证**：`test_nav_pause_protocol_contract.py` 新增双入口 HOLD 门控断言；与 RTK 恢复、滚刷区间契约合计 16 项通过，两个 Python 节点 `py_compile` 通过。未进行 ROS/实车验证。
 - **提交**：`3dafc4f fix: gate area jumps and RTK recovery`。
+
+## 2026-08-08 跳转进入滚刷开启区间
+
+### 96. `skip_to_area` 跳入开启区间后滚刷错误保持关闭
+
+- **问题**：路径中的 `#start` 位于航点 13、`#stop` 位于航点 484。跳转到航点 145 时，目标仍在开启区间 `[13, 484)` 内，但旧逻辑把已跨过的开启索引 13 作为“过期事件”直接丢弃，导致滚刷保持关闭。
+- **恢复链路问题**：`_apply_skip_to_area()` 计算出的 `brush_active=True` 未同步到 `nav_context`；随后进入 `AUTO_CLEANING` 时从旧快照恢复，又将滚刷覆盖为关闭。
+- **修复**：
+  1. `check_and_control_brush()` 按航点索引合并起止事件，重放所有 `event_index <= current_waypoint_idx` 的事件，不再丢弃跨过的 `#start`。
+  2. 跳转完成后立即同步 `nav_context["brush_active"]`，确保 AUTO 恢复不会覆盖本次区间计算结果。
+  3. 多段滚刷区间按事件顺序处理；跳入 `[start, stop)` 开启，跨过 `stop` 后关闭。
+- **验证**：滚刷区间合同测试及现有导航合同测试共 15 项通过；`py_compile` 和 `git diff --check` 通过，未进行 ROS/实车验证。
+- **提交**：`06f59e1 fix: preserve brush state when skipping into active interval`。
