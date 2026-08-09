@@ -63,12 +63,42 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertIn("preserve_heading_history", helper)
         self.assertIn("force=True", callback)
 
+    def test_float_frames_bridge_without_polluting_stability_window(self):
+        _, tree = _source_tree()
+        callback = ast.unparse(_function(tree, "heading_callback"))
+
+        self.assertIn("can_track_heading = current_sample_fixed", callback)
+        self.assertIn("self._heading_stability_history.append", callback)
+
+    def test_settle_window_keeps_boundary_margin_and_uses_recent_samples(self):
+        source, tree = _source_tree()
+        callback = ast.unparse(_function(tree, "heading_callback"))
+
+        self.assertIn(
+            "HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0",
+            source,
+        )
+        self.assertIn("settle_history =", callback)
+        self.assertIn("len(settle_history) >= 20", callback)
+
     def test_fixed_recovery_has_confirmation_delay(self):
         _, tree = _source_tree()
         timer = ast.unparse(_function(tree, "rtk_timer_callback"))
 
         self.assertIn("HEADING_FIXED_CONFIRM_WINDOW", timer)
         self.assertIn("self.publish_stop_speed()", timer)
+
+    def test_heading_gate_is_visible_as_auto_resume_pause(self):
+        _, tree = _source_tree()
+        helper = ast.unparse(_function(tree, "_prepare_auto_cleaning_heading_gate"))
+        timer = ast.unparse(_function(tree, "rtk_timer_callback"))
+        recovery = ast.unparse(_function(tree, "heading_callback"))
+
+        self.assertIn("self.nav_context['nav_state'] = NavState.PAUSE", helper)
+        self.assertIn("self.nav_context['pause_reason'] = 'auto_heading_gate'", helper)
+        self.assertIn("self.publish_nav_state(NavState.PAUSE)", helper)
+        self.assertIn("'auto_heading_gate'", timer)
+        self.assertIn("保持PAUSE", recovery)
 
     def test_gate_release_aligns_waypoint_move_before_generator_creation(self):
         source, tree = _source_tree()
@@ -82,6 +112,14 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertLess(alignment_call, generator_create)
         self.assertIn("self.start_heading_recalibration", helper)
         self.assertIn("self.nav_context['nav_state'] = NavState.WAYPOINT_CALIB", helper)
+
+    def test_initial_move_does_not_duplicate_heading_gate_inside_generator(self):
+        _, tree = _source_tree()
+        generator = ast.unparse(_function(tree, "multi_waypoint_nav_generator"))
+
+        self.assertNotIn("_last_heading_stable", generator)
+        self.assertNotIn("初始航向校验", generator)
+        self.assertIn("current_nav_state = NavState.INITIAL_MOVE", generator)
 
     def test_waypoint_attitude_change_restarts_auto_heading_gate(self):
         source, tree = _source_tree()

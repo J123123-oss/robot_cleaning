@@ -49,6 +49,21 @@ class NavPauseProtocolContractTest(unittest.TestCase):
         self.assertIn("self.switch_state('h')", callback)
         self.assertIn("if self._rtk_auto_pause", timer)
 
+    def test_heading_gate_timeout_is_latched_manual_hold_with_error_64(self):
+        rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+        motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
+        rtk_tree = ast.parse(rtk_source)
+        publisher = ast.unparse(_function(rtk_tree, "publish_nav_state"))
+        timer = ast.unparse(_function(rtk_tree, "rtk_timer_callback"))
+
+        self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT = 64", rtk_source)
+        self.assertIn("set_rtk_error_bits(ERROR_HEADING_STABILITY_TIMEOUT)", timer)
+        self.assertIn("auto_heading_gate_timeout", timer)
+        self.assertIn("publish_stop_speed()", timer)
+        self.assertIn("pause_reason != 'auto_heading_gate_timeout'", publisher)
+        self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT = 64", motor_source)
+        self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT", motor_source)
+
     def test_tilt_fault_is_not_published_as_an_rtk_error(self):
         rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
         motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
