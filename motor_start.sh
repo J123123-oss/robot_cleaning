@@ -16,4 +16,4 @@ done
 echo "已成功ping通 $TARGET_IP"
 # 日志按实际日期滚动；单文件达到 10 MiB 后切分为 runYYYYMMDD.1.log、.2.log。
 # 可通过 systemd Environment=MOTOR_START_LOG_MAX_BYTES=... 覆盖分卷大小。
-source /opt/ros/humble/setup.bash && source /home/ztl/robot_cleaning/install/setup.bash && ros2 launch rtk_nav run.launch.py 2>&1 | /usr/bin/python3 /home/ztl/robot_cleaning/scripts/rotate_motor_start_log.py
+source /opt/ros/humble/setup.bash && source /home/ztl/robot_cleaning/install/setup.bash && ros2 launch rtk_nav run.launch.py 2>&1 | /usr/bin/python3 /home/ztl/robot_cleaning/rotate_motor_start_log.py
