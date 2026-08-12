@@ -2102,7 +2102,7 @@ class MotorControlNode(Node):
                 # 原地旋转：使用与 LOADING_TURN 相同的转向逻辑
                 align_target = target_bearing + 180.0 if self._nav_use_backward else target_bearing
                 correction = self.get_speed_correction(align_target)
-                turn_speed = self.get_adaptive_turn_speed(abs(align_error))
+                turn_speed = 0.5 * self.get_adaptive_turn_speed(abs(align_error))
                 turn_speed = turn_speed if align_error <= 0 else -turn_speed
                 self.set_motors_speed(turn_speed + correction, turn_speed + correction)
                 return
@@ -2306,7 +2306,7 @@ class MotorControlNode(Node):
                     correction = self.get_speed_correction(self.loading_turn_target_deg)
                     yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
                     # 差值小于0，左转；差值大于0，右转，保持方向正确
-                    turn_speed = 0.5 * self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff)
+                    turn_speed = 0.5 * (self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff))
                     left_speed = turn_speed + correction
                     right_speed = turn_speed + correction
                     self.set_motors_speed(left_speed, right_speed)
