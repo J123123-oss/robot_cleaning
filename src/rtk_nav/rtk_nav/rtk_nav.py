@@ -72,9 +72,10 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "boundary_retreat_timeout",
     "boundary_cycle_exhausted",
 })
-# 初始航向校验（仅检查航向是否稳定无漂移，不限制固定角度——出仓后无论车头朝哪，稳住即放行）
-# 航向稳定性由 heading_callback 中的 HEADING_STABILITY_WINDOW / HEADING_STABILITY_RANGE 控制
-# INITIAL_HEADING_TARGET / INITIAL_HEADING_TOLERANCE 已废弃，不再使用固定角度判定
+# 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
+# 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
+INITIAL_HEADING_MIN = -100.0
+INITIAL_HEADING_MAX = -80.0
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
 STANLEY_MIN_SPEED = 0.15
@@ -104,7 +105,7 @@ ERROR_CALIB_TIMEOUT = 128    # 航向校准卡滞/超时及相关人工介入故
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
 HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
-HEADING_STABILITY_SETTLE_RANGE = 2.0    # 收敛窗口内最大允许变化（度）
+HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
 # 保留少量边界余量，避免滚动队列在恰好 30 秒时先删掉首帧，导致窗口永远无法 ready。
 HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
 # 短时定向失锁可保留航向稳定资格；Float 持续超过 3 秒才清空窗口并重新等待 30 秒。
@@ -218,6 +219,7 @@ class RTKNavControlNode(Node):
         self._auto_heading_gate_quality_gap_invalidated = False
         self._auto_heading_gate_seen_fixed = False
         self._auto_heading_gate_path_alignment_pending = False
+        self._auto_heading_gate_initial_direction_required = False
         self.imu_calibration_offset = 0.0
         self.last_yaw_error = 0.0
         self.integral_yaw = 0.0
@@ -2116,6 +2118,23 @@ class RTKNavControlNode(Node):
                     short_range <= HEADING_STABILITY_RANGE
                     and settle_range <= HEADING_STABILITY_SETTLE_RANGE
                 )
+
+                # 首次出仓清扫不能仅凭“稳定”放行；152°这类稳定但反向的
+                # 航向会让初始移动沿错误方向行驶。清空窗口后重新采集，
+                # 直到稳定航向落入现场标定的作业方向范围。
+                initial_direction_valid = (
+                    not self._auto_heading_gate_initial_direction_required
+                    or INITIAL_HEADING_MIN <= self.imu_yaw <= INITIAL_HEADING_MAX
+                )
+                if is_stable and not initial_direction_valid:
+                    is_stable = False
+                    self._heading_stability_history.clear()
+                    self._auto_heading_gate_start_time = now
+                    self.get_logger().warn(
+                        f"[AUTO航向门控] 航向稳定但方向错误：IMU={self.imu_yaw:.1f}°，"
+                        f"要求{INITIAL_HEADING_MIN:.0f}°~{INITIAL_HEADING_MAX:.0f}°，"
+                        "清空稳定窗口并重新等待"
+                    )
 
             self._heading_short_range = short_range
             self._heading_settle_range = settle_range
@@ -4302,11 +4321,14 @@ class RTKNavControlNode(Node):
         # WAYPOINT_MOVE 而误以为车辆正在运行。人工介入暂停必须保持原有原因，
         # 不能被航向门控覆盖，否则底盘会错误地留在 AUTO_CLEANING。
         existing_reason = self.nav_context.get("pause_reason")
+        current_state = self.nav_context.get("nav_state", NavState.IDLE)
+        self._auto_heading_gate_initial_direction_required = (
+            current_state == NavState.IDLE and not preserve_heading_history
+        )
         if existing_reason == "auto_heading_gate_timeout":
             # 人工重新进入 AUTO 后确认已处理上一次航向超时故障。
             self.clear_rtk_error_bits(ERROR_HEADING_STABILITY_TIMEOUT)
         if existing_reason not in MANUAL_INTERVENTION_PAUSE_REASONS:
-            current_state = self.nav_context.get("nav_state", NavState.IDLE)
             if current_state != NavState.PAUSE:
                 self.nav_context["pre_pause_state"] = current_state
             self.nav_context["nav_state"] = NavState.PAUSE
@@ -4360,6 +4382,7 @@ class RTKNavControlNode(Node):
         self._auto_heading_gate_quality_gap_invalidated = False
         self._auto_heading_gate_seen_fixed = False
         self._auto_heading_gate_path_alignment_pending = False
+        self._auto_heading_gate_initial_direction_required = False
 
     def _start_auto_heading_gate_path_alignment(self) -> bool:
         """在门控放行后先静止对齐当前路径，避免直接进入Stanley巡迹。"""
