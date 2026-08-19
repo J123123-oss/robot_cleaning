@@ -16,6 +16,12 @@ def generate_launch_description():
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
+    declare_visual_correction_arg = DeclareLaunchArgument(
+        "enable_visual_correction",
+        default_value=TextSubstitution(text="false"),
+        description="Enable visual correction; disabled by default",
+    )
+
     # 定义电机控制节点
     motor_control_node = Node(
         package='motor_control',  # 对应 ROS1 的 pkg，包名不变
@@ -68,7 +74,8 @@ def generate_launch_description():
         # output='screen',
         parameters=[
             {'rtk_path_file': rtk_path_file},
-            {'loading_gps': loading_gps}
+            {'loading_gps': loading_gps},
+            {'enable_visual_correction': LaunchConfiguration("enable_visual_correction")},
         ]
     )
     # RTK录制的消息解析节点（原ROS1中未注释的节点）
@@ -127,6 +134,7 @@ def generate_launch_description():
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
     ld.add_action(declare_robot_id_arg)
+    ld.add_action(declare_visual_correction_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 

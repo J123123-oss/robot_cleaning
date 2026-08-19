@@ -301,6 +301,10 @@ class RTKNavControlNode(Node):
         # 声明RTK路径参数
         self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.declare_parameter("enable_visual_correction", False)
+        self.enable_visual_correction = bool(
+            self.get_parameter("enable_visual_correction").value
+        )
         self.path_dir = os.path.dirname(self.rtk_path_file)
         # self.rtk_path_file = self.declare_parameter(
         #     'rtk_path_file',
@@ -4278,6 +4282,7 @@ class RTKNavControlNode(Node):
             "heading_short_ready": self._heading_short_ready,
             "heading_settle_ready": self._heading_settle_ready,
             "heading_quality_gap_elapsed": self._heading_quality_gap_elapsed,
+            "enable_visual_correction": self.enable_visual_correction,
             "auto_heading_gate_elapsed": (
                 time.monotonic() - self._auto_heading_gate_start_time
                 if self._auto_heading_gate_pending and self._auto_heading_gate_start_time is not None
