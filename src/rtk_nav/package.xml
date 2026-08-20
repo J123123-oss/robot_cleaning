@@ -10,16 +10,17 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>custom_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cv_bridge</depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <build_depend>ament_cmake</build_depend>
   <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
-  <build_depend>geometry_msgs</build_depend>  <!-- 若引用了geometry_msgs相关类型，添加此依赖 -->
-
-
   <exec_depend>rosidl_default_runtime</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

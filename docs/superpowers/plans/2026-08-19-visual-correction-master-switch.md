@@ -4,7 +4,7 @@
 
 **Goal:** Add a default-off `enable_visual_correction` launch switch on the `camera` branch and make `rtk_nav` gate future visual path-context output without changing existing RTK navigation behavior.
 
-**Architecture:** `run.launch.py` declares the global launch argument and passes it to `rtk_nav`. `rtk_nav.py` declares and stores the boolean parameter, and its visual-context publication boundary will return an invalid context whenever the switch is false. The root-level visual scripts remain outside the launch graph until they are registered as ROS2 package executables.
+**Architecture:** `run.launch.py` declares the global launch argument, passes it to `rtk_nav`, and conditionally starts the packaged `line_detector_node`. `rtk_nav.py` publishes the current path context as valid only when the switch and RTK navigation gates pass. The detector consumes that context and publishes invalid output on timeout, state loss, or failed geometry.
 
 **Tech Stack:** ROS2 Humble launch, `rclpy`, Python `pytest`, existing `rtk_nav` node.
 
@@ -119,7 +119,7 @@ pytest -q src/rtk_nav/test/test_visual_correction_switch_contract.py
 
 Expected: FAIL because `rtk_nav.py` does not yet declare or consume the switch.
 
-- [ ] **Step 3: Implement the minimal RTK parameter gate**
+- [ ] **Step 3: Implement the RTK parameter and visual-context gate**
 
 Declare the parameter during `RTKNavControlNode.__init__`:
 
@@ -130,12 +130,11 @@ self.enable_visual_correction = bool(
 )
 ```
 
-At the future visual path-context publication boundary, return/publish an invalid
-context when this value is false. The invalid context must not alter existing
-`/rtk/motor_speed`, RTK status, pause, heading-gate, or boundary behavior. If the
-visual-context publisher does not yet exist in the current source, add only a small
-private helper with the agreed invalid-output semantics; do not wire visual corrections
-into Stanley in this switch-only change.
+Publish `/rtk/visual_path_context` from the 10 Hz RTK timer. Set `x` to the active
+Stanley path direction, `y` to `imu_yaw`, and `z=1` only when the switch, AUTO mode,
+RTK fixed solution, active move state, finite path direction, and finite heading all
+hold. Otherwise publish `z=0`. This context must not alter existing `/rtk/motor_speed`,
+RTK status, pause, heading-gate, or boundary behavior.
 
 - [ ] **Step 4: Run focused tests and existing RTK tests**
 

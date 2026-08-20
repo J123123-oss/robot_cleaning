@@ -36,6 +36,8 @@ setup(
             'wtrtk_parse_txt = rtk_nav.wtrtk_parse_txt:main',
             'wtrtk_serial_driver = rtk_nav.wtrtk_serial_driver:main',
             'rtk_nav = rtk_nav.rtk_nav:main',
+            'line_detector_node = rtk_nav.line_detector_node:main',
+            'camera_publisher_node = rtk_nav.camera_publisher_node:main',
             'navsat_key_publisher = rtk_nav.navsat_key_publisher:main',
         ],
     },

@@ -2,6 +2,8 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # 全局路径配置
@@ -20,6 +22,42 @@ def generate_launch_description():
         "enable_visual_correction",
         default_value=TextSubstitution(text="false"),
         description="Enable visual correction; disabled by default",
+    )
+
+    declare_stanley_k_path_arg = DeclareLaunchArgument(
+        "stanley_k_path",
+        default_value=TextSubstitution(text="0.45"),
+        description="Stanley lateral gain for normal path tracking",
+    )
+    declare_stanley_k_near_target_arg = DeclareLaunchArgument(
+        "stanley_k_near_target",
+        default_value=TextSubstitution(text="0.42"),
+        description="Stanley lateral gain within 1.3 m of the target",
+    )
+    declare_visual_heading_gain_arg = DeclareLaunchArgument(
+        "visual_heading_gain",
+        default_value=TextSubstitution(text="0.2"),
+        description="Visual heading correction gain",
+    )
+    declare_visual_lateral_gain_arg = DeclareLaunchArgument(
+        "visual_lateral_gain",
+        default_value=TextSubstitution(text="10.0"),
+        description="Visual lateral correction gain",
+    )
+    declare_visual_max_steering_arg = DeclareLaunchArgument(
+        "visual_max_steering_deg",
+        default_value=TextSubstitution(text="3.0"),
+        description="Maximum visual correction steering angle in degrees",
+    )
+    declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
+        "visual_confidence_threshold",
+        default_value=TextSubstitution(text="0.5"),
+        description="Minimum visual confidence for correction",
+    )
+    declare_visual_timeout_arg = DeclareLaunchArgument(
+        "visual_timeout_sec",
+        default_value=TextSubstitution(text="0.5"),
+        description="Visual sample timeout in seconds",
     )
 
     # 定义电机控制节点
@@ -75,7 +113,33 @@ def generate_launch_description():
         parameters=[
             {'rtk_path_file': rtk_path_file},
             {'loading_gps': loading_gps},
-            {'enable_visual_correction': LaunchConfiguration("enable_visual_correction")},
+            {
+                'enable_visual_correction': ParameterValue(
+                    LaunchConfiguration("enable_visual_correction"),
+                    value_type=bool,
+                ),
+                'stanley_k_path': ParameterValue(
+                    LaunchConfiguration("stanley_k_path"), value_type=float
+                ),
+                'stanley_k_near_target': ParameterValue(
+                    LaunchConfiguration("stanley_k_near_target"), value_type=float
+                ),
+                'visual_heading_gain': ParameterValue(
+                    LaunchConfiguration("visual_heading_gain"), value_type=float
+                ),
+                'visual_lateral_gain': ParameterValue(
+                    LaunchConfiguration("visual_lateral_gain"), value_type=float
+                ),
+                'visual_max_steering_deg': ParameterValue(
+                    LaunchConfiguration("visual_max_steering_deg"), value_type=float
+                ),
+                'visual_confidence_threshold': ParameterValue(
+                    LaunchConfiguration("visual_confidence_threshold"), value_type=float
+                ),
+                'visual_timeout_sec': ParameterValue(
+                    LaunchConfiguration("visual_timeout_sec"), value_type=float
+                ),
+            },
         ]
     )
     # RTK录制的消息解析节点（原ROS1中未注释的节点）
@@ -103,6 +167,30 @@ def generate_launch_description():
             {'port': '/dev/ttyS2'},
             {'baud': 230400}
         ]
+    )
+
+    line_detector_node = Node(
+        package='rtk_nav',
+        executable='line_detector_node',
+        name='grid_line_detector',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
+        parameters=[
+            {
+                'enable_visual_correction': ParameterValue(
+                    LaunchConfiguration('enable_visual_correction'),
+                    value_type=bool,
+                )
+            },
+        ],
+    )
+
+    camera_publisher_node = Node(
+        package='rtk_nav',
+        executable='camera_publisher_node',
+        name='camera_publisher',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
     )
 
     # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
@@ -135,6 +223,13 @@ def generate_launch_description():
     ld = LaunchDescription()
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_visual_correction_arg)
+    ld.add_action(declare_stanley_k_path_arg)
+    ld.add_action(declare_stanley_k_near_target_arg)
+    ld.add_action(declare_visual_heading_gain_arg)
+    ld.add_action(declare_visual_lateral_gain_arg)
+    ld.add_action(declare_visual_max_steering_arg)
+    ld.add_action(declare_visual_confidence_threshold_arg)
+    ld.add_action(declare_visual_timeout_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
@@ -145,5 +240,7 @@ def generate_launch_description():
     ld.add_action(rtk_navigator)
     # 若需要启用注释的节点，取消以下对应行的注释
     ld.add_action(wtrtk_serial_driver_node)
+    ld.add_action(line_detector_node)
+    ld.add_action(camera_publisher_node)
 
     return ld

@@ -25,8 +25,8 @@ line_detector 根据该方向选择平行线组和垂直线组
 - 当前 `line_detector_node.py` 只保留数量最多的一个角度组，并且把接近水平
   和接近竖直的线折叠到同一角度范围，不能区分两组线。
 - 当前横向偏移始终使用图像 X 方向，不能适配横向运行。
-- 当前两个视觉节点没有被 `rtk_nav` 消费；本设计只定义路径上下文接口和视觉
-  检测逻辑，不在本阶段接入 Stanley 控制闭环。
+- `line_detector_node.py` 发布的视觉误差由 `rtk_nav.py` 消费，但只作为受限的
+  Stanley 附加修正；RTK 航向误差和 GPS 横向误差仍是主控制量。
 - `optical_flow_displacement_node.py` 不修改、不参与该方案。
 
 ## 架构
@@ -48,10 +48,10 @@ enable_visual_correction:=false
 - 无论开关状态如何，RTK 质量、导航状态、航向门控和边界安全条件仍然独立
   生效，视觉开关不能绕过这些条件。
 
-当前根目录下的 `line_detector_node.py` 尚未注册为 `rtk_nav` 或其他 ROS2 包的
-可执行入口，因此本阶段不把它直接加入 `run.launch.py`。待视觉节点完成包内注册
-后，应继续使用同一个 `enable_visual_correction` 参数通过 launch 条件启动它，避免
-出现 launch 看似开启但节点实际未运行的假配置。
+`line_detector_node.py` 应注册为 `rtk_nav` 包的 `line_detector_node` 可执行入口，
+并由 `run.launch.py` 使用同一个参数通过 `IfCondition` 启动。这样关闭开关时节点
+不会启动，开启开关时节点和 RTK 上下文使用同一配置，避免出现 launch 看似开启但
+节点实际未运行的假配置。
 
 ### 新增 RTK 话题
 
@@ -188,6 +188,25 @@ lateral_m = calibrated_pixel_to_meter(lateral_pixel_error)
 对于横向运行，横向坐标不再固定为图像 X 方向，而是使用路径轴的正交方向。
 因此同一套投影计算同时适用于纵向运行和横向运行。
 
+## Stanley 融合
+
+`rtk_nav.py` 订阅 `/grid_line/angle_deviation` 和
+`/grid_line/detection_confidence`。视觉样本只有在 `detected=1`、置信度达到
+阈值且未超过超时时间时才有效。有效样本产生独立的附加转向角：
+
+```text
+visual_correction = visual_lateral_gain * lateral_error_m
+                    - visual_heading_gain * heading_error_deg
+```
+
+附加转向角限制在 `[-visual_max_steering_deg, visual_max_steering_deg]`，再与
+现有 Stanley 结果相加，并继续使用原有总转向 `[-45°, 45°]` 限幅。视觉修正不
+替换 RTK 横向误差或 RTK 航向误差。
+
+视觉修正的运行门控包括：视觉总开关、RTK Fixed 就绪、`AUTO_CLEANING`、
+`INITIAL_MOVE`/`WAYPOINT_MOVE`、边界矫正未锁定、未处于原地校准/几何撤退/强制
+方位角模式。任一条件不满足时附加转向角为零。
+
 ## 输出接口
 
 保持现有话题：
@@ -208,7 +227,7 @@ z = detected
 
 ```text
 /grid_line/run_axis           std_msgs/String
-    "parallel" / "perpendicular" 仅用于诊断当前路径轴匹配结果
+    "vertical" / "horizontal" / "invalid"，仅用于诊断当前路径轴
 
 /grid_line/detection_confidence std_msgs/Float32
 ```
@@ -268,8 +287,8 @@ reacquire_frames           换向后连续有效帧数，默认 3
 - RTK 上下文超时或无效时停止发布有效视觉纠偏。
 - 角度组不明确、左右边界无法配对、相机参数非法时发布无效结果并记录节流
   警告。
-- 视觉节点不直接发布 `/rtk/motor_speed`，不绕过 `rtk_nav` 的 RTK 固定解、
-  航向门控、边界传感器和暂停状态。
+- 视觉节点不直接发布 `/rtk/motor_speed`；`rtk_nav` 只在上述门控通过时把视觉
+  附加项加入 Stanley，不绕过 RTK 固定解、航向门控、边界传感器和暂停状态。
 - 本设计不改变 `motor_control` 的安全判断和现有 RTK 状态机。
 
 ## 测试与验收
@@ -312,5 +331,6 @@ RTK/人工测量得到的航向真实偏差
 
 ### 运行验证边界
 
-设计和单元测试不能证明实际 ROS、相机、RTK 或底盘闭环效果。现场验证必须
-先以只记录、不接入电机控制的方式完成，再评估是否允许进入 Stanley 纠偏。
+设计和单元测试不能证明实际 ROS、相机、RTK 或底盘闭环效果。现场验证应先以
+视觉总开关关闭或视觉增益为零的方式确认话题和时间戳，再以低速、可急停条件
+逐步启用小增益，核对视觉误差正负方向和左右轮修正方向后再提高增益。

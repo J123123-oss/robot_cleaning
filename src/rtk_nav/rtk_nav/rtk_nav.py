@@ -302,8 +302,38 @@ class RTKNavControlNode(Node):
         self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
         self.declare_parameter("enable_visual_correction", False)
-        self.enable_visual_correction = bool(
-            self.get_parameter("enable_visual_correction").value
+        self.enable_visual_correction = (
+            self.get_parameter("enable_visual_correction")
+            .get_parameter_value()
+            .bool_value
+        )
+        self.declare_parameter("stanley_k_path", 0.45)
+        self.declare_parameter("stanley_k_near_target", 0.42)
+        self.stanley_k_path = max(
+            0.0, float(self.get_parameter("stanley_k_path").value)
+        )
+        self.stanley_k_near_target = max(
+            0.0, float(self.get_parameter("stanley_k_near_target").value)
+        )
+        self.declare_parameter("visual_heading_gain", 0.2)
+        self.declare_parameter("visual_lateral_gain", 10.0)
+        self.declare_parameter("visual_max_steering_deg", 3.0)
+        self.declare_parameter("visual_confidence_threshold", 0.5)
+        self.declare_parameter("visual_timeout_sec", 0.5)
+        self.visual_heading_gain = float(
+            self.get_parameter("visual_heading_gain").value
+        )
+        self.visual_lateral_gain = float(
+            self.get_parameter("visual_lateral_gain").value
+        )
+        self.visual_max_steering_deg = max(
+            0.0, float(self.get_parameter("visual_max_steering_deg").value)
+        )
+        self.visual_confidence_threshold = float(
+            self.get_parameter("visual_confidence_threshold").value
+        )
+        self.visual_timeout_sec = max(
+            0.0, float(self.get_parameter("visual_timeout_sec").value)
         )
         self.path_dir = os.path.dirname(self.rtk_path_file)
         # self.rtk_path_file = self.declare_parameter(
@@ -369,9 +399,17 @@ class RTKNavControlNode(Node):
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
         self.real_velocity = 0.0  # 当前真实速度 (m/s)
+        self.visual_heading_error_deg = 0.0
+        self.visual_lateral_error_m = 0.0
+        self.visual_detected = False
+        self.visual_confidence = 0.0
+        self.last_visual_angle_time = 0.0
 
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
+        self.visual_path_context_pub = self.create_publisher(
+            Vector3, "/rtk/visual_path_context", 10
+        )
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
         self._nav_state_seq = 0
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
@@ -382,6 +420,19 @@ class RTKNavControlNode(Node):
         self.velocity_pub = self.create_publisher(Float32, "/rtk/velocity", 10)
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
         self.nav_context_pub = self.create_publisher(String, "/rtk/nav_context", 10)  # 调试用：nav_context状态快照
+
+        self.visual_angle_sub = self.create_subscription(
+            Vector3,
+            "/grid_line/angle_deviation",
+            self.visual_angle_callback,
+            10,
+        )
+        self.visual_confidence_sub = self.create_subscription(
+            Float32,
+            "/grid_line/detection_confidence",
+            self.visual_confidence_callback,
+            10,
+        )
 
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
@@ -2593,8 +2644,8 @@ class RTKNavControlNode(Node):
 
     def get_adaptive_stanley_k(self, velocity, distance_to_target):
         if distance_to_target < 1.3:
-            return 0.42
-        return 0.45
+            return self.stanley_k_near_target
+        return self.stanley_k_path
 
     def stanley_steering_control(self, current_pos: Tuple[float, float],
                                  current_heading: float,
@@ -2624,7 +2675,8 @@ class RTKNavControlNode(Node):
             lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
             k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
             steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
-        total_steering = steering_correction - heading_error
+        visual_correction = self.get_visual_steering_correction()
+        total_steering = steering_correction - heading_error + visual_correction
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5
         total_steering_clamped = max(min(total_steering, 45.0), -45.0)
@@ -4301,6 +4353,93 @@ class RTKNavControlNode(Node):
         self.nav_context_pub.publish(msg)
         self._last_nav_context_publish = time.monotonic()
 
+    def publish_visual_path_context(self):
+        """发布视觉节点选择栅格运行轴所需的当前路径上下文。"""
+        msg = Vector3()
+        path_direction = getattr(self, "stanley_path_direction", None)
+        nav_state = self.nav_context.get("nav_state")
+        valid_state = nav_state in (NavState.INITIAL_MOVE, NavState.WAYPOINT_MOVE)
+        valid_heading = math.isfinite(float(getattr(self, "imu_yaw", float("nan"))))
+        valid = (
+            self.enable_visual_correction
+            and self.current_control_mode == ControlMode.AUTO_CLEANING
+            and self.rtk_solution_ready
+            and valid_state
+            and path_direction is not None
+            and math.isfinite(float(path_direction))
+            and valid_heading
+        )
+        if valid:
+            msg.x = float(path_direction)
+            msg.y = float(self.imu_yaw)
+            msg.z = 1.0
+        else:
+            msg.z = 0.0
+        self.visual_path_context_pub.publish(msg)
+
+    def visual_angle_callback(self, msg: Vector3):
+        """缓存视觉航向/横向误差，并拒绝无效检测结果。"""
+        values = (float(msg.x), float(msg.y), float(msg.z))
+        if not all(math.isfinite(value) for value in values) or msg.z < 0.5:
+            self.visual_detected = False
+            self.last_visual_angle_time = 0.0
+            return
+        self.visual_heading_error_deg = values[0]
+        self.visual_lateral_error_m = values[1]
+        self.visual_detected = True
+        self.last_visual_angle_time = time.monotonic()
+
+    def visual_confidence_callback(self, msg: Float32):
+        """缓存视觉检测置信度；非有限值按零处理。"""
+        confidence = float(msg.data)
+        self.visual_confidence = confidence if math.isfinite(confidence) else 0.0
+
+    def get_visual_steering_correction(self) -> float:
+        """返回满足安全门控时的视觉附加转向角。"""
+        if not self.enable_visual_correction:
+            return 0.0
+        if not self.rtk_solution_ready:
+            return 0.0
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            return 0.0
+        if self.nav_context.get("nav_state") not in (
+            NavState.INITIAL_MOVE,
+            NavState.WAYPOINT_MOVE,
+        ):
+            return 0.0
+        if (
+            self.boundary_correct_locked
+            or self.nav_context.get("calibration_active")
+            or self.nav_context.get("retreat_active")
+            or self.nav_context.get("force_bearing_mode")
+        ):
+            return 0.0
+        if not self.visual_detected:
+            return 0.0
+        if self.visual_confidence < self.visual_confidence_threshold:
+            return 0.0
+        if time.monotonic() - self.last_visual_angle_time > self.visual_timeout_sec:
+            return 0.0
+        if not all(
+            math.isfinite(value)
+            for value in (
+                self.visual_heading_error_deg,
+                self.visual_lateral_error_m,
+                self.visual_heading_gain,
+                self.visual_lateral_gain,
+            )
+        ):
+            return 0.0
+
+        correction = (
+            self.visual_lateral_gain * self.visual_lateral_error_m
+            - self.visual_heading_gain * self.visual_heading_error_deg
+        )
+        return max(
+            -self.visual_max_steering_deg,
+            min(self.visual_max_steering_deg, correction),
+        )
+
     def update_rtk_error_status(self, error_code: int, force: bool = False):
         if not force and error_code == self.rtk_error_code:
             return
@@ -4893,6 +5032,7 @@ class RTKNavControlNode(Node):
 
     def rtk_timer_callback(self):
         """10Hz定时器回调, 驱动多点导航逻辑"""
+        self.publish_visual_path_context()
         # 周期性发布 nav_context（每2s），便于 ros2 topic echo 调试
         if time.monotonic() - self._last_nav_context_publish >= 2.0:
             self.publish_nav_context()
