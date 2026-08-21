@@ -175,6 +175,40 @@ class CoarseWhiteLineContractTest(unittest.TestCase):
 
         self.assertEqual(len(merged), 2)
 
+    def test_merge_does_not_join_segments_that_only_touch_at_axis_endpoint(self):
+        tree, _ = _tree_and_source()
+        merge_lines = _execute_top_level_function(
+            tree, "merge_nearby_line_records"
+        )
+        self.assertIsNotNone(merge_lines)
+        if merge_lines is None:
+            return
+        first_segment = (0, 100, 20, 100, 20.0, 0.0, 10.0, 100.0, 12.0, 0.95)
+        second_segment = (20, 110, 40, 110, 20.0, 0.0, 30.0, 110.0, 12.0, 0.95)
+
+        merged = list(
+            merge_lines([first_segment, second_segment], 0.0, 10.0)
+        )
+
+        self.assertEqual(len(merged), 2)
+
+    def test_merge_ignores_records_with_nonfinite_center_coordinates(self):
+        tree, _ = _tree_and_source()
+        merge_lines = _execute_top_level_function(
+            tree, "merge_nearby_line_records"
+        )
+        self.assertIsNotNone(merge_lines)
+        if merge_lines is None:
+            return
+        invalid_record = (
+            0, 100, 20, 100, 20.0, 0.0, float("nan"), 100.0, 12.0, 0.95
+        )
+        valid_record = (40, 100, 60, 100, 20.0, 0.0, 50.0, 100.0, 12.0, 0.95)
+
+        merged = list(merge_lines([invalid_record, valid_record], 0.0, 10.0))
+
+        self.assertEqual(merged, [valid_record])
+
     def test_pipeline_uses_white_mask_parallel_angle_and_no_perpendicular_validity_gate(self):
         tree, source = _tree_and_source()
         detector = ast.unparse(
