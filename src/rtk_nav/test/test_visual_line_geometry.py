@@ -137,13 +137,13 @@ class BoundaryPairGeometryTest(unittest.TestCase):
     def _asymmetric_lines(axis_angle_deg):
         if axis_angle_deg % 180.0 == 0.0:
             return [
-                (0, 360, 480, 360, 480.0, 0.0, 240.0, 360.0),
-                (0, 240, 480, 240, 480.0, 0.0, 240.0, 240.0),
+                (0, 140, 480, 140, 480.0, 0.0, 240.0, 140.0),
+                (0, 340, 480, 340, 480.0, 0.0, 240.0, 340.0),
             ]
 
         return [
-            (470, 0, 470, 480, 480.0, 90.0, 470.0, 240.0),
-            (230, 0, 230, 480, 480.0, 90.0, 230.0, 240.0),
+            (200, 0, 200, 480, 480.0, 90.0, 200.0, 240.0),
+            (440, 0, 440, 480, 480.0, 90.0, 440.0, 240.0),
         ]
 
     def test_boundary_pair_translation_along_each_cardinal_path_axis_is_invariant(self):
