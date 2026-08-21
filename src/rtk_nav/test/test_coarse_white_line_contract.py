@@ -115,6 +115,47 @@ class CoarseWhiteLineContractTest(unittest.TestCase):
         center_projection = float(merged[0][7])
         self.assertAlmostEqual(center_projection, 100.0, delta=1.5)
 
+    def test_merge_preserves_length_when_edges_have_reversed_endpoints(self):
+        tree, _ = _tree_and_source()
+        merge_lines = _execute_top_level_function(
+            tree, "merge_nearby_line_records"
+        )
+        self.assertIsNotNone(merge_lines)
+        if merge_lines is None:
+            return
+        lower_edge = (0, 90, 140, 90, 140.0, 0.0, 70.0, 90.0, 12.0, 0.95)
+        reversed_upper_edge = (
+            140, 110, 0, 110, 140.0, 0.0, 70.0, 110.0, 12.0, 0.95
+        )
+
+        merged = list(
+            merge_lines([lower_edge, reversed_upper_edge], 0.0, 30.0)
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertGreater(float(merged[0][4]), 100.0)
+        self.assertAlmostEqual(float(merged[0][5]), 0.0, delta=1.0)
+        self.assertAlmostEqual(float(merged[0][7]), 100.0, delta=1.5)
+
+    def test_merge_does_not_join_nonoverlapping_segments_along_path_axis(self):
+        tree, _ = _tree_and_source()
+        merge_lines = _execute_top_level_function(
+            tree, "merge_nearby_line_records"
+        )
+        self.assertIsNotNone(merge_lines)
+        if merge_lines is None:
+            return
+        first_segment = (0, 100, 20, 100, 20.0, 0.0, 10.0, 100.0, 12.0, 0.95)
+        second_segment = (
+            120, 110, 140, 110, 20.0, 0.0, 130.0, 110.0, 12.0, 0.95
+        )
+
+        merged = list(
+            merge_lines([first_segment, second_segment], 0.0, 30.0)
+        )
+
+        self.assertEqual(len(merged), 2)
+
     def test_pipeline_uses_white_mask_parallel_angle_and_no_perpendicular_validity_gate(self):
         tree, source = _tree_and_source()
         detector = ast.unparse(
