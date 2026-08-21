@@ -50,6 +50,96 @@ def weighted_line_angle(lines):
     return undirected_angle(math.degrees(0.5 * math.atan2(sin_sum, cos_sum)))
 
 
+def select_coarse_white_lines(
+    lines, min_length_px, min_width_px, min_white_support
+):
+    """保留长度、白色带宽度和白色支持度都足够的线段。"""
+    selected = []
+    for line in lines:
+        if len(line) < 10:
+            continue
+        try:
+            length = float(line[4])
+            width = float(line[8])
+            support = float(line[9])
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in (length, width, support)):
+            continue
+        if (
+            length >= float(min_length_px)
+            and width >= float(min_width_px)
+            and support >= float(min_white_support)
+        ):
+            selected.append(line)
+    return selected
+
+
+def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
+    """沿路径轴法向合并同一粗白带的两条边缘线。"""
+    if not lines:
+        return []
+    if not math.isfinite(float(axis_angle_deg)) or not math.isfinite(
+        float(max_normal_gap_px)
+    ) or float(max_normal_gap_px) < 0.0:
+        return []
+
+    axis_rad = math.radians(float(axis_angle_deg))
+    normal_x = -math.sin(axis_rad)
+    normal_y = math.cos(axis_rad)
+    ordered = sorted(
+        lines,
+        key=lambda line: float(line[6]) * normal_x + float(line[7]) * normal_y,
+    )
+    merged = []
+    cluster = [ordered[0]]
+    previous_projection = (
+        float(ordered[0][6]) * normal_x + float(ordered[0][7]) * normal_y
+    )
+
+    def make_record(records):
+        total_length = sum(float(record[4]) for record in records)
+        if total_length <= 0.0 or not math.isfinite(total_length):
+            return records[0]
+        weights = [float(record[4]) / total_length for record in records]
+        endpoints = [
+            sum(weight * float(record[index]) for weight, record in zip(weights, records))
+            for index in range(4)
+        ]
+        x1, y1, x2, y2 = endpoints
+        length = math.hypot(x2 - x1, y2 - y1)
+        angle = (
+            math.degrees(math.atan2(y2 - y1, x2 - x1)) + 90.0
+        ) % 180.0 - 90.0
+        center_x = sum(weight * float(record[6]) for weight, record in zip(weights, records))
+        center_y = sum(weight * float(record[7]) for weight, record in zip(weights, records))
+        width = max(float(record[8]) for record in records)
+        support = sum(weight * float(record[9]) for weight, record in zip(weights, records))
+        return (
+            int(round(x1)),
+            int(round(y1)),
+            int(round(x2)),
+            int(round(y2)),
+            length,
+            angle,
+            center_x,
+            center_y,
+            width,
+            support,
+        )
+
+    for line in ordered[1:]:
+        projection = float(line[6]) * normal_x + float(line[7]) * normal_y
+        if projection - previous_projection <= float(max_normal_gap_px):
+            cluster.append(line)
+        else:
+            merged.append(make_record(cluster))
+            cluster = [line]
+        previous_projection = projection
+    merged.append(make_record(cluster))
+    return merged
+
+
 def select_boundary_pair(lines, axis_angle_deg, width, height, max_gap_px):
     """选择图像中心两侧最近的路径边界线，并返回投影信息。"""
     if len(lines) < 2:
@@ -139,6 +229,13 @@ class GridLineDetector(Node):
         self.declare_parameter('path_context_timeout_sec', 0.5)
         self.declare_parameter('boundary_pair_max_gap_px', 1200.0)
         self.declare_parameter('reacquire_frames', 3)
+        self.declare_parameter('white_line_value_threshold', 170.0)
+        self.declare_parameter('white_line_saturation_max', 100.0)
+        self.declare_parameter('coarse_line_min_length_px', 80.0)
+        self.declare_parameter('coarse_line_min_width_px', 3.0)
+        self.declare_parameter('coarse_line_min_support', 0.55)
+        self.declare_parameter('coarse_line_merge_gap_px', 10.0)
+        self.declare_parameter('white_line_scan_half_width_px', 8.0)
 
         self.camera_angle_offset = float(
             self.get_parameter('camera_angle_offset').value
@@ -166,6 +263,27 @@ class GridLineDetector(Node):
         self.reacquire_frames = max(
             1, int(self.get_parameter('reacquire_frames').value)
         )
+        self.white_line_value_threshold = float(
+            self.get_parameter('white_line_value_threshold').value
+        )
+        self.white_line_saturation_max = float(
+            self.get_parameter('white_line_saturation_max').value
+        )
+        self.coarse_line_min_length_px = float(
+            self.get_parameter('coarse_line_min_length_px').value
+        )
+        self.coarse_line_min_width_px = float(
+            self.get_parameter('coarse_line_min_width_px').value
+        )
+        self.coarse_line_min_support = float(
+            self.get_parameter('coarse_line_min_support').value
+        )
+        self.coarse_line_merge_gap_px = float(
+            self.get_parameter('coarse_line_merge_gap_px').value
+        )
+        self.white_line_scan_half_width_px = float(
+            self.get_parameter('white_line_scan_half_width_px').value
+        )
 
         if (
             not math.isfinite(self.path_context_timeout_sec)
@@ -188,6 +306,43 @@ class GridLineDetector(Node):
         ):
             raise ValueError(
                 'camera_pitch_deg must be finite and in (0, 90]'
+            )
+        if (
+            not math.isfinite(self.white_line_value_threshold)
+            or not 0.0 <= self.white_line_value_threshold <= 255.0
+        ):
+            raise ValueError('white_line_value_threshold must be in [0, 255]')
+        if (
+            not math.isfinite(self.white_line_saturation_max)
+            or not 0.0 <= self.white_line_saturation_max <= 255.0
+        ):
+            raise ValueError('white_line_saturation_max must be in [0, 255]')
+        if (
+            not math.isfinite(self.coarse_line_min_length_px)
+            or self.coarse_line_min_length_px <= 0.0
+        ):
+            raise ValueError('coarse_line_min_length_px must be finite and > 0')
+        if (
+            not math.isfinite(self.coarse_line_min_width_px)
+            or self.coarse_line_min_width_px <= 0.0
+        ):
+            raise ValueError('coarse_line_min_width_px must be finite and > 0')
+        if (
+            not math.isfinite(self.coarse_line_min_support)
+            or not 0.0 <= self.coarse_line_min_support <= 1.0
+        ):
+            raise ValueError('coarse_line_min_support must be finite in [0, 1]')
+        if (
+            not math.isfinite(self.coarse_line_merge_gap_px)
+            or self.coarse_line_merge_gap_px < 0.0
+        ):
+            raise ValueError('coarse_line_merge_gap_px must be finite and >= 0')
+        if (
+            not math.isfinite(self.white_line_scan_half_width_px)
+            or self.white_line_scan_half_width_px <= 0.0
+        ):
+            raise ValueError(
+                'white_line_scan_half_width_px must be finite and > 0'
             )
 
         self.path_direction_deg = 0.0
@@ -336,28 +491,42 @@ class GridLineDetector(Node):
         return lateral_m if math.isfinite(lateral_m) else float('nan')
 
     def detect_and_draw_grid_lines(self, image):
-        """检测路径平行/垂直线组并计算纠偏量。"""
+        """检测粗白光伏结构线并计算路径感知纠偏量。"""
         height, width = image.shape[:2]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray_blur = cv2.GaussianBlur(gray, (5, 5), 1.0)
-        edges = cv2.Canny(gray_blur, 50, 150, apertureSize=3)
-        _, binary = cv2.threshold(
-            gray_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        white_mask = cv2.inRange(
+            hsv,
+            np.array(
+                [0, 0, int(self.white_line_value_threshold)],
+                dtype=np.uint8,
+            ),
+            np.array(
+                [180, int(self.white_line_saturation_max), 255],
+                dtype=np.uint8,
+            ),
         )
+        white_mask = cv2.morphologyEx(
+            white_mask,
+            cv2.MORPH_OPEN,
+            np.ones((3, 3), dtype=np.uint8),
+        )
+        white_mask = cv2.morphologyEx(
+            white_mask,
+            cv2.MORPH_CLOSE,
+            np.ones((5, 5), dtype=np.uint8),
+        )
+        white_edges = cv2.Canny(white_mask, 50, 150, apertureSize=3)
         lines = cv2.HoughLinesP(
-            edges,
+            white_edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=80,
-            minLineLength=60,
+            threshold=40,
+            minLineLength=max(1, int(self.coarse_line_min_length_px)),
             maxLineGap=15,
         )
         display = image.copy()
-
-        if lines is None:
-            self.reset_reacquisition()
-            self.publish_debug_images(display, gray_blur, binary, edges)
-            return 0.0, 0.0, False, 0.0
 
         relative_path_heading = wrap180(
             self.path_direction_deg - self.vehicle_heading_deg
@@ -369,26 +538,92 @@ class GridLineDetector(Node):
         cross_axis_image = undirected_angle(directed_path_axis_image + 90.0)
         self.publish_run_axis(path_axis_image)
 
+        def estimate_line_metrics(x1, y1, x2, y2):
+            """沿线段法向扫描白色带宽度和支持度。"""
+            segment_length = math.hypot(x2 - x1, y2 - y1)
+            if segment_length <= 0.0 or not math.isfinite(segment_length):
+                return None
+            tangent_x = (x2 - x1) / segment_length
+            tangent_y = (y2 - y1) / segment_length
+            normal_x = -tangent_y
+            normal_y = tangent_x
+            sample_count = max(2, int(segment_length / 8.0))
+            half_width = int(round(self.white_line_scan_half_width_px))
+            widths = []
+            supported = 0
+            for sample_index in range(sample_count):
+                fraction = sample_index / float(sample_count - 1)
+                sample_x = x1 + (x2 - x1) * fraction
+                sample_y = y1 + (y2 - y1) * fraction
+                scan = []
+                for offset in range(-half_width, half_width + 1):
+                    pixel_x = int(round(sample_x + normal_x * offset))
+                    pixel_y = int(round(sample_y + normal_y * offset))
+                    if (
+                        0 <= pixel_x < width
+                        and 0 <= pixel_y < height
+                    ):
+                        scan.append(bool(white_mask[pixel_y, pixel_x]))
+                    else:
+                        scan.append(False)
+                if any(scan):
+                    supported += 1
+                longest_run = 0
+                current_run = 0
+                for is_white in scan:
+                    if is_white:
+                        current_run += 1
+                        longest_run = max(longest_run, current_run)
+                    else:
+                        current_run = 0
+                widths.append(float(longest_run))
+            if not widths:
+                return None
+            return float(np.mean(widths)), supported / float(sample_count)
+
+        coarse_lines = []
+        if lines is not None:
+            for raw_line in lines:
+                x1, y1, x2, y2 = [int(value) for value in raw_line[0]]
+                length = math.hypot(x2 - x1, y2 - y1)
+                metrics = estimate_line_metrics(x1, y1, x2, y2)
+                if metrics is None:
+                    continue
+                width_px, white_support = metrics
+                line_angle = undirected_angle(
+                    math.degrees(math.atan2(y2 - y1, x2 - x1))
+                )
+                record = (
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    length,
+                    line_angle,
+                    (x1 + x2) / 2.0,
+                    (y1 + y2) / 2.0,
+                    width_px,
+                    white_support,
+                )
+                coarse_lines.append(record)
+
+        coarse_lines = select_coarse_white_lines(
+            coarse_lines,
+            self.coarse_line_min_length_px,
+            self.coarse_line_min_width_px,
+            self.coarse_line_min_support,
+        )
+        if not coarse_lines:
+            self.reset_reacquisition()
+            self.publish_debug_images(
+                display, gray_blur, white_mask, white_edges
+            )
+            return 0.0, 0.0, False, 0.0
+
         parallel_group = []
         perpendicular_group = []
-        for raw_line in lines:
-            x1, y1, x2, y2 = [int(value) for value in raw_line[0]]
-            length = math.hypot(x2 - x1, y2 - y1)
-            line_angle = undirected_angle(
-                math.degrees(math.atan2(y2 - y1, x2 - x1))
-            )
-            center_x = (x1 + x2) / 2.0
-            center_y = (y1 + y2) / 2.0
-            record = (
-                x1,
-                y1,
-                x2,
-                y2,
-                length,
-                line_angle,
-                center_x,
-                center_y,
-            )
+        for record in coarse_lines:
+            line_angle = float(record[5])
             parallel_error = undirected_angle_distance(
                 line_angle, path_axis_image
             )
@@ -402,6 +637,17 @@ class GridLineDetector(Node):
                 parallel_group.append(record)
             elif perpendicular_error <= self.line_angle_tolerance_deg:
                 perpendicular_group.append(record)
+
+        parallel_group = merge_nearby_line_records(
+            parallel_group,
+            path_axis_image,
+            self.coarse_line_merge_gap_px,
+        )
+        perpendicular_group = merge_nearby_line_records(
+            perpendicular_group,
+            cross_axis_image,
+            self.coarse_line_merge_gap_px,
+        )
 
         for line in parallel_group:
             cv2.line(
@@ -420,35 +666,30 @@ class GridLineDetector(Node):
                 2,
             )
 
-        pair = None
-        if len(parallel_group) >= self.min_line_count:
-            pair = select_boundary_pair(
-                parallel_group,
-                directed_path_axis_image,
-                width,
-                height,
-                self.boundary_pair_max_gap_px,
-            )
-
+        pair = select_boundary_pair(
+            parallel_group,
+            directed_path_axis_image,
+            width,
+            height,
+            self.boundary_pair_max_gap_px,
+        )
         parallel_angle = weighted_line_angle(parallel_group)
-        cross_angle = weighted_line_angle(perpendicular_group)
         valid_geometry = (
             len(parallel_group) >= self.min_line_count
-            and len(perpendicular_group) >= self.min_line_count
             and pair is not None
             and parallel_angle is not None
-            and cross_angle is not None
             and math.isfinite(float(parallel_angle))
-            and math.isfinite(float(cross_angle))
         )
 
         if not valid_geometry:
             self.reset_reacquisition()
-            self.publish_debug_images(display, gray_blur, binary, edges)
+            self.publish_debug_images(
+                display, gray_blur, white_mask, white_edges
+            )
             return 0.0, 0.0, False, 0.0
 
         self.valid_streak += 1
-        heading_error = undirected_angle(cross_angle - cross_axis_image)
+        heading_error = undirected_angle(parallel_angle - path_axis_image)
         _, _, left_projection, right_projection, center_projection = pair
         lateral_pixel_error = (
             (left_projection + right_projection) / 2.0 - center_projection
@@ -456,7 +697,9 @@ class GridLineDetector(Node):
         lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
         if not math.isfinite(lateral_m):
             self.reset_reacquisition()
-            self.publish_debug_images(display, gray_blur, binary, edges)
+            self.publish_debug_images(
+                display, gray_blur, white_mask, white_edges
+            )
             return 0.0, 0.0, False, 0.0
 
         detected = self.valid_streak >= self.reacquire_frames
@@ -464,11 +707,14 @@ class GridLineDetector(Node):
         output_lateral = lateral_m if detected else 0.0
         confidence = 0.0
         if detected:
-            group_score = min(
-                1.0,
-                (len(parallel_group) + len(perpendicular_group)) / 10.0,
+            count_score = min(1.0, len(parallel_group) / 6.0)
+            support_score = sum(
+                float(line[9]) for line in parallel_group
+            ) / float(len(parallel_group))
+            confidence = max(
+                0.0,
+                min(1.0, 0.5 * count_score + 0.5 * support_score),
             )
-            confidence = max(0.0, min(1.0, 0.5 + 0.5 * group_score))
 
         cv2.putText(
             display,
@@ -497,7 +743,9 @@ class GridLineDetector(Node):
             (0, 255, 0),
             2,
         )
-        self.publish_debug_images(display, gray_blur, binary, edges)
+        self.publish_debug_images(
+            display, gray_blur, white_mask, white_edges
+        )
 
         if not detected:
             return 0.0, 0.0, False, 0.0
