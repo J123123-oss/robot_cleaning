@@ -167,6 +167,29 @@ class GridLineDetector(Node):
             1, int(self.get_parameter('reacquire_frames').value)
         )
 
+        if (
+            not math.isfinite(self.path_context_timeout_sec)
+            or self.path_context_timeout_sec <= 0.0
+        ):
+            raise ValueError('path_context_timeout_sec must be finite and > 0')
+        if (
+            not math.isfinite(self.camera_height)
+            or self.camera_height <= 0.0
+        ):
+            raise ValueError('camera_height must be finite and > 0')
+        if (
+            not math.isfinite(self.focal_length_px)
+            or self.focal_length_px <= 0.0
+        ):
+            raise ValueError('focal_length_px must be finite and > 0')
+        if (
+            not math.isfinite(self.camera_pitch_deg)
+            or not 0.0 < self.camera_pitch_deg <= 90.0
+        ):
+            raise ValueError(
+                'camera_pitch_deg must be finite and in (0, 90]'
+            )
+
         self.path_direction_deg = 0.0
         self.vehicle_heading_deg = 0.0
         self.path_context_valid = False
@@ -174,7 +197,7 @@ class GridLineDetector(Node):
         self.last_path_direction_deg = None
         self.valid_streak = 0
 
-        self.last_process_time = self.get_clock().now()
+        self.last_process_time = time.monotonic()
         self.min_process_interval = 0.1
         self.timer = self.create_timer(0.1, self.timer_callback)
 
@@ -186,10 +209,12 @@ class GridLineDetector(Node):
         try:
             path_direction = float(msg.x)
             vehicle_heading = float(msg.y)
+            context_validity = float(msg.z)
             valid = (
                 math.isfinite(path_direction)
                 and math.isfinite(vehicle_heading)
-                and float(msg.z) >= 0.5
+                and math.isfinite(context_validity)
+                and context_validity >= 0.5
             )
         except (AttributeError, TypeError, ValueError):
             valid = False
@@ -252,12 +277,11 @@ class GridLineDetector(Node):
             self.publish_invalid()
             return
 
-        current_time = self.get_clock().now()
-        if (
-            current_time - self.last_process_time
-        ).nanoseconds / 1e9 < self.min_process_interval:
+        current_time = time.monotonic()
+        if current_time - self.last_process_time < self.min_process_interval:
             return
 
+        self.last_process_time = current_time
         try:
             image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             angle, lateral_m, detected, confidence = (
@@ -273,19 +297,43 @@ class GridLineDetector(Node):
             confidence_msg = Float32()
             confidence_msg.data = float(confidence)
             self.confidence_pub.publish(confidence_msg)
-            self.last_process_time = current_time
         except Exception as exc:
+            self.last_process_time = time.monotonic()
             self.get_logger().error(f'图像处理错误: {exc}')
             self.reset_reacquisition()
             self.publish_invalid()
 
     def pixels_to_lateral_meters(self, lateral_pixel_error):
         """将路径法向像素误差换算为米制横向误差。"""
+        lateral_pixel_error = float(lateral_pixel_error)
+        camera_height = float(self.camera_height)
+        camera_pitch_deg = float(self.camera_pitch_deg)
+        focal_length_px = float(self.focal_length_px)
+        if not all(
+            math.isfinite(value)
+            for value in (
+                lateral_pixel_error,
+                camera_height,
+                camera_pitch_deg,
+                focal_length_px,
+            )
+        ):
+            return float('nan')
+        if (
+            camera_height <= 0.0
+            or focal_length_px <= 0.0
+            or not 0.0 < camera_pitch_deg <= 90.0
+        ):
+            return float('nan')
+
         pitch_rad = math.radians(float(self.camera_pitch_deg))
-        z_dist = float(self.camera_height) / max(math.sin(pitch_rad), 1e-6)
-        return float(lateral_pixel_error) * z_dist / max(
-            float(self.focal_length_px), 1e-6
+        sin_pitch = math.sin(pitch_rad)
+        if not math.isfinite(sin_pitch) or sin_pitch <= 0.0:
+            return float('nan')
+        lateral_m = lateral_pixel_error * camera_height / (
+            sin_pitch * focal_length_px
         )
+        return lateral_m if math.isfinite(lateral_m) else float('nan')
 
     def detect_and_draw_grid_lines(self, image):
         """检测路径平行/垂直线组并计算纠偏量。"""
@@ -406,6 +454,10 @@ class GridLineDetector(Node):
             (left_projection + right_projection) / 2.0 - center_projection
         )
         lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
+        if not math.isfinite(lateral_m):
+            self.reset_reacquisition()
+            self.publish_debug_images(display, gray_blur, binary, edges)
+            return 0.0, 0.0, False, 0.0
 
         detected = self.valid_streak >= self.reacquire_frames
         output_angle = heading_error if detected else 0.0
