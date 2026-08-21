@@ -137,7 +137,7 @@ class BoundaryPairGeometryTest(unittest.TestCase):
     def _asymmetric_lines(axis_angle_deg):
         if axis_angle_deg % 180.0 == 0.0:
             return [
-                (0, 140, 480, 140, 480.0, 0.0, 240.0, 140.0),
+                (0, 100, 480, 100, 480.0, 0.0, 240.0, 100.0),
                 (0, 340, 480, 340, 480.0, 0.0, 240.0, 340.0),
             ]
 
@@ -204,3 +204,5 @@ class BoundaryPairGeometryTest(unittest.TestCase):
 
         self.assertAlmostEqual(errors[0.0], -errors[180.0], delta=1e-9)
         self.assertAlmostEqual(errors[90.0], -errors[270.0], delta=1e-9)
+        self.assertAlmostEqual(errors[0.0], -20.0, delta=1e-9)
+        self.assertAlmostEqual(errors[180.0], 20.0, delta=1e-9)

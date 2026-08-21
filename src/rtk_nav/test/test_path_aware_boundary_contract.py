@@ -59,6 +59,18 @@ def _call_contains_string(call, value):
     )
 
 
+def _publisher_calls(function):
+    return {
+        ast.unparse(node.func)
+        for node in ast.walk(function)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "publish"
+        )
+    }
+
+
 def _has_assignment(function, target_text, value):
     for node in ast.walk(function):
         if isinstance(node, ast.Assign):
@@ -138,6 +150,9 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
         self.assertIsNotNone(publish_invalid)
         self.assertTrue(_has_assignment(publish_invalid, "result.z", 0.0))
         self.assertTrue(_has_assignment(publish_invalid, "confidence.data", 0.0))
+        publisher_calls = _publisher_calls(publish_invalid)
+        self.assertIn("self.angle_pub.publish", publisher_calls)
+        self.assertIn("self.confidence_pub.publish", publisher_calls)
 
     def test_detector_exposes_angle_and_boundary_helper_contracts(self):
         tree = _source_tree()
