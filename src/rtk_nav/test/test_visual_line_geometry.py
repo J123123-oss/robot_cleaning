@@ -51,6 +51,36 @@ def test_boundary_pair_center_is_zero_when_boundaries_are_symmetric():
     )
 
 
+def test_boundary_pair_is_invariant_to_translation_along_path_axis():
+    helpers = _helpers()
+    lines = [
+        (440, 0, 440, 480, 480.0, 90.0, 440.0, 240.0),
+        (200, 0, 200, 480, 480.0, 90.0, 200.0, 240.0),
+    ]
+    shifted = [
+        (440, 100, 440, 580, 480.0, 90.0, 440.0, 340.0),
+        (200, 100, 200, 580, 480.0, 90.0, 200.0, 340.0),
+    ]
+    first = helpers["select_boundary_pair"](lines, 90.0, 640, 480, 500.0)
+    second = helpers["select_boundary_pair"](shifted, 90.0, 640, 480, 500.0)
+    assert first is not None and second is not None
+    first_error = (first[2] + first[3]) / 2.0 - first[4]
+    second_error = (second[2] + second[3]) / 2.0 - second[4]
+    assert math.isclose(first_error, second_error, abs_tol=1e-9)
+
+
+def test_boundary_pair_changes_with_path_normal_translation():
+    helpers = _helpers()
+    lines = [
+        (470, 0, 470, 480, 480.0, 90.0, 470.0, 240.0),
+        (230, 0, 230, 480, 480.0, 90.0, 230.0, 240.0),
+    ]
+    pair = helpers["select_boundary_pair"](lines, 90.0, 640, 480, 500.0)
+    assert pair is not None
+    error = (pair[2] + pair[3]) / 2.0 - pair[4]
+    assert math.isclose(error, -30.0, abs_tol=1e-9)
+
+
 def test_reversing_directed_axis_reverses_lateral_sign_basis():
     helpers = _helpers()
     left = (430, 0, 430, 480, 480.0, 90.0, 430.0, 240.0)
