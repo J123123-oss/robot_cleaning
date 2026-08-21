@@ -33,6 +33,7 @@ setup(
             'cleaning_path_planner = rtk_nav.cleaning_path_planner:main',
             'three_point_planner = rtk_nav.three_point_planner:main',
             'full_path_planner = rtk_nav.full_path_planner:main',
+            'full_path_planner_auto = rtk_nav.auto_path_planner:main',
             'wtrtk_parse_txt = rtk_nav.wtrtk_parse_txt:main',
             'wtrtk_serial_driver = rtk_nav.wtrtk_serial_driver:main',
             'rtk_nav = rtk_nav.rtk_nav:main',
