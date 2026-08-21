@@ -84,6 +84,17 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
     ) or float(max_normal_gap_px) < 0.0:
         return []
 
+    valid_lines = []
+    for line in lines:
+        try:
+            values = [float(line[index]) for index in range(10)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        if all(math.isfinite(value) for value in values):
+            valid_lines.append(line)
+    if not valid_lines:
+        return []
+
     axis_rad = math.radians(float(axis_angle_deg))
     axis_x = math.cos(axis_rad)
     axis_y = math.sin(axis_rad)
@@ -115,7 +126,7 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
         return min(first, second), max(first, second)
 
     ordered = sorted(
-        (normalize_record(line) for line in lines),
+        (normalize_record(line) for line in valid_lines),
         key=lambda line: float(line[6]) * normal_x + float(line[7]) * normal_y,
     )
     merged = []
@@ -160,8 +171,8 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
         projection = float(line[6]) * normal_x + float(line[7]) * normal_y
         line_axis_start, line_axis_end = axis_interval(line)
         axis_intervals_join = (
-            line_axis_start <= cluster_axis_end
-            and cluster_axis_start <= line_axis_end
+            line_axis_start < cluster_axis_end
+            and cluster_axis_start < line_axis_end
         )
         if (
             projection - previous_projection <= float(max_normal_gap_px)
