@@ -5,6 +5,7 @@
 
 import ast
 import math
+import unittest
 from pathlib import Path
 
 
@@ -91,3 +92,115 @@ def test_reversing_directed_axis_reverses_lateral_sign_basis():
     forward_error = (forward[2] + forward[3]) / 2.0 - forward[4]
     reverse_error = (reverse[2] + reverse[3]) / 2.0 - reverse[4]
     assert math.isclose(forward_error, -reverse_error, abs_tol=1e-9)
+
+
+class BoundaryPairGeometryTest(unittest.TestCase):
+    def _select_pair(self, lines, axis_angle_deg):
+        helpers = _helpers()
+        self.assertIn(
+            "select_boundary_pair",
+            helpers,
+            "line detector must declare select_boundary_pair",
+        )
+        pair = helpers["select_boundary_pair"](
+            lines,
+            axis_angle_deg,
+            640,
+            480,
+            500.0,
+        )
+        self.assertIsNotNone(pair)
+        return pair
+
+    @staticmethod
+    def _error(pair):
+        return (pair[2] + pair[3]) / 2.0 - pair[4]
+
+    @staticmethod
+    def _cardinal_lines(axis_angle_deg, along_axis_offset=0):
+        if axis_angle_deg % 180.0 == 0.0:
+            start_x = along_axis_offset
+            end_x = 480 + along_axis_offset
+            return [
+                (start_x, 360, end_x, 360, 480.0, 0.0, (start_x + end_x) / 2.0, 360.0),
+                (start_x, 120, end_x, 120, 480.0, 0.0, (start_x + end_x) / 2.0, 120.0),
+            ]
+
+        start_y = along_axis_offset
+        end_y = 480 + along_axis_offset
+        return [
+            (440, start_y, 440, end_y, 480.0, 90.0, 440.0, (start_y + end_y) / 2.0),
+            (200, start_y, 200, end_y, 480.0, 90.0, 200.0, (start_y + end_y) / 2.0),
+        ]
+
+    @staticmethod
+    def _asymmetric_lines(axis_angle_deg):
+        if axis_angle_deg % 180.0 == 0.0:
+            return [
+                (0, 360, 480, 360, 480.0, 0.0, 240.0, 360.0),
+                (0, 240, 480, 240, 480.0, 0.0, 240.0, 240.0),
+            ]
+
+        return [
+            (470, 0, 470, 480, 480.0, 90.0, 470.0, 240.0),
+            (230, 0, 230, 480, 480.0, 90.0, 230.0, 240.0),
+        ]
+
+    def test_boundary_pair_translation_along_each_cardinal_path_axis_is_invariant(self):
+        for axis_angle_deg in (0.0, 90.0, 180.0, 270.0):
+            base = self._select_pair(
+                self._cardinal_lines(axis_angle_deg),
+                axis_angle_deg,
+            )
+            shifted = self._select_pair(
+                self._cardinal_lines(axis_angle_deg, along_axis_offset=100),
+                axis_angle_deg,
+            )
+            self.assertAlmostEqual(
+                self._error(base),
+                self._error(shifted),
+                delta=1e-9,
+                msg=f"axis={axis_angle_deg}",
+            )
+
+    def test_boundary_pair_normal_translation_preserves_base_and_signed_errors(self):
+        base = self._select_pair(
+            [
+                (440, 0, 440, 480, 480.0, 90.0, 440.0, 240.0),
+                (200, 0, 200, 480, 480.0, 90.0, 200.0, 240.0),
+            ],
+            90.0,
+        )
+        shifted_right = self._select_pair(
+            self._asymmetric_lines(90.0),
+            90.0,
+        )
+        shifted_left = self._select_pair(
+            [
+                (410, 0, 410, 480, 480.0, 90.0, 410.0, 240.0),
+                (170, 0, 170, 480, 480.0, 90.0, 170.0, 240.0),
+            ],
+            90.0,
+        )
+
+        base_error = self._error(base)
+        right_error = self._error(shifted_right)
+        left_error = self._error(shifted_left)
+        self.assertAlmostEqual(base_error, 0.0, delta=1e-9)
+        self.assertAlmostEqual(right_error, -30.0, delta=1e-9)
+        self.assertAlmostEqual(left_error, 30.0, delta=1e-9)
+        self.assertAlmostEqual(right_error, -left_error, delta=1e-9)
+        self.assertLess(right_error, base_error)
+        self.assertGreater(left_error, base_error)
+
+    def test_boundary_pair_reverse_cardinal_axes_reverse_lateral_sign(self):
+        errors = {}
+        for axis_angle_deg in (0.0, 90.0, 180.0, 270.0):
+            pair = self._select_pair(
+                self._asymmetric_lines(axis_angle_deg),
+                axis_angle_deg,
+            )
+            errors[axis_angle_deg] = self._error(pair)
+
+        self.assertAlmostEqual(errors[0.0], -errors[180.0], delta=1e-9)
+        self.assertAlmostEqual(errors[90.0], -errors[270.0], delta=1e-9)

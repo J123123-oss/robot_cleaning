@@ -40,6 +40,42 @@ def _declared_parameter_names(initializer):
     return names
 
 
+def _calls_named(node, name):
+    return [
+        child
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and (
+            (isinstance(child.func, ast.Name) and child.func.id == name)
+            or (isinstance(child.func, ast.Attribute) and child.func.attr == name)
+        )
+    ]
+
+
+def _call_contains_string(call, value):
+    return any(
+        isinstance(child, ast.Constant) and child.value == value
+        for child in ast.walk(call)
+    )
+
+
+def _has_assignment(function, target_text, value):
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            assigned_value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            assigned_value = node.value
+        else:
+            continue
+        if not isinstance(assigned_value, ast.Constant) or assigned_value.value != value:
+            continue
+        if any(ast.unparse(target) == target_text for target in targets):
+            return True
+    return False
+
+
 class PathAwareBoundaryContractTest(unittest.TestCase):
     def test_detector_subscribes_to_path_context_and_declares_geometry_tuning(self):
         tree = _source_tree()
@@ -47,7 +83,15 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
         self.assertIsNotNone(initializer)
         initializer_source = ast.unparse(initializer)
 
-        self.assertIn("/rtk/visual_path_context", initializer_source)
+        subscriptions = _calls_named(initializer, "create_subscription")
+        self.assertTrue(subscriptions)
+        self.assertTrue(
+            any(
+                _call_contains_string(call, "/rtk/visual_path_context")
+                for call in subscriptions
+            )
+        )
+        self.assertIn("create_subscription", initializer_source)
         declared = _declared_parameter_names(initializer)
         for name in (
             "line_angle_tolerance_deg",
@@ -62,16 +106,24 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
         image_callback = _function(tree, "image_callback")
         self.assertIsNotNone(image_callback)
 
+        detect_calls = _calls_named(image_callback, "detect_and_draw_grid_lines")
+        self.assertTrue(detect_calls)
+        first_detect_line = min(
+            (call.lineno, getattr(call, "col_offset", 0))
+            for call in detect_calls
+        )
         gated_invalid_paths = []
         for node in ast.walk(image_callback):
             if not isinstance(node, ast.If):
                 continue
             condition = ast.unparse(node.test)
-            body = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
+            node_position = (node.lineno, getattr(node, "col_offset", 0))
+            body_has_publish_invalid = bool(_calls_named(node, "publish_invalid"))
             if (
-                "path_context" in condition
-                and ("valid" in condition or "timeout" in condition)
-                and "publish_invalid" in body
+                node_position < first_detect_line
+                and "path_context_valid" in condition
+                and "timeout" in condition
+                and body_has_publish_invalid
             ):
                 gated_invalid_paths.append(node.lineno)
 
@@ -79,6 +131,13 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
             gated_invalid_paths,
             "image_callback must publish an invalid result when path context is invalid or stale",
         )
+
+    def test_publish_invalid_resets_result_and_confidence(self):
+        tree = _source_tree()
+        publish_invalid = _function(tree, "publish_invalid")
+        self.assertIsNotNone(publish_invalid)
+        self.assertTrue(_has_assignment(publish_invalid, "result.z", 0.0))
+        self.assertTrue(_has_assignment(publish_invalid, "confidence.data", 0.0))
 
     def test_detector_exposes_angle_and_boundary_helper_contracts(self):
         tree = _source_tree()
