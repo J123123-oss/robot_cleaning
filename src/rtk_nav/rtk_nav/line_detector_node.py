@@ -124,7 +124,6 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
         float(ordered[0][6]) * normal_x + float(ordered[0][7]) * normal_y
     )
     cluster_axis_start, cluster_axis_end = axis_interval(ordered[0])
-    axis_gap_tolerance = min(10.0, float(max_normal_gap_px))
 
     def make_record(records):
         total_length = sum(float(record[4]) for record in records)
@@ -161,8 +160,8 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
         projection = float(line[6]) * normal_x + float(line[7]) * normal_y
         line_axis_start, line_axis_end = axis_interval(line)
         axis_intervals_join = (
-            line_axis_start <= cluster_axis_end + axis_gap_tolerance
-            and cluster_axis_start <= line_axis_end + axis_gap_tolerance
+            line_axis_start <= cluster_axis_end
+            and cluster_axis_start <= line_axis_end
         )
         if (
             projection - previous_projection <= float(max_normal_gap_px)
