@@ -85,10 +85,37 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
         return []
 
     axis_rad = math.radians(float(axis_angle_deg))
+    axis_x = math.cos(axis_rad)
+    axis_y = math.sin(axis_rad)
     normal_x = -math.sin(axis_rad)
     normal_y = math.cos(axis_rad)
+
+    def normalize_record(record):
+        x1, y1, x2, y2 = [float(record[index]) for index in range(4)]
+        first_axis_projection = x1 * axis_x + y1 * axis_y
+        second_axis_projection = x2 * axis_x + y2 * axis_y
+        if second_axis_projection < first_axis_projection:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        return (
+            x1,
+            y1,
+            x2,
+            y2,
+            float(record[4]),
+            float(record[5]),
+            float(record[6]),
+            float(record[7]),
+            float(record[8]),
+            float(record[9]),
+        )
+
+    def axis_interval(record):
+        first = float(record[0]) * axis_x + float(record[1]) * axis_y
+        second = float(record[2]) * axis_x + float(record[3]) * axis_y
+        return min(first, second), max(first, second)
+
     ordered = sorted(
-        lines,
+        (normalize_record(line) for line in lines),
         key=lambda line: float(line[6]) * normal_x + float(line[7]) * normal_y,
     )
     merged = []
@@ -96,6 +123,8 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
     previous_projection = (
         float(ordered[0][6]) * normal_x + float(ordered[0][7]) * normal_y
     )
+    cluster_axis_start, cluster_axis_end = axis_interval(ordered[0])
+    axis_gap_tolerance = min(10.0, float(max_normal_gap_px))
 
     def make_record(records):
         total_length = sum(float(record[4]) for record in records)
@@ -130,11 +159,22 @@ def merge_nearby_line_records(lines, axis_angle_deg, max_normal_gap_px):
 
     for line in ordered[1:]:
         projection = float(line[6]) * normal_x + float(line[7]) * normal_y
-        if projection - previous_projection <= float(max_normal_gap_px):
+        line_axis_start, line_axis_end = axis_interval(line)
+        axis_intervals_join = (
+            line_axis_start <= cluster_axis_end + axis_gap_tolerance
+            and cluster_axis_start <= line_axis_end + axis_gap_tolerance
+        )
+        if (
+            projection - previous_projection <= float(max_normal_gap_px)
+            and axis_intervals_join
+        ):
             cluster.append(line)
+            cluster_axis_start = min(cluster_axis_start, line_axis_start)
+            cluster_axis_end = max(cluster_axis_end, line_axis_end)
         else:
             merged.append(make_record(cluster))
             cluster = [line]
+            cluster_axis_start, cluster_axis_end = line_axis_start, line_axis_end
         previous_projection = projection
     merged.append(make_record(cluster))
     return merged
