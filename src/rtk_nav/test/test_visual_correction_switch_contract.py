@@ -136,6 +136,20 @@ def test_line_detector_defaults_disabled_and_publishes_invalid_output_when_disab
     assert "confidence.data = 0.0" in publish_invalid
 
 
+def test_line_detector_path_context_bypass_defaults_off_and_preserves_visual_switch():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    image_callback = ast.unparse(_function(tree, "image_callback"))
+
+    assert "self.declare_parameter('bypass_path_context_gate', False)" in initializer
+    assert "self.bypass_path_context_gate" in initializer
+    assert "if not self.enable_visual_correction:" in image_callback
+    assert "not self.bypass_path_context_gate" in image_callback
+    assert "not self.path_context_valid" in image_callback
+    assert "self.path_context_timeout_sec" in image_callback
+
+
 def test_line_detector_implements_path_axis_groups_and_reacquisition():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)

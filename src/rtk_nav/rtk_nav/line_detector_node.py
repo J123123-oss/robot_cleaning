@@ -275,6 +275,7 @@ class GridLineDetector(Node):
         self.declare_parameter('focal_length_px', 132.0)
         self.declare_parameter('min_line_count', 2)
         self.declare_parameter('enable_visual_correction', False)
+        self.declare_parameter('bypass_path_context_gate', False)
         self.declare_parameter('line_angle_tolerance_deg', 15.0)
         self.declare_parameter('path_context_timeout_sec', 0.5)
         self.declare_parameter('boundary_pair_max_gap_px', 1200.0)
@@ -300,6 +301,9 @@ class GridLineDetector(Node):
         self.min_line_count = int(self.get_parameter('min_line_count').value)
         self.enable_visual_correction = bool(
             self.get_parameter('enable_visual_correction').value
+        )
+        self.bypass_path_context_gate = bool(
+            self.get_parameter('bypass_path_context_gate').value
         )
         self.line_angle_tolerance_deg = float(
             self.get_parameter('line_angle_tolerance_deg').value
@@ -473,9 +477,12 @@ class GridLineDetector(Node):
             return
 
         if (
-            not self.path_context_valid
-            or time.monotonic() - self.last_path_context_time
-            > self.path_context_timeout_sec
+            not self.bypass_path_context_gate
+            and (
+                not self.path_context_valid
+                or time.monotonic() - self.last_path_context_time
+                > self.path_context_timeout_sec
+            )
         ):
             self.path_context_valid = False
             self.reset_reacquisition()
