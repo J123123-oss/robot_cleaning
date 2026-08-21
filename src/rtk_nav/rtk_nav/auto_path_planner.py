@@ -3,6 +3,7 @@
 """Generate a safe serpentine route from a small set of RTK traces."""
 
 import argparse
+import heapq
 import json
 import math
 import sys
@@ -26,6 +27,33 @@ class PlanningError(ValueError):
 
 
 @dataclass(frozen=True)
+class Polygon:
+    """One outer ring and zero or more excluded inner rings."""
+
+    boundary: Tuple[Point, ...]
+    holes: Tuple[Tuple[Point, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class Region:
+    """A logical cleaning region made from one or more polygons."""
+
+    id: str
+    polygons: Tuple[Polygon, ...]
+    start: Optional[Point] = None
+
+
+@dataclass(frozen=True)
+class Connector:
+    """An explicit traversable path between two named regions."""
+
+    id: str
+    from_region: str
+    to_region: str
+    path: Tuple[Point, ...]
+
+
+@dataclass(frozen=True)
 class AutoMap:
     """Validated map data in longitude/latitude coordinates."""
 
@@ -33,6 +61,10 @@ class AutoMap:
     guides: Tuple[Tuple[Point, ...], ...]
     no_go: Tuple[Tuple[Point, ...], ...]
     start: Optional[Point]
+    regions: Tuple[Region, ...] = ()
+    connectors: Tuple[Connector, ...] = ()
+    order: Tuple[str, ...] = ()
+    legacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -42,6 +74,10 @@ class Segment:
     kind: str
     points: Tuple[Point, ...]
     length_m: float
+    region_id: Optional[str] = None
+    connector_id: Optional[str] = None
+    from_region: Optional[str] = None
+    to_region: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +88,7 @@ class Route:
     segments: Tuple[Segment, ...]
     total_length_m: float
     max_connector_length_m: float
+    order: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -123,6 +160,136 @@ def _close_ring(raw: Any, field: str) -> Tuple[Point, ...]:
     return tuple(points)
 
 
+def _cross(first: LocalPoint, second: LocalPoint) -> float:
+    return first[0] * second[1] - first[1] * second[0]
+
+
+def _subtract(first: LocalPoint, second: LocalPoint) -> LocalPoint:
+    return (first[0] - second[0], first[1] - second[1])
+
+
+def _segments_intersect(
+    first_start: LocalPoint,
+    first_end: LocalPoint,
+    second_start: LocalPoint,
+    second_end: LocalPoint,
+) -> bool:
+    first_vector = _subtract(first_end, first_start)
+    second_vector = _subtract(second_end, second_start)
+    start_delta = _subtract(second_start, first_start)
+    denominator = _cross(first_vector, second_vector)
+    if abs(denominator) > 1e-12:
+        first_ratio = _cross(start_delta, second_vector) / denominator
+        second_ratio = _cross(start_delta, first_vector) / denominator
+        return (
+            -1e-9 <= first_ratio <= 1.0 + 1e-9
+            and -1e-9 <= second_ratio <= 1.0 + 1e-9
+        )
+    if abs(_cross(start_delta, first_vector)) > 1e-12:
+        return False
+    first_length_squared = first_vector[0] ** 2 + first_vector[1] ** 2
+    if first_length_squared <= 1e-18:
+        return _local_distance(first_start, second_start) <= 1e-9
+    second_start_ratio = (
+        (second_start[0] - first_start[0]) * first_vector[0]
+        + (second_start[1] - first_start[1]) * first_vector[1]
+    ) / first_length_squared
+    second_end_ratio = (
+        (second_end[0] - first_start[0]) * first_vector[0]
+        + (second_end[1] - first_start[1]) * first_vector[1]
+    ) / first_length_squared
+    return max(0.0, min(second_start_ratio, second_end_ratio)) <= min(
+        1.0, max(second_start_ratio, second_end_ratio)
+    ) + 1e-9
+
+
+def _properly_cross(
+    first_start: LocalPoint,
+    first_end: LocalPoint,
+    second_start: LocalPoint,
+    second_end: LocalPoint,
+) -> bool:
+    first_vector = _subtract(first_end, first_start)
+    second_vector = _subtract(second_end, second_start)
+    first_to_second_start = _subtract(second_start, first_start)
+    first_to_second_end = _subtract(second_end, first_start)
+    second_to_first_start = _subtract(first_start, second_start)
+    second_to_first_end = _subtract(first_end, second_start)
+    return (
+        _cross(first_vector, first_to_second_start)
+        * _cross(first_vector, first_to_second_end)
+        < -1e-12
+        and _cross(second_vector, second_to_first_start)
+        * _cross(second_vector, second_to_first_end)
+        < -1e-12
+    )
+
+
+def _ring_edges(ring: Sequence[LocalPoint]):
+    return zip(ring, ring[1:])
+
+
+def _validate_simple_ring(ring: Sequence[Point], field: str) -> None:
+    local_ring = tuple(ring)
+    edge_count = len(local_ring) - 1
+    for first_index in range(edge_count):
+        first_start, first_end = local_ring[first_index], local_ring[first_index + 1]
+        for second_index in range(first_index + 1, edge_count):
+            if second_index in (first_index + 1, first_index - 1):
+                continue
+            if first_index == 0 and second_index == edge_count - 1:
+                continue
+            second_start, second_end = local_ring[second_index], local_ring[second_index + 1]
+            if _segments_intersect(first_start, first_end, second_start, second_end):
+                raise PlanningError(f"{field} self-intersects")
+
+
+def _strictly_inside(point: Point, ring: Sequence[Point]) -> bool:
+    return _point_in_ring(point, ring) and not any(
+        _point_on_segment(point, first, second)
+        for first, second in _ring_edges(ring)
+    )
+
+
+def _rings_overlap(first: Sequence[Point], second: Sequence[Point]) -> bool:
+    if any(_strictly_inside(point, second) for point in first[:-1]):
+        return True
+    if any(_strictly_inside(point, first) for point in second[:-1]):
+        return True
+    return any(
+        _properly_cross(first_start, first_end, second_start, second_end)
+        for first_start, first_end in _ring_edges(first)
+        for second_start, second_end in _ring_edges(second)
+    )
+
+
+def _validate_polygon_geometry(polygon: Polygon, field: str) -> None:
+    _validate_simple_ring(polygon.boundary, f"{field}.boundary")
+    for hole_index, hole in enumerate(polygon.holes):
+        hole_field = f"{field}.holes[{hole_index}]"
+        _validate_simple_ring(hole, hole_field)
+        if not _strictly_inside(hole[0], polygon.boundary):
+            raise PlanningError(f"{hole_field} must be inside {field}.boundary")
+        if any(
+            _segments_intersect(first_start, first_end, second_start, second_end)
+            for first_start, first_end in _ring_edges(polygon.boundary)
+            for second_start, second_end in _ring_edges(hole)
+        ):
+            raise PlanningError(f"{hole_field} intersects {field}.boundary")
+        for previous_hole in polygon.holes[:hole_index]:
+            if _rings_overlap(hole, previous_hole) or _strictly_inside(hole[0], previous_hole):
+                raise PlanningError(f"{hole_field} overlaps another hole")
+
+
+def _validate_region_geometry(polygons: Sequence[Polygon], field: str) -> None:
+    for index, polygon in enumerate(polygons):
+        _validate_polygon_geometry(polygon, f"{field}.polygons[{index}]")
+    for first_index, first in enumerate(polygons):
+        for second in polygons[first_index + 1 :]:
+            if _rings_overlap(first.boundary, second.boundary):
+                raise PlanningError(f"{field} contains overlapping polygons")
+
+
 def _parse_guides(raw: Any) -> Tuple[Tuple[Point, ...], ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or not raw:
         raise PlanningError("guides must contain at least one track")
@@ -137,11 +304,187 @@ def _parse_guides(raw: Any) -> Tuple[Tuple[Point, ...], ...]:
     return tuple(guides)
 
 
+def _parse_id(raw: Any, field: str) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise PlanningError(f"{field} must be a non-empty string")
+    return raw.strip()
+
+
+def _parse_polygon(raw: Any, field: str) -> Polygon:
+    if not isinstance(raw, Mapping):
+        raise PlanningError(f"{field} must be an object")
+    boundary = _close_ring(raw.get("boundary"), f"{field}.boundary")
+    raw_holes = raw.get("holes", [])
+    if not isinstance(raw_holes, Sequence) or isinstance(raw_holes, (str, bytes)):
+        raise PlanningError(f"{field}.holes must be a list of polygon rings")
+    holes = tuple(
+        _close_ring(hole, f"{field}.holes[{index}]")
+        for index, hole in enumerate(raw_holes)
+    )
+    polygon = Polygon(boundary=boundary, holes=holes)
+    _validate_polygon_geometry(polygon, field)
+    return polygon
+
+
+def _parse_regions(raw: Any) -> Tuple[Region, ...]:
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or not raw:
+        raise PlanningError("regions must contain at least one region")
+    regions = []
+    seen = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, Mapping):
+            raise PlanningError(f"regions[{index}] must be an object")
+        region_id = _parse_id(value.get("id", value.get("name")), f"regions[{index}].id")
+        if region_id in seen:
+            raise PlanningError(f"duplicate region id: {region_id}")
+        seen.add(region_id)
+
+        raw_polygons = value.get("polygons")
+        if raw_polygons is None:
+            if "boundary" not in value:
+                raise PlanningError(f"regions[{index}] needs polygons or boundary")
+            raw_polygons = [
+                {"boundary": value.get("boundary"), "holes": value.get("holes", [])}
+            ]
+        if (
+            not isinstance(raw_polygons, Sequence)
+            or isinstance(raw_polygons, (str, bytes))
+            or not raw_polygons
+        ):
+            raise PlanningError(f"regions[{index}].polygons must not be empty")
+        polygons = tuple(
+            _parse_polygon(polygon, f"regions[{index}].polygons[{polygon_index}]")
+            for polygon_index, polygon in enumerate(raw_polygons)
+        )
+        _validate_region_geometry(polygons, f"regions[{index}]")
+        raw_start = value.get("start")
+        start = None if raw_start is None else _coerce_point(raw_start, f"regions[{index}].start")
+        regions.append(Region(id=region_id, polygons=polygons, start=start))
+    return tuple(regions)
+
+
+def _parse_connectors(raw: Any, region_ids: set[str]) -> Tuple[Connector, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise PlanningError("connectors must be a list")
+    connectors = []
+    seen = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, Mapping):
+            raise PlanningError(f"connectors[{index}] must be an object")
+        connector_id = _parse_id(
+            value.get("id", value.get("name")), f"connectors[{index}].id"
+        )
+        if connector_id in seen or connector_id in region_ids:
+            raise PlanningError(f"duplicate map item id: {connector_id}")
+        seen.add(connector_id)
+        from_region = _parse_id(
+            value.get("from", value.get("from_region")),
+            f"connectors[{index}].from",
+        )
+        to_region = _parse_id(
+            value.get("to", value.get("to_region")),
+            f"connectors[{index}].to",
+        )
+        if from_region not in region_ids or to_region not in region_ids:
+            raise PlanningError(f"connector {connector_id} references an unknown region")
+        raw_path = value.get("path")
+        if not isinstance(raw_path, Sequence) or isinstance(raw_path, (str, bytes)):
+            raise PlanningError(f"connectors[{index}].path must be a list of points")
+        path = tuple(
+            _coerce_point(point, f"connectors[{index}].path") for point in raw_path
+        )
+        if len(path) < 2 or _distance(path[0], path[-1]) <= EPSILON:
+            raise PlanningError(f"connectors[{index}].path needs two distinct endpoints")
+        connectors.append(
+            Connector(
+                id=connector_id,
+                from_region=from_region,
+                to_region=to_region,
+                path=path,
+            )
+        )
+    return tuple(connectors)
+
+
+def _parse_order(
+    raw: Any,
+    regions: Sequence[Region],
+    connectors: Sequence[Connector],
+) -> Tuple[str, ...]:
+    region_ids = {region.id for region in regions}
+    connector_by_id = {connector.id: connector for connector in connectors}
+    if raw is None:
+        if len(regions) == 1 and not connectors:
+            return (regions[0].id,)
+        raise PlanningError("order is required for multiple regions or connectors")
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or not raw:
+        raise PlanningError("order must be a non-empty list")
+
+    order = tuple(_parse_id(item, "order item") for item in raw)
+    seen_regions = set()
+    seen_connectors = set()
+    for item in order:
+        if item in region_ids:
+            if item in seen_regions:
+                raise PlanningError(f"region appears more than once in order: {item}")
+            seen_regions.add(item)
+        elif item in connector_by_id:
+            if item in seen_connectors:
+                raise PlanningError(f"connector appears more than once in order: {item}")
+            seen_connectors.add(item)
+        else:
+            raise PlanningError(f"order references unknown map item: {item}")
+
+    if seen_regions != region_ids:
+        missing = sorted(region_ids - seen_regions)
+        raise PlanningError(f"order does not include regions: {', '.join(missing)}")
+
+    for previous, current in zip(order, order[1:]):
+        if previous in region_ids and current in region_ids:
+            raise PlanningError(
+                f"regions {previous} and {current} need an explicit connector"
+            )
+
+    for index, item in enumerate(order):
+        if item not in connector_by_id:
+            continue
+        if index == 0 or index == len(order) - 1:
+            raise PlanningError(f"connector must be between two regions: {item}")
+        connector = connector_by_id[item]
+        if order[index - 1] != connector.from_region or order[index + 1] != connector.to_region:
+            raise PlanningError(
+                f"connector {item} does not connect {order[index - 1]} to {order[index + 1]}"
+            )
+    return order
+
+
 def load_map(source: JsonSource) -> AutoMap:
     """Load and validate a JSON map object or JSON file path."""
     payload = _read_json_source(source)
-    boundary = _close_ring(payload.get("boundary"), "boundary")
     guides = _parse_guides(payload.get("guides"))
+
+    if payload.get("format") == "rtk_auto_map_v2" or "regions" in payload:
+        regions = _parse_regions(payload.get("regions"))
+        region_ids = {region.id for region in regions}
+        connectors = _parse_connectors(payload.get("connectors", []), region_ids)
+        order = _parse_order(payload.get("order"), regions, connectors)
+        boundary = regions[0].polygons[0].boundary
+        no_go = regions[0].polygons[0].holes
+        raw_start = payload.get("start")
+        start = None if raw_start is None else _coerce_point(raw_start, "start")
+        return AutoMap(
+            boundary=boundary,
+            guides=guides,
+            no_go=no_go,
+            start=start,
+            regions=regions,
+            connectors=connectors,
+            order=order,
+        )
+
+    boundary = _close_ring(payload.get("boundary"), "boundary")
 
     raw_no_go = payload.get("no_go", [])
     if not isinstance(raw_no_go, Sequence) or isinstance(raw_no_go, (str, bytes)):
@@ -153,7 +496,15 @@ def load_map(source: JsonSource) -> AutoMap:
 
     raw_start = payload.get("start")
     start = None if raw_start is None else _coerce_point(raw_start, "start")
-    return AutoMap(boundary=boundary, guides=guides, no_go=no_go, start=start)
+    return AutoMap(
+        boundary=boundary,
+        guides=guides,
+        no_go=no_go,
+        start=start,
+        regions=(Region("legacy", (Polygon(boundary, no_go),), start),),
+        order=("legacy",),
+        legacy=True,
+    )
 
 
 def _distance(a: Point, b: Point) -> float:
@@ -224,6 +575,30 @@ def _rotated_geometry(
     )
 
 
+RotatedPolygon = Tuple[
+    Tuple[LocalPoint, ...], Tuple[Tuple[LocalPoint, ...], ...]
+]
+RotatedRegion = Tuple[RotatedPolygon, ...]
+
+
+def _rotated_region_geometry(
+    map_data: AutoMap, region: Region, axis_angle: float
+) -> Tuple[_LocalFrame, RotatedRegion]:
+    frame = _LocalFrame.from_map(map_data)
+
+    def rotate_ring(ring: Sequence[Point]) -> Tuple[LocalPoint, ...]:
+        return tuple(_rotate(frame.to_xy(point), axis_angle) for point in ring)
+
+    geometry = tuple(
+        (
+            rotate_ring(polygon.boundary),
+            tuple(rotate_ring(hole) for hole in polygon.holes),
+        )
+        for polygon in region.polygons
+    )
+    return frame, geometry
+
+
 def _line_intersections(ring: Sequence[LocalPoint], sweep_value: float) -> list[float]:
     intersections = []
     for first, second in zip(ring, ring[1:]):
@@ -239,15 +614,112 @@ def _line_intersections(ring: Sequence[LocalPoint], sweep_value: float) -> list[
     return intersections
 
 
+def _ring_intervals(
+    ring: Sequence[LocalPoint], sweep_value: float
+) -> list[Tuple[float, float]]:
+    intersections = _line_intersections(ring, sweep_value)
+    intersections.sort()
+    if len(intersections) % 2:
+        raise PlanningError("scanline intersects invalid map geometry")
+    return [
+        (left, right)
+        for left, right in zip(intersections[::2], intersections[1::2])
+        if right - left > EPSILON
+    ]
+
+
+def _merge_intervals(intervals: Sequence[Tuple[float, float]]) -> list[Tuple[float, float]]:
+    if not intervals:
+        return []
+    ordered = sorted(intervals)
+    merged = [ordered[0]]
+    for left, right in ordered[1:]:
+        previous_left, previous_right = merged[-1]
+        if left <= previous_right + EPSILON:
+            merged[-1] = (previous_left, max(previous_right, right))
+        else:
+            merged.append((left, right))
+    return merged
+
+
+def _subtract_intervals(
+    intervals: Sequence[Tuple[float, float]],
+    cuts: Sequence[Tuple[float, float]],
+) -> list[Tuple[float, float]]:
+    remaining = list(intervals)
+    for cut_left, cut_right in _merge_intervals(cuts):
+        next_remaining = []
+        for left, right in remaining:
+            if cut_right <= left + EPSILON or cut_left >= right - EPSILON:
+                next_remaining.append((left, right))
+                continue
+            if left < cut_left - EPSILON:
+                next_remaining.append((left, min(right, cut_left)))
+            if cut_right < right - EPSILON:
+                next_remaining.append((max(left, cut_right), right))
+        remaining = next_remaining
+    return [(left, right) for left, right in remaining if right - left > EPSILON]
+
+
+def _region_scanline_intervals(
+    geometry: RotatedRegion,
+    sweep_value: float,
+    edge_clearance: float,
+) -> list[Tuple[float, float]]:
+    intervals = []
+    for boundary, holes in geometry:
+        allowed = _ring_intervals(boundary, sweep_value)
+        hole_intervals = [
+            interval
+            for hole in holes
+            for interval in _ring_intervals(hole, sweep_value)
+        ]
+        intervals.extend(_subtract_intervals(allowed, hole_intervals))
+
+    clipped = []
+    for left, right in _merge_intervals(intervals):
+        left += edge_clearance
+        right -= edge_clearance
+        if right - left > EPSILON:
+            clipped.append((left, right))
+    return clipped
+
+
+def _region_scan_values(
+    geometry: RotatedRegion, sweep_spacing: float, edge_clearance: float
+) -> list[float]:
+    values = [point[1] for boundary, _ in geometry for point in boundary]
+    lower = min(values) + edge_clearance
+    upper = max(values) - edge_clearance
+    if upper <= lower + EPSILON:
+        raise PlanningError("edge_clearance leaves no usable scan area")
+    result = []
+    current = lower
+    while current <= upper + EPSILON:
+        result.append(current)
+        current += sweep_spacing
+    if not result:
+        raise PlanningError("no scanline fits inside the region")
+    return result
+
+
 def extract_scanline_intervals(
     map_data: AutoMap,
     axis_angle: float,
     sweep_value: float,
     edge_clearance: float,
+    region_id: Optional[str] = None,
 ) -> list[Tuple[float, float]]:
     """Return safe local U intervals for one local V scanline."""
     if edge_clearance < 0.0:
         raise PlanningError("edge_clearance must be non-negative")
+    if region_id is not None:
+        region = next((item for item in map_data.regions if item.id == region_id), None)
+        if region is None:
+            raise PlanningError(f"unknown region: {region_id}")
+        _, geometry = _rotated_region_geometry(map_data, region, axis_angle)
+        return _region_scanline_intervals(geometry, sweep_value, edge_clearance)
+
     _, boundary, no_go = _rotated_geometry(map_data, axis_angle)
     intersections = _line_intersections(boundary, sweep_value)
     for ring in no_go:
@@ -311,6 +783,10 @@ def _point_in_ring(point: LocalPoint, ring: Sequence[LocalPoint]) -> bool:
     return inside
 
 
+def _point_on_ring(point: LocalPoint, ring: Sequence[LocalPoint]) -> bool:
+    return any(_point_on_segment(point, first, second) for first, second in zip(ring, ring[1:]))
+
+
 def _point_is_allowed(
     point: LocalPoint,
     boundary: Sequence[LocalPoint],
@@ -319,6 +795,26 @@ def _point_is_allowed(
     if not _point_in_ring(point, boundary):
         return False
     return not any(_point_in_ring(point, ring) for ring in no_go)
+
+
+def _point_is_allowed_region(
+    point: LocalPoint,
+    geometry: RotatedRegion,
+    allow_hole_boundary: bool = False,
+) -> bool:
+    for boundary, holes in geometry:
+        if not _point_in_ring(point, boundary):
+            continue
+        blocked = False
+        for hole in holes:
+            if _point_in_ring(point, hole):
+                if allow_hole_boundary and _point_on_ring(point, hole):
+                    continue
+                blocked = True
+                break
+        if not blocked:
+            return True
+    return False
 
 
 def _line_is_allowed(
@@ -340,6 +836,96 @@ def _line_is_allowed(
     return True
 
 
+def _segment_intersection_parameters(
+    start: LocalPoint,
+    end: LocalPoint,
+    ring: Sequence[LocalPoint],
+) -> list[float]:
+    direction = _subtract(end, start)
+    direction_length_squared = direction[0] ** 2 + direction[1] ** 2
+    if direction_length_squared <= 1e-18:
+        return [0.0]
+    parameters = []
+    for edge_start, edge_end in _ring_edges(ring):
+        edge = _subtract(edge_end, edge_start)
+        offset = _subtract(edge_start, start)
+        denominator = _cross(direction, edge)
+        if abs(denominator) > 1e-12:
+            first_ratio = _cross(offset, edge) / denominator
+            second_ratio = _cross(offset, direction) / denominator
+            if -1e-9 <= first_ratio <= 1.0 + 1e-9 and -1e-9 <= second_ratio <= 1.0 + 1e-9:
+                parameters.append(max(0.0, min(1.0, first_ratio)))
+            continue
+        if abs(_cross(offset, direction)) > 1e-12:
+            continue
+        for point in (edge_start, edge_end):
+            ratio = (
+                (point[0] - start[0]) * direction[0]
+                + (point[1] - start[1]) * direction[1]
+            ) / direction_length_squared
+            if -1e-9 <= ratio <= 1.0 + 1e-9:
+                parameters.append(max(0.0, min(1.0, ratio)))
+    parameters.extend((0.0, 1.0))
+    return sorted(set(round(parameter, 12) for parameter in parameters))
+
+
+def _line_enters_ring(
+    start: LocalPoint,
+    end: LocalPoint,
+    ring: Sequence[LocalPoint],
+) -> bool:
+    parameters = _segment_intersection_parameters(start, end, ring)
+    for parameter in parameters:
+        point = (
+            start[0] + (end[0] - start[0]) * parameter,
+            start[1] + (end[1] - start[1]) * parameter,
+        )
+        if _point_in_ring(point, ring):
+            return True
+    for first_parameter, second_parameter in zip(parameters, parameters[1:]):
+        if second_parameter - first_parameter <= 1e-12:
+            continue
+        midpoint_parameter = (first_parameter + second_parameter) / 2.0
+        midpoint = (
+            start[0] + (end[0] - start[0]) * midpoint_parameter,
+            start[1] + (end[1] - start[1]) * midpoint_parameter,
+        )
+        if _point_in_ring(midpoint, ring):
+            return True
+    return False
+
+
+def _line_is_allowed_region(
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+) -> bool:
+    parameters = {0.0, 1.0}
+    for boundary, holes in geometry:
+        parameters.update(_segment_intersection_parameters(start, end, boundary))
+        for hole in holes:
+            parameters.update(_segment_intersection_parameters(start, end, hole))
+    ordered_parameters = sorted(parameters)
+    for ratio in ordered_parameters:
+        point = (
+            start[0] + (end[0] - start[0]) * ratio,
+            start[1] + (end[1] - start[1]) * ratio,
+        )
+        if not _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+            return False
+    for first_ratio, second_ratio in zip(ordered_parameters, ordered_parameters[1:]):
+        if second_ratio - first_ratio <= 1e-12:
+            continue
+        ratio = (first_ratio + second_ratio) / 2.0
+        point = (
+            start[0] + (end[0] - start[0]) * ratio,
+            start[1] + (end[1] - start[1]) * ratio,
+        )
+        if not _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+            return False
+    return True
+
+
 def _connector_candidates(start: LocalPoint, end: LocalPoint) -> list[list[LocalPoint]]:
     candidates = [[start, end]]
     first_corner = (end[0], start[1])
@@ -352,6 +938,106 @@ def _path_length(points: Sequence[LocalPoint]) -> float:
     return sum(_local_distance(first, second) for first, second in zip(points, points[1:]))
 
 
+def _unique_local_points(points: Sequence[LocalPoint]) -> list[LocalPoint]:
+    result = []
+    for point in points:
+        if not any(_local_distance(point, existing) <= 1e-7 for existing in result):
+            result.append(point)
+    return result
+
+
+def _orthogonal_connector_nodes(
+    start: LocalPoint, end: LocalPoint, geometry: RotatedRegion
+) -> list[LocalPoint]:
+    """Return allowed grid intersections used for turn-only travel."""
+    x_values = {start[0], end[0]}
+    y_values = {start[1], end[1]}
+    for boundary, holes in geometry:
+        for point in boundary[:-1]:
+            x_values.add(point[0])
+            y_values.add(point[1])
+        for hole in holes:
+            for point in hole[:-1]:
+                x_values.add(point[0])
+                y_values.add(point[1])
+
+    nodes = [start, end]
+    for x_value in x_values:
+        for y_value in y_values:
+            point = (x_value, y_value)
+            if _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+                nodes.append(point)
+    return _unique_local_points(nodes)
+
+
+def _find_region_connector(
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+    max_connector: float,
+) -> Tuple[LocalPoint, ...]:
+    if _local_distance(start, end) <= EPSILON:
+        return (start,)
+    if not _point_is_allowed_region(start, geometry, allow_hole_boundary=False):
+        raise PlanningError("connector start is outside the region")
+    if not _point_is_allowed_region(end, geometry, allow_hole_boundary=False):
+        raise PlanningError("connector end is outside the region")
+
+    nodes = _orthogonal_connector_nodes(start, end, geometry)
+    start_index = min(range(len(nodes)), key=lambda index: _local_distance(nodes[index], start))
+    end_index = min(range(len(nodes)), key=lambda index: _local_distance(nodes[index], end))
+
+    graph = [[] for _ in nodes]
+    for first_index in range(len(nodes)):
+        for second_index in range(first_index + 1, len(nodes)):
+            first = nodes[first_index]
+            second = nodes[second_index]
+            if (
+                abs(first[0] - second[0]) > EPSILON
+                and abs(first[1] - second[1]) > EPSILON
+            ):
+                continue
+            if not _line_is_allowed_region(first, second, geometry):
+                continue
+            weight = _local_distance(first, second)
+            graph[first_index].append((weight, second_index))
+            graph[second_index].append((weight, first_index))
+
+    distances = [math.inf] * len(nodes)
+    previous = [None] * len(nodes)
+    distances[start_index] = 0.0
+    queue = [(0.0, start_index)]
+    while queue:
+        distance, current = heapq.heappop(queue)
+        if distance > distances[current] + EPSILON:
+            continue
+        if current == end_index:
+            break
+        for weight, neighbor in graph[current]:
+            candidate = distance + weight
+            if candidate + EPSILON < distances[neighbor]:
+                distances[neighbor] = candidate
+                previous[neighbor] = current
+                heapq.heappush(queue, (candidate, neighbor))
+
+    if not math.isfinite(distances[end_index]):
+        raise PlanningError("no safe connector between consecutive coverage segments")
+    if distances[end_index] > max_connector + EPSILON:
+        raise PlanningError(
+            "safe connector length {:.2f}m exceeds max_connector {:.2f}m".format(
+                distances[end_index], max_connector
+            )
+        )
+
+    path_indices = []
+    current = end_index
+    while current is not None:
+        path_indices.append(current)
+        current = previous[current]
+    path_indices.reverse()
+    return tuple(nodes[index] for index in path_indices)
+
+
 def _find_connector(
     start: LocalPoint,
     end: LocalPoint,
@@ -359,27 +1045,7 @@ def _find_connector(
     no_go: Sequence[Sequence[LocalPoint]],
     max_connector: float,
 ) -> Tuple[LocalPoint, ...]:
-    choices = []
-    for candidate in _connector_candidates(start, end):
-        if _line_is_allowed(candidate[0], candidate[1], boundary, no_go) and (
-            len(candidate) == 2
-            or _line_is_allowed(candidate[1], candidate[2], boundary, no_go)
-        ):
-            choices.append(candidate)
-    if not choices:
-        raise PlanningError(
-            "no safe connector between consecutive coverage segments"
-        )
-    choices.sort(key=_path_length)
-    connector = tuple(choices[0])
-    connector_length = _path_length(connector)
-    if connector_length > max_connector + EPSILON:
-        raise PlanningError(
-            "safe connector length {:.2f}m exceeds max_connector {:.2f}m".format(
-                connector_length, max_connector
-            )
-        )
-    return connector
+    return _find_region_connector(start, end, ((tuple(boundary), tuple(no_go)),), max_connector)
 
 
 def _local_coverage_segments(
@@ -408,27 +1074,83 @@ def _local_coverage_segments(
     return segments
 
 
+def _local_region_coverage_segments(
+    map_data: AutoMap,
+    region: Region,
+    axis_angle: float,
+    sweep_spacing: float,
+    edge_clearance: float,
+) -> Tuple[RotatedRegion, list[Tuple[LocalPoint, LocalPoint]]]:
+    _, geometry = _rotated_region_geometry(map_data, region, axis_angle)
+    segments = []
+    for row_index, sweep_value in enumerate(
+        _region_scan_values(geometry, sweep_spacing, edge_clearance)
+    ):
+        intervals = _region_scanline_intervals(geometry, sweep_value, edge_clearance)
+        if row_index % 2:
+            intervals = list(reversed(intervals))
+        for left, right in intervals:
+            if row_index % 2:
+                segments.append(((right, sweep_value), (left, sweep_value)))
+            else:
+                segments.append(((left, sweep_value), (right, sweep_value)))
+    if not segments:
+        raise PlanningError(f"region {region.id} has no usable coverage segment")
+    return geometry, segments
+
+
+def _serpentine_candidates(
+    local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
+) -> list[list[Tuple[LocalPoint, LocalPoint]]]:
+    """Return the four complete sweep directions without breaking turn order."""
+    forward = list(local_segments)
+    reverse_direction = [(end, start) for start, end in forward]
+    reverse_order = list(reversed(forward))
+    reverse_order_and_direction = [
+        (end, start) for start, end in reverse_order
+    ]
+    candidates = [
+        forward,
+        reverse_direction,
+        reverse_order,
+        reverse_order_and_direction,
+    ]
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+    return unique_candidates
+
+
 def _segments_from_start(
     map_data: AutoMap,
     axis_angle: float,
     local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
+    start_point: Optional[Point] = None,
+    exit_point: Optional[Point] = None,
 ) -> list[Tuple[LocalPoint, LocalPoint]]:
-    if map_data.start is None:
-        return list(local_segments)
+    selected_start = map_data.start if start_point is None else start_point
     frame = _LocalFrame.from_map(map_data)
-    start_local = _rotate(frame.to_xy(map_data.start), axis_angle)
-    distances = [
-        min(_local_distance(start_local, segment[0]), _local_distance(start_local, segment[1]))
-        for segment in local_segments
-    ]
-    first_index = min(range(len(local_segments)), key=distances.__getitem__)
-    reordered = list(local_segments[first_index:]) + list(local_segments[:first_index])
-    first_segment = reordered[0]
-    if _local_distance(start_local, first_segment[1]) < _local_distance(
-        start_local, first_segment[0]
-    ):
-        reordered[0] = (first_segment[1], first_segment[0])
-    return reordered
+    start_local = (
+        _rotate(frame.to_xy(selected_start), axis_angle)
+        if selected_start is not None
+        else None
+    )
+    exit_local = (
+        _rotate(frame.to_xy(exit_point), axis_angle)
+        if exit_point is not None
+        else None
+    )
+
+    def attachment_cost(candidate: Sequence[Tuple[LocalPoint, LocalPoint]]) -> float:
+        cost = 0.0
+        if start_local is not None:
+            cost += _local_distance(start_local, candidate[0][0])
+        if exit_local is not None:
+            cost += _local_distance(candidate[-1][1], exit_local)
+        return cost
+
+    return min(_serpentine_candidates(local_segments), key=attachment_cost)
 
 
 def _route_from_local_segments(
@@ -436,16 +1158,37 @@ def _route_from_local_segments(
     axis_angle: float,
     local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
     max_connector: float,
+    region_id: Optional[str] = None,
+    geometry: Optional[RotatedRegion] = None,
+    start_point: Optional[Point] = None,
+    exit_point: Optional[Point] = None,
+    order: Tuple[str, ...] = (),
 ) -> Route:
-    frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
+    if geometry is None:
+        frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
+        geometry = ((boundary, tuple(no_go)),)
+    else:
+        frame = _LocalFrame.from_map(map_data)
+
+    selected_start = map_data.start if start_point is None else start_point
+    ordered_segments = _segments_from_start(
+        map_data, axis_angle, local_segments, selected_start, exit_point
+    )
     output = []
     previous_end = None
     max_connector_length = 0.0
 
-    for index, (start, end) in enumerate(local_segments):
-        if previous_end is not None:
-            connector = _find_connector(
-                previous_end, start, boundary, no_go, max_connector
+    output_region_id = None if map_data.legacy else region_id
+    if selected_start is not None:
+        start_local = _rotate(frame.to_xy(selected_start), axis_angle)
+        if not _point_is_allowed_region(
+            start_local, geometry, allow_hole_boundary=False
+        ):
+            raise PlanningError("start is outside the usable map area")
+        first_start = ordered_segments[0][0]
+        if _local_distance(start_local, first_start) > EPSILON:
+            connector = _find_region_connector(
+                start_local, first_start, geometry, max_connector
             )
             connector_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in connector
@@ -453,7 +1196,29 @@ def _route_from_local_segments(
             connector_length = _path_length(connector)
             max_connector_length = max(max_connector_length, connector_length)
             output.append(
-                Segment("connector", connector_points, connector_length)
+                Segment(
+                    "connector",
+                    connector_points,
+                    connector_length,
+                    region_id=output_region_id,
+                )
+            )
+
+    for start, end in ordered_segments:
+        if previous_end is not None:
+            connector = _find_region_connector(previous_end, start, geometry, max_connector)
+            connector_points = tuple(
+                frame.from_xy(_unrotate(point, axis_angle)) for point in connector
+            )
+            connector_length = _path_length(connector)
+            max_connector_length = max(max_connector_length, connector_length)
+            output.append(
+                Segment(
+                    "connector",
+                    connector_points,
+                    connector_length,
+                    region_id=output_region_id,
+                )
             )
 
         coverage_local = (start, end)
@@ -461,7 +1226,14 @@ def _route_from_local_segments(
             frame.from_xy(_unrotate(point, axis_angle)) for point in coverage_local
         )
         coverage_length = _path_length(coverage_local)
-        output.append(Segment("coverage", coverage_points, coverage_length))
+        output.append(
+            Segment(
+                "coverage",
+                coverage_points,
+                coverage_length,
+                region_id=output_region_id,
+            )
+        )
         previous_end = end
 
     total_length = sum(segment.length_m for segment in output)
@@ -470,6 +1242,7 @@ def _route_from_local_segments(
         segments=tuple(output),
         total_length_m=total_length,
         max_connector_length_m=max_connector_length,
+        order=order,
     )
 
 
@@ -488,30 +1261,167 @@ def plan_route(
         raise PlanningError("max_connector must be non-negative")
 
     axis_angle = estimate_axis_angle(map_data.guides)
-    local_segments = _local_coverage_segments(
-        map_data, axis_angle, sweep_spacing, edge_clearance
-    )
-    if map_data.start is not None:
-        frame = _LocalFrame.from_map(map_data)
-        start_local = _rotate(frame.to_xy(map_data.start), axis_angle)
-        _, boundary, no_go = _rotated_geometry(map_data, axis_angle)
-        if not _point_is_allowed(start_local, boundary, no_go):
-            raise PlanningError("start is outside the usable map area")
-        start_segments = _segments_from_start(map_data, axis_angle, local_segments)
-        return _route_from_local_segments(
-            map_data, axis_angle, start_segments, max_connector
+    regions = {region.id: region for region in map_data.regions}
+    connectors = {connector.id: connector for connector in map_data.connectors}
+    if not regions:
+        legacy_region = Region(
+            "legacy", (Polygon(map_data.boundary, map_data.no_go),), map_data.start
         )
-    return _route_from_local_segments(
-        map_data, axis_angle, local_segments, max_connector
+        regions = {legacy_region.id: legacy_region}
+    order = map_data.order or tuple(regions)
+
+    output = []
+    max_connector_length = 0.0
+    previous_region: Optional[Region] = None
+    pending_entry: Optional[Point] = None
+
+    for index, item in enumerate(order):
+        if item in regions:
+            region = regions[item]
+            start_point = pending_entry
+            if start_point is None:
+                start_point = region.start
+            if index == 0 and map_data.start is not None:
+                start_point = map_data.start
+            next_item = order[index + 1] if index + 1 < len(order) else None
+            exit_point = (
+                connectors[next_item].path[0]
+                if next_item in connectors
+                else None
+            )
+            geometry, local_segments = _local_region_coverage_segments(
+                map_data, region, axis_angle, sweep_spacing, edge_clearance
+            )
+            region_route = _route_from_local_segments(
+                map_data,
+                axis_angle,
+                local_segments,
+                max_connector,
+                region_id=region.id,
+                geometry=geometry,
+                start_point=start_point,
+                exit_point=exit_point,
+                order=order,
+            )
+            output.extend(region_route.segments)
+            max_connector_length = max(
+                max_connector_length, region_route.max_connector_length_m
+            )
+            previous_region = region
+            pending_entry = None
+            continue
+
+        connector = connectors.get(item)
+        if connector is None:
+            raise PlanningError(f"order references unknown connector: {item}")
+        if previous_region is None or previous_region.id != connector.from_region:
+            raise PlanningError(f"connector {item} has no matching source region")
+        if index == len(order) - 1 or order[index + 1] != connector.to_region:
+            raise PlanningError(f"connector {item} has no matching destination region")
+
+        frame, source_geometry = _rotated_region_geometry(
+            map_data, previous_region, axis_angle
+        )
+        connector_start_local = _rotate(frame.to_xy(connector.path[0]), axis_angle)
+        if not _point_is_allowed_region(
+            connector_start_local, source_geometry, allow_hole_boundary=False
+        ):
+            raise PlanningError(f"connector {item} starts outside region {connector.from_region}")
+        previous_end = output[-1].points[-1]
+        previous_end_local = _rotate(frame.to_xy(previous_end), axis_angle)
+        if _local_distance(previous_end_local, connector_start_local) > EPSILON:
+            attach = _find_region_connector(
+                previous_end_local,
+                connector_start_local,
+                source_geometry,
+                max_connector,
+            )
+            attach_points = tuple(
+                frame.from_xy(_unrotate(point, axis_angle)) for point in attach
+            )
+            attach_length = _path_length(attach)
+            output.append(
+                Segment(
+                    "connector",
+                    attach_points,
+                    attach_length,
+                    region_id=None if map_data.legacy else previous_region.id,
+                )
+            )
+            max_connector_length = max(max_connector_length, attach_length)
+
+        destination_region = regions[connector.to_region]
+        destination_frame, destination_geometry = _rotated_region_geometry(
+            map_data, destination_region, axis_angle
+        )
+        destination_end_local = _rotate(
+            destination_frame.to_xy(connector.path[-1]), axis_angle
+        )
+        if not _point_is_allowed_region(
+            destination_end_local, destination_geometry, allow_hole_boundary=False
+        ):
+            raise PlanningError(f"connector {item} ends outside region {connector.to_region}")
+
+        connector_local_path = tuple(
+            _rotate(frame.to_xy(point), axis_angle) for point in connector.path
+        )
+        all_region_geometries = [
+            _rotated_region_geometry(map_data, region, axis_angle)[1]
+            for region in regions.values()
+        ]
+        for path_start, path_end in zip(connector_local_path, connector_local_path[1:]):
+            if any(
+                _line_enters_ring(path_start, path_end, hole)
+                for geometry in all_region_geometries
+                for _, holes in geometry
+                for hole in holes
+            ):
+                raise PlanningError(f"connector {connector.id} intersects a hole")
+        connector_length = _path_length(connector_local_path)
+        if connector_length > max_connector + EPSILON:
+            raise PlanningError(
+                "connector {} length {:.2f}m exceeds max_connector {:.2f}m".format(
+                    connector.id, connector_length, max_connector
+                )
+            )
+        output.append(
+            Segment(
+                "connector",
+                connector.path,
+                connector_length,
+                connector_id=connector.id,
+                from_region=connector.from_region,
+                to_region=connector.to_region,
+            )
+        )
+        max_connector_length = max(max_connector_length, connector_length)
+        pending_entry = connector.path[-1]
+
+    total_length = sum(segment.length_m for segment in output)
+    return Route(
+        axis_angle_rad=axis_angle,
+        segments=tuple(output),
+        total_length_m=total_length,
+        max_connector_length_m=max_connector_length,
+        order=order,
     )
 
 
 def _segment_dict(segment: Segment) -> dict[str, Any]:
-    return {
+    payload = {
         "kind": segment.kind,
         "points": [[point[0], point[1]] for point in segment.points],
         "length_m": round(segment.length_m, 6),
     }
+    if segment.region_id is not None:
+        payload["region_id"] = segment.region_id
+    if segment.connector_id is not None:
+        payload["connector_id"] = segment.connector_id
+    if segment.from_region is not None:
+        payload["from_region"] = segment.from_region
+    if segment.to_region is not None:
+        payload["to_region"] = segment.to_region
+    return payload
 
 
 def route_to_json(route: Route) -> str:
@@ -529,6 +1439,7 @@ def route_to_json(route: Route) -> str:
             ),
             "total_length_m": round(route.total_length_m, 6),
             "max_connector_length_m": round(route.max_connector_length_m, 6),
+            "order": list(route.order),
         },
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -543,6 +1454,7 @@ def route_to_geojson(route: Route) -> str:
                 "type": "Feature",
                 "properties": {
                     "index": index,
+                    "sequence": index,
                     "kind": segment.kind,
                     "length_m": round(segment.length_m, 6),
                 },
@@ -552,6 +1464,14 @@ def route_to_geojson(route: Route) -> str:
                 },
             }
         )
+        if segment.region_id is not None:
+            features[-1]["properties"]["region_id"] = segment.region_id
+        if segment.connector_id is not None:
+            features[-1]["properties"]["connector_id"] = segment.connector_id
+        if segment.from_region is not None:
+            features[-1]["properties"]["from_region"] = segment.from_region
+        if segment.to_region is not None:
+            features[-1]["properties"]["to_region"] = segment.to_region
     return json.dumps(
         {"type": "FeatureCollection", "features": features},
         ensure_ascii=False,
