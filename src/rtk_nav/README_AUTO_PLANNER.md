@@ -91,11 +91,18 @@
 }
 ```
 
+四点区域也可以直接写成 `regions[].boundary`，不需要转换成旧 YAML 的三点标定格式。
+解析器同时接受 `[lon, lat]` 点数组、`{"lon": ..., "lat": ...}` 点对象，以及
+`top_left/top_right/bottom_right/bottom_left` 命名角点。缺少 `guides` 时，规划器使用
+最长边推导清扫方向；缺少 `order` 时，仅在连接桥构成单向链的情况下自动推导顺序。
+
 - `regions[].polygons` 可以放一个凹形外轮廓，也可以放多个相接的错位矩形；多个 polygon 会合并为一个逻辑清扫区。
 - `holes` 是局部缺口、设备区或不允许清扫的区域。扫描线会自动分裂，内部连接会绕开缺口；无法绕行时规划失败。
 - `connectors` 使用 RTK 实际采集的桥接轨迹，默认只通行、不计为清扫覆盖。`from`、`to` 和 `order` 决定连接方向。
 - `back_` 开头的返回轨迹可以保留在输入文件中，但不要放进本次正向清扫的 `order`。
 - 例如 E9/E10/E11 的正向顺序为 `E9 -> bridge_9-10B -> E10 -> bridge_10A-11B -> E11`。
+
+当一个区域包含多个相接或错位 polygon 时，规划器会先生成所有扫描段，再在安全连接图上优化扫描顺序：优先压低最长连接距离，其次压低连接总距离。这样带有加长块或窄通道的区域不会机械地把支路留到最后，再横向返回下一个桥架。最多 16 条扫描段的多 polygon 区域使用有界状态搜索；更大的区域保留线性蛇形顺序，以控制规划时间。`--max-connector` 同时约束优化阶段和最终输出阶段。
 
 区域内部不再自动把所有矩形两两连接；规划器只在同一 `region` 的允许几何内寻找安全连接。跨区域必须有明确 connector，这样不会把两个相邻但实际不可通行的区域误连成一条直线。
 
@@ -124,7 +131,8 @@ python -m rtk_nav.auto_path_planner \
 命令会生成：
 
 - `auto_route.json`：自动规划器主输出，按顺序包含 `coverage` 和 `connector` 段；
-- `auto_route.geojson`：相同路线的 GeoJSON，可在 QGIS 中检查。
+- `auto_route.geojson`：标准 `FeatureCollection`，包含 `boundary` Polygon、`bridge`
+  LineString、`coverage` 清扫线和 `connector` 连接线，可直接在 QGIS 或 geojson.io 中检查。
 
 ## 可视化检查
 

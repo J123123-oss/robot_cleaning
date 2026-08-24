@@ -5,13 +5,14 @@
 
 import json
 import math
+import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 
 PACKAGE_ROOT = Path(__file__).parents[1]
+REPOSITORY_ROOT = PACKAGE_ROOT.parents[1]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -24,6 +25,10 @@ from rtk_nav.auto_path_planner import (  # noqa: E402
     plan_route,
     route_to_geojson,
     route_to_json,
+)
+from rtk_nav.auto_path_planner import (  # noqa: E402
+    Route,
+    Segment,
 )
 
 
@@ -141,6 +146,80 @@ def _bridge_entry_map():
 
 
 class AutoPathPlannerTests(unittest.TestCase):
+    def test_e9_e11_map_models_long_blocks_and_bridge_endpoints(self):
+        map_path = REPOSITORY_ROOT / "auto_map_e9_e11.json"
+        if not map_path.exists():
+            self.skipTest("repository E9/E11 map fixture is not present")
+
+        payload = json.loads(map_path.read_text(encoding="utf-8"))
+        model = load_map(payload)
+        regions = {region.id: region for region in model.regions}
+        self.assertLess(max(point[1] for point in regions["E9"].polygons[0].boundary), 35.6051)
+        self.assertEqual(len(regions["E10"].polygons), 3)
+        self.assertTrue(all(not polygon.holes for polygon in regions["E10"].polygons))
+        self.assertEqual(len(regions["E11"].polygons), 3)
+
+        route = plan_route(model, sweep_spacing=2.0, edge_clearance=1.0, max_connector=50.0)
+        for connector in model.connectors:
+            bridge_index = next(
+                index
+                for index, segment in enumerate(route.segments)
+                if segment.connector_id == connector.id
+            )
+            self.assertEqual(route.segments[bridge_index].points[0], connector.path[0])
+            self.assertEqual(route.segments[bridge_index].points[-1], connector.path[-1])
+            self.assertEqual(route.segments[bridge_index - 1].points[-1], connector.path[0])
+            self.assertEqual(route.segments[bridge_index + 1].points[0], connector.path[-1])
+
+        e10_bridge_index = next(
+            index
+            for index, segment in enumerate(route.segments)
+            if segment.connector_id == "bridge_10A-11B"
+        )
+        e10_internal_attach = route.segments[e10_bridge_index - 1]
+        self.assertEqual(e10_internal_attach.region_id, "E10")
+        self.assertLess(e10_internal_attach.length_m, 15.0)
+        self.assertLess(route.max_connector_length_m, 35.0)
+        self.assertGreater(route.segments[-1].points[-1][0], 110.6477)
+
+    def test_v2_accepts_named_four_corner_boundaries_and_point_objects(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "regions": [
+                {
+                    "id": "E9",
+                    "boundary": {
+                        "top_left": {"lon": 110.0, "lat": 35.001},
+                        "top_right": {"lon": 110.001, "lat": 35.001},
+                        "bottom_right": {"lon": 110.001, "lat": 35.0},
+                        "bottom_left": {"lon": 110.0, "lat": 35.0},
+                    },
+                }
+            ],
+        }
+        model = load_map(payload)
+        self.assertEqual(model.regions[0].id, "E9")
+        self.assertEqual(len(model.regions[0].polygons[0].boundary), 5)
+        self.assertTrue(model.guides)
+
+    def test_geojson_uses_point_for_degenerate_segment(self):
+        route = Route(
+            axis_angle_rad=0.0,
+            segments=(
+                Segment(
+                    kind="connector",
+                    points=((110.0, 35.0),),
+                    length_m=0.0,
+                ),
+            ),
+            total_length_m=0.0,
+            max_connector_length_m=0.0,
+        )
+        document = json.loads(route_to_geojson(route))
+        geometry = document["features"][0]["geometry"]
+        self.assertEqual(geometry["type"], "Point")
+        self.assertEqual(geometry["coordinates"], [110.0, 35.0])
+
     def test_load_map_closes_boundary_and_requires_guide(self):
         model = load_map(
             {
@@ -188,14 +267,20 @@ class AutoPathPlannerTests(unittest.TestCase):
         model = load_map(_rectangle_map(width_m=4.0, height_m=2.0))
         route = plan_route(model, sweep_spacing=1.0, edge_clearance=0.1)
         route_json = json.loads(route_to_json(route))
-        route_geojson = json.loads(route_to_geojson(route))
+        route_geojson = json.loads(route_to_geojson(route, model))
         self.assertEqual(route_json["format"], "rtk_auto_route_v1")
         self.assertIn("coverage_segments", route_json["metrics"])
         self.assertEqual(route_geojson["type"], "FeatureCollection")
         self.assertEqual(
             {feature["properties"]["kind"] for feature in route_geojson["features"]},
-            {"coverage", "connector"},
+            {"boundary", "coverage", "connector"},
         )
+        boundary = next(
+            feature
+            for feature in route_geojson["features"]
+            if feature["properties"]["kind"] == "boundary"
+        )
+        self.assertEqual(boundary["geometry"]["type"], "Polygon")
 
     def test_start_must_be_inside_usable_area(self):
         model_data = _rectangle_map(width_m=4.0, height_m=2.0)
@@ -421,10 +506,12 @@ class AutoPathPlannerTests(unittest.TestCase):
 
     def test_cli_writes_json_and_geojson(self):
         model_data = _rectangle_map(width_m=4.0, height_m=2.0)
-        with tempfile.TemporaryDirectory(dir=PACKAGE_ROOT) as temp_dir:
-            temp_path = Path(temp_dir)
-            input_path = temp_path / "auto_map.json"
-            output_path = temp_path / "auto_route.json"
+        temp_path = PACKAGE_ROOT.parent.parent / "tmp"
+        temp_path.mkdir(parents=True, exist_ok=True)
+        suffix = str(os.getpid())
+        input_path = temp_path / f"test_auto_map_{suffix}.json"
+        output_path = temp_path / f"test_auto_route_{suffix}.json"
+        try:
             input_path.write_text(json.dumps(model_data), encoding="utf-8")
             result = main(
                 [
@@ -441,6 +528,20 @@ class AutoPathPlannerTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertTrue(output_path.exists())
             self.assertTrue(output_path.with_suffix(".geojson").exists())
+            route_document = json.loads(output_path.read_text(encoding="utf-8"))
+            geojson_document = json.loads(
+                output_path.with_suffix(".geojson").read_text(encoding="utf-8")
+            )
+            self.assertEqual(route_document["format"], "rtk_auto_route_v1")
+            self.assertEqual(geojson_document["type"], "FeatureCollection")
+            self.assertTrue(all(item["type"] == "Feature" for item in geojson_document["features"]))
+        finally:
+            for generated_path in (
+                input_path,
+                output_path,
+                output_path.with_suffix(".geojson"),
+            ):
+                generated_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

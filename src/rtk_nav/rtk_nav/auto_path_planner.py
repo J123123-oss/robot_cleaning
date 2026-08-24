@@ -133,10 +133,18 @@ def _read_json_source(source: JsonSource) -> Mapping[str, Any]:
 
 
 def _coerce_point(raw: Any, field: str) -> Point:
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) < 2:
-        raise PlanningError(f"{field} point must be [longitude, latitude]")
+    if isinstance(raw, Mapping):
+        lon = raw.get("lon", raw.get("longitude", raw.get("x")))
+        lat = raw.get("lat", raw.get("latitude", raw.get("y")))
+        if lon is None or lat is None:
+            raise PlanningError(f"{field} point must contain longitude and latitude")
+        raw_values = (lon, lat)
+    else:
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) < 2:
+            raise PlanningError(f"{field} point must be [longitude, latitude]")
+        raw_values = (raw[0], raw[1])
     try:
-        point = (float(raw[0]), float(raw[1]))
+        point = (float(raw_values[0]), float(raw_values[1]))
     except (TypeError, ValueError) as exc:
         raise PlanningError(f"{field} point must contain numbers") from exc
     if not all(math.isfinite(value) for value in point):
@@ -146,7 +154,31 @@ def _coerce_point(raw: Any, field: str) -> Point:
     return point
 
 
+def _ring_values(raw: Any, field: str) -> Any:
+    """Accept list rings and common named-corner JSON representations."""
+    if not isinstance(raw, Mapping):
+        return raw
+    for key in ("points", "coordinates", "corners"):
+        if key in raw:
+            return raw[key]
+
+    named_orders = (
+        ("top_left", "top_right", "bottom_right", "bottom_left"),
+        ("top-left", "top-right", "bottom-right", "bottom-left"),
+        ("p1", "p2", "p3", "p4"),
+    )
+    for names in named_orders:
+        if all(name in raw for name in names):
+            return [raw[name] for name in names]
+
+    values = list(raw.values())
+    if values and all(isinstance(value, Mapping) for value in values):
+        return values
+    raise PlanningError(f"{field} must be a list of points")
+
+
 def _close_ring(raw: Any, field: str) -> Tuple[Point, ...]:
+    raw = _ring_values(raw, field)
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise PlanningError(f"{field} must be a list of points")
     if len(raw) < 3:
@@ -327,6 +359,16 @@ def _parse_polygon(raw: Any, field: str) -> Polygon:
 
 
 def _parse_regions(raw: Any) -> Tuple[Region, ...]:
+    if isinstance(raw, Mapping):
+        normalized = []
+        for region_id, value in raw.items():
+            if isinstance(value, Mapping):
+                item = dict(value)
+                item.setdefault("id", region_id)
+            else:
+                item = {"id": region_id, "boundary": value}
+            normalized.append(item)
+        raw = normalized
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or not raw:
         raise PlanningError("regions must contain at least one region")
     regions = []
@@ -366,6 +408,16 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
 def _parse_connectors(raw: Any, region_ids: set[str]) -> Tuple[Connector, ...]:
     if raw is None:
         return ()
+    if isinstance(raw, Mapping):
+        normalized = []
+        for connector_id, value in raw.items():
+            if isinstance(value, Mapping):
+                item = dict(value)
+                item.setdefault("id", connector_id)
+            else:
+                item = {"id": connector_id, "path": value}
+            normalized.append(item)
+        raw = normalized
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise PlanningError("connectors must be a list")
     connectors = []
@@ -418,6 +470,26 @@ def _parse_order(
     if raw is None:
         if len(regions) == 1 and not connectors:
             return (regions[0].id,)
+        if len(connectors) == len(regions) - 1:
+            incoming = {connector.to_region for connector in connectors}
+            starts = [region.id for region in regions if region.id not in incoming]
+            if len(starts) == 1:
+                generated = []
+                current = starts[0]
+                remaining = list(connectors)
+                generated.append(current)
+                while remaining:
+                    next_connector = next(
+                        (item for item in remaining if item.from_region == current),
+                        None,
+                    )
+                    if next_connector is None:
+                        break
+                    generated.extend((next_connector.id, next_connector.to_region))
+                    current = next_connector.to_region
+                    remaining.remove(next_connector)
+                if not remaining and len(generated) == 2 * len(regions) - 1:
+                    return tuple(generated)
         raise PlanningError("order is required for multiple regions or connectors")
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or not raw:
         raise PlanningError("order must be a non-empty list")
@@ -463,12 +535,26 @@ def _parse_order(
 def load_map(source: JsonSource) -> AutoMap:
     """Load and validate a JSON map object or JSON file path."""
     payload = _read_json_source(source)
-    guides = _parse_guides(payload.get("guides"))
-
     if payload.get("format") == "rtk_auto_map_v2" or "regions" in payload:
         regions = _parse_regions(payload.get("regions"))
+        raw_guides = payload.get("guides")
+        if raw_guides is None:
+            longest_edge = max(
+                (
+                    (first, second)
+                    for region in regions
+                    for polygon in region.polygons
+                    for first, second in _ring_edges(polygon.boundary)
+                ),
+                key=lambda edge: _distance(edge[0], edge[1]),
+            )
+            guides = (longest_edge,)
+        else:
+            guides = _parse_guides(raw_guides)
         region_ids = {region.id for region in regions}
-        connectors = _parse_connectors(payload.get("connectors", []), region_ids)
+        connectors = _parse_connectors(
+            payload.get("connectors", payload.get("bridges", [])), region_ids
+        )
         order = _parse_order(payload.get("order"), regions, connectors)
         boundary = regions[0].polygons[0].boundary
         no_go = regions[0].polygons[0].holes
@@ -484,6 +570,7 @@ def load_map(source: JsonSource) -> AutoMap:
             order=order,
         )
 
+    guides = _parse_guides(payload.get("guides"))
     boundary = _close_ring(payload.get("boundary"), "boundary")
 
     raw_no_go = payload.get("no_go", [])
@@ -934,6 +1021,36 @@ def _connector_candidates(start: LocalPoint, end: LocalPoint) -> list[list[Local
     return candidates
 
 
+def _safe_connector_length(
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+    max_connector: float,
+) -> Optional[float]:
+    """Return a safe orthogonal connector length with a fast common path."""
+    if _local_distance(start, end) <= EPSILON:
+        return 0.0
+
+    direct_candidates = []
+    for candidate in _connector_candidates(start, end)[1:]:
+        if all(
+            _line_is_allowed_region(first, second, geometry)
+            for first, second in zip(candidate, candidate[1:])
+        ):
+            length = _path_length(candidate)
+            if length <= max_connector + EPSILON:
+                direct_candidates.append(length)
+    if direct_candidates:
+        return min(direct_candidates)
+
+    try:
+        return _path_length(
+            _find_region_connector(start, end, geometry, max_connector)
+        )
+    except PlanningError:
+        return None
+
+
 def _path_length(points: Sequence[LocalPoint]) -> float:
     return sum(_local_distance(first, second) for first, second in zip(points, points[1:]))
 
@@ -1122,6 +1239,143 @@ def _serpentine_candidates(
     return unique_candidates
 
 
+def _optimized_multi_polygon_segments(
+    map_data: AutoMap,
+    axis_angle: float,
+    local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
+    geometry: RotatedRegion,
+    max_connector: float,
+    start_point: Optional[Point],
+    exit_point: Optional[Point],
+) -> Tuple[Tuple[LocalPoint, LocalPoint], ...]:
+    """Order a small multi-polygon sweep set by safe connector cost.
+
+    A polygon that extends from the main sweep body can otherwise become the
+    final scanline, forcing a long return to the next bridge. The bitmask
+    search is bounded to small regions; large regions retain the linear
+    serpentine planner.
+    """
+    segment_count = len(local_segments)
+    if segment_count > 16:
+        return tuple(local_segments)
+
+    frame = _LocalFrame.from_map(map_data)
+    local_start = (
+        None
+        if start_point is None
+        else _rotate(frame.to_xy(start_point), axis_angle)
+    )
+    local_exit = (
+        None
+        if exit_point is None
+        else _rotate(frame.to_xy(exit_point), axis_angle)
+    )
+    connector_cache: dict[Tuple[LocalPoint, LocalPoint], Optional[float]] = {}
+
+    def connector_length(
+        start: LocalPoint, end: LocalPoint
+    ) -> Optional[float]:
+        key = (start, end)
+        if key in connector_cache:
+            return connector_cache[key]
+        length = _safe_connector_length(start, end, geometry, max_connector)
+        connector_cache[key] = length
+        return length
+
+    def segment_start(index: int, orientation: int) -> LocalPoint:
+        start, end = local_segments[index]
+        return start if orientation == 0 else end
+
+    def segment_end(index: int, orientation: int) -> LocalPoint:
+        start, end = local_segments[index]
+        return end if orientation == 0 else start
+
+    # Each metric is (longest connector, total connector length). This keeps
+    # one unavoidable branch from becoming the dominant turn in the route.
+    metrics: dict[Tuple[int, int, int], Tuple[float, float]] = {}
+    parents: dict[Tuple[int, int, int], Optional[Tuple[int, int, int]]] = {}
+    for index in range(segment_count):
+        for orientation in (0, 1):
+            first = segment_start(index, orientation)
+            cost = 0.0 if local_start is None else connector_length(local_start, first)
+            if cost is None:
+                continue
+            state = (1 << index, index, orientation)
+            metrics[state] = (cost, cost)
+            parents[state] = None
+
+    full_mask = (1 << segment_count) - 1
+    for mask in range(1, full_mask + 1):
+        for last in range(segment_count):
+            if not mask & (1 << last):
+                continue
+            for orientation in (0, 1):
+                state = (mask, last, orientation)
+                current_metric = metrics.get(state)
+                if current_metric is None:
+                    continue
+                current_end = segment_end(last, orientation)
+                for next_index in range(segment_count):
+                    if mask & (1 << next_index):
+                        continue
+                    for next_orientation in (0, 1):
+                        next_start = segment_start(next_index, next_orientation)
+                        cost = connector_length(current_end, next_start)
+                        if cost is None:
+                            continue
+                        next_state = (
+                            mask | (1 << next_index),
+                            next_index,
+                            next_orientation,
+                        )
+                        candidate_metric = (
+                            max(current_metric[0], cost),
+                            current_metric[1] + cost,
+                        )
+                        if candidate_metric < metrics.get(
+                            next_state, (math.inf, math.inf)
+                        ):
+                            metrics[next_state] = candidate_metric
+                            parents[next_state] = state
+
+    best_state = None
+    best_metric = (math.inf, math.inf)
+    for last in range(segment_count):
+        for orientation in (0, 1):
+            state = (full_mask, last, orientation)
+            current_metric = metrics.get(state)
+            if current_metric is None:
+                continue
+            tail = (
+                0.0
+                if local_exit is None
+                else connector_length(segment_end(last, orientation), local_exit)
+            )
+            if tail is None:
+                continue
+            candidate_metric = (
+                max(current_metric[0], tail),
+                current_metric[1] + tail,
+            )
+            if candidate_metric < best_metric:
+                best_metric = candidate_metric
+                best_state = state
+
+    if best_state is None:
+        raise PlanningError(
+            "no safe connector ordering between multi-polygon coverage segments"
+        )
+
+    selected = []
+    state = best_state
+    while state is not None:
+        _, index, orientation = state
+        selected.append((segment_start(index, orientation), segment_end(index, orientation)))
+        state = parents[state]
+    selected.reverse()
+    return tuple(selected)
+
+
 def _segments_from_start(
     map_data: AutoMap,
     axis_angle: float,
@@ -1142,13 +1396,22 @@ def _segments_from_start(
         else None
     )
 
-    def attachment_cost(candidate: Sequence[Tuple[LocalPoint, LocalPoint]]) -> float:
-        cost = 0.0
-        if start_local is not None:
-            cost += _local_distance(start_local, candidate[0][0])
-        if exit_local is not None:
-            cost += _local_distance(candidate[-1][1], exit_local)
-        return cost
+    def attachment_cost(
+        candidate: Sequence[Tuple[LocalPoint, LocalPoint]],
+    ) -> Union[float, Tuple[float, float]]:
+        start_cost = (
+            0.0
+            if start_local is None
+            else _local_distance(start_local, candidate[0][0])
+        )
+        if exit_local is None:
+            return start_cost
+
+        # An explicit next-region connector defines where this region must
+        # finish. Prefer that endpoint first; otherwise a small saving at the
+        # entry can create a long return across the last polygon.
+        exit_cost = _local_distance(candidate[-1][1], exit_local)
+        return (exit_cost, start_cost)
 
     return min(_serpentine_candidates(local_segments), key=attachment_cost)
 
@@ -1163,6 +1426,7 @@ def _route_from_local_segments(
     start_point: Optional[Point] = None,
     exit_point: Optional[Point] = None,
     order: Tuple[str, ...] = (),
+    preserve_segment_order: bool = False,
 ) -> Route:
     if geometry is None:
         frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
@@ -1171,8 +1435,12 @@ def _route_from_local_segments(
         frame = _LocalFrame.from_map(map_data)
 
     selected_start = map_data.start if start_point is None else start_point
-    ordered_segments = _segments_from_start(
-        map_data, axis_angle, local_segments, selected_start, exit_point
+    ordered_segments = (
+        list(local_segments)
+        if preserve_segment_order
+        else _segments_from_start(
+            map_data, axis_angle, local_segments, selected_start, exit_point
+        )
     )
     output = []
     previous_end = None
@@ -1292,6 +1560,18 @@ def plan_route(
             geometry, local_segments = _local_region_coverage_segments(
                 map_data, region, axis_angle, sweep_spacing, edge_clearance
             )
+            preserve_segment_order = False
+            if len(region.polygons) > 1 and len(local_segments) <= 16:
+                local_segments = _optimized_multi_polygon_segments(
+                    map_data,
+                    axis_angle,
+                    local_segments,
+                    geometry,
+                    max_connector,
+                    start_point,
+                    exit_point,
+                )
+                preserve_segment_order = True
             region_route = _route_from_local_segments(
                 map_data,
                 axis_angle,
@@ -1302,6 +1582,7 @@ def plan_route(
                 start_point=start_point,
                 exit_point=exit_point,
                 order=order,
+                preserve_segment_order=preserve_segment_order,
             )
             output.extend(region_route.segments)
             max_connector_length = max(
@@ -1445,10 +1726,65 @@ def route_to_json(route: Route) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def route_to_geojson(route: Route) -> str:
-    """Serialize a route as a GeoJSON FeatureCollection."""
+def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
+    """Serialize route and optional map geometry as a GeoJSON FeatureCollection."""
     features = []
+    if map_data is not None:
+        for region in map_data.regions:
+            for polygon_index, polygon in enumerate(region.polygons):
+                coordinates = [
+                    [[point[0], point[1]] for point in polygon.boundary]
+                ]
+                coordinates.extend(
+                    [[point[0], point[1]] for point in hole]
+                    for hole in polygon.holes
+                )
+                features.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "kind": "boundary",
+                            "region_id": region.id,
+                            "polygon_index": polygon_index,
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": coordinates,
+                        },
+                    }
+                )
+        for connector in map_data.connectors:
+            features.append(
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "kind": "bridge",
+                        "connector_id": connector.id,
+                        "from_region": connector.from_region,
+                        "to_region": connector.to_region,
+                    },
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [
+                            [point[0], point[1]] for point in connector.path
+                        ],
+                    },
+                }
+            )
     for index, segment in enumerate(route.segments):
+        segment_coordinates = [list(point) for point in segment.points]
+        if not segment_coordinates:
+            raise PlanningError(f"segment {index} has no coordinates")
+        if len(segment_coordinates) == 1:
+            geometry = {
+                "type": "Point",
+                "coordinates": segment_coordinates[0],
+            }
+        else:
+            geometry = {
+                "type": "LineString",
+                "coordinates": segment_coordinates,
+            }
         features.append(
             {
                 "type": "Feature",
@@ -1458,10 +1794,7 @@ def route_to_geojson(route: Route) -> str:
                     "kind": segment.kind,
                     "length_m": round(segment.length_m, 6),
                 },
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [list(point) for point in segment.points],
-                },
+                "geometry": geometry,
             }
         )
         if segment.region_id is not None:
@@ -1510,7 +1843,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(route_to_json(route) + "\n", encoding="utf-8")
         output_path.with_suffix(".geojson").write_text(
-            route_to_geojson(route) + "\n", encoding="utf-8"
+            route_to_geojson(route, map_data) + "\n", encoding="utf-8"
         )
         print(
             "generated {} coverage segments and {} connector segments".format(
