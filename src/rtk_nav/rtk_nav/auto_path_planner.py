@@ -41,6 +41,7 @@ class Region:
     id: str
     polygons: Tuple[Polygon, ...]
     start: Optional[Point] = None
+    connection_tolerance_m: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -401,7 +402,25 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
         _validate_region_geometry(polygons, f"regions[{index}]")
         raw_start = value.get("start")
         start = None if raw_start is None else _coerce_point(raw_start, f"regions[{index}].start")
-        regions.append(Region(id=region_id, polygons=polygons, start=start))
+        raw_tolerance = value.get("connection_tolerance_m", 0.0)
+        try:
+            connection_tolerance_m = float(raw_tolerance)
+        except (TypeError, ValueError) as exc:
+            raise PlanningError(
+                f"regions[{index}].connection_tolerance_m must be a number"
+            ) from exc
+        if not math.isfinite(connection_tolerance_m) or connection_tolerance_m < 0.0:
+            raise PlanningError(
+                f"regions[{index}].connection_tolerance_m must be non-negative"
+            )
+        regions.append(
+            Region(
+                id=region_id,
+                polygons=polygons,
+                start=start,
+                connection_tolerance_m=connection_tolerance_m,
+            )
+        )
     return tuple(regions)
 
 
@@ -904,6 +923,52 @@ def _point_is_allowed_region(
     return False
 
 
+def _distance_to_segment(
+    point: LocalPoint, first: LocalPoint, second: LocalPoint
+) -> float:
+    direction = _subtract(second, first)
+    length_squared = direction[0] ** 2 + direction[1] ** 2
+    if length_squared <= EPSILON:
+        return _local_distance(point, first)
+    ratio = (
+        (point[0] - first[0]) * direction[0]
+        + (point[1] - first[1]) * direction[1]
+    ) / length_squared
+    ratio = max(0.0, min(1.0, ratio))
+    projection = (
+        first[0] + ratio * direction[0],
+        first[1] + ratio * direction[1],
+    )
+    return _local_distance(point, projection)
+
+
+def _distance_to_ring(point: LocalPoint, ring: Sequence[LocalPoint]) -> float:
+    return min(
+        _distance_to_segment(point, first, second)
+        for first, second in _ring_edges(ring)
+    )
+
+
+def _point_is_allowed_region_with_tolerance(
+    point: LocalPoint,
+    geometry: RotatedRegion,
+    connection_tolerance_m: float,
+) -> bool:
+    if _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+        return True
+    if connection_tolerance_m <= EPSILON:
+        return False
+
+    # A tolerance may bridge a small gap between polygons, but never permits
+    # travel through a hole or an arbitrary point far outside the region.
+    boundary_distance = math.inf
+    for boundary, holes in geometry:
+        if any(_point_in_ring(point, hole) for hole in holes):
+            return False
+        boundary_distance = min(boundary_distance, _distance_to_ring(point, boundary))
+    return boundary_distance <= connection_tolerance_m + EPSILON
+
+
 def _line_is_allowed(
     start: LocalPoint,
     end: LocalPoint,
@@ -986,6 +1051,7 @@ def _line_is_allowed_region(
     start: LocalPoint,
     end: LocalPoint,
     geometry: RotatedRegion,
+    connection_tolerance_m: float = 0.0,
 ) -> bool:
     parameters = {0.0, 1.0}
     for boundary, holes in geometry:
@@ -998,7 +1064,9 @@ def _line_is_allowed_region(
             start[0] + (end[0] - start[0]) * ratio,
             start[1] + (end[1] - start[1]) * ratio,
         )
-        if not _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+        if not _point_is_allowed_region_with_tolerance(
+            point, geometry, connection_tolerance_m
+        ):
             return False
     for first_ratio, second_ratio in zip(ordered_parameters, ordered_parameters[1:]):
         if second_ratio - first_ratio <= 1e-12:
@@ -1008,7 +1076,9 @@ def _line_is_allowed_region(
             start[0] + (end[0] - start[0]) * ratio,
             start[1] + (end[1] - start[1]) * ratio,
         )
-        if not _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+        if not _point_is_allowed_region_with_tolerance(
+            point, geometry, connection_tolerance_m
+        ):
             return False
     return True
 
@@ -1026,6 +1096,7 @@ def _safe_connector_length(
     end: LocalPoint,
     geometry: RotatedRegion,
     max_connector: float,
+    connection_tolerance_m: float = 0.0,
 ) -> Optional[float]:
     """Return a safe orthogonal connector length with a fast common path."""
     if _local_distance(start, end) <= EPSILON:
@@ -1034,7 +1105,9 @@ def _safe_connector_length(
     direct_candidates = []
     for candidate in _connector_candidates(start, end)[1:]:
         if all(
-            _line_is_allowed_region(first, second, geometry)
+            _line_is_allowed_region(
+                first, second, geometry, connection_tolerance_m
+            )
             for first, second in zip(candidate, candidate[1:])
         ):
             length = _path_length(candidate)
@@ -1045,7 +1118,13 @@ def _safe_connector_length(
 
     try:
         return _path_length(
-            _find_region_connector(start, end, geometry, max_connector)
+            _find_region_connector(
+                start,
+                end,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+            )
         )
     except PlanningError:
         return None
@@ -1064,7 +1143,10 @@ def _unique_local_points(points: Sequence[LocalPoint]) -> list[LocalPoint]:
 
 
 def _orthogonal_connector_nodes(
-    start: LocalPoint, end: LocalPoint, geometry: RotatedRegion
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+    connection_tolerance_m: float = 0.0,
 ) -> list[LocalPoint]:
     """Return allowed grid intersections used for turn-only travel."""
     x_values = {start[0], end[0]}
@@ -1082,7 +1164,9 @@ def _orthogonal_connector_nodes(
     for x_value in x_values:
         for y_value in y_values:
             point = (x_value, y_value)
-            if _point_is_allowed_region(point, geometry, allow_hole_boundary=False):
+            if _point_is_allowed_region_with_tolerance(
+                point, geometry, connection_tolerance_m
+            ):
                 nodes.append(point)
     return _unique_local_points(nodes)
 
@@ -1092,6 +1176,7 @@ def _find_region_connector(
     end: LocalPoint,
     geometry: RotatedRegion,
     max_connector: float,
+    connection_tolerance_m: float = 0.0,
 ) -> Tuple[LocalPoint, ...]:
     if _local_distance(start, end) <= EPSILON:
         return (start,)
@@ -1100,7 +1185,9 @@ def _find_region_connector(
     if not _point_is_allowed_region(end, geometry, allow_hole_boundary=False):
         raise PlanningError("connector end is outside the region")
 
-    nodes = _orthogonal_connector_nodes(start, end, geometry)
+    nodes = _orthogonal_connector_nodes(
+        start, end, geometry, connection_tolerance_m
+    )
     start_index = min(range(len(nodes)), key=lambda index: _local_distance(nodes[index], start))
     end_index = min(range(len(nodes)), key=lambda index: _local_distance(nodes[index], end))
 
@@ -1114,7 +1201,9 @@ def _find_region_connector(
                 and abs(first[1] - second[1]) > EPSILON
             ):
                 continue
-            if not _line_is_allowed_region(first, second, geometry):
+            if not _line_is_allowed_region(
+                first, second, geometry, connection_tolerance_m
+            ):
                 continue
             weight = _local_distance(first, second)
             graph[first_index].append((weight, second_index))
@@ -1245,6 +1334,7 @@ def _optimized_multi_polygon_segments(
     local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
     geometry: RotatedRegion,
     max_connector: float,
+    connection_tolerance_m: float,
     start_point: Optional[Point],
     exit_point: Optional[Point],
 ) -> Tuple[Tuple[LocalPoint, LocalPoint], ...]:
@@ -1278,7 +1368,13 @@ def _optimized_multi_polygon_segments(
         key = (start, end)
         if key in connector_cache:
             return connector_cache[key]
-        length = _safe_connector_length(start, end, geometry, max_connector)
+        length = _safe_connector_length(
+            start,
+            end,
+            geometry,
+            max_connector,
+            connection_tolerance_m,
+        )
         connector_cache[key] = length
         return length
 
@@ -1427,6 +1523,7 @@ def _route_from_local_segments(
     exit_point: Optional[Point] = None,
     order: Tuple[str, ...] = (),
     preserve_segment_order: bool = False,
+    connection_tolerance_m: float = 0.0,
 ) -> Route:
     if geometry is None:
         frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
@@ -1456,7 +1553,11 @@ def _route_from_local_segments(
         first_start = ordered_segments[0][0]
         if _local_distance(start_local, first_start) > EPSILON:
             connector = _find_region_connector(
-                start_local, first_start, geometry, max_connector
+                start_local,
+                first_start,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
             )
             connector_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in connector
@@ -1474,7 +1575,13 @@ def _route_from_local_segments(
 
     for start, end in ordered_segments:
         if previous_end is not None:
-            connector = _find_region_connector(previous_end, start, geometry, max_connector)
+            connector = _find_region_connector(
+                previous_end,
+                start,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+            )
             connector_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in connector
             )
@@ -1568,6 +1675,7 @@ def plan_route(
                     local_segments,
                     geometry,
                     max_connector,
+                    region.connection_tolerance_m,
                     start_point,
                     exit_point,
                 )
@@ -1583,6 +1691,7 @@ def plan_route(
                 exit_point=exit_point,
                 order=order,
                 preserve_segment_order=preserve_segment_order,
+                connection_tolerance_m=region.connection_tolerance_m,
             )
             output.extend(region_route.segments)
             max_connector_length = max(
@@ -1616,6 +1725,7 @@ def plan_route(
                 connector_start_local,
                 source_geometry,
                 max_connector,
+                previous_region.connection_tolerance_m,
             )
             attach_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in attach

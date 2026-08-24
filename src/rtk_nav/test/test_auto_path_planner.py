@@ -182,6 +182,29 @@ class AutoPathPlannerTests(unittest.TestCase):
         self.assertLess(route.max_connector_length_m, 35.0)
         self.assertGreater(route.segments[-1].points[-1][0], 110.6477)
 
+    def test_e12_e14_map_uses_two_polygon_e13_with_gap_tolerance(self):
+        map_path = REPOSITORY_ROOT / "auto_map_e12_e14.json"
+        if not map_path.exists():
+            self.skipTest("repository E12/E14 map fixture is not present")
+
+        model = load_map(json.loads(map_path.read_text(encoding="utf-8")))
+        regions = {region.id: region for region in model.regions}
+        self.assertEqual(len(regions["E13"].polygons), 2)
+        self.assertEqual(regions["E13"].connection_tolerance_m, 3.0)
+        self.assertEqual(
+            model.order,
+            ("E12", "bridge_12-13B", "E13", "bridge_13-14B", "E14"),
+        )
+
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=1.0,
+            max_connector=50.0,
+        )
+        self.assertTrue(any(segment.kind == "coverage" for segment in route.segments))
+        self.assertLess(route.max_connector_length_m, 50.0)
+
     def test_v2_accepts_named_four_corner_boundaries_and_point_objects(self):
         payload = {
             "format": "rtk_auto_map_v2",
@@ -428,6 +451,39 @@ class AutoPathPlannerTests(unittest.TestCase):
         }
         with self.assertRaises(PlanningError):
             plan_route(load_map(payload), sweep_spacing=1.0, edge_clearance=0.1)
+
+    def test_v2_region_connection_tolerance_bridges_small_polygon_gap(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(6, 0)]],
+            "regions": [
+                {
+                    "id": "combined",
+                    "connection_tolerance_m": 2.0,
+                    "polygons": [
+                        {"boundary": _ring([(0, 0), (2, 0), (2, 2), (0, 2)])},
+                        {"boundary": _ring([(3, 0), (5, 0), (5, 2), (3, 2)])},
+                    ],
+                }
+            ],
+            "order": ["combined"],
+        }
+
+        model = load_map(payload)
+        self.assertEqual(model.regions[0].connection_tolerance_m, 2.0)
+        route = plan_route(
+            model,
+            sweep_spacing=1.0,
+            edge_clearance=0.1,
+            max_connector=10.0,
+        )
+        internal_connectors = [
+            segment
+            for segment in route.segments
+            if segment.kind == "connector"
+        ]
+        self.assertTrue(internal_connectors)
+        self.assertTrue(any(segment.length_m > 1.0 for segment in internal_connectors))
 
     def test_v2_rejects_explicit_connector_path_through_a_hole(self):
         payload = _complex_multi_region_map()
