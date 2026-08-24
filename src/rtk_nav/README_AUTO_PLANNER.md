@@ -98,20 +98,32 @@
 
 - `regions[].polygons` 可以放一个凹形外轮廓，也可以放多个相接的错位矩形；多个 polygon 会合并为一个逻辑清扫区。
 - `holes` 是局部缺口、设备区或不允许清扫的区域。扫描线会自动分裂，内部连接会绕开缺口；无法绕行时规划失败。
+- `edge_distance_lon` 和 `edge_distance_lat` 可配置四边的非对称边缘距离，单位是米。顺序保持旧 YAML 逻辑：`edge_distance_lon=[右,左]`、`edge_distance_lat=[下,上]`；正值向内缩进，负值向外扩展。区域级字段会继承到所有 polygon，polygon 自己配置时优先。
+- 边缘距离用于四角矩形 polygon；它会先调整清扫几何，再叠加命令行的统一 `--edge-clearance`。桥架端点仍按原始外围边界校验。
 - `connection_tolerance_m` 可选，仅用于同一区域多个 polygon 之间的小间隙连接。它不会扩大 GeoJSON 边界，孔洞仍然禁止通行；缺省为 `0`。
 - `connectors` 使用 RTK 实际采集的桥接轨迹，默认只通行、不计为清扫覆盖。`from`、`to` 和 `order` 决定连接方向。
 - `back_` 开头的返回轨迹可以保留在输入文件中，但不要放进本次正向清扫的 `order`。
 - 例如 E9/E10/E11 的正向顺序为 `E9 -> bridge_9-10B -> E10 -> bridge_10A-11B -> E11`。
 
-例如 E13 的两个 polygon 因旧 YAML 的非对称边缘缩进和统一 `--edge-clearance` 产生小间隙时，可以配置：
+例如 E13 的两个 polygon 可以分别配置旧 YAML 中的四边距离：
 
 ```json
 {
   "id": "E13",
   "connection_tolerance_m": 3.0,
   "polygons": [
-    {"boundary": [], "holes": []},
-    {"boundary": [], "holes": []}
+    {
+      "edge_distance_lon": [0.15, 0.5],
+      "edge_distance_lat": [0.3, 0.3],
+      "boundary": [[110.6472707611, 35.6041331221], [110.6474216066, 35.6041331221], [110.6474211547, 35.6042619680], [110.6472707611, 35.6042620942]],
+      "holes": []
+    },
+    {
+      "edge_distance_lon": [0.3, 0.1],
+      "edge_distance_lat": [0.3, 0.3],
+      "boundary": [[110.6474291479, 35.6041538960], [110.6477649148, 35.6041538960], [110.6477646446, 35.6042622178], [110.6474291479, 35.6042619846]],
+      "holes": []
+    }
   ]
 }
 ```

@@ -29,6 +29,7 @@ from rtk_nav.auto_path_planner import (  # noqa: E402
 from rtk_nav.auto_path_planner import (  # noqa: E402
     Route,
     Segment,
+    _rotated_region_geometry,
 )
 
 
@@ -204,6 +205,15 @@ class AutoPathPlannerTests(unittest.TestCase):
         )
         self.assertTrue(any(segment.kind == "coverage" for segment in route.segments))
         self.assertLess(route.max_connector_length_m, 50.0)
+        geojson = json.loads(route_to_geojson(route, model))
+        e13_boundary = next(
+            feature
+            for feature in geojson["features"]
+            if feature["properties"].get("region_id") == "E13"
+            and feature["properties"].get("polygon_index") == 0
+        )
+        self.assertEqual(e13_boundary["properties"]["edge_distance_lon"], [0.15, 0.5])
+        self.assertEqual(e13_boundary["properties"]["edge_distance_lat"], [0.3, 0.3])
 
     def test_v2_accepts_named_four_corner_boundaries_and_point_objects(self):
         payload = {
@@ -224,6 +234,77 @@ class AutoPathPlannerTests(unittest.TestCase):
         self.assertEqual(model.regions[0].id, "E9")
         self.assertEqual(len(model.regions[0].polygons[0].boundary), 5)
         self.assertTrue(model.guides)
+
+    def test_edge_distances_adjust_four_edges_with_legacy_order(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "adjusted",
+                    "edge_distance_lon": [1.0, 2.0],
+                    "edge_distance_lat": [0.5, 1.5],
+                    "polygons": [{"boundary": _ring([(0, 0), (10, 0), (10, 4), (0, 4)])}],
+                },
+            ],
+            "order": ["adjusted"],
+        }
+        model = load_map(payload)
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lon, (1.0, 2.0))
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lat, (0.5, 1.5))
+
+        _, adjusted = _rotated_region_geometry(model, model.regions[0], 0.0)
+        adjusted_boundary = adjusted[0][0]
+        self.assertTrue(
+            all(
+                math.isclose(actual, expected, abs_tol=1e-6)
+                for actual, expected in zip(
+                    (
+                        min(point[0] for point in adjusted_boundary[:-1]),
+                        max(point[0] for point in adjusted_boundary[:-1]),
+                        min(point[1] for point in adjusted_boundary[:-1]),
+                        max(point[1] for point in adjusted_boundary[:-1]),
+                    ),
+                    (2.0, 9.0, 0.5, 2.5),
+                )
+            )
+        )
+        expanded_payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "expanded",
+                    "polygons": [
+                        {
+                            "boundary": _ring([(0, 0), (10, 0), (10, 4), (0, 4)]),
+                            "edge_distance_lon": [-1.0, -2.0],
+                            "edge_distance_lat": [-0.5, -1.5],
+                        }
+                    ],
+                }
+            ],
+            "order": ["expanded"],
+        }
+        expanded_model = load_map(expanded_payload)
+        _, expanded = _rotated_region_geometry(
+            expanded_model, expanded_model.regions[0], 0.0
+        )
+        expanded_boundary = expanded[0][0]
+        self.assertTrue(
+            all(
+                math.isclose(actual, expected, abs_tol=1e-6)
+                for actual, expected in zip(
+                    (
+                        min(point[0] for point in expanded_boundary[:-1]),
+                        max(point[0] for point in expanded_boundary[:-1]),
+                        min(point[1] for point in expanded_boundary[:-1]),
+                        max(point[1] for point in expanded_boundary[:-1]),
+                    ),
+                    (-2.0, 11.0, -0.5, 5.5),
+                )
+            )
+        )
 
     def test_geojson_uses_point_for_degenerate_segment(self):
         route = Route(

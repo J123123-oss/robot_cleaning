@@ -32,6 +32,8 @@ class Polygon:
 
     boundary: Tuple[Point, ...]
     holes: Tuple[Tuple[Point, ...], ...] = ()
+    edge_distance_lon: Tuple[float, float] = (0.0, 0.0)
+    edge_distance_lat: Tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -343,7 +345,28 @@ def _parse_id(raw: Any, field: str) -> str:
     return raw.strip()
 
 
-def _parse_polygon(raw: Any, field: str) -> Polygon:
+def _parse_distance_pair(raw: Any, field: str) -> Tuple[float, float]:
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        if len(raw) != 2:
+            raise PlanningError(f"{field} must contain exactly two distances")
+        values = (raw[0], raw[1])
+    else:
+        values = (raw, raw)
+    try:
+        distances = (float(values[0]), float(values[1]))
+    except (TypeError, ValueError) as exc:
+        raise PlanningError(f"{field} must contain numbers") from exc
+    if not all(math.isfinite(value) for value in distances):
+        raise PlanningError(f"{field} must contain finite numbers")
+    return distances
+
+
+def _parse_polygon(
+    raw: Any,
+    field: str,
+    default_edge_distance_lon: Tuple[float, float] = (0.0, 0.0),
+    default_edge_distance_lat: Tuple[float, float] = (0.0, 0.0),
+) -> Polygon:
     if not isinstance(raw, Mapping):
         raise PlanningError(f"{field} must be an object")
     boundary = _close_ring(raw.get("boundary"), f"{field}.boundary")
@@ -354,7 +377,20 @@ def _parse_polygon(raw: Any, field: str) -> Polygon:
         _close_ring(hole, f"{field}.holes[{index}]")
         for index, hole in enumerate(raw_holes)
     )
-    polygon = Polygon(boundary=boundary, holes=holes)
+    edge_distance_lon = _parse_distance_pair(
+        raw.get("edge_distance_lon", default_edge_distance_lon),
+        f"{field}.edge_distance_lon",
+    )
+    edge_distance_lat = _parse_distance_pair(
+        raw.get("edge_distance_lat", default_edge_distance_lat),
+        f"{field}.edge_distance_lat",
+    )
+    polygon = Polygon(
+        boundary=boundary,
+        holes=holes,
+        edge_distance_lon=edge_distance_lon,
+        edge_distance_lat=edge_distance_lat,
+    )
     _validate_polygon_geometry(polygon, field)
     return polygon
 
@@ -382,6 +418,15 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
             raise PlanningError(f"duplicate region id: {region_id}")
         seen.add(region_id)
 
+        region_edge_distance_lon = _parse_distance_pair(
+            value.get("edge_distance_lon", (0.0, 0.0)),
+            f"regions[{index}].edge_distance_lon",
+        )
+        region_edge_distance_lat = _parse_distance_pair(
+            value.get("edge_distance_lat", (0.0, 0.0)),
+            f"regions[{index}].edge_distance_lat",
+        )
+
         raw_polygons = value.get("polygons")
         if raw_polygons is None:
             if "boundary" not in value:
@@ -396,7 +441,12 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
         ):
             raise PlanningError(f"regions[{index}].polygons must not be empty")
         polygons = tuple(
-            _parse_polygon(polygon, f"regions[{index}].polygons[{polygon_index}]")
+            _parse_polygon(
+                polygon,
+                f"regions[{index}].polygons[{polygon_index}]",
+                region_edge_distance_lon,
+                region_edge_distance_lat,
+            )
             for polygon_index, polygon in enumerate(raw_polygons)
         )
         _validate_region_geometry(polygons, f"regions[{index}]")
@@ -687,8 +737,48 @@ RotatedPolygon = Tuple[
 RotatedRegion = Tuple[RotatedPolygon, ...]
 
 
+def _edge_adjusted_ring(
+    ring: Sequence[LocalPoint],
+    edge_distance_lon: Tuple[float, float],
+    edge_distance_lat: Tuple[float, float],
+) -> Tuple[LocalPoint, ...]:
+    if all(abs(value) <= EPSILON for value in (*edge_distance_lon, *edge_distance_lat)):
+        return tuple(ring)
+    if len(ring) != 5:
+        raise PlanningError(
+            "edge_distance_lon/lat require a four-corner polygon boundary"
+        )
+
+    min_x = min(point[0] for point in ring[:-1])
+    max_x = max(point[0] for point in ring[:-1])
+    min_y = min(point[1] for point in ring[:-1])
+    max_y = max(point[1] for point in ring[:-1])
+
+    # Preserve the legacy YAML order: longitude is [right, left], latitude
+    # is [bottom, top]. Positive values inset; negative values extend.
+    adjusted_min_x = min_x + edge_distance_lon[1]
+    adjusted_max_x = max_x - edge_distance_lon[0]
+    adjusted_min_y = min_y + edge_distance_lat[0]
+    adjusted_max_y = max_y - edge_distance_lat[1]
+    if adjusted_max_x - adjusted_min_x <= EPSILON:
+        raise PlanningError("edge_distance_lon leaves no usable polygon width")
+    if adjusted_max_y - adjusted_min_y <= EPSILON:
+        raise PlanningError("edge_distance_lat leaves no usable polygon height")
+
+    return (
+        (adjusted_min_x, adjusted_min_y),
+        (adjusted_max_x, adjusted_min_y),
+        (adjusted_max_x, adjusted_max_y),
+        (adjusted_min_x, adjusted_max_y),
+        (adjusted_min_x, adjusted_min_y),
+    )
+
+
 def _rotated_region_geometry(
-    map_data: AutoMap, region: Region, axis_angle: float
+    map_data: AutoMap,
+    region: Region,
+    axis_angle: float,
+    apply_edge_distance: bool = True,
 ) -> Tuple[_LocalFrame, RotatedRegion]:
     frame = _LocalFrame.from_map(map_data)
 
@@ -697,7 +787,15 @@ def _rotated_region_geometry(
 
     geometry = tuple(
         (
-            rotate_ring(polygon.boundary),
+            (
+                _edge_adjusted_ring(
+                    rotate_ring(polygon.boundary),
+                    polygon.edge_distance_lon,
+                    polygon.edge_distance_lat,
+                )
+                if apply_edge_distance
+                else rotate_ring(polygon.boundary)
+            ),
             tuple(rotate_ring(hole) for hole in polygon.holes),
         )
         for polygon in region.polygons
@@ -1524,12 +1622,15 @@ def _route_from_local_segments(
     order: Tuple[str, ...] = (),
     preserve_segment_order: bool = False,
     connection_tolerance_m: float = 0.0,
+    attachment_geometry: Optional[RotatedRegion] = None,
 ) -> Route:
     if geometry is None:
         frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
         geometry = ((boundary, tuple(no_go)),)
     else:
         frame = _LocalFrame.from_map(map_data)
+    if attachment_geometry is None:
+        attachment_geometry = geometry
 
     selected_start = map_data.start if start_point is None else start_point
     ordered_segments = (
@@ -1547,7 +1648,7 @@ def _route_from_local_segments(
     if selected_start is not None:
         start_local = _rotate(frame.to_xy(selected_start), axis_angle)
         if not _point_is_allowed_region(
-            start_local, geometry, allow_hole_boundary=False
+            start_local, attachment_geometry, allow_hole_boundary=False
         ):
             raise PlanningError("start is outside the usable map area")
         first_start = ordered_segments[0][0]
@@ -1555,7 +1656,7 @@ def _route_from_local_segments(
             connector = _find_region_connector(
                 start_local,
                 first_start,
-                geometry,
+                attachment_geometry,
                 max_connector,
                 connection_tolerance_m,
             )
@@ -1667,6 +1768,9 @@ def plan_route(
             geometry, local_segments = _local_region_coverage_segments(
                 map_data, region, axis_angle, sweep_spacing, edge_clearance
             )
+            _, attachment_geometry = _rotated_region_geometry(
+                map_data, region, axis_angle, apply_edge_distance=False
+            )
             preserve_segment_order = False
             if len(region.polygons) > 1 and len(local_segments) <= 16:
                 local_segments = _optimized_multi_polygon_segments(
@@ -1692,6 +1796,7 @@ def plan_route(
                 order=order,
                 preserve_segment_order=preserve_segment_order,
                 connection_tolerance_m=region.connection_tolerance_m,
+                attachment_geometry=attachment_geometry,
             )
             output.extend(region_route.segments)
             max_connector_length = max(
@@ -1710,7 +1815,10 @@ def plan_route(
             raise PlanningError(f"connector {item} has no matching destination region")
 
         frame, source_geometry = _rotated_region_geometry(
-            map_data, previous_region, axis_angle
+            map_data,
+            previous_region,
+            axis_angle,
+            apply_edge_distance=False,
         )
         connector_start_local = _rotate(frame.to_xy(connector.path[0]), axis_angle)
         if not _point_is_allowed_region(
@@ -1743,7 +1851,10 @@ def plan_route(
 
         destination_region = regions[connector.to_region]
         destination_frame, destination_geometry = _rotated_region_geometry(
-            map_data, destination_region, axis_angle
+            map_data,
+            destination_region,
+            axis_angle,
+            apply_edge_distance=False,
         )
         destination_end_local = _rotate(
             destination_frame.to_xy(connector.path[-1]), axis_angle
@@ -1757,7 +1868,9 @@ def plan_route(
             _rotate(frame.to_xy(point), axis_angle) for point in connector.path
         )
         all_region_geometries = [
-            _rotated_region_geometry(map_data, region, axis_angle)[1]
+            _rotated_region_geometry(
+                map_data, region, axis_angle, apply_edge_distance=False
+            )[1]
             for region in regions.values()
         ]
         for path_start, path_end in zip(connector_local_path, connector_local_path[1:]):
@@ -1856,6 +1969,8 @@ def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
                             "kind": "boundary",
                             "region_id": region.id,
                             "polygon_index": polygon_index,
+                            "edge_distance_lon": list(polygon.edge_distance_lon),
+                            "edge_distance_lat": list(polygon.edge_distance_lat),
                         },
                         "geometry": {
                             "type": "Polygon",
