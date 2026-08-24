@@ -14,14 +14,20 @@ def generate_launch_description():
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan"),  # 默认值
+        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_old"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
     declare_visual_correction_arg = DeclareLaunchArgument(
         "enable_visual_correction",
-        default_value=TextSubstitution(text="false"),
-        description="Enable visual correction; disabled by default",
+        default_value=TextSubstitution(text="true"),
+        description="Enable visual correction",
+    )
+
+    declare_bypass_path_context_gate_arg = DeclareLaunchArgument(
+        "bypass_path_context_gate",
+        default_value=TextSubstitution(text="true"),
+        description="Bypass RTK path context gate for visual line testing",
     )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
@@ -51,13 +57,28 @@ def generate_launch_description():
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
         "visual_confidence_threshold",
-        default_value=TextSubstitution(text="0.5"),
+        default_value=TextSubstitution(text="0.75"),
         description="Minimum visual confidence for correction",
     )
     declare_visual_timeout_arg = DeclareLaunchArgument(
         "visual_timeout_sec",
         default_value=TextSubstitution(text="0.5"),
         description="Visual sample timeout in seconds",
+    )
+    declare_target_line_offset_arg = DeclareLaunchArgument(
+        "target_line_offset_m",
+        default_value=TextSubstitution(text="nan"),
+        description="Calibrated target parallel-line offset from camera center",
+    )
+    declare_target_line_tolerance_arg = DeclareLaunchArgument(
+        "target_line_match_tolerance_m",
+        default_value=TextSubstitution(text="0.5"),
+        description="Maximum target-line matching error in meters",
+    )
+    declare_reference_axis_offset_arg = DeclareLaunchArgument(
+        "reference_axis_offset_px",
+        default_value=TextSubstitution(text="0.0"),
+        description="Fixed line measurement section offset along path axis",
     )
 
     # 定义电机控制节点
@@ -180,7 +201,23 @@ def generate_launch_description():
                 'enable_visual_correction': ParameterValue(
                     LaunchConfiguration('enable_visual_correction'),
                     value_type=bool,
-                )
+                ),
+                'bypass_path_context_gate': ParameterValue(
+                    LaunchConfiguration("bypass_path_context_gate"),
+                    value_type=bool,
+                ),
+                'target_line_offset_m': ParameterValue(
+                    LaunchConfiguration("target_line_offset_m"),
+                    value_type=float,
+                ),
+                'target_line_match_tolerance_m': ParameterValue(
+                    LaunchConfiguration("target_line_match_tolerance_m"),
+                    value_type=float,
+                ),
+                'reference_axis_offset_px': ParameterValue(
+                    LaunchConfiguration("reference_axis_offset_px"),
+                    value_type=float,
+                ),
             },
         ],
     )
@@ -223,6 +260,7 @@ def generate_launch_description():
     ld = LaunchDescription()
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_visual_correction_arg)
+    ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
     ld.add_action(declare_visual_heading_gain_arg)
@@ -230,16 +268,19 @@ def generate_launch_description():
     ld.add_action(declare_visual_max_steering_arg)
     ld.add_action(declare_visual_confidence_threshold_arg)
     ld.add_action(declare_visual_timeout_arg)
+    ld.add_action(declare_target_line_offset_arg)
+    ld.add_action(declare_target_line_tolerance_arg)
+    ld.add_action(declare_reference_axis_offset_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
-    ld.add_action(sensors_485_node)
-    ld.add_action(laser_node)
-    ld.add_action(charging_node)
-    # ld.add_action(wtrtk_parse_txt_node)
-    ld.add_action(rtk_navigator)
-    # 若需要启用注释的节点，取消以下对应行的注释
-    ld.add_action(wtrtk_serial_driver_node)
+    # ld.add_action(sensors_485_node)
+    # ld.add_action(laser_node)
+    # ld.add_action(charging_node)
+    # # ld.add_action(wtrtk_parse_txt_node)
+    # ld.add_action(rtk_navigator)
+    # # 若需要启用注释的节点，取消以下对应行的注释
+    # ld.add_action(wtrtk_serial_driver_node)
     ld.add_action(line_detector_node)
     ld.add_action(camera_publisher_node)
 
