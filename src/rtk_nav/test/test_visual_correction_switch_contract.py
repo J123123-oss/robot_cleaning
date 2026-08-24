@@ -8,6 +8,8 @@ import math
 import time
 from pathlib import Path
 
+import numpy as np
+
 
 REPO_ROOT = Path(__file__).parents[3]
 LAUNCH_SOURCE_PATH = Path(__file__).parents[1] / "launch" / "run.launch.py"
@@ -104,6 +106,53 @@ def test_camera_publisher_loads_static_images_as_color_frames():
     )
 
     assert namespace["load_static_image"]("image.png") == "bgr-frame"
+
+
+def test_camera_publisher_extracts_translated_roi_with_clamped_source_bounds():
+    source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    extractor = _function(tree, "extract_translated_roi")
+    namespace = {}
+    exec(
+        compile(
+            ast.Module(body=[extractor], type_ignores=[]),
+            str(CAMERA_PUBLISHER_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+
+    image = np.arange(5 * 7, dtype=np.uint8).reshape(5, 7)
+    extract = namespace["extract_translated_roi"]
+
+    translated = extract(image, 1, 1, 3, 2, 2, 1)
+    assert translated.shape == (2, 3)
+    assert np.array_equal(translated, image[2:4, 3:6])
+    assert translated.flags["OWNDATA"]
+
+    clamped_top_left = extract(image, 1, 1, 3, 2, -100, -100)
+    assert np.array_equal(clamped_top_left, image[0:2, 0:3])
+
+    clamped_bottom_right = extract(image, 1, 1, 3, 2, 100, 100)
+    assert np.array_equal(clamped_bottom_right, image[3:5, 4:7])
+
+
+def test_camera_publisher_uses_source_slicing_for_static_translation():
+    source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+
+    for parameter in ("crop_x", "crop_y", "translate_x", "translate_y"):
+        assert f"declare_parameter('{parameter}'" in source
+    assert "extract_translated_roi" in source
+
+    for forbidden in (
+        "cv2.warpAffine",
+        "cv2.warpPerspective",
+        "cv2.remap",
+        "np.roll",
+        "BORDER_REPLICATE",
+        "BORDER_REFLECT",
+    ):
+        assert forbidden not in source
 
 
 def test_rtk_declares_and_reports_visual_correction_switch():
