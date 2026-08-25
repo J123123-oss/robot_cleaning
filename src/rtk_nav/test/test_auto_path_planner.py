@@ -184,6 +184,47 @@ class AutoPathPlannerTests(unittest.TestCase):
         self.assertLess(route.max_connector_length_m, 35.0)
         self.assertGreater(route.segments[-1].points[-1][0], 110.6477)
 
+    def test_e13_ends_near_next_bridge_at_one_meter_spacing(self):
+        map_path = REPOSITORY_ROOT / "auto_map_e12_e14.json"
+        if not map_path.exists():
+            self.skipTest("repository E12/E14 map fixture is not present")
+
+        model = load_map(json.loads(map_path.read_text(encoding="utf-8")))
+        route = plan_route(
+            model,
+            sweep_spacing=1.0,
+            edge_clearance=1.0,
+            max_connector=400.0,
+        )
+        bridge_index = next(
+            index
+            for index, segment in enumerate(route.segments)
+            if segment.connector_id == "bridge_13-14B"
+        )
+        e13_coverage = [
+            segment
+            for segment in route.segments[:bridge_index]
+            if segment.kind == "coverage" and segment.region_id == "E13"
+        ]
+        self.assertTrue(e13_coverage)
+
+        origin = model.boundary[0]
+        lon_scale = 111320.0 * math.cos(math.radians(origin[1]))
+        lat_scale = 110540.0
+        bridge_start = next(
+            connector.path[0]
+            for connector in model.connectors
+            if connector.id == "bridge_13-14B"
+        )
+        end_point = e13_coverage[-1].points[-1]
+        end_distance = math.hypot(
+            (end_point[0] - bridge_start[0]) * lon_scale,
+            (end_point[1] - bridge_start[1]) * lat_scale,
+        )
+
+        self.assertLess(end_distance, 8.0)
+        self.assertLess(route.segments[bridge_index - 1].length_m, 8.0)
+
     def test_e12_e14_map_uses_two_polygon_e13_with_gap_tolerance(self):
         map_path = REPOSITORY_ROOT / "auto_map_e12_e14.json"
         if not map_path.exists():
@@ -215,6 +256,59 @@ class AutoPathPlannerTests(unittest.TestCase):
         )
         self.assertEqual(e13_boundary["properties"]["edge_distance_lon"], [0.15, 0.5])
         self.assertEqual(e13_boundary["properties"]["edge_distance_lat"], [0.3, 0.3])
+
+    def test_v2_inherits_legacy_defaults_for_unconfigured_polygon_edges(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "defaulted",
+                    "polygons": [
+                        {"boundary": _ring([(0, 0), (10, 0), (10, 4), (0, 4)])}
+                    ],
+                }
+            ],
+            "order": ["defaulted"],
+        }
+
+        model = load_map(payload)
+
+        self.assertEqual(model.defaults.interval, 1.0)
+        self.assertEqual(model.defaults.start_corner, "top_left")
+        self.assertFalse(model.defaults.swap_wh_select)
+        self.assertEqual(model.defaults.edge_distance_lon, (0.1, 0.1))
+        self.assertEqual(model.defaults.edge_distance_lat, (0.1, 0.1))
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lon, (0.1, 0.1))
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lat, (0.1, 0.1))
+
+    def test_v2_defaults_can_override_legacy_values(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "defaults": {
+                "interval": 1.5,
+                "start_corner": "bottom_right",
+                "swap_wh_select": True,
+                "edge_distance_lon": 0.2,
+                "edge_distance_lat": [0.3, 0.4],
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "defaulted",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 4), (0, 4)]),
+                }
+            ],
+            "order": ["defaulted"],
+        }
+
+        model = load_map(payload)
+
+        self.assertEqual(model.defaults.interval, 1.5)
+        self.assertEqual(model.defaults.start_corner, "bottom_right")
+        self.assertTrue(model.defaults.swap_wh_select)
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lon, (0.2, 0.2))
+        self.assertEqual(model.regions[0].polygons[0].edge_distance_lat, (0.3, 0.4))
 
     def test_v2_accepts_named_four_corner_boundaries_and_point_objects(self):
         payload = {

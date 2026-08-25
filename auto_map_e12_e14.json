@@ -1,5 +1,12 @@
 {
   "format": "rtk_auto_map_v2",
+  "defaults": {
+    "interval": 1.0,
+    "start_corner": "top_left",
+    "swap_wh_select": false,
+    "edge_distance_lon": 0.1,
+    "edge_distance_lat": 0.1
+  },
   "guides": [
     [[110.6472, 35.6040], [110.6478, 35.6040]]
   ],

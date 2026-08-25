@@ -37,6 +37,17 @@ class Polygon:
 
 
 @dataclass(frozen=True)
+class PlannerDefaults:
+    """Legacy-compatible defaults inherited by unconfigured map regions."""
+
+    interval: float = 1.0
+    start_corner: str = "top_left"
+    swap_wh_select: bool = False
+    edge_distance_lon: Tuple[float, float] = (0.1, 0.1)
+    edge_distance_lat: Tuple[float, float] = (0.1, 0.1)
+
+
+@dataclass(frozen=True)
 class Region:
     """A logical cleaning region made from one or more polygons."""
 
@@ -64,6 +75,7 @@ class AutoMap:
     guides: Tuple[Tuple[Point, ...], ...]
     no_go: Tuple[Tuple[Point, ...], ...]
     start: Optional[Point]
+    defaults: PlannerDefaults = PlannerDefaults()
     regions: Tuple[Region, ...] = ()
     connectors: Tuple[Connector, ...] = ()
     order: Tuple[str, ...] = ()
@@ -361,11 +373,55 @@ def _parse_distance_pair(raw: Any, field: str) -> Tuple[float, float]:
     return distances
 
 
+def _parse_defaults(raw: Any) -> PlannerDefaults:
+    if raw is None:
+        return PlannerDefaults()
+    if not isinstance(raw, Mapping):
+        raise PlanningError("defaults must be an object")
+
+    raw_interval = raw.get("interval", PlannerDefaults.interval)
+    try:
+        interval = float(raw_interval)
+    except (TypeError, ValueError) as exc:
+        raise PlanningError("defaults.interval must be a positive number") from exc
+    if not math.isfinite(interval) or interval <= 0.0:
+        raise PlanningError("defaults.interval must be a positive number")
+
+    start_corner = raw.get("start_corner", PlannerDefaults.start_corner)
+    if not isinstance(start_corner, str) or start_corner not in {
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+    }:
+        raise PlanningError(
+            "defaults.start_corner must be top_left, top_right, bottom_left, or bottom_right"
+        )
+
+    swap_wh_select = raw.get("swap_wh_select", PlannerDefaults.swap_wh_select)
+    if not isinstance(swap_wh_select, bool):
+        raise PlanningError("defaults.swap_wh_select must be a boolean")
+
+    return PlannerDefaults(
+        interval=interval,
+        start_corner=start_corner,
+        swap_wh_select=swap_wh_select,
+        edge_distance_lon=_parse_distance_pair(
+            raw.get("edge_distance_lon", PlannerDefaults.edge_distance_lon),
+            "defaults.edge_distance_lon",
+        ),
+        edge_distance_lat=_parse_distance_pair(
+            raw.get("edge_distance_lat", PlannerDefaults.edge_distance_lat),
+            "defaults.edge_distance_lat",
+        ),
+    )
+
+
 def _parse_polygon(
     raw: Any,
     field: str,
-    default_edge_distance_lon: Tuple[float, float] = (0.0, 0.0),
-    default_edge_distance_lat: Tuple[float, float] = (0.0, 0.0),
+    default_edge_distance_lon: Tuple[float, float] = PlannerDefaults.edge_distance_lon,
+    default_edge_distance_lat: Tuple[float, float] = PlannerDefaults.edge_distance_lat,
 ) -> Polygon:
     if not isinstance(raw, Mapping):
         raise PlanningError(f"{field} must be an object")
@@ -377,12 +433,18 @@ def _parse_polygon(
         _close_ring(hole, f"{field}.holes[{index}]")
         for index, hole in enumerate(raw_holes)
     )
+    inherited_edge_distance_lon = (
+        default_edge_distance_lon if len(boundary) == 5 else (0.0, 0.0)
+    )
+    inherited_edge_distance_lat = (
+        default_edge_distance_lat if len(boundary) == 5 else (0.0, 0.0)
+    )
     edge_distance_lon = _parse_distance_pair(
-        raw.get("edge_distance_lon", default_edge_distance_lon),
+        raw.get("edge_distance_lon", inherited_edge_distance_lon),
         f"{field}.edge_distance_lon",
     )
     edge_distance_lat = _parse_distance_pair(
-        raw.get("edge_distance_lat", default_edge_distance_lat),
+        raw.get("edge_distance_lat", inherited_edge_distance_lat),
         f"{field}.edge_distance_lat",
     )
     polygon = Polygon(
@@ -395,7 +457,10 @@ def _parse_polygon(
     return polygon
 
 
-def _parse_regions(raw: Any) -> Tuple[Region, ...]:
+def _parse_regions(
+    raw: Any,
+    defaults: PlannerDefaults = PlannerDefaults(),
+) -> Tuple[Region, ...]:
     if isinstance(raw, Mapping):
         normalized = []
         for region_id, value in raw.items():
@@ -419,11 +484,11 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
         seen.add(region_id)
 
         region_edge_distance_lon = _parse_distance_pair(
-            value.get("edge_distance_lon", (0.0, 0.0)),
+            value.get("edge_distance_lon", defaults.edge_distance_lon),
             f"regions[{index}].edge_distance_lon",
         )
         region_edge_distance_lat = _parse_distance_pair(
-            value.get("edge_distance_lat", (0.0, 0.0)),
+            value.get("edge_distance_lat", defaults.edge_distance_lat),
             f"regions[{index}].edge_distance_lat",
         )
 
@@ -440,12 +505,33 @@ def _parse_regions(raw: Any) -> Tuple[Region, ...]:
             or not raw_polygons
         ):
             raise PlanningError(f"regions[{index}].polygons must not be empty")
+        has_explicit_polygon_edges = any(
+            isinstance(polygon, Mapping)
+            and (
+                "edge_distance_lon" in polygon
+                or "edge_distance_lat" in polygon
+            )
+            for polygon in raw_polygons
+        )
+        inherited_edge_distance_lon = region_edge_distance_lon
+        inherited_edge_distance_lat = region_edge_distance_lat
+        if (
+            len(raw_polygons) > 1
+            and "edge_distance_lon" not in value
+            and "edge_distance_lat" not in value
+            and not has_explicit_polygon_edges
+        ):
+            # A composite region often contains touching polygons. Applying
+            # an independent inset to every polygon would create artificial
+            # gaps and duplicate coverage along their shared edge.
+            inherited_edge_distance_lon = (0.0, 0.0)
+            inherited_edge_distance_lat = (0.0, 0.0)
         polygons = tuple(
             _parse_polygon(
                 polygon,
                 f"regions[{index}].polygons[{polygon_index}]",
-                region_edge_distance_lon,
-                region_edge_distance_lat,
+                inherited_edge_distance_lon,
+                inherited_edge_distance_lat,
             )
             for polygon_index, polygon in enumerate(raw_polygons)
         )
@@ -605,7 +691,9 @@ def load_map(source: JsonSource) -> AutoMap:
     """Load and validate a JSON map object or JSON file path."""
     payload = _read_json_source(source)
     if payload.get("format") == "rtk_auto_map_v2" or "regions" in payload:
-        regions = _parse_regions(payload.get("regions"))
+        raw_defaults = payload.get("defaults", payload.get("default"))
+        defaults = _parse_defaults(raw_defaults)
+        regions = _parse_regions(payload.get("regions"), defaults)
         raw_guides = payload.get("guides")
         if raw_guides is None:
             longest_edge = max(
@@ -634,11 +722,13 @@ def load_map(source: JsonSource) -> AutoMap:
             guides=guides,
             no_go=no_go,
             start=start,
+            defaults=defaults,
             regions=regions,
             connectors=connectors,
             order=order,
         )
 
+    defaults = _parse_defaults(payload.get("defaults", payload.get("default")))
     guides = _parse_guides(payload.get("guides"))
     boundary = _close_ring(payload.get("boundary"), "boundary")
 
@@ -657,6 +747,7 @@ def load_map(source: JsonSource) -> AutoMap:
         guides=guides,
         no_go=no_go,
         start=start,
+        defaults=defaults,
         regions=(Region("legacy", (Polygon(boundary, no_go),), start),),
         order=("legacy",),
         legacy=True,
@@ -1452,6 +1543,155 @@ def _serpentine_candidates(
     return unique_candidates
 
 
+def _beam_optimized_multi_polygon_segments(
+    map_data: AutoMap,
+    axis_angle: float,
+    local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
+    geometry: RotatedRegion,
+    max_connector: float,
+    connection_tolerance_m: float,
+    start_point: Optional[Point],
+    exit_point: Optional[Point],
+) -> Tuple[Tuple[LocalPoint, LocalPoint], ...]:
+    """Find a safe large-region ordering while keeping the search bounded."""
+    frame = _LocalFrame.from_map(map_data)
+    local_start = (
+        None
+        if start_point is None
+        else _rotate(frame.to_xy(start_point), axis_angle)
+    )
+    local_exit = (
+        None
+        if exit_point is None
+        else _rotate(frame.to_xy(exit_point), axis_angle)
+    )
+    segment_count = len(local_segments)
+    connector_cache: dict[Tuple[LocalPoint, LocalPoint], Optional[float]] = {}
+
+    def connector_length(
+        start: LocalPoint, end: LocalPoint
+    ) -> Optional[float]:
+        key = (start, end)
+        if key not in connector_cache:
+            connector_cache[key] = _safe_connector_length(
+                start,
+                end,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+            )
+        return connector_cache[key]
+
+    def segment_start(index: int, orientation: int) -> LocalPoint:
+        start, end = local_segments[index]
+        return start if orientation == 0 else end
+
+    def segment_end(index: int, orientation: int) -> LocalPoint:
+        start, end = local_segments[index]
+        return end if orientation == 0 else start
+
+    # State is (visited mask, last segment, orientation, max connector,
+    # total connector, selected segments). Keep enough alternatives to retain
+    # an exit-friendly ordering without turning this into factorial search.
+    beam_width = max(256, min(2048, segment_count * 64))
+    beam = []
+    for index in range(segment_count):
+        for orientation in (0, 1):
+            first = segment_start(index, orientation)
+            cost = 0.0 if local_start is None else connector_length(local_start, first)
+            if cost is None:
+                continue
+            beam.append(
+                (
+                    1 << index,
+                    index,
+                    orientation,
+                    cost,
+                    cost,
+                    ((first, segment_end(index, orientation)),),
+                )
+            )
+
+    if not beam:
+        raise PlanningError(
+            "no safe connector ordering between multi-polygon coverage segments"
+        )
+
+    def ranking(state):
+        _, last, orientation, longest, total, _ = state
+        tail = (
+            0.0
+            if local_exit is None
+            else connector_length(segment_end(last, orientation), local_exit)
+        )
+        # A missing tail is kept as a valid partial state, but ranked after
+        # states that can already reach the next bridge.
+        tail_rank = math.inf if tail is None else tail
+        return (longest, total, tail_rank)
+
+    beam.sort(key=ranking)
+    beam = beam[:beam_width]
+    for _ in range(1, segment_count):
+        next_states = {}
+        for mask, last, orientation, longest, total, selected in beam:
+            current_end = segment_end(last, orientation)
+            for next_index in range(segment_count):
+                if mask & (1 << next_index):
+                    continue
+                for next_orientation in (0, 1):
+                    next_start = segment_start(next_index, next_orientation)
+                    cost = connector_length(current_end, next_start)
+                    if cost is None:
+                        continue
+                    next_longest = max(longest, cost)
+                    next_total = total + cost
+                    next_mask = mask | (1 << next_index)
+                    next_state_key = (next_mask, next_index, next_orientation)
+                    candidate = (
+                        next_mask,
+                        next_index,
+                        next_orientation,
+                        next_longest,
+                        next_total,
+                        selected
+                        + ((next_start, segment_end(next_index, next_orientation)),),
+                    )
+                    previous = next_states.get(next_state_key)
+                    if previous is None or (
+                        next_longest,
+                        next_total,
+                    ) < (previous[3], previous[4]):
+                        next_states[next_state_key] = candidate
+
+        if not next_states:
+            raise PlanningError(
+                "no safe connector ordering between multi-polygon coverage segments"
+            )
+        beam = sorted(next_states.values(), key=ranking)[:beam_width]
+
+    best = None
+    best_metric = (math.inf, math.inf, math.inf)
+    for state in beam:
+        _, last, orientation, longest, total, selected = state
+        tail = (
+            0.0
+            if local_exit is None
+            else connector_length(segment_end(last, orientation), local_exit)
+        )
+        if tail is None:
+            continue
+        metric = (max(longest, tail), total + tail, tail)
+        if metric < best_metric:
+            best_metric = metric
+            best = selected
+
+    if best is None:
+        raise PlanningError(
+            "no safe connector ordering between multi-polygon coverage segments"
+        )
+    return tuple(best)
+
+
 def _optimized_multi_polygon_segments(
     map_data: AutoMap,
     axis_angle: float,
@@ -1462,16 +1702,30 @@ def _optimized_multi_polygon_segments(
     start_point: Optional[Point],
     exit_point: Optional[Point],
 ) -> Tuple[Tuple[LocalPoint, LocalPoint], ...]:
-    """Order a small multi-polygon sweep set by safe connector cost.
+    """Order a multi-polygon sweep set by safe connector cost.
 
     A polygon that extends from the main sweep body can otherwise become the
-    final scanline, forcing a long return to the next bridge. The bitmask
-    search is bounded to small regions; large regions retain the linear
-    serpentine planner.
+    final scanline, forcing a long return to the next bridge. The exact
+    bitmask search is retained for small regions and a bounded beam search
+    handles larger regions.
     """
     segment_count = len(local_segments)
     if segment_count > 16:
-        return tuple(local_segments)
+        try:
+            return _beam_optimized_multi_polygon_segments(
+                map_data,
+                axis_angle,
+                local_segments,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+                start_point,
+                exit_point,
+            )
+        except PlanningError:
+            # Preserve the proven linear route when beam pruning cannot retain
+            # a complete Hamiltonian ordering for a highly fragmented region.
+            return tuple(local_segments)
 
     frame = _LocalFrame.from_map(map_data)
     local_start = (
@@ -1559,7 +1813,7 @@ def _optimized_multi_polygon_segments(
                             parents[next_state] = state
 
     best_state = None
-    best_metric = (math.inf, math.inf)
+    best_metric = (math.inf, math.inf, math.inf)
     for last in range(segment_count):
         for orientation in (0, 1):
             state = (full_mask, last, orientation)
@@ -1576,6 +1830,7 @@ def _optimized_multi_polygon_segments(
             candidate_metric = (
                 max(current_metric[0], tail),
                 current_metric[1] + tail,
+                tail,
             )
             if candidate_metric < best_metric:
                 best_metric = candidate_metric
@@ -1806,16 +2061,24 @@ def plan_route(
             geometry, local_segments = _local_region_coverage_segments(
                 map_data, region, axis_angle, sweep_spacing, edge_clearance
             )
+            routing_geometry = geometry
+            if len(region.polygons) > 1:
+                # Edge offsets shape coverage lines, but travel between
+                # adjoining polygons must still be allowed on their original
+                # shared boundary.
+                _, routing_geometry = _rotated_region_geometry(
+                    map_data, region, axis_angle, apply_edge_distance=False
+                )
             _, attachment_geometry = _rotated_region_geometry(
                 map_data, region, axis_angle, apply_edge_distance=False
             )
             preserve_segment_order = False
-            if len(region.polygons) > 1 and len(local_segments) <= 16:
+            if len(region.polygons) > 1:
                 local_segments = _optimized_multi_polygon_segments(
                     map_data,
                     axis_angle,
                     local_segments,
-                    geometry,
+                    routing_geometry,
                     max_connector,
                     region.connection_tolerance_m,
                     start_point,
@@ -1828,7 +2091,7 @@ def plan_route(
                 local_segments,
                 max_connector,
                 region_id=region.id,
-                geometry=geometry,
+                geometry=routing_geometry,
                 start_point=start_point,
                 exit_point=exit_point,
                 order=order,
@@ -2081,7 +2344,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="auto map JSON file")
     parser.add_argument("--output", required=True, help="route JSON output file")
     parser.add_argument(
-        "--sweep-spacing", type=float, default=1.0, help="coverage line spacing in metres"
+        "--sweep-spacing",
+        type=float,
+        default=None,
+        help="coverage line spacing in metres (default: map interval or 1.0)",
     )
     parser.add_argument(
         "--edge-clearance", type=float, default=0.3, help="coverage edge clearance in metres"
@@ -2098,9 +2364,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     output_path = Path(args.output)
     try:
         map_data = load_map(args.input)
+        sweep_spacing = (
+            map_data.defaults.interval
+            if args.sweep_spacing is None
+            else args.sweep_spacing
+        )
         route = plan_route(
             map_data,
-            sweep_spacing=args.sweep_spacing,
+            sweep_spacing=sweep_spacing,
             edge_clearance=args.edge_clearance,
             max_connector=args.max_connector,
         )
