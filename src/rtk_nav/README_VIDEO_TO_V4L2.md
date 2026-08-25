@@ -33,12 +33,25 @@ ros2 run rtk_nav video_to_v4l2 \
   --width 640 \
   --height 480 \
   --fps 30 \
+  --speed 0.5 \
   --loop
 ```
 
 The output keeps the requested size. It preserves the source aspect ratio and
 center-crops the excess area, so the output has no black border and no
-non-uniform stretch.
+non-uniform stretch. `--speed 1.0` is normal speed, `--speed 2.0` is twice
+speed, and `--speed 0.5` is half speed.
+
+The replay process accepts single-key controls in the terminal where it is
+running:
+
+- Press `Space` or `p` to pause/resume.
+- Press `q` to quit.
+- Press `Ctrl-C` to stop.
+
+When paused, ffmpeg stops decoding and v4l2loopback repeats the last submitted
+frame with `sustain_framerate=1`. The ROS camera publisher therefore continues
+receiving a static image instead of a blank frame or a changing video frame.
 
 Then start the existing camera publisher in another terminal:
 
@@ -63,12 +76,24 @@ With `exclusive_caps=1`, `/dev/video0` may initially report an output-only
 capability. Start the replay process first; after `ffmpeg` opens the device, the
 camera publisher can read it as a capture device.
 
+If `/dev/video0` was created before this tool enabled `sustain_framerate=1`,
+stop the replay and all camera consumers, then recreate the virtual device:
+
+```bash
+sudo modprobe -r v4l2loopback
+```
+
+Run that command only when `/dev/video0` is the virtual loopback device. Do not
+unload a physical camera driver. The next replay command will load
+`v4l2loopback` again with the frame-sustain option.
+
 ## Options
 
 - `--video`: recorded video path, required.
 - `--device`: V4L2 output device, default `/dev/video0`.
 - `--width`, `--height`: fixed output dimensions, defaults `640` and `480`.
 - `--fps`: output frame rate, default `30`.
+- `--speed`: playback speed multiplier, default `1.0`.
 - `--loop`: restart the video when it reaches the end.
 - `--no-create-device`: require the V4L2 device to already exist.
 

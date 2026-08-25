@@ -5,6 +5,7 @@
 
 import importlib.util
 import subprocess
+import types
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,12 @@ class VideoToV4L2ContractTest(unittest.TestCase):
         self.assertEqual(args.fps, 30)
         self.assertFalse(args.loop)
         self.assertTrue(args.create_device)
+        self.assertEqual(args.speed, 1.0)
+
+        fast_args = module.parse_args(
+            ["--video", "recorded.mp4", "--speed", "2.5"]
+        )
+        self.assertEqual(fast_args.speed, 2.5)
 
     def test_parse_args_rejects_non_positive_output_settings(self):
         module = _load_module()
@@ -45,6 +52,10 @@ class VideoToV4L2ContractTest(unittest.TestCase):
             module.parse_args(["--video", "recorded.mp4", "--fps", "0"])
         with self.assertRaises(SystemExit):
             module.parse_args(["--video", "recorded.mp4", "--width", "641"])
+        with self.assertRaises(SystemExit):
+            module.parse_args(["--video", "recorded.mp4", "--speed", "0"])
+        with self.assertRaises(SystemExit):
+            module.parse_args(["--video", "recorded.mp4", "--speed", "-0.5"])
 
     def test_build_ffmpeg_command_scales_and_crops_without_blank_or_stretched_edges(self):
         module = _load_module()
@@ -60,6 +71,8 @@ class VideoToV4L2ContractTest(unittest.TestCase):
                 "720",
                 "--fps",
                 "25",
+                "--speed",
+                "2.5",
                 "--loop",
             ]
         )
@@ -75,9 +88,11 @@ class VideoToV4L2ContractTest(unittest.TestCase):
                 "warning",
             ],
         )
+        self.assertEqual(command[4:6], ["-readrate", "2.5"])
+        self.assertNotIn("-re", command)
         self.assertEqual(
-            ["-re", "-stream_loop", "-1", "-i", "recorded file.mp4"],
-            command[4:9],
+            ["-readrate", "2.5", "-stream_loop", "-1", "-i", "recorded file.mp4"],
+            command[4:10],
         )
         self.assertIn(
             "scale=1280:720:force_original_aspect_ratio=increase,"
@@ -125,6 +140,49 @@ class VideoToV4L2ContractTest(unittest.TestCase):
                 is_root=lambda: True,
             )
 
+    def test_ensure_v4l2_device_enables_sustained_last_frame(self):
+        module = _load_module()
+        commands = []
+        device_exists = [False]
+
+        def command_runner(command, check):
+            self.assertTrue(check)
+            commands.append(command)
+            device_exists[0] = True
+
+        module.ensure_v4l2_device(
+            "/dev/video0",
+            command_runner=command_runner,
+            path_exists=lambda _: device_exists[0],
+            executable_finder=lambda name: f"/usr/bin/{name}",
+            is_root=lambda: True,
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("sustain_framerate=1", commands[0])
+
+    def test_set_process_paused_sends_stop_and_continue(self):
+        module = _load_module()
+
+        class FakeProcess:
+            def __init__(self):
+                self.signals = []
+
+            def send_signal(self, value):
+                self.signals.append(value)
+
+        process = FakeProcess()
+        original_signal = module.signal
+        module.signal = types.SimpleNamespace(SIGSTOP="STOP", SIGCONT="CONT")
+        try:
+            module.set_process_paused(process, True)
+            module.set_process_paused(process, False)
+        finally:
+            module.signal = original_signal
+
+        self.assertEqual(process.signals, ["STOP", "CONT"])
+
     def test_setup_registers_video_to_v4l2_console_script(self):
         setup_source = SETUP_PATH.read_text(encoding="utf-8")
 
@@ -140,3 +198,7 @@ class VideoToV4L2ContractTest(unittest.TestCase):
         self.assertIn("ros2 run rtk_nav video_to_v4l2", readme_source)
         self.assertIn("ros2 run rtk_nav camera_publisher_node", readme_source)
         self.assertIn("/camera/color/image_raw", readme_source)
+        self.assertIn("--speed", readme_source)
+        self.assertIn("Space", readme_source)
+        self.assertIn("sustain_framerate=1", readme_source)
+        self.assertIn("modprobe -r v4l2loopback", readme_source)
