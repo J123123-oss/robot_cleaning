@@ -29,6 +29,7 @@ from rtk_nav.auto_path_planner import (  # noqa: E402
 from rtk_nav.auto_path_planner import (  # noqa: E402
     Route,
     Segment,
+    _bridge_attachment_connector,
     _rotated_region_geometry,
 )
 
@@ -463,6 +464,66 @@ class AutoPathPlannerTests(unittest.TestCase):
         coverage = [segment for segment in route.segments if segment.kind == "coverage"]
         self.assertTrue(coverage)
         self.assertEqual({segment.region_id for segment in coverage}, {"E9", "E10"})
+
+    def test_bridge_attachments_prefer_one_safe_diagonal_segment(self):
+        payload = _bridge_entry_map()
+        payload["connectors"][0]["path"] = [
+            _metric_point(8.0, 10.7),
+            _metric_point(8.0, 9.3),
+        ]
+        route = plan_route(
+            load_map(payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        bridge_index = next(
+            index
+            for index, segment in enumerate(route.segments)
+            if segment.connector_id == "bridge_9-10B"
+        )
+
+        for attachment in (
+            route.segments[bridge_index - 1],
+            route.segments[bridge_index + 1],
+        ):
+            self.assertEqual(attachment.kind, "connector")
+            self.assertEqual(len(attachment.points), 2)
+            first_x, first_y = _metric_xy(attachment.points[0])
+            second_x, second_y = _metric_xy(attachment.points[1])
+            self.assertGreater(abs(second_x - first_x), 1e-6)
+            self.assertGreater(abs(second_y - first_y), 1e-6)
+
+    def test_bridge_attachment_falls_back_when_diagonal_crosses_hole(self):
+        boundary = (
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+            (0.0, 10.0),
+            (0.0, 0.0),
+        )
+        hole = (
+            (4.0, 4.0),
+            (6.0, 4.0),
+            (6.0, 6.0),
+            (4.0, 6.0),
+            (4.0, 4.0),
+        )
+        geometry = ((boundary, (hole,)),)
+
+        path = _bridge_attachment_connector(
+            (2.0, 2.0),
+            (8.0, 8.0),
+            geometry,
+            max_connector=20.0,
+        )
+
+        self.assertGreater(len(path), 2)
+        for first, second in zip(path, path[1:]):
+            self.assertTrue(
+                math.isclose(first[0], second[0], abs_tol=1e-9)
+                or math.isclose(first[1], second[1], abs_tol=1e-9)
+            )
 
     def test_hole_connectors_are_orthogonal(self):
         route = plan_route(

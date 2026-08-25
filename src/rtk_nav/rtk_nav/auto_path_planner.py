@@ -1228,6 +1228,32 @@ def _safe_connector_length(
         return None
 
 
+def _bridge_attachment_connector(
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+    max_connector: float,
+    connection_tolerance_m: float = 0.0,
+) -> Tuple[LocalPoint, ...]:
+    """Prefer one safe direct bridge attachment, then use the grid fallback."""
+    if _local_distance(start, end) <= EPSILON:
+        return (start,)
+
+    direct_length = _local_distance(start, end)
+    if direct_length <= max_connector + EPSILON and _line_is_allowed_region(
+        start, end, geometry, connection_tolerance_m
+    ):
+        return (start, end)
+
+    return _find_region_connector(
+        start,
+        end,
+        geometry,
+        max_connector,
+        connection_tolerance_m,
+    )
+
+
 def _path_length(points: Sequence[LocalPoint]) -> float:
     return sum(_local_distance(first, second) for first, second in zip(points, points[1:]))
 
@@ -1623,6 +1649,7 @@ def _route_from_local_segments(
     preserve_segment_order: bool = False,
     connection_tolerance_m: float = 0.0,
     attachment_geometry: Optional[RotatedRegion] = None,
+    prefer_diagonal_attachment: bool = False,
 ) -> Route:
     if geometry is None:
         frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
@@ -1653,12 +1680,22 @@ def _route_from_local_segments(
             raise PlanningError("start is outside the usable map area")
         first_start = ordered_segments[0][0]
         if _local_distance(start_local, first_start) > EPSILON:
-            connector = _find_region_connector(
-                start_local,
-                first_start,
-                attachment_geometry,
-                max_connector,
-                connection_tolerance_m,
+            connector = (
+                _bridge_attachment_connector(
+                    start_local,
+                    first_start,
+                    attachment_geometry,
+                    max_connector,
+                    connection_tolerance_m,
+                )
+                if prefer_diagonal_attachment
+                else _find_region_connector(
+                    start_local,
+                    first_start,
+                    attachment_geometry,
+                    max_connector,
+                    connection_tolerance_m,
+                )
             )
             connector_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in connector
@@ -1755,6 +1792,7 @@ def plan_route(
         if item in regions:
             region = regions[item]
             start_point = pending_entry
+            prefer_diagonal_attachment = pending_entry is not None
             if start_point is None:
                 start_point = region.start
             if index == 0 and map_data.start is not None:
@@ -1797,6 +1835,7 @@ def plan_route(
                 preserve_segment_order=preserve_segment_order,
                 connection_tolerance_m=region.connection_tolerance_m,
                 attachment_geometry=attachment_geometry,
+                prefer_diagonal_attachment=prefer_diagonal_attachment,
             )
             output.extend(region_route.segments)
             max_connector_length = max(
@@ -1828,7 +1867,7 @@ def plan_route(
         previous_end = output[-1].points[-1]
         previous_end_local = _rotate(frame.to_xy(previous_end), axis_angle)
         if _local_distance(previous_end_local, connector_start_local) > EPSILON:
-            attach = _find_region_connector(
+            attach = _bridge_attachment_connector(
                 previous_end_local,
                 connector_start_local,
                 source_geometry,
