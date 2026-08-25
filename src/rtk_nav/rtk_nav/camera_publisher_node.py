@@ -20,6 +20,36 @@ def load_static_image(image_path):
     return frame
 
 
+def extract_translated_roi(
+    source,
+    crop_x,
+    crop_y,
+    output_width,
+    output_height,
+    translate_x,
+    translate_y,
+):
+    """Extract a fixed-size ROI using only valid pixels from the source image."""
+    source_height, source_width = source.shape[:2]
+    output_width = int(output_width)
+    output_height = int(output_height)
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("output image dimensions must be positive")
+    if output_width > source_width or output_height > source_height:
+        raise ValueError("source image is smaller than the requested output")
+
+    max_x = source_width - output_width
+    max_y = source_height - output_height
+    origin_x = int(round(float(crop_x) + float(translate_x)))
+    origin_y = int(round(float(crop_y) + float(translate_y)))
+    origin_x = max(0, min(max_x, origin_x))
+    origin_y = max(0, min(max_y, origin_y))
+    return source[
+        origin_y:origin_y + output_height,
+        origin_x:origin_x + output_width,
+    ].copy()
+
+
 class CameraPublisherNode(Node):
     def __init__(self):
         super().__init__('camera_publisher')
@@ -30,6 +60,10 @@ class CameraPublisherNode(Node):
         self.declare_parameter('height', 480)
         self.declare_parameter('fps', 30)
         self.declare_parameter('image_path', '')
+        self.declare_parameter('crop_x', 0)
+        self.declare_parameter('crop_y', 0)
+        self.declare_parameter('translate_x', 0)
+        self.declare_parameter('translate_y', 0)
         self.declare_parameter('pixel_format', '')
         self.declare_parameter('use_gstreamer', True)
         self.declare_parameter('io_mode', 0)
@@ -39,6 +73,10 @@ class CameraPublisherNode(Node):
         self.height = self.get_parameter('height').get_parameter_value().integer_value
         self.fps = self.get_parameter('fps').get_parameter_value().integer_value
         self.image_path = self.get_parameter('image_path').get_parameter_value().string_value
+        self.crop_x = self.get_parameter('crop_x').get_parameter_value().integer_value
+        self.crop_y = self.get_parameter('crop_y').get_parameter_value().integer_value
+        self.translate_x = self.get_parameter('translate_x').get_parameter_value().integer_value
+        self.translate_y = self.get_parameter('translate_y').get_parameter_value().integer_value
         self.pixel_format = self.get_parameter('pixel_format').get_parameter_value().string_value
         self.use_gstreamer = self.get_parameter('use_gstreamer').get_parameter_value().bool_value
         self.io_mode = self.get_parameter('io_mode').get_parameter_value().integer_value
@@ -51,6 +89,15 @@ class CameraPublisherNode(Node):
 
         if self.image_path:
             self.static_frame = load_static_image(self.image_path)
+            extract_translated_roi(
+                self.static_frame,
+                self.crop_x,
+                self.crop_y,
+                self.width,
+                self.height,
+                self.translate_x,
+                self.translate_y,
+            )
             actual_height, actual_width = self.static_frame.shape[:2]
             actual_fps = self.fps
             self.get_logger().info(f"使用静态图片: {self.image_path}")
@@ -131,7 +178,15 @@ class CameraPublisherNode(Node):
     def timer_callback(self):
         """定时器回调函数"""
         if self.static_frame is not None:
-            frame = self.static_frame
+            frame = extract_translated_roi(
+                self.static_frame,
+                self.crop_x,
+                self.crop_y,
+                self.width,
+                self.height,
+                self.translate_x,
+                self.translate_y,
+            )
         else:
             # 读取摄像头帧
             ret, frame = self.cap.read()
