@@ -183,6 +183,156 @@ class VideoToV4L2ContractTest(unittest.TestCase):
 
         self.assertEqual(process.signals, ["STOP", "CONT"])
 
+    def test_terminal_controller_restores_terminal_state_idempotently(self):
+        module = _load_module()
+        termios_calls = []
+        signal_calls = []
+
+        class FakeStream:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                return 7
+
+        class FakeTermios:
+            TCSADRAIN = "drain"
+            TCSANOW = "now"
+
+            @staticmethod
+            def tcgetattr(fd):
+                self.assertEqual(fd, 7)
+                return ["original-settings"]
+
+            @staticmethod
+            def tcsetattr(fd, when, settings):
+                termios_calls.append((fd, when, settings))
+
+        class FakeTTY:
+            @staticmethod
+            def setcbreak(fd):
+                self.assertEqual(fd, 7)
+
+        class FakeSignals:
+            SIGINT = "int"
+            SIGTERM = "term"
+            SIGHUP = "hup"
+
+            @staticmethod
+            def getsignal(value):
+                return f"previous-{value}"
+
+            @staticmethod
+            def signal(value, handler):
+                signal_calls.append((value, handler))
+
+        class FakeAtexit:
+            @staticmethod
+            def register(handler):
+                self.assertTrue(callable(handler))
+
+            @staticmethod
+            def unregister(handler):
+                self.assertTrue(callable(handler))
+
+        originals = (module.termios, module.tty, module.signal, module.atexit)
+        module.termios = FakeTermios
+        module.tty = FakeTTY
+        module.signal = FakeSignals
+        module.atexit = FakeAtexit
+        try:
+            with module._TerminalController(FakeStream()) as terminal:
+                self.assertTrue(terminal.enabled)
+                with self.assertRaises(KeyboardInterrupt):
+                    terminal._handle_signal(FakeSignals.SIGINT, None)
+            terminal.restore()
+        finally:
+            module.termios, module.tty, module.signal, module.atexit = originals
+
+        self.assertEqual(
+            termios_calls,
+            [(7, "drain", ["original-settings"])],
+        )
+        self.assertGreaterEqual(len(signal_calls), 6)
+
+    def test_terminal_controller_repairs_preexisting_broken_terminal(self):
+        module = _load_module()
+        termios_calls = []
+
+        class FakeStream:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                return 7
+
+        class FakeTermios:
+            TCSADRAIN = "drain"
+            TCSANOW = "now"
+            ICANON = 0x0002
+            ECHO = 0x0008
+            ISIG = 0x0001
+            IEXTEN = 0x8000
+            OPOST = 0x0001
+
+            @staticmethod
+            def tcgetattr(fd):
+                self.assertEqual(fd, 7)
+                return [0, 0, 0, 0, 0, 0, []]
+
+            @staticmethod
+            def tcsetattr(fd, when, settings):
+                termios_calls.append((fd, when, settings))
+
+        class FakeTTY:
+            @staticmethod
+            def setcbreak(fd):
+                self.assertEqual(fd, 7)
+
+        class FakeSignals:
+            SIGINT = "int"
+            SIGTERM = "term"
+            SIGHUP = "hup"
+
+            @staticmethod
+            def getsignal(value):
+                return f"previous-{value}"
+
+            @staticmethod
+            def signal(_value, _handler):
+                return None
+
+        class FakeAtexit:
+            @staticmethod
+            def register(_handler):
+                return None
+
+            @staticmethod
+            def unregister(_handler):
+                return None
+
+        originals = (module.termios, module.tty, module.signal, module.atexit)
+        module.termios = FakeTermios
+        module.tty = FakeTTY
+        module.signal = FakeSignals
+        module.atexit = FakeAtexit
+        try:
+            with module._TerminalController(FakeStream()):
+                pass
+        finally:
+            module.termios, module.tty, module.signal, module.atexit = originals
+
+        self.assertEqual(
+            termios_calls,
+            [
+                (
+                    7,
+                    "drain",
+                    [0, 1, 0, FakeTermios.ICANON | FakeTermios.ECHO | FakeTermios.ISIG | FakeTermios.IEXTEN, 0, 0, []],
+                )
+            ],
+        )
+
     def test_setup_registers_video_to_v4l2_console_script(self):
         setup_source = SETUP_PATH.read_text(encoding="utf-8")
 

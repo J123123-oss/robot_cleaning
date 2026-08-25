@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import math
 import os
 import select
@@ -225,6 +226,9 @@ class _TerminalController:
         self.enabled = False
         self._fd = None
         self._settings = None
+        self._restore_settings = None
+        self._previous_handlers = {}
+        self._atexit_registered = False
 
     def __enter__(self):
         if termios is None or tty is None or not self.stream.isatty():
@@ -233,16 +237,79 @@ class _TerminalController:
         self._fd = self.stream.fileno()
         try:
             self._settings = termios.tcgetattr(self._fd)
+            self._restore_settings = self._settings_for_exit(self._settings)
+            atexit.register(self.restore)
+            self._atexit_registered = True
+            for signal_name in ("SIGINT", "SIGTERM", "SIGHUP"):
+                signal_value = getattr(signal, signal_name, None)
+                if signal_value is not None:
+                    self._previous_handlers[signal_value] = signal.getsignal(
+                        signal_value
+                    )
+                    signal.signal(signal_value, self._handle_signal)
             tty.setcbreak(self._fd)
             self.enabled = True
         except (OSError, ValueError):
-            self._fd = None
-            self._settings = None
+            self.restore()
         return self
 
+    @staticmethod
+    def _settings_for_exit(settings):
+        """Repair a terminal left broken by an older interrupted run."""
+        if len(settings) < 4:
+            return settings
+
+        local_flags = settings[3]
+        canonical = getattr(termios, "ICANON", 0)
+        echo = getattr(termios, "ECHO", 0)
+        if not (
+            (canonical and not local_flags & canonical)
+            or (echo and not local_flags & echo)
+        ):
+            return settings
+
+        recovered = list(settings)
+        for flag_name in ("ICANON", "ECHO", "ISIG", "IEXTEN"):
+            recovered[3] |= getattr(termios, flag_name, 0)
+        if len(recovered) > 1:
+            recovered[1] |= getattr(termios, "OPOST", 0)
+        return recovered
+
     def __exit__(self, _exc_type, _exc_value, _traceback):
-        if self._settings is not None and self._fd is not None:
-            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._settings)
+        self.restore()
+
+    def _handle_signal(self, signal_value, _frame):
+        """Restore the terminal before propagating an external stop signal."""
+        self.restore()
+        if signal_value == getattr(signal, "SIGINT", None):
+            raise KeyboardInterrupt
+        raise SystemExit(128 + signal_value)
+
+    def restore(self):
+        """Restore terminal and signal state; safe to call more than once."""
+        if self._restore_settings is not None and self._fd is not None:
+            try:
+                termios.tcsetattr(
+                    self._fd, termios.TCSADRAIN, self._restore_settings
+                )
+            except (OSError, ValueError):
+                try:
+                    termios.tcsetattr(
+                        self._fd, termios.TCSANOW, self._restore_settings
+                    )
+                except (OSError, ValueError):
+                    pass
+
+        if self._atexit_registered:
+            atexit.unregister(self.restore)
+            self._atexit_registered = False
+
+        for signal_value, previous_handler in self._previous_handlers.items():
+            signal.signal(signal_value, previous_handler)
+        self._previous_handlers = {}
+        self._settings = None
+        self._restore_settings = None
+        self._fd = None
         self.enabled = False
 
     def read_key(self, timeout: float = 0.1) -> Optional[str]:

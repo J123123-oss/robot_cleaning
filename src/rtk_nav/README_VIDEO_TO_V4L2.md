@@ -99,3 +99,10 @@ unload a physical camera driver. The next replay command will load
 
 Stop the replay with `Ctrl-C`. If the device is busy, stop any previous replay
 process before starting another one.
+
+If an older version is forcibly terminated and the shell no longer echoes
+input, type the following command and press Enter:
+
+```bash
+stty sane
+```
