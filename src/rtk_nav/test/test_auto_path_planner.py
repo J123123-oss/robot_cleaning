@@ -18,6 +18,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from rtk_nav.auto_path_planner import (  # noqa: E402
     PlanningError,
+    convert_legacy_yaml_to_map,
     extract_scanline_intervals,
     estimate_axis_angle,
     load_map,
@@ -25,6 +26,8 @@ from rtk_nav.auto_path_planner import (  # noqa: E402
     plan_route,
     route_to_geojson,
     route_to_json,
+    route_to_txt,
+    yaml as planner_yaml,
 )
 from rtk_nav.auto_path_planner import (  # noqa: E402
     Route,
@@ -147,7 +150,110 @@ def _bridge_entry_map():
     }
 
 
+def _connector_boundary_offset_map():
+    return {
+        "format": "rtk_auto_map_v2",
+        "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+        "regions": [
+            {
+                "id": "source",
+                "polygons": [
+                    {"boundary": _ring([(0, 0), (10, 0), (10, 4), (0, 4)])}
+                ],
+            },
+            {
+                "id": "destination",
+                "polygons": [
+                    {"boundary": _ring([(0, 6), (10, 6), (10, 10), (0, 10)])}
+                ],
+            },
+        ],
+        "connectors": [
+            {
+                "id": "bridge-source-destination",
+                "from": "source",
+                "to": "destination",
+                "path": [
+                    _metric_point(10, 4),
+                    _metric_point(10, 5),
+                    _metric_point(9, 6),
+                ],
+            }
+        ],
+        "order": ["source", "bridge-source-destination", "destination"],
+    }
+
+
 class AutoPathPlannerTests(unittest.TestCase):
+    def test_route_to_txt_keeps_corners_and_interpolates_long_segments(self):
+        route = Route(
+            axis_angle_rad=0.0,
+            segments=(
+                Segment(
+                    kind="coverage",
+                    points=(_metric_point(0.0, 0.0), _metric_point(40.0, 0.0), _metric_point(40.0, 20.0)),
+                    length_m=60.0,
+                    region_id="E14",
+                ),
+            ),
+            total_length_m=60.0,
+            max_connector_length_m=0.0,
+        )
+
+        document = route_to_txt(route)
+        lines = document.splitlines()
+        self.assertEqual(lines[0], "序号,经度,纬度,航向角(度)")
+        rows = [line.split(",") for line in lines[1:] if not line.startswith("#")]
+        points = [(float(row[1]), float(row[2])) for row in rows]
+        headings = [float(row[3]) for row in rows]
+
+        self.assertEqual(len(points), 6)
+        self.assertTrue(
+            math.isclose(_metric_xy(points[0])[0], 0.0, abs_tol=0.001)
+        )
+        self.assertTrue(
+            any(
+                math.isclose(_metric_xy(point)[0], 40.0, abs_tol=0.001)
+                and math.isclose(_metric_xy(point)[1], 0.0, abs_tol=0.001)
+                for point in points
+            )
+        )
+        self.assertTrue(
+            math.isclose(_metric_xy(points[-1])[0], 40.0, abs_tol=0.001)
+        )
+        self.assertTrue(
+            math.isclose(_metric_xy(points[-1])[1], 20.0, abs_tol=0.001)
+        )
+        self.assertAlmostEqual(headings[0], 90.0, places=3)
+        self.assertAlmostEqual(headings[3], 0.0, places=3)
+        self.assertAlmostEqual(headings[-1], headings[-2], places=3)
+
+        distances = [
+            math.hypot(
+                _metric_xy(first)[0] - _metric_xy(second)[0],
+                _metric_xy(first)[1] - _metric_xy(second)[1],
+            )
+            for first, second in zip(points, points[1:])
+        ]
+        self.assertLessEqual(max(distances), 15.0 + 1e-6)
+
+    def test_route_to_txt_rejects_non_positive_spacing(self):
+        route = Route(
+            axis_angle_rad=0.0,
+            segments=(
+                Segment(
+                    kind="coverage",
+                    points=(_metric_point(0.0, 0.0), _metric_point(1.0, 0.0)),
+                    length_m=1.0,
+                ),
+            ),
+            total_length_m=1.0,
+            max_connector_length_m=0.0,
+        )
+
+        with self.assertRaises(PlanningError):
+            route_to_txt(route, point_spacing=0.0)
+
     def test_e9_e11_map_models_long_blocks_and_bridge_endpoints(self):
         map_path = REPOSITORY_ROOT / "auto_map_e9_e11.json"
         if not map_path.exists():
@@ -168,19 +274,33 @@ class AutoPathPlannerTests(unittest.TestCase):
                 for index, segment in enumerate(route.segments)
                 if segment.connector_id == connector.id
             )
-            self.assertEqual(route.segments[bridge_index].points[0], connector.path[0])
-            self.assertEqual(route.segments[bridge_index].points[-1], connector.path[-1])
-            self.assertEqual(route.segments[bridge_index - 1].points[-1], connector.path[0])
-            self.assertEqual(route.segments[bridge_index + 1].points[0], connector.path[-1])
+            bridge_segment = route.segments[bridge_index]
+            self.assertEqual(
+                route.segments[bridge_index - 1].points[-1],
+                bridge_segment.points[0],
+            )
+            self.assertEqual(
+                route.segments[bridge_index + 1].points[0],
+                bridge_segment.points[-1],
+            )
+            self.assertIsNone(bridge_segment.region_id)
+
+        first_bridge = next(
+            segment
+            for segment in route.segments
+            if segment.connector_id == "bridge_9-10B"
+        )
+        self.assertNotEqual(first_bridge.points[0], model.connectors[0].path[0])
 
         e10_bridge_index = next(
             index
             for index, segment in enumerate(route.segments)
             if segment.connector_id == "bridge_10A-11B"
         )
-        e10_internal_attach = route.segments[e10_bridge_index - 1]
-        self.assertEqual(e10_internal_attach.region_id, "E10")
-        self.assertLess(e10_internal_attach.length_m, 15.0)
+        e10_bridge = route.segments[e10_bridge_index]
+        self.assertIsNone(e10_bridge.region_id)
+        self.assertEqual(route.segments[e10_bridge_index - 1].kind, "coverage")
+        self.assertEqual(route.segments[e10_bridge_index + 1].kind, "coverage")
         self.assertLess(route.max_connector_length_m, 35.0)
         self.assertGreater(route.segments[-1].points[-1][0], 110.6477)
 
@@ -223,7 +343,10 @@ class AutoPathPlannerTests(unittest.TestCase):
         )
 
         self.assertLess(end_distance, 8.0)
-        self.assertLess(route.segments[bridge_index - 1].length_m, 8.0)
+        self.assertEqual(
+            route.segments[bridge_index - 1].points[-1],
+            route.segments[bridge_index].points[0],
+        )
 
     def test_e12_e14_map_uses_two_polygon_e13_with_gap_tolerance(self):
         map_path = REPOSITORY_ROOT / "auto_map_e12_e14.json"
@@ -248,6 +371,14 @@ class AutoPathPlannerTests(unittest.TestCase):
         self.assertTrue(any(segment.kind == "coverage" for segment in route.segments))
         self.assertLess(route.max_connector_length_m, 50.0)
         geojson = json.loads(route_to_geojson(route, model))
+        bridge_feature = next(
+            feature
+            for feature in geojson["features"]
+            if feature["properties"].get("connector_id") == "bridge_12-13B"
+            and feature["properties"].get("kind") == "bridge"
+        )
+        self.assertEqual(bridge_feature["properties"]["edge_distance_lon"], [0.1, 0.1])
+        self.assertEqual(bridge_feature["properties"]["edge_distance_lat"], [0.1, -1.0])
         e13_boundary = next(
             feature
             for feature in geojson["features"]
@@ -255,7 +386,296 @@ class AutoPathPlannerTests(unittest.TestCase):
             and feature["properties"].get("polygon_index") == 0
         )
         self.assertEqual(e13_boundary["properties"]["edge_distance_lon"], [0.15, 0.5])
-        self.assertEqual(e13_boundary["properties"]["edge_distance_lat"], [0.3, 0.3])
+        self.assertEqual(
+            e13_boundary["properties"]["edge_distance_lat"],
+            list(regions["E13"].polygons[0].edge_distance_lat),
+        )
+
+    def test_multi_polygon_coverage_completes_each_polygon_once(self):
+        map_path = REPOSITORY_ROOT / "auto_map_e12_e14.json"
+        if not map_path.exists():
+            self.skipTest("repository E12/E14 map fixture is not present")
+
+        model = load_map(json.loads(map_path.read_text(encoding="utf-8")))
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=1.0,
+            max_connector=50.0,
+        )
+        e13 = next(region for region in model.regions if region.id == "E13")
+        bounds = [
+            (
+                min(point[0] for point in polygon.boundary),
+                max(point[0] for point in polygon.boundary),
+            )
+            for polygon in e13.polygons
+        ]
+
+        labels = []
+        coverage_segments = []
+        for segment in route.segments:
+            if segment.kind != "coverage" or segment.region_id != "E13":
+                continue
+            coverage_segments.append(segment)
+            midpoint = (
+                sum(point[0] for point in segment.points) / len(segment.points),
+                sum(point[1] for point in segment.points) / len(segment.points),
+            )
+            polygon_index = next(
+                index
+                for index, (left, right) in enumerate(bounds)
+                if left - 1e-10 <= midpoint[0] <= right + 1e-10
+            )
+            labels.append(polygon_index)
+
+        self.assertTrue(labels)
+        self.assertEqual(set(labels), set(range(len(e13.polygons))))
+        unique_segments = {
+            tuple(
+                sorted(
+                    tuple(round(value, 12) for value in point)
+                    for point in segment.points
+                )
+            )
+            for segment in coverage_segments
+        }
+        self.assertEqual(len(unique_segments), len(coverage_segments))
+        transitions = sum(
+            first != second for first, second in zip(labels, labels[1:])
+        )
+        self.assertEqual(transitions, len(e13.polygons) - 1)
+        for polygon_index in range(len(e13.polygons)):
+            first = labels.index(polygon_index)
+            last = len(labels) - 1 - labels[::-1].index(polygon_index)
+            self.assertEqual(
+                labels[first : last + 1],
+                [polygon_index] * (last - first + 1),
+            )
+
+    @unittest.skipIf(planner_yaml is None, "PyYAML is not installed")
+    def test_003_e12_e14_yaml_converts_rectangles_and_full_connector_order(self):
+        yaml_path = (
+            REPOSITORY_ROOT
+            / "src"
+            / "rtk_nav"
+            / "rtk_nav"
+            / "config"
+            / "003-E12-E14.yaml"
+        )
+
+        payload = convert_legacy_yaml_to_map(yaml_path)
+        self.assertEqual(payload["format"], "rtk_auto_map_v2")
+        self.assertIn("guides", payload)
+        self.assertEqual(len(payload["guides"]), 1)
+        self.assertEqual(len(payload["guides"][0]), 2)
+        self.assertEqual(
+            [region["id"] for region in payload["regions"]],
+            ["E12", "E13", "E14"],
+        )
+        self.assertEqual(
+            [region.get("guide") for region in payload["regions"]],
+            ["horizontal", "horizontal", "horizontal"],
+        )
+        self.assertEqual(len(payload["regions"][1]["polygons"]), 2)
+        self.assertNotIn("travel_segments", payload)
+        self.assertEqual(
+            [item["id"] for item in payload["connectors"]],
+            [
+                "bridge_5B-6B",
+                "bridge_6A-7bB",
+                "bridge_7bA-7A",
+                "bridge_8B-9A",
+                "bridge_10A-11B",
+                "bridge_11A-12B",
+                "bridge_12-13B",
+                "bridge_13-14B",
+                "back_14B-13A_stop",
+                "back_13B-12A",
+                "back_12B-11A",
+                "back_11B-10A",
+                "back_9A-8B",
+                "back_7A-7bA",
+                "back_7bB-6A",
+                "back_6B-5A",
+                "back_5B-4A",
+            ],
+        )
+        self.assertEqual(
+            payload["order"],
+            [
+                "bridge_5B-6B",
+                "bridge_6A-7bB",
+                "bridge_7bA-7A",
+                "bridge_8B-9A",
+                "bridge_10A-11B",
+                "bridge_11A-12B",
+                "E12",
+                "bridge_12-13B",
+                "E13",
+                "bridge_13-14B",
+                "E14",
+                "back_14B-13A_stop",
+                "back_13B-12A",
+                "back_12B-11A",
+                "back_11B-10A",
+                "back_9A-8B",
+                "back_7A-7bA",
+                "back_7bB-6A",
+                "back_6B-5A",
+                "back_5B-4A",
+            ],
+        )
+        self.assertTrue(
+            all(
+                "from" not in connector and "to" not in connector
+                for connector in payload["connectors"][:6]
+                + payload["connectors"][8:]
+            )
+        )
+        self.assertEqual(
+            [(connector["from"], connector["to"]) for connector in payload["connectors"][6:8]],
+            [("E12", "E13"), ("E13", "E14")],
+        )
+        bridge_offsets = {
+            connector["id"]: (
+                connector["edge_distance_lon"],
+                connector["edge_distance_lat"],
+            )
+            for connector in payload["connectors"][6:8]
+        }
+        self.assertEqual(
+            bridge_offsets["bridge_12-13B"],
+            ([0.1, 0.1], [0.1, -0.3]),
+        )
+        self.assertEqual(
+            bridge_offsets["bridge_13-14B"],
+            ([0.1, 0.1], [0.1, -0.3]),
+        )
+
+        e12 = payload["regions"][0]["polygons"][0]["boundary"]
+        a = [110.64776463744738, 35.60429273226822]
+        b = [110.64776416327175, 35.60442191035046]
+        c = [110.64727006172468, 35.60442127126381]
+        expected_d = [a[0] + c[0] - b[0], a[1] + c[1] - b[1]]
+        self.assertEqual(e12[0], expected_d)
+        self.assertEqual(e12[1:4], [a, b, c])
+        self.assertEqual(e12[4], expected_d)
+
+        model = load_map(payload)
+        route = plan_route(
+            model,
+            sweep_spacing=1.0,
+            edge_clearance=1.0,
+            max_connector=50.0,
+        )
+        self.assertEqual(
+            [segment.connector_id for segment in route.segments if segment.connector_id],
+            [connector["id"] for connector in payload["connectors"]],
+        )
+
+        source = planner_yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        explicit_guides = [[_metric_point(1.0, 1.0), _metric_point(2.0, 1.0)]]
+        source["guides"] = explicit_guides
+        explicit_payload = convert_legacy_yaml_to_map(source)
+        self.assertEqual(explicit_payload["guides"], explicit_guides)
+
+        conflicting_source = planner_yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        next(
+            area for area in conflicting_source["areas"] if area["name"] == "E13"
+        )["guide"] = "vertical"
+        with self.assertRaises(PlanningError):
+            convert_legacy_yaml_to_map(conflicting_source)
+
+    @unittest.skipIf(planner_yaml is None, "PyYAML is not installed")
+    def test_e14_edge_offsets_keep_the_measured_slanted_edge(self):
+        yaml_path = (
+            REPOSITORY_ROOT
+            / "src"
+            / "rtk_nav"
+            / "rtk_nav"
+            / "config"
+            / "003-E12-E14.yaml"
+        )
+        payload = convert_legacy_yaml_to_map(yaml_path)
+        e14_payload = next(
+            region for region in payload["regions"] if region["id"] == "E14"
+        )
+        raw_boundary = e14_payload["polygons"][0]["boundary"]
+        raw_b = raw_boundary[2]
+        raw_c = raw_boundary[3]
+        self.assertGreater(abs(raw_c[1] - raw_b[1]), 1e-9)
+
+        model = load_map(payload)
+        e14 = next(region for region in model.regions if region.id == "E14")
+        _, original_geometry = _rotated_region_geometry(
+            model, e14, 0.0, apply_edge_distance=False
+        )
+        _, adjusted_geometry = _rotated_region_geometry(model, e14, 0.0)
+        original = original_geometry[0][0]
+        adjusted = adjusted_geometry[0][0]
+
+        original_top = (
+            original[3][0] - original[2][0],
+            original[3][1] - original[2][1],
+        )
+        adjusted_top = (
+            adjusted[3][0] - adjusted[2][0],
+            adjusted[3][1] - adjusted[2][1],
+        )
+        self.assertGreater(abs(adjusted_top[1]), 1e-6)
+        self.assertTrue(
+            math.isclose(
+                original_top[0] * adjusted_top[1]
+                - original_top[1] * adjusted_top[0],
+                0.0,
+                abs_tol=1e-6,
+            )
+        )
+
+        old_rectangular_d = (
+            min(point[0] for point in original[:-1]) + 0.5,
+            min(point[1] for point in original[:-1]) + 0.3,
+        )
+        self.assertGreater(
+            math.hypot(
+                adjusted[0][0] - old_rectangular_d[0],
+                adjusted[0][1] - old_rectangular_d[1],
+            ),
+            0.05,
+        )
+
+    def test_route_serializers_preserve_unbound_connector_ids(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "regions": [
+                {
+                    "id": "only",
+                    "boundary": [
+                        [110.0, 35.0],
+                        [110.001, 35.0],
+                        [110.001, 35.001],
+                        [110.0, 35.001],
+                    ],
+                }
+            ],
+            "connectors": [
+                {"id": "pre", "path": [[110.0, 35.0], [109.999, 35.0]]},
+                {"id": "post", "path": [[110.001, 35.001], [110.002, 35.001]]},
+            ],
+            "order": ["pre", "only", "post"],
+        }
+        route = plan_route(load_map(payload), sweep_spacing=1.0, edge_clearance=0.1)
+        document = json.loads(route_to_json(route))
+        self.assertEqual(
+            [
+                segment.get("connector_id")
+                for segment in document["segments"]
+                if segment.get("connector_id") in {"pre", "post"}
+            ],
+            ["pre", "post"],
+        )
+        self.assertNotIn("travel_segments", document["metrics"])
 
     def test_v2_inherits_legacy_defaults_for_unconfigured_polygon_edges(self):
         payload = {
@@ -494,6 +914,79 @@ class AutoPathPlannerTests(unittest.TestCase):
         self.assertEqual(model.order, ("E9", "bridge_9-10B", "E10"))
         self.assertEqual(len(model.regions[1].polygons[0].holes), 1)
 
+    def test_v2_region_guide_accepts_horizontal_and_vertical_only(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "guided",
+                    "guide": "vertical",
+                    "boundary": _ring([(0, 0), (2, 0), (2, 10), (0, 10)]),
+                }
+            ],
+            "order": ["guided"],
+        }
+
+        model = load_map(payload)
+        self.assertEqual(model.regions[0].guide, "vertical")
+
+        payload["regions"][0]["guide"] = "diagonal"
+        with self.assertRaises(PlanningError):
+            load_map(payload)
+
+    def test_region_without_guide_uses_own_longest_edge_and_override_is_cardinal(self):
+        base_payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "tall",
+                    "boundary": _ring([(0, 0), (2, 0), (2, 10), (0, 10)]),
+                }
+            ],
+            "order": ["tall"],
+        }
+
+        fallback_route = plan_route(
+            load_map(base_payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+        )
+        fallback_coverage = [
+            segment for segment in fallback_route.segments if segment.kind == "coverage"
+        ]
+        self.assertTrue(fallback_coverage)
+        for segment in fallback_coverage:
+            first_x, first_y = _metric_xy(segment.points[0])
+            last_x, last_y = _metric_xy(segment.points[-1])
+            self.assertGreater(abs(last_y - first_y), abs(last_x - first_x))
+
+        base_payload["regions"][0]["guide"] = "horizontal"
+        override_route = plan_route(
+            load_map(base_payload),
+            sweep_spacing=1.0,
+            edge_clearance=0.2,
+        )
+        override_coverage = [
+            segment for segment in override_route.segments if segment.kind == "coverage"
+        ]
+        self.assertTrue(override_coverage)
+        for segment in override_coverage:
+            first_x, first_y = _metric_xy(segment.points[0])
+            last_x, last_y = _metric_xy(segment.points[-1])
+            self.assertGreater(abs(last_x - first_x), abs(last_y - first_y))
+
+        override_geojson = json.loads(
+            route_to_geojson(override_route, load_map(base_payload))
+        )
+        boundary = next(
+            feature
+            for feature in override_geojson["features"]
+            if feature["properties"].get("kind") == "boundary"
+        )
+        self.assertEqual(boundary["properties"]["guide"], "horizontal")
+
     def test_concave_and_hole_scanlines_remain_split_into_safe_intervals(self):
         model = load_map(_complex_multi_region_map())
         e9 = model.regions[0]
@@ -577,16 +1070,212 @@ class AutoPathPlannerTests(unittest.TestCase):
             if segment.connector_id == "bridge_9-10B"
         )
 
-        for attachment in (
-            route.segments[bridge_index - 1],
-            route.segments[bridge_index + 1],
+        bridge = route.segments[bridge_index]
+        self.assertEqual(route.segments[bridge_index - 1].kind, "coverage")
+        self.assertEqual(route.segments[bridge_index + 1].kind, "coverage")
+        for first, second in (
+            (bridge.points[0], bridge.points[1]),
+            (bridge.points[-2], bridge.points[-1]),
         ):
-            self.assertEqual(attachment.kind, "connector")
-            self.assertEqual(len(attachment.points), 2)
-            first_x, first_y = _metric_xy(attachment.points[0])
-            second_x, second_y = _metric_xy(attachment.points[1])
+            first_x, first_y = _metric_xy(first)
+            second_x, second_y = _metric_xy(second)
             self.assertGreater(abs(second_x - first_x), 1e-6)
             self.assertGreater(abs(second_y - first_y), 1e-6)
+
+    def test_connector_endpoints_inherit_boundary_defaults(self):
+        model = load_map(_connector_boundary_offset_map())
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        bridge = next(
+            segment
+            for segment in route.segments
+            if segment.connector_id == "bridge-source-destination"
+        )
+
+        self.assertEqual(len(bridge.points), 5)
+        first_x, first_y = _metric_xy(bridge.points[1])
+        middle_x, middle_y = _metric_xy(bridge.points[2])
+        last_x, last_y = _metric_xy(bridge.points[3])
+        middle_ratio = 1.0 / (1.0 + math.sqrt(2.0))
+        self.assertTrue(math.isclose(first_x, 9.9, abs_tol=1e-6))
+        self.assertTrue(math.isclose(first_y, 3.9, abs_tol=1e-6))
+        self.assertTrue(
+            math.isclose(
+                middle_x,
+                10.0 - 0.1 * (1.0 - middle_ratio),
+                abs_tol=1e-6,
+            )
+        )
+        self.assertTrue(
+            math.isclose(
+                middle_y,
+                5.0 - 0.1 * (1.0 - middle_ratio) + 0.1 * middle_ratio,
+                abs_tol=1e-6,
+            )
+        )
+        self.assertTrue(math.isclose(last_x, 9.0, abs_tol=1e-6))
+        self.assertTrue(math.isclose(last_y, 6.1, abs_tol=1e-6))
+        self.assertNotEqual(bridge.points[1], tuple(_metric_point(10, 5)))
+
+    def test_connector_endpoint_uses_explicit_polygon_edges(self):
+        payload = _connector_boundary_offset_map()
+        payload["regions"][0]["polygons"][0].update(
+            {
+                "edge_distance_lon": [1.0, 2.0],
+                "edge_distance_lat": [0.5, 1.5],
+            }
+        )
+        payload["connectors"][0]["path"] = [
+            _metric_point(10, 4),
+            _metric_point(10, 5),
+            _metric_point(10, 6),
+        ]
+        model = load_map(payload)
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        bridge = next(
+            segment
+            for segment in route.segments
+            if segment.connector_id == "bridge-source-destination"
+        )
+
+        first_x, first_y = _metric_xy(bridge.points[1])
+        middle_x, middle_y = _metric_xy(bridge.points[2])
+        last_x, last_y = _metric_xy(bridge.points[3])
+        self.assertTrue(math.isclose(first_x, 9.0, abs_tol=1e-6))
+        self.assertTrue(math.isclose(first_y, 2.5, abs_tol=1e-6))
+        self.assertTrue(math.isclose(middle_x, 9.45, abs_tol=1e-6))
+        self.assertTrue(math.isclose(middle_y, 4.3, abs_tol=1e-6))
+        self.assertTrue(math.isclose(last_x, 9.9, abs_tol=1e-6))
+        self.assertTrue(math.isclose(last_y, 6.1, abs_tol=1e-6))
+
+    def test_connector_edges_override_region_edges(self):
+        payload = _connector_boundary_offset_map()
+        for region in payload["regions"]:
+            region["polygons"][0].update(
+                {
+                    "edge_distance_lon": [1.0, 1.0],
+                    "edge_distance_lat": [1.0, 1.0],
+                }
+            )
+        payload["connectors"][0].update(
+            {
+                "edge_distance_lon": [0.0, 0.0],
+                "edge_distance_lat": [0.5, -0.5],
+            }
+        )
+
+        model = load_map(payload)
+        connector = model.connectors[0]
+        self.assertEqual(connector.edge_distance_lon, (0.0, 0.0))
+        self.assertEqual(connector.edge_distance_lat, (0.5, -0.5))
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        bridge = next(
+            segment
+            for segment in route.segments
+            if segment.connector_id == "bridge-source-destination"
+        )
+
+        # The raw-boundary attachment and offset bridge points share one
+        # ordered segment; the explicit bridge starts at points[2].
+        first_x, first_y = _metric_xy(bridge.points[2])
+        shifted_x, shifted_y = _metric_xy(bridge.points[3])
+        last_x, last_y = _metric_xy(bridge.points[4])
+        self.assertTrue(math.isclose(first_x, 10.0, abs_tol=1e-6))
+        self.assertTrue(math.isclose(first_y, 4.5, abs_tol=1e-6))
+        self.assertTrue(math.isclose(shifted_x, 9.8535534, abs_tol=1e-6))
+        self.assertTrue(math.isclose(shifted_y, 5.4393398, abs_tol=1e-6))
+        self.assertTrue(math.isclose(last_x, 8.6464466, abs_tol=1e-6))
+        self.assertTrue(math.isclose(last_y, 6.3535534, abs_tol=1e-6))
+
+    def test_ordered_connector_merge_joins_region_tails_and_keeps_coverage(self):
+        route = plan_route(
+            load_map(_connector_boundary_offset_map()),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+
+        bridge_indexes = [
+            index
+            for index, segment in enumerate(route.segments)
+            if segment.connector_id == "bridge-source-destination"
+        ]
+        self.assertEqual(len(bridge_indexes), 1)
+        bridge_index = bridge_indexes[0]
+        bridge = route.segments[bridge_index]
+        self.assertEqual(bridge.kind, "connector")
+        self.assertEqual(bridge.from_region, "source")
+        self.assertEqual(bridge.to_region, "destination")
+        self.assertIsNone(bridge.region_id)
+
+        before = route.segments[bridge_index - 1]
+        after = route.segments[bridge_index + 1]
+        self.assertEqual(before.kind, "coverage")
+        self.assertEqual(after.kind, "coverage")
+        self.assertEqual(bridge.points[0], before.points[-1])
+        self.assertEqual(bridge.points[-1], after.points[0])
+        self.assertEqual(len(bridge.points), 5)
+        expected_length = sum(
+            math.hypot(
+                _metric_xy(first)[0] - _metric_xy(second)[0],
+                _metric_xy(first)[1] - _metric_xy(second)[1],
+            )
+            for first, second in zip(bridge.points, bridge.points[1:])
+        )
+        self.assertAlmostEqual(
+            bridge.length_m,
+            expected_length,
+            delta=1e-6,
+        )
+
+        internal_connectors = [
+            segment
+            for segment in route.segments
+            if segment.kind == "connector" and segment.connector_id is None
+        ]
+        self.assertTrue(internal_connectors)
+        self.assertTrue(
+            any(segment.region_id == "source" for segment in internal_connectors)
+        )
+        self.assertTrue(
+            any(segment.region_id == "destination" for segment in internal_connectors)
+        )
+
+    def test_unbound_connector_keeps_raw_travel_path(self):
+        base = _rectangle_map(width_m=4.0, height_m=2.0)
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": base["guides"],
+            "regions": [{"id": "only", "boundary": base["boundary"]}],
+            "connectors": [
+                {
+                    "id": "access",
+                    "path": [_metric_point(-1, 0), _metric_point(0, 0)],
+                }
+            ],
+            "order": ["access", "only"],
+        }
+
+        route = plan_route(load_map(payload), sweep_spacing=1.0, edge_clearance=0.1)
+        access = next(segment for segment in route.segments if segment.connector_id == "access")
+        self.assertEqual(
+            access.points,
+            tuple(tuple(point) for point in payload["connectors"][0]["path"]),
+        )
 
     def test_bridge_attachment_falls_back_when_diagonal_crosses_hole(self):
         boundary = (
@@ -668,6 +1357,11 @@ class AutoPathPlannerTests(unittest.TestCase):
         mismatched["connectors"][0]["from"] = "E10"
         with self.assertRaises(PlanningError):
             load_map(mismatched)
+
+        partial = _complex_multi_region_map()
+        partial["connectors"][0].pop("to")
+        with self.assertRaises(PlanningError):
+            load_map(partial)
 
     def test_v2_rejects_region_without_a_safe_internal_connector(self):
         payload = {
@@ -803,6 +1497,7 @@ class AutoPathPlannerTests(unittest.TestCase):
         suffix = str(os.getpid())
         input_path = temp_path / f"test_auto_map_{suffix}.json"
         output_path = temp_path / f"test_auto_route_{suffix}.json"
+        txt_path = temp_path / f"test_auto_route_{suffix}.txt"
         try:
             input_path.write_text(json.dumps(model_data), encoding="utf-8")
             result = main(
@@ -815,25 +1510,64 @@ class AutoPathPlannerTests(unittest.TestCase):
                     "1.0",
                     "--edge-clearance",
                     "0.1",
+                    "--txt-output",
+                    str(txt_path),
                 ]
             )
             self.assertEqual(result, 0)
             self.assertTrue(output_path.exists())
             self.assertTrue(output_path.with_suffix(".geojson").exists())
+            self.assertTrue(txt_path.exists())
             route_document = json.loads(output_path.read_text(encoding="utf-8"))
             geojson_document = json.loads(
                 output_path.with_suffix(".geojson").read_text(encoding="utf-8")
             )
             self.assertEqual(route_document["format"], "rtk_auto_route_v1")
+            self.assertIn("turn_count", route_document["metrics"])
+            self.assertGreaterEqual(route_document["metrics"]["turn_count"], 0)
             self.assertEqual(geojson_document["type"], "FeatureCollection")
             self.assertTrue(all(item["type"] == "Feature" for item in geojson_document["features"]))
+            txt_rows = [
+                line
+                for line in txt_path.read_text(encoding="utf-8").splitlines()
+                if line and not line.startswith("#")
+            ]
+            self.assertEqual(txt_rows[0], "序号,经度,纬度,航向角(度)")
+            self.assertTrue(all(len(row.split(",")) == 4 for row in txt_rows[1:]))
         finally:
             for generated_path in (
                 input_path,
                 output_path,
                 output_path.with_suffix(".geojson"),
+                txt_path,
             ):
                 generated_path.unlink(missing_ok=True)
+
+    def test_cli_rejects_overwriting_input_map(self):
+        model_data = _rectangle_map(width_m=4.0, height_m=2.0)
+        temp_path = PACKAGE_ROOT.parent.parent / "tmp"
+        temp_path.mkdir(parents=True, exist_ok=True)
+        suffix = f"{os.getpid()}_same_path"
+        input_path = temp_path / f"test_auto_map_{suffix}.json"
+        original = json.dumps(model_data)
+        try:
+            input_path.write_text(original, encoding="utf-8")
+            result = main(
+                [
+                    "--input",
+                    str(input_path),
+                    "--output",
+                    str(input_path),
+                ]
+            )
+            self.assertEqual(result, 2)
+            self.assertEqual(input_path.read_text(encoding="utf-8"), original)
+        finally:
+            input_path.unlink(missing_ok=True)
+
+    def test_load_map_rejects_geojson_route_output(self):
+        with self.assertRaises(PlanningError):
+            load_map({"type": "FeatureCollection", "features": []})
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ EPSILON = 1e-9
 DEFAULT_TURN_PENALTY_M = 1.0
 DEFAULT_MAX_CONNECTOR_PENALTY = 1.0
 DEFAULT_TXT_SPACING_M = 15.0
+VALID_GUIDES = {"horizontal", "vertical"}
 
 
 class PlanningError(ValueError):
@@ -64,6 +65,7 @@ class Region:
     polygons: Tuple[Polygon, ...]
     start: Optional[Point] = None
     connection_tolerance_m: float = 0.0
+    guide: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +371,14 @@ def _parse_id(raw: Any, field: str) -> str:
     return raw.strip()
 
 
+def _parse_guide(raw: Any, field: str) -> Optional[str]:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or raw.strip() not in VALID_GUIDES:
+        raise PlanningError(f"{field} must be horizontal or vertical")
+    return raw.strip()
+
+
 def _parse_distance_pair(raw: Any, field: str) -> Tuple[float, float]:
     if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
         if len(raw) != 2:
@@ -494,6 +504,7 @@ def _parse_regions(
         if region_id in seen:
             raise PlanningError(f"duplicate region id: {region_id}")
         seen.add(region_id)
+        guide = _parse_guide(value.get("guide"), f"regions[{index}].guide")
 
         region_edge_distance_lon = _parse_distance_pair(
             value.get("edge_distance_lon", defaults.edge_distance_lon),
@@ -567,6 +578,7 @@ def _parse_regions(
                 polygons=polygons,
                 start=start,
                 connection_tolerance_m=connection_tolerance_m,
+                guide=guide,
             )
         )
     return tuple(regions)
@@ -759,14 +771,10 @@ def load_map(source: JsonSource) -> AutoMap:
         regions = _parse_regions(payload.get("regions"), defaults)
         raw_guides = payload.get("guides")
         if raw_guides is None:
-            longest_edge = max(
-                (
-                    (first, second)
-                    for region in regions
-                    for polygon in region.polygons
-                    for first, second in _ring_edges(polygon.boundary)
-                ),
-                key=lambda edge: _distance(edge[0], edge[1]),
+            longest_edge = _longest_edge(
+                polygon.boundary
+                for region in regions
+                for polygon in region.polygons
             )
             guides = (longest_edge,)
         else:
@@ -924,6 +932,7 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         "E13": [],
         "E14": [],
     }
+    region_guides: dict[str, str] = {}
     pre_connectors: list[dict[str, Any]] = []
     post_connectors: list[dict[str, Any]] = []
     inter_bridge_data: list[
@@ -940,6 +949,21 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
 
         if area_name in cleaning_region_names:
             region_id = cleaning_region_names[area_name]
+            guide = _parse_guide(
+                raw_area.get("guide"), f"areas[{index}].guide"
+            )
+            existing_guide = region_guides.get(region_id)
+            if (
+                guide is not None
+                and existing_guide is not None
+                and guide != existing_guide
+            ):
+                raise PlanningError(
+                    f"cleaning region {region_id} has conflicting guides: "
+                    f"{existing_guide} and {guide}"
+                )
+            if guide is not None:
+                region_guides[region_id] = guide
             polygon, corners = _yaml_rectangle_polygon(
                 raw_area, area_name, defaults
             )
@@ -1045,10 +1069,27 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         }
         if region_id == "E13":
             region["connection_tolerance_m"] = 3.0
+        if region_id in region_guides:
+            region["guide"] = region_guides[region_id]
         regions.append(region)
+
+    raw_guides = payload.get("guides")
+    if raw_guides is None:
+        longest_edge = _longest_edge(
+            polygon["boundary"]
+            for polygons in region_polygons.values()
+            for polygon in polygons
+        )
+        guides = [[list(longest_edge[0]), list(longest_edge[1])]]
+    else:
+        guides = [
+            [list(point) for point in guide]
+            for guide in _parse_guides(raw_guides)
+        ]
 
     return {
         "format": "rtk_auto_map_v2",
+        "guides": guides,
         "defaults": default_payload,
         "regions": regions,
         "connectors": pre_connectors + inter_connectors + post_connectors,
@@ -1068,6 +1109,29 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
 
 def _distance(a: Point, b: Point) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _geo_distance_m(first: Point, second: Point) -> float:
+    latitude = math.radians((first[1] + second[1]) / 2.0)
+    delta_lon = (second[0] - first[0]) * METERS_PER_DEGREE_LON * math.cos(latitude)
+    delta_lat = (second[1] - first[1]) * METERS_PER_DEGREE_LAT
+    return math.hypot(delta_lon, delta_lat)
+
+
+def _geo_axis_angle(first: Point, second: Point) -> float:
+    latitude = math.radians((first[1] + second[1]) / 2.0)
+    delta_lon = (second[0] - first[0]) * METERS_PER_DEGREE_LON * math.cos(latitude)
+    delta_lat = (second[1] - first[1]) * METERS_PER_DEGREE_LAT
+    if math.hypot(delta_lon, delta_lat) <= EPSILON:
+        raise PlanningError("boundary edge has no usable direction")
+    return math.atan2(delta_lat, delta_lon) % math.pi
+
+
+def _longest_edge(rings: Sequence[Sequence[Point]]) -> Tuple[Point, Point]:
+    edges = [edge for ring in rings for edge in _ring_edges(ring)]
+    if not edges:
+        raise PlanningError("regions do not contain a usable boundary edge")
+    return max(edges, key=lambda edge: _geo_distance_m(edge[0], edge[1]))
 
 
 def _local_distance(a: LocalPoint, b: LocalPoint) -> float:
@@ -1099,6 +1163,23 @@ def estimate_axis_angle(guides: Sequence[Sequence[Point]]) -> float:
         axis = 0.5 * math.atan2(sum_sin, sum_cos)
     axis %= math.pi
     return axis
+
+
+def _region_axis_angle(
+    region: Region,
+    default_axis: float,
+    use_region_fallback: bool,
+) -> float:
+    if region.guide == "horizontal":
+        return 0.0
+    if region.guide == "vertical":
+        return math.pi / 2.0
+    if not use_region_fallback:
+        return default_axis
+    longest = _longest_edge(
+        polygon.boundary for polygon in region.polygons
+    )
+    return _geo_axis_angle(longest[0], longest[1])
 
 
 def _rotate(point: LocalPoint, angle: float) -> LocalPoint:
@@ -3328,6 +3409,90 @@ def _route_from_local_segments(
     )
 
 
+def _merge_ordered_inter_region_connector_spans(
+    segments: Sequence[Segment],
+    order: Sequence[str],
+    connectors: Mapping[str, Connector],
+) -> Tuple[Segment, ...]:
+    """Join each ordered inter-region bridge with its two region tails."""
+    output = list(segments)
+    order_positions = {item: index for index, item in enumerate(order)}
+
+    for item in reversed(order):
+        connector = connectors.get(item)
+        if (
+            connector is None
+            or connector.from_region is None
+            or connector.to_region is None
+        ):
+            continue
+
+        order_index = order_positions[item]
+        if (
+            order_index == 0
+            or order_index == len(order) - 1
+            or order[order_index - 1] != connector.from_region
+            or order[order_index + 1] != connector.to_region
+        ):
+            continue
+
+        bridge_indexes = [
+            index
+            for index, segment in enumerate(output)
+            if segment.connector_id == connector.id
+        ]
+        if len(bridge_indexes) != 1:
+            raise PlanningError(
+                f"ordered connector {connector.id} must produce one route segment"
+            )
+        bridge_index = bridge_indexes[0]
+
+        start = bridge_index
+        while start > 0:
+            candidate = output[start - 1]
+            if not (
+                candidate.kind == "connector"
+                and candidate.connector_id is None
+                and candidate.region_id == connector.from_region
+            ):
+                break
+            start -= 1
+
+        end = bridge_index + 1
+        while end < len(output):
+            candidate = output[end]
+            if not (
+                candidate.kind == "connector"
+                and candidate.connector_id is None
+                and candidate.region_id == connector.to_region
+            ):
+                break
+            end += 1
+
+        if end - start == 1:
+            continue
+
+        merged_points: list[Point] = []
+        for segment in output[start:end]:
+            for point in segment.points:
+                if merged_points and point == merged_points[-1]:
+                    continue
+                merged_points.append(point)
+
+        output[start:end] = [
+            Segment(
+                kind="connector",
+                points=tuple(merged_points),
+                length_m=sum(segment.length_m for segment in output[start:end]),
+                connector_id=connector.id,
+                from_region=connector.from_region,
+                to_region=connector.to_region,
+            )
+        ]
+
+    return tuple(output)
+
+
 def plan_route(
     map_data: AutoMap,
     sweep_spacing: float = 1.0,
@@ -3357,6 +3522,14 @@ def plan_route(
             "legacy", (Polygon(map_data.boundary, map_data.no_go),), map_data.start
         )
         regions = {legacy_region.id: legacy_region}
+    region_axes = {
+        region.id: _region_axis_angle(
+            region,
+            axis_angle,
+            use_region_fallback=not map_data.legacy,
+        )
+        for region in regions.values()
+    }
     order = map_data.order or tuple(regions)
     effective_connector_paths = {
         connector.id: _effective_connector_path(
@@ -3378,6 +3551,7 @@ def plan_route(
     for index, item in enumerate(order):
         if item in regions:
             region = regions[item]
+            region_axis = region_axes[region.id]
             start_point = pending_entry
             prefer_diagonal_attachment = pending_entry is not None
             if start_point is None:
@@ -3392,7 +3566,7 @@ def plan_route(
                 else None
             )
             geometry, coverage_groups = _local_region_coverage_groups(
-                map_data, region, axis_angle, sweep_spacing, edge_clearance
+                map_data, region, region_axis, sweep_spacing, edge_clearance
             )
             local_segments = [
                 segment
@@ -3407,7 +3581,7 @@ def plan_route(
             _, attachment_geometry = _rotated_region_geometry(
                 map_data,
                 region,
-                axis_angle,
+                region_axis,
                 apply_edge_distance=(
                     pending_entry is not None
                     and not pending_entry_uses_raw_geometry
@@ -3417,7 +3591,7 @@ def plan_route(
             if len(region.polygons) > 1:
                 local_segments = _optimized_multi_polygon_groups(
                     map_data,
-                    axis_angle,
+                    region_axis,
                     coverage_groups,
                     routing_geometry,
                     max_connector,
@@ -3431,7 +3605,7 @@ def plan_route(
                 preserve_segment_order = True
             region_route = _route_from_local_segments(
                 map_data,
-                axis_angle,
+                region_axis,
                 local_segments,
                 max_connector,
                 region_id=region.id,
@@ -3677,7 +3851,18 @@ def plan_route(
             pending_entry = effective_geo_path[-1]
         pending_entry_uses_raw_geometry = connector_has_offsets
 
+    output = list(
+        _merge_ordered_inter_region_connector_spans(output, order, connectors)
+    )
     total_length = sum(segment.length_m for segment in output)
+    max_connector_length = max(
+        (
+            segment.length_m
+            for segment in output
+            if segment.kind == "connector"
+        ),
+        default=0.0,
+    )
     frame = _LocalFrame.from_map(map_data)
     return Route(
         axis_angle_rad=axis_angle,
@@ -3881,6 +4066,8 @@ def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
                         },
                     }
                 )
+                if region.guide is not None:
+                    features[-1]["properties"]["guide"] = region.guide
         for connector in map_data.connectors:
             properties = {
                 "kind": "bridge",
