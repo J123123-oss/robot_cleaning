@@ -495,6 +495,103 @@ class AutoPathPlannerTests(unittest.TestCase):
             )
 
     @unittest.skipIf(planner_yaml is None, "PyYAML is not installed")
+    def test_legacy_yaml_converter_recognizes_all_cardinal_region_prefixes(self):
+        def area(name, x):
+            return {
+                "name": name,
+                "calib_point_a": {"lon": x + 0.001, "lat": 35.001},
+                "calib_point_b": {"lon": x + 0.001, "lat": 35.002},
+                "calib_point_c": {"lon": x, "lat": 35.002},
+            }
+
+        source = {
+            "default": {
+                "interval": 1.0,
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+            },
+            "areas": [
+                area("E1", 110.000),
+                {
+                    "name": "bridge_E1A-W2B",
+                    "calib_point_a": {"lon": 110.001, "lat": 35.001},
+                    "calib_point_b": {"lon": 110.003, "lat": 35.002},
+                    "calib_point_c": {"lon": 110.001, "lat": 35.001},
+                },
+                area("W2", 110.002),
+                {
+                    "name": "bridge_W2A-N3B",
+                    "calib_point_a": {"lon": 110.003, "lat": 35.001},
+                    "calib_point_b": {"lon": 110.005, "lat": 35.002},
+                    "calib_point_c": {"lon": 110.003, "lat": 35.001},
+                },
+                area("N3", 110.004),
+                {
+                    "name": "bridge_N3A-S4B",
+                    "calib_point_a": {"lon": 110.005, "lat": 35.001},
+                    "calib_point_b": {"lon": 110.007, "lat": 35.002},
+                    "calib_point_c": {"lon": 110.005, "lat": 35.001},
+                },
+                area("S4", 110.006),
+            ],
+        }
+
+        payload = convert_legacy_yaml_to_map(source)
+
+        self.assertEqual(
+            [region["id"] for region in payload["regions"]],
+            ["E1", "W2", "N3", "S4"],
+        )
+        connector_by_id = {
+            connector["id"]: connector for connector in payload["connectors"]
+        }
+        self.assertEqual(
+            (connector_by_id["bridge_E1A-W2B"]["from"],
+             connector_by_id["bridge_E1A-W2B"]["to"]),
+            ("E1", "W2"),
+        )
+        self.assertEqual(
+            (connector_by_id["bridge_W2A-N3B"]["from"],
+             connector_by_id["bridge_W2A-N3B"]["to"]),
+            ("W2", "N3"),
+        )
+        self.assertEqual(
+            (connector_by_id["bridge_N3A-S4B"]["from"],
+             connector_by_id["bridge_N3A-S4B"]["to"]),
+            ("N3", "S4"),
+        )
+        load_map(payload)
+
+    @unittest.skipIf(planner_yaml is None, "PyYAML is not installed")
+    def test_006_e22_w24_retraces_a_multi_polygon_tail_to_reach_exit_bridge(self):
+        yaml_path = (
+            PACKAGE_ROOT / "rtk_nav" / "config" / "006-E22-W24.yaml"
+        )
+        model = load_map(convert_legacy_yaml_to_map(yaml_path))
+
+        route = plan_route(
+            model,
+            sweep_spacing=1.0,
+            edge_clearance=1.0,
+            max_connector=40.0,
+        )
+
+        e23_segments = [
+            segment
+            for segment in route.segments
+            if segment.region_id == "E23"
+        ]
+        self.assertTrue(any(segment.kind == "coverage" for segment in e23_segments))
+        self.assertTrue(
+            any(
+                segment.kind == "connector"
+                and segment.connector_id is None
+                and segment.region_id == "E23"
+                for segment in e23_segments
+            )
+        )
+
+    @unittest.skipIf(planner_yaml is None, "PyYAML is not installed")
     def test_003_e12_e14_yaml_converts_rectangles_and_full_connector_order(self):
         yaml_path = (
             REPOSITORY_ROOT

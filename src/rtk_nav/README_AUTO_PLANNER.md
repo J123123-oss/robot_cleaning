@@ -32,6 +32,35 @@
 
 外围边界应尽量沿可清扫区域的实际边缘采集，而不是用一个包住所有障碍物的粗略外包框。若内部通道、设备或断开区域不能通行，应采集为 `no_go` 多边形。
 
+## 区域名称和点位采集
+
+旧 YAML 的清扫区域名称使用“方向字母 + 编号”识别：`Exx` 表示东向区域，
+`Wxx` 表示西向区域，`Nxx` 表示北向区域，`Sxx` 表示南向区域。例如
+`E22_long_block_start` 和 `E22` 都归入逻辑区域 `E22`。桥架名称可以使用完整方向名，
+例如 `bridge_E22A-W24B`；历史格式 `bridge_22-23B` 仍兼容，但没有方向字母时按
+`E22/E23` 解释，不能用它表示 W/N/S 区域。
+
+每个旧 YAML 清扫区域需要用 RTK 手动采集三个角点：
+
+- `calib_point_a`：东南角 A，手动采集；
+- `calib_point_b`：东北角 B，手动采集；
+- `calib_point_c`：西北角 C，手动采集。
+
+转换器自动计算西南角 D：`D = A + C - B`，并生成五点闭合边界
+`[D, A, B, C, D]`。因此输出 JSON 的 `boundary` 中第 1、5 个点都是自动点，
+第 2、3、4 个点对应人工采集的 A、B、C。每个 polygon 还会保存
+`boundary_point_annotations` 和 `manual_calibration_points`，可据此核对点位来源。
+E16 是例外：第 4 个输出点是正交化后的 `C_prime`，原始 C 仍保存在人工点记录中。
+
+`bridge_*` 和 `back_*` 不是清扫区域。对它们只需按机器人实际行驶方向采集
+`calib_point_a -> calib_point_b` 的桥架起点和终点；旧 YAML 中的 `calib_point_c`
+通常填 A 的重复值，仅为兼容旧格式，转换时不参与桥架路径计算。桥架端点名称能解析到
+两个不同区域时自动生成 `from/to`；不能解析的前置桥架、同一区域桥架和 `back_*`
+会保留为无绑定 connector，由 `order` 中的前后位置决定方向。无绑定 connector 会选择
+距离前一个区域结束角点和下一个区域起始角点最近的端点，连续 connector 之间按原顺序连接。
+转换生成的 `order` 会保留前置/中间 `bridge_*`，并把 `back_*` 返回轨迹放在清扫区域之后，
+所以这些路径不会因为没有 `from/to` 而丢失。
+
 ## 多区域和复杂轮廓格式
 
 当一个大型清扫任务包含 E9、E10、E11 和连接桥时，使用 `rtk_auto_map_v2`：
@@ -95,6 +124,64 @@
 解析器同时接受 `[lon, lat]` 点数组、`{"lon": ..., "lat": ...}` 点对象，以及
 `top_left/top_right/bottom_right/bottom_left` 命名角点。缺少 `guides` 时，规划器使用
 最长边推导清扫方向；缺少 `order` 时，仅在连接桥构成单向链的情况下自动推导顺序。
+
+### 没有 YAML 时如何填写区域点位
+
+没有旧 YAML 时，直接新建一个 `rtk_auto_map_v2` JSON。每个清扫区域的点位放在
+`regions[].polygons[].boundary` 中，坐标仍是 `[经度, 纬度]`。现场用 RTK 沿区域边界
+采集一圈时，按同一方向记录四个角点，并在 JSON 中闭合首尾；也可以不重复首尾，加载时
+会自动闭合。若区域是矩形，推荐按下面的固定位置填写：
+
+```text
+top_left     -> 西北角
+top_right    -> 东北角
+bottom_right -> 东南角
+bottom_left  -> 西南角
+```
+
+例如，矩形区域 E22 的四点可以直接写成：
+
+```json
+{
+  "format": "rtk_auto_map_v2",
+  "defaults": {
+    "interval": 1.0,
+    "swap_wh_select": false
+  },
+  "regions": [
+    {
+      "id": "E22",
+      "guide": "horizontal",
+      "polygons": [
+        {
+          "boundary": [
+            [110.64743, 35.60228],
+            [110.64777, 35.60229],
+            [110.64777, 35.60241],
+            [110.64743, 35.60241],
+            [110.64743, 35.60228]
+          ],
+          "holes": []
+        }
+      ]
+    }
+  ],
+  "connectors": [],
+  "order": ["E22"]
+}
+```
+
+以上示例中的四个非闭合点必须由现场人工采集或从测量数据整理，最后一个闭合点是
+同一西北角的重复值。对于不规则区域，不要强行套用矩形角点顺序，按实际边界顺序记录
+所有点；对于一个区域内相互错位的多块区域，分别增加一个 polygon，并按实际可通行
+情况设置 `connection_tolerance_m`。区域没有桥架时，不需要填写 `start` 或
+`start_corner`，规划器会按清扫几何生成路径；有桥架时会自动选择距离桥架最近的有效角点
+作为入口和出口，无法同时对齐时会沿清扫线安全回退到上一个角点。
+
+每个区域都应有唯一的 `id`。方向字母只用于区域命名和桥架端点解析：`Exx`、`Wxx`、
+`Nxx`、`Sxx` 分别表示东、西、北、南向编号区域。桥架按实际行驶方向填写 `path`，并
+在 `order` 中把区域和桥架交替排列；没有 `from/to` 的 `bridge_*` 或 `back_*` 也必须
+保留在 `order` 中，规划器会按顺序把上一个结束点与下一个区域最近点连接。
 
 由旧 YAML 三点标定转换生成的 `auto_map_*.json`，每个 polygon 还会包含
 `source_area`、`boundary_order`、`manual_calibration_points` 和
@@ -160,6 +247,57 @@ E16 为了保持矩形，使用正交化逻辑，第 4 个点标记为 `C_prime`
 桥架轨迹与清扫线之间的短区域内补接会优先使用一条经过安全校验的斜向直线；如果斜线穿过边界、孔洞或超过 `--max-connector`，自动回退到原有正交连接。清扫线之间的内部连接仍保持正交绕行。跨区域 bridge 的源区收尾、bridge 本体和目标区起始补接会按 `order` 合并到同一个 `connector_id` 段中；coverage 之间的清扫连接仍保持各自的 route 顺序。
 
 ## 运行
+
+### 从 YAML 生成地图和路线
+
+旧 YAML 只负责提供人工采集的区域 A/B/C 点和桥架 A/B 端点。第一次运行必须同时提供
+`--map-output`，规划器会先生成带有 `boundary` 点位注释、区域方向和 `order` 的
+`rtk_auto_map_v2`，再用同一份内存地图生成路线。地图输出和路线输出必须使用不同文件。
+
+例如 E22-W24：
+
+```powershell
+python src/rtk_nav/rtk_nav/auto_path_planner.py `
+  --input src/rtk_nav/rtk_nav/config/006-E22-W24.yaml `
+  --map-output auto_map_e22_w24.json `
+  --output auto_route_e22_w24.json `
+  --geojson-output auto_route_e22_w24.geojson `
+  --txt-output auto_route_e22_w24.txt `
+  --sweep-spacing 1.0 `
+  --edge-clearance 1.0 `
+  --max-connector 100.0 `
+  --turn-penalty-m 1.0 `
+  --max-connector-penalty 1.0
+```
+
+如果已经有 `auto_map_e22_w24.json`，后续可直接从地图规划，不需要再次读取 YAML：
+
+```powershell
+python src/rtk_nav/rtk_nav/auto_path_planner.py `
+  --input auto_map_e22_w24.json `
+  --output auto_route_e22_w24.json `
+  --geojson-output auto_route_e22_w24.geojson `
+  --txt-output auto_route_e22_w24.txt `
+  --max-connector 100.0
+```
+
+### 调整连接阈值
+
+`--max-connector` 可以在每次运行时修改，单位是米，默认值为 `8.0`。它限制桥架本体、
+区域入口/出口补接、区域内部连接和安全回退路径中的单段连接长度；例如：
+
+```powershell
+python src/rtk_nav/rtk_nav/auto_path_planner.py `
+  --input auto_map_e22_w24.json `
+  --output auto_route_e22_w24.json `
+  --max-connector 40.0
+```
+
+如果现场桥架本体或补接段超过 40 米，可以改为 `--max-connector 100.0`。增大该值只会
+允许更长的已校验连接段，不会取消边界、孔洞或区域间安全检查；如果两个独立区域本身
+不应直接相连，应保留 `--max-connector` 较小，并通过正确的 `order`、桥架路径或
+`holes` 表达不可通行关系。`connection_tolerance_m` 只用于同一区域多个 polygon 的
+小间隙，不能用 `--max-connector` 替代。
 
 在 ROS2 工作空间构建后：
 

@@ -30,10 +30,24 @@ DEFAULT_TURN_PENALTY_M = 1.0
 DEFAULT_MAX_CONNECTOR_PENALTY = 1.0
 DEFAULT_TXT_SPACING_M = 15.0
 VALID_GUIDES = {"horizontal", "vertical"}
+LEGACY_REGION_DIRECTIONS = frozenset({"E", "W", "N", "S"})
 
 
 class PlanningError(ValueError):
     """Raised when the input map cannot produce a safe route."""
+
+
+def _legacy_region_base(token: str) -> Optional[str]:
+    """Return the cardinal-direction region prefix from a legacy token."""
+    normalized = token.strip()
+    if len(normalized) < 2 or normalized[0].upper() not in LEGACY_REGION_DIRECTIONS:
+        return None
+    digit_end = 1
+    while digit_end < len(normalized) and normalized[digit_end].isdigit():
+        digit_end += 1
+    if digit_end == 1:
+        return None
+    return f"{normalized[0].upper()}{normalized[1:digit_end]}"
 
 
 @dataclass(frozen=True)
@@ -743,10 +757,17 @@ def _parse_order(
             continue
         connector = connector_by_id[item]
         if connector.from_region is None:
-            if not (index < first_region_index or index > last_region_index):
-                raise PlanningError(
-                    f"unbound connector must be before the first or after the last region: {item}"
+            if first_region_index < index < last_region_index:
+                has_previous_region = any(
+                    candidate in region_ids for candidate in order[:index]
                 )
+                has_next_region = any(
+                    candidate in region_ids for candidate in order[index + 1 :]
+                )
+                if not (has_previous_region and has_next_region):
+                    raise PlanningError(
+                        f"unbound connector has no surrounding regions: {item}"
+                    )
             continue
         if index == 0 or index == len(order) - 1:
             raise PlanningError(f"connector must be between two regions: {item}")
@@ -1043,6 +1064,8 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
     region_order: list[str] = []
     area_sequence: list[tuple[str, str]] = []
     pre_connectors: list[dict[str, Any]] = []
+    middle_connectors: list[dict[str, Any]] = []
+    post_bridge_connectors: list[dict[str, Any]] = []
     post_connectors: list[dict[str, Any]] = []
     bridge_areas: list[dict[str, Any]] = []
     internal_bridge_areas: list[dict[str, Any]] = []
@@ -1050,9 +1073,9 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
     def area_region_id(area_name: str) -> Optional[str]:
         """Return the logical region represented by a cleaning area name."""
         prefix, separator, suffix = area_name.partition("_")
-        if not separator or not prefix.startswith("E") or not prefix[1:].isdigit():
-            if area_name.startswith("E") and area_name[1:].isdigit():
-                return area_name
+        if not separator:
+            return area_name if _legacy_region_base(area_name) == area_name else None
+        if _legacy_region_base(prefix) != prefix:
             return None
         if area_name == "E17_upB_downC":
             return None
@@ -1177,14 +1200,17 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         )
 
     def token_region(token: str, point: Point) -> Optional[str]:
-        digits = ""
-        for character in token:
-            if not character.isdigit():
-                break
-            digits += character
-        if not digits:
-            return None
-        base = f"E{digits}"
+        base = _legacy_region_base(token)
+        if base is None:
+            digit_end = 0
+            while digit_end < len(token) and token[digit_end].isdigit():
+                digit_end += 1
+            if digit_end == 0:
+                return None
+            base = f"E{token[:digit_end]}"
+            suffix = token[digit_end:].lower()
+        else:
+            suffix = token[len(base) :].lower()
         candidates = [
             region_id
             for region_id in region_polygons
@@ -1192,7 +1218,6 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         ]
         if not candidates:
             return None
-        suffix = token[len(digits) :].lower()
         if "up" in suffix:
             up_candidates = [item for item in candidates if item.endswith("_up")]
             if up_candidates:
@@ -1223,7 +1248,11 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
             from_region = token_region(from_token, bridge["a"])
             to_region = token_region(to_token, bridge["b"])
         path = [list(bridge["a"]), list(bridge["b"])]
-        if from_region is not None and to_region is not None:
+        if (
+            from_region is not None
+            and to_region is not None
+            and from_region != to_region
+        ):
             if bridge["id"] == "bridge_16A-17downB" and "E17_up" in region_polygons:
                 internal = internal_by_id.get("E17_upB_downC")
                 if internal is not None:
@@ -1245,15 +1274,30 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
                 }
             )
         else:
-            pre_connectors.append(
-                {
-                    "id": bridge["id"],
-                    "path": path,
-                    "edge_distance_lon": bridge["edge_distance_lon"],
-                    "edge_distance_lat": bridge["edge_distance_lat"],
-                }
+            unbound_connector = {
+                "id": bridge["id"],
+                "path": path,
+                "edge_distance_lon": bridge["edge_distance_lon"],
+                "edge_distance_lat": bridge["edge_distance_lat"],
+            }
+            bridge_sequence_index = next(
+                sequence_index
+                for sequence_index, (_, item_id) in enumerate(area_sequence)
+                if item_id == bridge["id"]
             )
+            region_sequence_indices = [
+                sequence_index
+                for sequence_index, (kind, _) in enumerate(area_sequence)
+                if kind == "region"
+            ]
+            if bridge_sequence_index < min(region_sequence_indices):
+                pre_connectors.append(unbound_connector)
+            elif bridge_sequence_index > max(region_sequence_indices):
+                post_bridge_connectors.append(unbound_connector)
+            else:
+                middle_connectors.append(unbound_connector)
 
+    inter_connectors.extend(middle_connectors)
     inter_connectors.extend(internal_bridge_areas)
     # Keep the source order for the inter-region connectors, including the
     # explicit E17 gap crossing, rather than grouping by connector type.
@@ -1266,7 +1310,12 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
     ]
     inter_connectors = ordered_inter_connectors
 
-    connectors = pre_connectors + inter_connectors + post_connectors
+    connectors = (
+        pre_connectors
+        + inter_connectors
+        + post_bridge_connectors
+        + post_connectors
+    )
     ordered_regions_and_inter = [
         item_id
         for kind, item_id in area_sequence
@@ -1324,6 +1373,7 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         "connectors": connectors,
         "order": [item["id"] for item in pre_connectors]
         + physical_order
+        + [item["id"] for item in post_bridge_connectors]
         + [item["id"] for item in post_connectors],
     }
 
@@ -1399,10 +1449,15 @@ def _ordered_unbound_connector_path(
 ) -> Tuple[Point, ...]:
     """Orient an unbound connector according to its position in ``order``."""
     path = connector.path
-    if next_region is not None and previous_region is None:
+    if previous_region is not None and next_region is not None:
+        previous_endpoint = _nearest_region_endpoint(path, previous_region)
+        next_endpoint = _nearest_region_endpoint(path, next_region)
+        if previous_endpoint == 1 and next_endpoint == 0:
+            return tuple(reversed(path))
+    elif next_region is not None:
         if _nearest_region_endpoint(path, next_region) == 0:
             return tuple(reversed(path))
-    elif previous_region is not None and next_region is None:
+    elif previous_region is not None:
         if _nearest_region_endpoint(path, previous_region) == 1:
             return tuple(reversed(path))
     return path
@@ -2074,15 +2129,20 @@ def _safe_connector_path(
 
     direct_candidates: list[Tuple[Tuple[LocalPoint, ...], float]] = []
     for candidate in _connector_candidates(start, end)[1:]:
+        compact_candidate = tuple(
+            point
+            for index, point in enumerate(candidate)
+            if index == 0 or point != candidate[index - 1]
+        )
         if all(
             _line_is_allowed_region(
                 first, second, geometry, connection_tolerance_m
             )
-            for first, second in zip(candidate, candidate[1:])
+            for first, second in zip(compact_candidate, compact_candidate[1:])
         ):
-            length = _path_length(candidate)
+            length = _path_length(compact_candidate)
             if length <= max_connector + EPSILON:
-                direct_candidates.append((tuple(candidate), length))
+                direct_candidates.append((compact_candidate, length))
     if direct_candidates:
         return min(
             direct_candidates,
@@ -2099,6 +2159,43 @@ def _safe_connector_path(
         )
     except PlanningError:
         return None
+
+
+def _retrace_connector_path(
+    start: LocalPoint,
+    end: LocalPoint,
+    geometry: RotatedRegion,
+    max_connector: float,
+    connection_tolerance_m: float = 0.0,
+) -> Optional[Tuple[LocalPoint, ...]]:
+    """Return a safe retrace split into connector-sized route segments."""
+    if _local_distance(start, end) <= EPSILON:
+        return (start,)
+    if max_connector <= EPSILON:
+        return None
+    path = _safe_connector_path(
+        start,
+        end,
+        geometry,
+        math.inf,
+        connection_tolerance_m,
+    )
+    if path is None:
+        return None
+
+    split_path = [path[0]]
+    for first, second in zip(path, path[1:]):
+        length = _local_distance(first, second)
+        step_count = max(1, int(math.ceil(length / max_connector)))
+        for step in range(1, step_count + 1):
+            ratio = step / step_count
+            split_path.append(
+                (
+                    first[0] + (second[0] - first[0]) * ratio,
+                    first[1] + (second[1] - first[1]) * ratio,
+                )
+            )
+    return tuple(split_path)
 
 
 def _safe_connector_length(
@@ -2883,27 +2980,67 @@ def _beam_optimized_multi_polygon_segments(
 
     def final_ranking(state):
         _, last, orientation, longest, total, selected = state
-        tail = (
-            0.0
-            if local_exit is None
-            else connector_length(segment_end(last, orientation), local_exit)
-        )
-        if tail is None:
+        if local_exit is None:
+            return _objective_key(
+                total,
+                _turn_count(selected_points(selected)),
+                longest,
+                turn_penalty_m,
+                max_connector_penalty,
+            )
+
+        current_start = segment_start(last, orientation)
+        current_end = segment_end(last, orientation)
+        terminal_candidates = []
+        direct_path = connector_path(current_end, local_exit)
+        if direct_path is not None:
+            points = selected_points(selected)
+            points.extend(direct_path[1:])
+            tail = _path_length(direct_path)
+            terminal_candidates.append(
+                _objective_key(
+                    total + tail,
+                    _turn_count(points),
+                    max(longest, tail),
+                    turn_penalty_m,
+                    max_connector_penalty,
+                    terminal_connector_length_m=tail,
+                )
+            )
+
+        # If the exit is closer to the other end of the final sweep, allow a
+        # safe retrace before attaching to the bridge.
+        if _local_distance(current_start, local_exit) + EPSILON < _local_distance(
+            current_end, local_exit
+        ):
+            reverse_path = _retrace_connector_path(
+                current_end,
+                current_start,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+            )
+            tail_path = connector_path(current_start, local_exit)
+            if reverse_path is not None and tail_path is not None:
+                points = selected_points(selected)
+                points.extend(reverse_path[1:])
+                points.extend(tail_path[1:])
+                reverse_length = _path_length(reverse_path)
+                tail = _path_length(tail_path)
+                terminal_candidates.append(
+                    _objective_key(
+                        total + reverse_length + tail,
+                        _turn_count(points),
+                        max(longest, reverse_length, tail),
+                        turn_penalty_m,
+                        max_connector_penalty,
+                        terminal_connector_length_m=tail,
+                    )
+                )
+
+        if not terminal_candidates:
             return (math.inf, math.inf, math.inf, math.inf, math.inf, math.inf)
-        points = selected_points(selected)
-        if local_exit is not None:
-            tail_path = connector_cache[(points[-1], local_exit)]
-            if tail_path is None:
-                return (math.inf, math.inf, math.inf, math.inf, math.inf, math.inf)
-            points.extend(tail_path[1:])
-        return _objective_key(
-            total + tail,
-            _turn_count(points),
-            max(longest, tail),
-            turn_penalty_m,
-            max_connector_penalty,
-            terminal_connector_length_m=tail,
-        )
+        return min(terminal_candidates)
 
     beam.sort(key=partial_ranking)
     beam = beam[:beam_width]
@@ -2945,18 +3082,12 @@ def _beam_optimized_multi_polygon_segments(
     best = None
     best_metric = None
     for state in beam:
-        _, last, orientation, longest, total, selected = state
-        tail = (
-            0.0
-            if local_exit is None
-            else connector_length(segment_end(last, orientation), local_exit)
-        )
-        if tail is None:
-            continue
         metric = final_ranking(state)
+        if not math.isfinite(metric[0]):
+            continue
         if best_metric is None or metric < best_metric:
             best_metric = metric
-            best = selected
+            best = state[-1]
 
     if best is None:
         raise PlanningError(
@@ -3506,21 +3637,49 @@ def _optimized_multi_polygon_segments(
             current_metric = metrics.get(state)
             if current_metric is None:
                 continue
-            tail = (
-                0.0
-                if local_exit is None
-                else connector_length(segment_end(last, orientation), local_exit)
-            )
-            if tail is None:
-                continue
-            candidate_metric = (
-                max(current_metric[0], tail),
-                current_metric[1] + tail,
-                tail,
-            )
-            if candidate_metric < best_metric:
-                best_metric = candidate_metric
-                best_state = state
+            current_start = segment_start(last, orientation)
+            current_end = segment_end(last, orientation)
+            terminal_candidates = []
+            if local_exit is None:
+                terminal_candidates.append(
+                    (current_metric[0], current_metric[1], 0.0)
+                )
+            else:
+                direct_length = connector_length(current_end, local_exit)
+                if direct_length is not None:
+                    tail = direct_length
+                    terminal_candidates.append(
+                        (
+                            max(current_metric[0], tail),
+                            current_metric[1] + tail,
+                            tail,
+                        )
+                    )
+                if _local_distance(current_start, local_exit) + EPSILON < _local_distance(
+                    current_end, local_exit
+                ):
+                    reverse_path = _retrace_connector_path(
+                        current_end,
+                        current_start,
+                        geometry,
+                        max_connector,
+                        connection_tolerance_m,
+                    )
+                    tail_length = connector_length(current_start, local_exit)
+                    if reverse_path is not None and tail_length is not None:
+                        reverse_length = _path_length(reverse_path)
+                        tail = tail_length
+                        terminal_candidates.append(
+                            (
+                                max(current_metric[0], reverse_length, tail),
+                                current_metric[1] + reverse_length + tail,
+                                tail,
+                            )
+                        )
+            for candidate_metric in terminal_candidates:
+                if candidate_metric < best_metric:
+                    best_metric = candidate_metric
+                    best_state = state
 
     if best_state is None:
         raise PlanningError(
@@ -3739,28 +3898,31 @@ def _route_from_local_segments(
         direct_exit_cost = _local_distance(final_end, exit_selection_local)
         reverse_exit_cost = _local_distance(final_start, exit_selection_local)
         if reverse_exit_cost + EPSILON < direct_exit_cost:
-            reverse_connector = _find_region_connector(
+            reverse_connector = _retrace_connector_path(
                 final_end,
                 final_start,
                 geometry,
                 max_connector,
                 connection_tolerance_m,
             )
-            reverse_points = tuple(
-                frame.from_xy(_unrotate(point, axis_angle))
-                for point in reverse_connector
-            )
-            reverse_length = _path_length(reverse_connector)
-            output.append(
-                Segment(
-                    "connector",
-                    reverse_points,
-                    reverse_length,
-                    region_id=output_region_id,
+            if reverse_connector is None:
+                raise PlanningError("no safe retrace to the selected exit corner")
+            for first, second in zip(reverse_connector, reverse_connector[1:]):
+                reverse_points = tuple(
+                    frame.from_xy(_unrotate(point, axis_angle))
+                    for point in (first, second)
                 )
-            )
-            max_connector_length = max(max_connector_length, reverse_length)
-            total_length += reverse_length
+                reverse_length = _local_distance(first, second)
+                output.append(
+                    Segment(
+                        "connector",
+                        reverse_points,
+                        reverse_length,
+                        region_id=output_region_id,
+                    )
+                )
+                max_connector_length = max(max_connector_length, reverse_length)
+                total_length += reverse_length
 
     return Route(
         axis_angle_rad=axis_angle,
@@ -4080,15 +4242,26 @@ def plan_route(
         if connector is None:
             raise PlanningError(f"order references unknown connector: {item}")
         if connector.from_region is None:
-            next_region = (
-                regions[order[index + 1]]
-                if index + 1 < len(order) and order[index + 1] in regions
-                else None
+            next_region = next(
+                (
+                    regions[candidate]
+                    for candidate in order[index + 1 :]
+                    if candidate in regions
+                ),
+                None,
             )
-            previous_region_for_unbound = (
-                regions[order[index - 1]]
-                if index > 0 and order[index - 1] in regions
-                else None
+            previous_region_for_unbound = next(
+                (
+                    regions[candidate]
+                    for candidate in reversed(order[:index])
+                    if candidate in regions
+                ),
+                None,
+            )
+            previous_item = order[index - 1] if index > 0 else None
+            previous_item_is_unbound = (
+                previous_item in connectors
+                and connectors[previous_item].from_region is None
             )
             connector_path = _ordered_unbound_connector_path(
                 connector,
@@ -4110,27 +4283,51 @@ def plan_route(
                 previous_end_local = _rotate(
                     frame.to_xy(output[-1].points[-1]), axis_angle
                 )
-                attach = (
-                    _find_region_connector(
-                        previous_end_local,
-                        local_path[0],
-                        source_attachment_geometry,
-                        max_connector,
-                        previous_region_for_unbound.connection_tolerance_m,
+                if previous_item_is_unbound:
+                    attach_length = _local_distance(
+                        previous_end_local, local_path[0]
                     )
-                    if previous_region_uses_reverse_end
-                    else _bridge_attachment_connector(
-                        previous_end_local,
-                        local_path[0],
-                        source_attachment_geometry,
-                        max_connector,
-                        previous_region_for_unbound.connection_tolerance_m,
-                    )
-                )
+                    if attach_length > max_connector + EPSILON:
+                        raise PlanningError(
+                            f"unbound connector join exceeds --max-connector: "
+                            f"{attach_length:.3f} m"
+                        )
+                    attach = (previous_end_local, local_path[0])
+                else:
+                    if previous_region_uses_reverse_end:
+                        try:
+                            attach = _find_region_connector(
+                                previous_end_local,
+                                local_path[0],
+                                source_attachment_geometry,
+                                max_connector,
+                                previous_region_for_unbound.connection_tolerance_m,
+                            )
+                        except PlanningError:
+                            # Raw bridge endpoints may lie exactly on a corner,
+                            # which the strict orthogonal graph cannot target.
+                            attach = _bridge_attachment_connector(
+                                previous_end_local,
+                                local_path[0],
+                                source_attachment_geometry,
+                                max_connector,
+                                previous_region_for_unbound.connection_tolerance_m,
+                            )
+                    else:
+                        attach = _bridge_attachment_connector(
+                            previous_end_local,
+                            local_path[0],
+                            source_attachment_geometry,
+                            max_connector,
+                            previous_region_for_unbound.connection_tolerance_m,
+                        )
                 attach_points = tuple(
                     frame.from_xy(_unrotate(point, axis_angle)) for point in attach
                 )
-                attach_length = _path_length(attach)
+                if previous_item_is_unbound:
+                    attach_length = _path_length(attach)
+                else:
+                    attach_length = _path_length(attach)
                 output.append(
                     Segment(
                         "connector",
