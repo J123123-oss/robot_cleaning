@@ -3,15 +3,17 @@
 ## Goal
 
 Keep the video replay, camera publisher, and dynamic grid-line detector on a
-single `640x480 @ 30 FPS` contract while replacing the ROS raw image transport
-with JPEG-compressed image messages and preventing stale-frame backlog.
+single `360x640 @ 30 FPS` portrait contract while replacing the ROS raw image
+transport with JPEG-compressed image messages and preventing stale-frame
+backlog.
 
 ## Scope and constraints
 
 - The source video is portrait `720x1280`.
 - The video is not rotated.
-- The output must remain `640x480`; aspect ratio is preserved by scaling to
-  cover and center-cropping, so there is no non-uniform stretch or padding.
+- The output must remain `360x640`; it is the exact 0.5 scale of the source.
+  The whole image is retained with no rotation, crop, padding, or non-uniform
+  stretch.
 - `/dev/video0` remains a raw V4L2/YUYV interface. Compression applies to the
   ROS camera topic after the camera publisher reads the V4L2 frame.
 - The existing visual correction topics and result semantics remain unchanged.
@@ -19,8 +21,8 @@ with JPEG-compressed image messages and preventing stale-frame backlog.
 
 ## Architecture
 
-`video_to_v4l2` produces `640x480` YUYV frames at 30 FPS using an
-aspect-preserving scale and center crop. `camera_publisher_node` reads those
+`video_to_v4l2` produces `360x640` YUYV frames at 30 FPS using an exact
+aspect-preserving scale with no crop. `camera_publisher_node` reads those
 frames and publishes `sensor_msgs/msg/CompressedImage` on
 `/camera/color/image_compressed` using JPEG quality 80. The publisher uses a
 latest-frame appsink configuration where GStreamer is available.
@@ -41,8 +43,8 @@ topics keep their existing names and message types.
 
 ```text
 720x1280 video
-  -> ffmpeg: scale-to-cover + center crop, no rotation
-  -> /dev/video0: 640x480 YUYV @ 30 FPS
+  -> ffmpeg: exact half-scale, no rotation or crop
+  -> /dev/video0: 360x640 YUYV @ 30 FPS
   -> camera publisher: BGR frame -> JPEG quality 80
   -> /camera/color/image_compressed: CompressedImage @ target 30 FPS
   -> line detector: depth-1 latest frame -> JPEG decode -> detection
@@ -55,11 +57,11 @@ The following parameters are explicit and consistent across the components:
 
 | Component | Parameter | Default |
 | --- | --- | ---: |
-| video replay | width | 640 |
-| video replay | height | 480 |
+| video replay | width | 360 |
+| video replay | height | 640 |
 | video replay | fps | 30 |
-| camera publisher | width | 640 |
-| camera publisher | height | 480 |
+| camera publisher | width | 360 |
+| camera publisher | height | 640 |
 | camera publisher | fps | 30 |
 | camera publisher | jpeg_quality | 80 |
 | line detector | detection_fps | 30.0 |
@@ -74,7 +76,8 @@ video path.
 
 The implementation must include tests that verify:
 
-1. The replay filter preserves the fixed `640x480` output without rotation.
+1. The replay filter preserves the fixed `360x640` output without rotation or
+   crop.
 2. The camera publisher constructs a compressed image with the configured
    JPEG quality and publishes the compressed topic.
 3. The line detector decodes compressed messages, stores only the latest
