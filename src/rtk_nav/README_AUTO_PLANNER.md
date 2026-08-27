@@ -333,6 +333,8 @@ python -m rtk_nav.auto_path_planner \
   `--txt-spacing` 插值；默认值为 15 m，与 `full_path_planner_dense.py` 的
   `DEFAULT_DENSE_SPACING` 一致。TXT 中的 `#` 区域/连接标记会被导航器忽略但可用于人工检查。
 
+GeoJSON 的线要素同时写入 `color`、标准 `stroke` 和 `style_class` 样式属性，使用固定颜色区分路径：清扫区域 `coverage` 为黑色 `#000000`，区域内自动首尾/内部连接为蓝色 `#1f77b4`，无 `region_id` 的自动连接为绿色 `#0eff0e`，实际采集的 `bridge_*`、`back_*` 路径为红色 `#d62728`，区域边界为灰色 `#6b7280`。自动连接不再继承相邻区域颜色。
+
 地图输入和路线输出必须使用不同路径。推荐使用 `auto_map_*.json` 保存
 `rtk_auto_map_v2`，使用 `auto_route_*.json` 和 `auto_route_*.geojson` 保存规划结果；
 不要把 GeoJSON 输出重新作为地图输入。

@@ -1021,7 +1021,11 @@ class AutoPathPlannerTests(unittest.TestCase):
             )
 
     def test_route_serializers_include_segment_kinds_and_metrics(self):
-        model = load_map(_rectangle_map(width_m=4.0, height_m=2.0))
+        payload = _rectangle_map(width_m=4.0, height_m=2.0)
+        payload["format"] = "rtk_auto_map_v2"
+        payload["regions"] = [{"id": "only", "boundary": payload.pop("boundary")}]
+        payload["order"] = ["only"]
+        model = load_map(payload)
         route = plan_route(model, sweep_spacing=1.0, edge_clearance=0.1)
         route_json = json.loads(route_to_json(route))
         route_geojson = json.loads(route_to_geojson(route, model))
@@ -1038,6 +1042,88 @@ class AutoPathPlannerTests(unittest.TestCase):
             if feature["properties"]["kind"] == "boundary"
         )
         self.assertEqual(boundary["geometry"]["type"], "Polygon")
+
+        self.assertEqual(boundary["properties"]["color"], "#6b7280")
+        self.assertEqual(
+            boundary["properties"]["style_class"], "cleaning_area_boundary"
+        )
+        route_features = [
+            feature
+            for feature in route_geojson["features"]
+            if "index" in feature["properties"]
+        ]
+        coverage = next(
+            feature
+            for feature in route_features
+            if feature["properties"]["kind"] == "coverage"
+        )
+        auto_connector = next(
+            feature
+            for feature in route_features
+            if feature["properties"]["kind"] == "connector"
+            and "connector_id" not in feature["properties"]
+        )
+        self.assertEqual(coverage["properties"]["color"], "#000000")
+        self.assertEqual(coverage["properties"]["stroke"], "#000000")
+        self.assertEqual(coverage["properties"]["style_class"], "cleaning_area")
+        self.assertEqual(
+            auto_connector["properties"]["color"], "#1f77b4"
+        )
+        self.assertEqual(
+            auto_connector["properties"]["stroke"], "#1f77b4"
+        )
+        self.assertEqual(
+            auto_connector["properties"]["style_class"],
+            "automatic_region_connector",
+        )
+        self.assertNotEqual(
+            auto_connector["properties"]["color"],
+            coverage["properties"]["color"],
+        )
+
+    def test_geojson_leading_automatic_connector_uses_fixed_unbound_color(self):
+        base = _rectangle_map(width_m=10.0, height_m=5.0)
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": base["guides"],
+            "regions": [{"id": "only", "boundary": base["boundary"]}],
+            "connectors": [
+                {
+                    "id": "first",
+                    "path": [_metric_point(-3, 0), _metric_point(-3, 2)],
+                },
+                {
+                    "id": "second",
+                    "path": [_metric_point(0, 0), _metric_point(-4, 0)],
+                },
+            ],
+            "order": ["first", "second", "only"],
+        }
+        model = load_map(payload)
+        route = plan_route(
+            model,
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        document = json.loads(route_to_geojson(route, model))
+        automatic = next(
+            feature
+            for feature in document["features"]
+            if feature["properties"].get("index") == 1
+        )
+        self.assertEqual(automatic["properties"]["kind"], "connector")
+        self.assertNotIn("connector_id", automatic["properties"])
+        self.assertEqual(
+            automatic["properties"]["color"], "#0eff0e"
+        )
+        self.assertEqual(
+            automatic["properties"]["stroke"], "#0eff0e"
+        )
+        self.assertEqual(
+            automatic["properties"]["style_class"],
+            "automatic_unbound_connector",
+        )
 
     def test_start_must_be_inside_usable_area(self):
         model_data = _rectangle_map(width_m=4.0, height_m=2.0)
@@ -1170,6 +1256,9 @@ class AutoPathPlannerTests(unittest.TestCase):
             if feature["properties"].get("connector_id")
         )
         self.assertEqual(bridge_feature["properties"]["to_region"], "E10")
+        self.assertEqual(bridge_feature["properties"]["color"], "#d62728")
+        self.assertEqual(bridge_feature["properties"]["stroke"], "#d62728")
+        self.assertEqual(bridge_feature["properties"]["style_class"], "bridge_path")
         for segment in coverage:
             for first, second in zip(segment.points, segment.points[1:]):
                 midpoint = (
@@ -1414,6 +1503,50 @@ class AutoPathPlannerTests(unittest.TestCase):
             access.points,
             tuple(tuple(point) for point in payload["connectors"][0]["path"]),
         )
+
+    def test_contiguous_unbound_connectors_follow_previous_end_and_join(self):
+        base = _rectangle_map(width_m=10.0, height_m=5.0)
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "guides": base["guides"],
+            "regions": [{"id": "only", "boundary": base["boundary"]}],
+            "connectors": [
+                {
+                    "id": "first",
+                    "path": [_metric_point(-3, 0), _metric_point(-3, 2)],
+                },
+                {
+                    "id": "second",
+                    "path": [_metric_point(0, 0), _metric_point(-4, 0)],
+                },
+            ],
+            "order": ["first", "second", "only"],
+        }
+
+        route = plan_route(
+            load_map(payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        first = next(
+            segment for segment in route.segments if segment.connector_id == "first"
+        )
+        second = next(
+            segment for segment in route.segments if segment.connector_id == "second"
+        )
+        joins = [
+            segment
+            for segment in route.segments
+            if segment.connector_id is None
+            and segment.points[0] == first.points[-1]
+            and segment.points[-1] == second.points[0]
+        ]
+
+        self.assertEqual(first.points[-1], tuple(_metric_point(-3, 0)))
+        self.assertEqual(second.points[0], tuple(_metric_point(-4, 0)))
+        self.assertEqual(len(joins), 1)
+        self.assertAlmostEqual(joins[0].length_m, 1.0, delta=0.01)
 
     def test_unbound_entry_and_exit_use_nearest_region_corners(self):
         payload = {

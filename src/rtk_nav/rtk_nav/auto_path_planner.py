@@ -31,6 +31,11 @@ DEFAULT_MAX_CONNECTOR_PENALTY = 1.0
 DEFAULT_TXT_SPACING_M = 15.0
 VALID_GUIDES = {"horizontal", "vertical"}
 LEGACY_REGION_DIRECTIONS = frozenset({"E", "W", "N", "S"})
+BOUNDARY_COLOR = "#6b7280"
+CLEANING_AREA_COLOR = "#000000"
+AUTOMATIC_UNBOUND_CONNECTOR_COLOR = "#0eff0e"
+AUTOMATIC_REGION_CONNECTOR_COLOR = "#1f77b4"
+BRIDGE_PATH_COLOR = "#d62728"
 
 
 class PlanningError(ValueError):
@@ -1446,10 +1451,18 @@ def _ordered_unbound_connector_path(
     connector: Connector,
     previous_region: Optional[Region],
     next_region: Optional[Region],
+    previous_path_end: Optional[Point] = None,
 ) -> Tuple[Point, ...]:
     """Orient an unbound connector according to its position in ``order``."""
     path = connector.path
-    if previous_region is not None and next_region is not None:
+    if previous_path_end is not None:
+        previous_endpoint = min(
+            range(2),
+            key=lambda index: _geo_distance_m(path[index], previous_path_end),
+        )
+        if previous_endpoint == 1:
+            return tuple(reversed(path))
+    elif previous_region is not None and next_region is not None:
         previous_endpoint = _nearest_region_endpoint(path, previous_region)
         next_endpoint = _nearest_region_endpoint(path, next_region)
         if previous_endpoint == 1 and next_endpoint == 0:
@@ -4263,17 +4276,48 @@ def plan_route(
                 previous_item in connectors
                 and connectors[previous_item].from_region is None
             )
+            previous_path_end = (
+                output[-1].points[-1]
+                if previous_item_is_unbound and output
+                else None
+            )
             connector_path = _ordered_unbound_connector_path(
                 connector,
                 previous_region_for_unbound,
                 next_region,
+                previous_path_end,
             )
 
             frame = _LocalFrame.from_map(map_data)
             local_path = tuple(
                 _rotate(frame.to_xy(point), axis_angle) for point in connector_path
             )
-            if previous_region_for_unbound is not None:
+            if previous_item_is_unbound:
+                previous_end_local = _rotate(
+                    frame.to_xy(output[-1].points[-1]), axis_angle
+                )
+                attach = (previous_end_local, local_path[0])
+                attach_length = _path_length(attach)
+                if attach_length > max_connector + EPSILON:
+                    raise PlanningError(
+                        f"unbound connector join exceeds --max-connector: "
+                        f"{attach_length:.3f} m"
+                    )
+                attach_points = tuple(
+                    frame.from_xy(_unrotate(point, axis_angle)) for point in attach
+                )
+                output.append(
+                    Segment(
+                        "connector",
+                        attach_points,
+                        attach_length,
+                        region_id=None
+                        if map_data.legacy or previous_region_for_unbound is None
+                        else previous_region_for_unbound.id,
+                    )
+                )
+                max_connector_length = max(max_connector_length, attach_length)
+            elif previous_region_for_unbound is not None:
                 _, source_attachment_geometry = _rotated_region_geometry(
                     map_data,
                     previous_region_for_unbound,
@@ -4283,37 +4327,18 @@ def plan_route(
                 previous_end_local = _rotate(
                     frame.to_xy(output[-1].points[-1]), axis_angle
                 )
-                if previous_item_is_unbound:
-                    attach_length = _local_distance(
-                        previous_end_local, local_path[0]
-                    )
-                    if attach_length > max_connector + EPSILON:
-                        raise PlanningError(
-                            f"unbound connector join exceeds --max-connector: "
-                            f"{attach_length:.3f} m"
+                if previous_region_uses_reverse_end:
+                    try:
+                        attach = _find_region_connector(
+                            previous_end_local,
+                            local_path[0],
+                            source_attachment_geometry,
+                            max_connector,
+                            previous_region_for_unbound.connection_tolerance_m,
                         )
-                    attach = (previous_end_local, local_path[0])
-                else:
-                    if previous_region_uses_reverse_end:
-                        try:
-                            attach = _find_region_connector(
-                                previous_end_local,
-                                local_path[0],
-                                source_attachment_geometry,
-                                max_connector,
-                                previous_region_for_unbound.connection_tolerance_m,
-                            )
-                        except PlanningError:
-                            # Raw bridge endpoints may lie exactly on a corner,
-                            # which the strict orthogonal graph cannot target.
-                            attach = _bridge_attachment_connector(
-                                previous_end_local,
-                                local_path[0],
-                                source_attachment_geometry,
-                                max_connector,
-                                previous_region_for_unbound.connection_tolerance_m,
-                            )
-                    else:
+                    except PlanningError:
+                        # Raw bridge endpoints may lie exactly on a corner,
+                        # which the strict orthogonal graph cannot target.
                         attach = _bridge_attachment_connector(
                             previous_end_local,
                             local_path[0],
@@ -4321,13 +4346,18 @@ def plan_route(
                             max_connector,
                             previous_region_for_unbound.connection_tolerance_m,
                         )
+                else:
+                    attach = _bridge_attachment_connector(
+                        previous_end_local,
+                        local_path[0],
+                        source_attachment_geometry,
+                        max_connector,
+                        previous_region_for_unbound.connection_tolerance_m,
+                    )
                 attach_points = tuple(
                     frame.from_xy(_unrotate(point, axis_angle)) for point in attach
                 )
-                if previous_item_is_unbound:
-                    attach_length = _path_length(attach)
-                else:
-                    attach_length = _path_length(attach)
+                attach_length = _path_length(attach)
                 output.append(
                     Segment(
                         "connector",
@@ -4761,6 +4791,31 @@ def route_to_txt(
 def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
     """Serialize route and optional map geometry as a GeoJSON FeatureCollection."""
     features = []
+
+    def line_style(color: str, style_class: str) -> dict[str, Any]:
+        return {
+            "color": color,
+            "stroke": color,
+            "stroke-width": 2,
+            "stroke-opacity": 1.0,
+            "style_class": style_class,
+        }
+
+    def segment_style(segment: Segment) -> dict[str, Any]:
+        if segment.kind == "coverage":
+            return line_style(CLEANING_AREA_COLOR, "cleaning_area")
+        if segment.connector_id is not None:
+            return line_style(BRIDGE_PATH_COLOR, "bridge_path")
+        if segment.region_id is not None:
+            return line_style(
+                AUTOMATIC_REGION_CONNECTOR_COLOR,
+                "automatic_region_connector",
+            )
+        return line_style(
+            AUTOMATIC_UNBOUND_CONNECTOR_COLOR,
+            "automatic_unbound_connector",
+        )
+
     if map_data is not None:
         for region in map_data.regions:
             for polygon_index, polygon in enumerate(region.polygons):
@@ -4780,6 +4835,9 @@ def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
                             "polygon_index": polygon_index,
                             "edge_distance_lon": list(polygon.edge_distance_lon),
                             "edge_distance_lat": list(polygon.edge_distance_lat),
+                            **line_style(BOUNDARY_COLOR, "cleaning_area_boundary"),
+                            "fill": BOUNDARY_COLOR,
+                            "fill-opacity": 0.08,
                         },
                         "geometry": {
                             "type": "Polygon",
@@ -4793,6 +4851,7 @@ def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
             properties = {
                 "kind": "bridge",
                 "connector_id": connector.id,
+                **line_style(BRIDGE_PATH_COLOR, "bridge_path"),
             }
             if connector.edge_distance_lon is not None:
                 properties["edge_distance_lon"] = list(
@@ -4839,6 +4898,7 @@ def route_to_geojson(route: Route, map_data: Optional[AutoMap] = None) -> str:
                     "sequence": index,
                     "kind": segment.kind,
                     "length_m": round(segment.length_m, 6),
+                    **segment_style(segment),
                 },
                 "geometry": geometry,
             }

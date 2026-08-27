@@ -14,7 +14,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -57,7 +64,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -100,7 +114,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -143,7 +164,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -186,7 +214,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -229,7 +264,14 @@
         "edge_distance_lat": [
           0.3,
           0.3
-        ]
+        ],
+        "color": "#6b7280",
+        "stroke": "#6b7280",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area_boundary",
+        "fill": "#6b7280",
+        "fill-opacity": 0.08
       },
       "geometry": {
         "type": "Polygon",
@@ -264,6 +306,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_5B-6B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -292,6 +339,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_6A-7bB",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -320,6 +372,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_7bA-7A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.3,
           0.3
@@ -348,6 +405,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_8B-9A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -376,6 +438,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_10A-11B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -404,6 +471,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_11A-12B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -432,6 +504,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_12A-13B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -460,6 +537,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_13A-14B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -488,6 +570,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_14A-15B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -516,6 +603,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_15A-16B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -544,6 +636,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_16A-17B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -572,6 +669,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_17A-18B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -600,6 +702,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_18A-19B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -628,6 +735,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_19A-20B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -656,6 +768,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_20A-21B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -684,6 +801,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_21A-22B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -712,6 +834,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_22-23B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -742,6 +869,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_23-24B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -772,6 +904,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_E24A-E24D",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.3,
           0.3
@@ -800,6 +937,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "bridge_front1-W24C",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -828,6 +970,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_W24B-W24C_stop",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -856,6 +1003,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_E24D-24A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.3,
           0.3
@@ -884,6 +1036,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_24B-23A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -912,6 +1069,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_23B-22A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -940,6 +1102,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_22B-21A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -968,6 +1135,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_21B-20A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -996,6 +1168,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_20B-19A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1024,6 +1201,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_19B-18A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1052,6 +1234,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_18B-17A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1080,6 +1267,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_17B-16A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1108,6 +1300,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_16B-15A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1136,6 +1333,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_15B-14A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1164,6 +1366,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_14B-13A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1192,6 +1399,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_13B-12A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1220,6 +1432,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_12B-11A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1248,6 +1465,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_11B-10A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1276,6 +1498,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_9A-8B",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1304,6 +1531,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_7A-7bA",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.3,
           0.3
@@ -1332,6 +1564,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_7bB-6A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1360,6 +1597,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_6B-5A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1388,6 +1630,11 @@
       "properties": {
         "kind": "bridge",
         "connector_id": "back_5B-4A",
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "edge_distance_lon": [
           0.1,
           0.1
@@ -1418,6 +1665,11 @@
         "sequence": 0,
         "kind": "connector",
         "length_m": 23.747191,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_5B-6B"
       },
       "geometry": {
@@ -1440,7 +1692,39 @@
         "index": 1,
         "sequence": 1,
         "kind": "connector",
+        "length_m": 20.017355,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741642174106,
+            35.60568374013546
+          ],
+          [
+            110.64741690256913,
+            35.605502653578235
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 2,
+        "sequence": 2,
+        "kind": "connector",
         "length_m": 3.916292,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_6A-7bB"
       },
       "geometry": {
@@ -1460,10 +1744,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 2,
-        "sequence": 2,
+        "index": 3,
+        "sequence": 3,
+        "kind": "connector",
+        "length_m": 20.013521,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741521205767,
+            35.605467251897565
+          ],
+          [
+            110.64741623970805,
+            35.605286201553355
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 4,
+        "sequence": 4,
         "kind": "connector",
         "length_m": 31.115786,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_7bA-7A"
       },
       "geometry": {
@@ -1483,10 +1799,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 3,
-        "sequence": 3,
+        "index": 5,
+        "sequence": 5,
+        "kind": "connector",
+        "length_m": 3.812188,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776001450005,
+            35.605286952396405
+          ],
+          [
+            110.6477602879233,
+            35.605252466171876
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 6,
+        "sequence": 6,
         "kind": "connector",
         "length_m": 27.860092,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_8B-9A"
       },
       "geometry": {
@@ -1506,10 +1854,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 4,
-        "sequence": 4,
+        "index": 7,
+        "sequence": 7,
+        "kind": "connector",
+        "length_m": 16.306293,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6477609856752,
+            35.60500043052129
+          ],
+          [
+            110.64776183179559,
+            35.604852917286685
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 8,
+        "sequence": 8,
         "kind": "connector",
         "length_m": 11.360912,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_10A-11B"
       },
       "geometry": {
@@ -1529,10 +1909,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 5,
-        "sequence": 5,
+        "index": 9,
+        "sequence": 9,
+        "kind": "connector",
+        "length_m": 24.611399,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776265157377,
+            35.60475014299974
+          ],
+          [
+            110.64776313280512,
+            35.60452749634761
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 10,
+        "sequence": 10,
         "kind": "connector",
         "length_m": 11.671849,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_11A-12B"
       },
       "geometry": {
@@ -1552,10 +1964,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 6,
-        "sequence": 6,
+        "index": 11,
+        "sequence": 11,
+        "kind": "connector",
+        "length_m": 14.27941,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776416327175,
+            35.60442191035046
+          ],
+          [
+            110.64776463744738,
+            35.60429273226822
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 12,
+        "sequence": 12,
         "kind": "connector",
         "length_m": 3.373068,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_12A-13B"
       },
       "geometry": {
@@ -1575,10 +2019,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 7,
-        "sequence": 7,
+        "index": 13,
+        "sequence": 13,
+        "kind": "connector",
+        "length_m": 11.973921,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776464459975,
+            35.60426221780848
+          ],
+          [
+            110.64776491482968,
+            35.60415389596566
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 14,
+        "sequence": 14,
         "kind": "connector",
         "length_m": 12.146025,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_13A-14B"
       },
       "geometry": {
@@ -1598,10 +2074,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 8,
-        "sequence": 8,
+        "index": 15,
+        "sequence": 15,
+        "kind": "connector",
+        "length_m": 20.009291,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776557275421,
+            35.60404401827957
+          ],
+          [
+            110.64776723843342,
+            35.603863009383225
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 16,
+        "sequence": 16,
         "kind": "connector",
         "length_m": 3.867796,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_14A-15B"
       },
       "geometry": {
@@ -1621,10 +2129,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 9,
-        "sequence": 9,
+        "index": 17,
+        "sequence": 17,
+        "kind": "connector",
+        "length_m": 11.968207,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776678225708,
+            35.60382802136538
+          ],
+          [
+            110.64776705903036,
+            35.60371975122639
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 18,
+        "sequence": 18,
         "kind": "connector",
         "length_m": 12.282069,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_15A-16B"
       },
       "geometry": {
@@ -1644,10 +2184,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 10,
-        "sequence": 10,
+        "index": 19,
+        "sequence": 19,
+        "kind": "connector",
+        "length_m": 15.425711,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6477676095043,
+            35.60360864241737
+          ],
+          [
+            110.64776810603713,
+            35.60346909433307
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 20,
+        "sequence": 20,
         "kind": "connector",
         "length_m": 2.658948,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_16A-17B"
       },
       "geometry": {
@@ -1667,10 +2239,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 11,
-        "sequence": 11,
+        "index": 21,
+        "sequence": 21,
+        "kind": "connector",
+        "length_m": 15.382607,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776797468316,
+            35.60344504040682
+          ],
+          [
+            110.64776897053187,
+            35.603305884061356
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 22,
+        "sequence": 22,
         "kind": "connector",
         "length_m": 3.894532,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_17A-18B"
       },
       "geometry": {
@@ -1690,10 +2294,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 12,
-        "sequence": 12,
+        "index": 23,
+        "sequence": 23,
+        "kind": "connector",
+        "length_m": 7.399212,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776922016449,
+            35.60327065277348
+          ],
+          [
+            110.64776956203357,
+            35.60320371639688
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 24,
+        "sequence": 24,
         "kind": "connector",
         "length_m": 11.328804,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_18A-19B"
       },
       "geometry": {
@@ -1713,10 +2349,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 13,
-        "sequence": 13,
+        "index": 25,
+        "sequence": 25,
+        "kind": "connector",
+        "length_m": 25.737669,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776966454107,
+            35.603101230415184
+          ],
+          [
+            110.6477703763593,
+            35.602868395349155
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 26,
+        "sequence": 26,
         "kind": "connector",
         "length_m": 3.563357,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_19A-20B"
       },
       "geometry": {
@@ -1736,10 +2404,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 14,
-        "sequence": 14,
+        "index": 27,
+        "sequence": 27,
+        "kind": "connector",
+        "length_m": 18.847316,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64777090237833,
+            35.60283616232081
+          ],
+          [
+            110.64777166295664,
+            35.602665661235534
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 28,
+        "sequence": 28,
         "kind": "connector",
         "length_m": 11.691265,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_20A-21B"
       },
       "geometry": {
@@ -1759,10 +2459,42 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 15,
-        "sequence": 15,
+        "index": 29,
+        "sequence": 29,
+        "kind": "connector",
+        "length_m": 13.138531,
+        "color": "#0eff0e",
+        "stroke": "#0eff0e",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_unbound_connector"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64777235307753,
+            35.60255989772949
+          ],
+          [
+            110.64777253579807,
+            35.60244104011207
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 30,
+        "sequence": 30,
         "kind": "connector",
         "length_m": 3.598532,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_21A-22B"
       },
       "geometry": {
@@ -1782,10 +2514,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 16,
-        "sequence": 16,
+        "index": 31,
+        "sequence": 31,
         "kind": "connector",
-        "length_m": 0.912991,
+        "length_m": 2.378384,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
@@ -1796,365 +2533,8 @@
             35.60240848925073
           ],
           [
-            110.64776647940096,
-            35.60240225672068
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 17,
-        "sequence": 17,
-        "kind": "coverage",
-        "length_m": 29.444937,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776647940096,
-            35.60240225672068
-          ],
-          [
-            110.64744116988493,
-            35.602400575437294
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 18,
-        "sequence": 18,
-        "kind": "connector",
-        "length_m": 1.575949,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744116988493,
-            35.602400575437294
-          ],
-          [
-            110.64742375870159,
-            35.60240048545181
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 19,
-        "sequence": 19,
-        "kind": "coverage",
-        "length_m": 12.458072,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64742375870159,
-            35.60240048545181
-          ],
-          [
-            110.64728612113491,
-            35.60239977410541
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 20,
-        "sequence": 20,
-        "kind": "connector",
-        "length_m": 1.000347,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64728612113491,
-            35.60239977410541
-          ],
-          [
-            110.64728611730509,
-            35.60239977408562
-          ],
-          [
-            110.64728618703907,
-            35.60239072776681
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 21,
-        "sequence": 21,
-        "kind": "coverage",
-        "length_m": 12.458072,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64728618703907,
-            35.60239072776681
-          ],
-          [
-            110.64742382460575,
-            35.60239143911321
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 22,
-        "sequence": 22,
-        "kind": "connector",
-        "length_m": 1.5713,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64742382460575,
-            35.60239143911321
-          ],
-          [
-            110.6474411844247,
-            35.60239152883323
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 23,
-        "sequence": 23,
-        "kind": "coverage",
-        "length_m": 29.444937,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6474411844247,
-            35.60239152883323
-          ],
-          [
-            110.64776649394072,
-            35.60239321011662
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 24,
-        "sequence": 24,
-        "kind": "connector",
-        "length_m": 1.004996,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776649394072,
-            35.60239321011662
-          ],
-          [
-            110.64776643874649,
-            35.602393209831355
-          ],
-          [
-            110.64776650848049,
-            35.60238416351255
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 25,
-        "sequence": 25,
-        "kind": "coverage",
-        "length_m": 29.444937,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776650848049,
-            35.60238416351255
-          ],
-          [
-            110.64744119896446,
-            35.60238248222917
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 26,
-        "sequence": 26,
-        "kind": "connector",
-        "length_m": 1.566651,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744119896446,
-            35.60238248222917
-          ],
-          [
-            110.64742389050991,
-            35.602382392774615
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 27,
-        "sequence": 27,
-        "kind": "coverage",
-        "length_m": 12.458072,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64742389050991,
-            35.602382392774615
-          ],
-          [
-            110.64728625294325,
-            35.60238168142821
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 28,
-        "sequence": 28,
-        "kind": "connector",
-        "length_m": 1.000347,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64728625294325,
-            35.60238168142821
-          ],
-          [
-            110.6472862491134,
-            35.60238168140842
-          ],
-          [
-            110.6472863188474,
-            35.602372635089615
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 29,
-        "sequence": 29,
-        "kind": "coverage",
-        "length_m": 12.458072,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6472863188474,
-            35.602372635089615
-          ],
-          [
-            110.64742395641407,
-            35.60237334643602
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 30,
-        "sequence": 30,
-        "kind": "connector",
-        "length_m": 1.562001,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64742395641407,
-            35.60237334643602
-          ],
-          [
-            110.64744121350424,
-            35.602373435625104
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 31,
-        "sequence": 31,
-        "kind": "coverage",
-        "length_m": 29.444937,
-        "region_id": "E22"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744121350424,
-            35.602373435625104
-          ],
-          [
-            110.64776652302025,
-            35.60237511690849
+            110.6477587646586,
+            35.602390456165935
           ]
         ]
       }
@@ -2164,24 +2544,25 @@
       "properties": {
         "index": 32,
         "sequence": 32,
-        "kind": "connector",
-        "length_m": 1.004996,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776652302025,
-            35.60237511690849
+            110.6477587646586,
+            35.602390456165935
           ],
           [
-            110.64776646782603,
-            35.60237511662323
-          ],
-          [
-            110.64776653756002,
-            35.60236607030443
+            110.64744892243068,
+            35.60238885482148
           ]
         ]
       }
@@ -2191,20 +2572,25 @@
       "properties": {
         "index": 33,
         "sequence": 33,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 2.969905,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776653756002,
-            35.60236607030443
+            110.64744892243068,
+            35.60238885482148
           ],
           [
-            110.647441228044,
-            35.60236438902104
+            110.64741611073295,
+            35.60238868524217
           ]
         ]
       }
@@ -2214,20 +2600,25 @@
       "properties": {
         "index": 34,
         "sequence": 34,
-        "kind": "connector",
-        "length_m": 1.557352,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.647441228044,
-            35.60236438902104
+            110.64741611073295,
+            35.60238868524217
           ],
           [
-            110.64742402231823,
-            35.60236430009742
+            110.64729394045438,
+            35.602388053834694
           ]
         ]
       }
@@ -2237,20 +2628,29 @@
       "properties": {
         "index": 35,
         "sequence": 35,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742402231823,
-            35.60236430009742
+            110.64729394045438,
+            35.602388053834694
           ],
           [
-            110.64728638475157,
-            35.60236358875102
+            110.64729393662454,
+            35.602388053814906
+          ],
+          [
+            110.64729400635854,
+            35.6023790074961
           ]
         ]
       }
@@ -2260,24 +2660,25 @@
       "properties": {
         "index": 36,
         "sequence": 36,
-        "kind": "connector",
-        "length_m": 1.000347,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728638475157,
-            35.60236358875102
+            110.64729400635854,
+            35.6023790074961
           ],
           [
-            110.64728638092173,
-            35.60236358873122
-          ],
-          [
-            110.64728645065573,
-            35.602354542412414
+            110.64741617663711,
+            35.60237963890357
           ]
         ]
       }
@@ -2287,20 +2688,25 @@
       "properties": {
         "index": 37,
         "sequence": 37,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 2.965256,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728645065573,
-            35.602354542412414
+            110.64741617663711,
+            35.60237963890357
           ],
           [
-            110.6474240882224,
-            35.602355253758816
+            110.64744893697045,
+            35.602379808217414
           ]
         ]
       }
@@ -2310,20 +2716,25 @@
       "properties": {
         "index": 38,
         "sequence": 38,
-        "kind": "connector",
-        "length_m": 1.552703,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6474240882224,
-            35.602355253758816
+            110.64744893697045,
+            35.602379808217414
           ],
           [
-            110.64744124258377,
-            35.60235534241698
+            110.64775877919837,
+            35.60238140956187
           ]
         ]
       }
@@ -2333,20 +2744,29 @@
       "properties": {
         "index": 39,
         "sequence": 39,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 1.004996,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744124258377,
-            35.60235534241698
+            110.64775877919837,
+            35.60238140956187
           ],
           [
-            110.64776655209978,
-            35.602357023700364
+            110.64775872400413,
+            35.60238140927661
+          ],
+          [
+            110.64775879373813,
+            35.60237236295781
           ]
         ]
       }
@@ -2356,24 +2776,25 @@
       "properties": {
         "index": 40,
         "sequence": 40,
-        "kind": "connector",
-        "length_m": 1.004996,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776655209978,
-            35.602357023700364
+            110.64775879373813,
+            35.60237236295781
           ],
           [
-            110.64776649690556,
-            35.6023570234151
-          ],
-          [
-            110.64776656663955,
-            35.6023479770963
+            110.64744895151021,
+            35.60237076161335
           ]
         ]
       }
@@ -2383,20 +2804,25 @@
       "properties": {
         "index": 41,
         "sequence": 41,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 2.960607,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776656663955,
-            35.6023479770963
+            110.64744895151021,
+            35.60237076161335
           ],
           [
-            110.64744125712353,
-            35.602346295812914
+            110.64741624254128,
+            35.602370592564974
           ]
         ]
       }
@@ -2406,20 +2832,25 @@
       "properties": {
         "index": 42,
         "sequence": 42,
-        "kind": "connector",
-        "length_m": 1.548054,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744125712353,
-            35.602346295812914
+            110.64741624254128,
+            35.602370592564974
           ],
           [
-            110.64742415412657,
-            35.60234620742022
+            110.6472940722627,
+            35.6023699611575
           ]
         ]
       }
@@ -2429,20 +2860,29 @@
       "properties": {
         "index": 43,
         "sequence": 43,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742415412657,
-            35.60234620742022
+            110.6472940722627,
+            35.6023699611575
           ],
           [
-            110.64728651655989,
-            35.602345496073816
+            110.64729406843287,
+            35.602369961137704
+          ],
+          [
+            110.64729413816686,
+            35.6023609148189
           ]
         ]
       }
@@ -2452,24 +2892,25 @@
       "properties": {
         "index": 44,
         "sequence": 44,
-        "kind": "connector",
-        "length_m": 1.000347,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728651655989,
-            35.602345496073816
+            110.64729413816686,
+            35.6023609148189
           ],
           [
-            110.64728651273005,
-            35.60234549605402
-          ],
-          [
-            110.64728658246405,
-            35.60233644973522
+            110.64741630844544,
+            35.602361546226376
           ]
         ]
       }
@@ -2479,20 +2920,25 @@
       "properties": {
         "index": 45,
         "sequence": 45,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 2.955958,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728658246405,
-            35.60233644973522
+            110.64741630844544,
+            35.602361546226376
           ],
           [
-            110.64742422003073,
-            35.60233716108162
+            110.64744896604998,
+            35.60236171500929
           ]
         ]
       }
@@ -2502,20 +2948,25 @@
       "properties": {
         "index": 46,
         "sequence": 46,
-        "kind": "connector",
-        "length_m": 1.543405,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742422003073,
-            35.60233716108162
+            110.64744896604998,
+            35.60236171500929
           ],
           [
-            110.6474412716633,
-            35.60233724920885
+            110.6477588082779,
+            35.602363316353745
           ]
         ]
       }
@@ -2525,20 +2976,29 @@
       "properties": {
         "index": 47,
         "sequence": 47,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 1.004996,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6474412716633,
-            35.60233724920885
+            110.6477588082779,
+            35.602363316353745
           ],
           [
-            110.64776658117931,
-            35.60233893049224
+            110.64775875308368,
+            35.602363316068484
+          ],
+          [
+            110.64775882281766,
+            35.60235426974968
           ]
         ]
       }
@@ -2548,24 +3008,25 @@
       "properties": {
         "index": 48,
         "sequence": 48,
-        "kind": "connector",
-        "length_m": 1.004996,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776658117931,
-            35.60233893049224
+            110.64775882281766,
+            35.60235426974968
           ],
           [
-            110.64776652598509,
-            35.602338930206976
-          ],
-          [
-            110.64776659571908,
-            35.602329883888174
+            110.64744898058974,
+            35.602352668405224
           ]
         ]
       }
@@ -2575,20 +3036,25 @@
       "properties": {
         "index": 49,
         "sequence": 49,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 2.951308,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776659571908,
-            35.602329883888174
+            110.64744898058974,
+            35.602352668405224
           ],
           [
-            110.64744128620306,
-            35.60232820260479
+            110.6474163743496,
+            35.60235249988777
           ]
         ]
       }
@@ -2598,20 +3064,25 @@
       "properties": {
         "index": 50,
         "sequence": 50,
-        "kind": "connector",
-        "length_m": 1.538756,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744128620306,
-            35.60232820260479
+            110.6474163743496,
+            35.60235249988777
           ],
           [
-            110.64742428593489,
-            35.602328114743024
+            110.64729420407102,
+            35.6023518684803
           ]
         ]
       }
@@ -2621,20 +3092,29 @@
       "properties": {
         "index": 51,
         "sequence": 51,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742428593489,
-            35.602328114743024
+            110.64729420407102,
+            35.6023518684803
           ],
           [
-            110.64728664836821,
-            35.60232740339662
+            110.64729420024119,
+            35.60235186846051
+          ],
+          [
+            110.64729426997519,
+            35.6023428221417
           ]
         ]
       }
@@ -2644,24 +3124,25 @@
       "properties": {
         "index": 52,
         "sequence": 52,
-        "kind": "connector",
-        "length_m": 1.000347,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728664836821,
-            35.60232740339662
+            110.64729426997519,
+            35.6023428221417
           ],
           [
-            110.64728664453838,
-            35.602327403376826
-          ],
-          [
-            110.64728671427237,
-            35.602318357058024
+            110.64741644025376,
+            35.602343453549175
           ]
         ]
       }
@@ -2671,20 +3152,25 @@
       "properties": {
         "index": 53,
         "sequence": 53,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 2.946659,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728671427237,
-            35.602318357058024
+            110.64741644025376,
+            35.602343453549175
           ],
           [
-            110.64742435183905,
-            35.60231906840443
+            110.64744899512951,
+            35.60234362180116
           ]
         ]
       }
@@ -2694,20 +3180,25 @@
       "properties": {
         "index": 54,
         "sequence": 54,
-        "kind": "connector",
-        "length_m": 1.534106,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742435183905,
-            35.60231906840443
+            110.64744899512951,
+            35.60234362180116
           ],
           [
-            110.64744130074283,
-            35.602319156000725
+            110.64775883735743,
+            35.60234522314562
           ]
         ]
       }
@@ -2717,20 +3208,29 @@
       "properties": {
         "index": 55,
         "sequence": 55,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 1.004996,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744130074283,
-            35.602319156000725
+            110.64775883735743,
+            35.60234522314562
           ],
           [
-            110.64776661025886,
-            35.60232083728411
+            110.64775878216321,
+            35.60234522286036
+          ],
+          [
+            110.6477588518972,
+            35.602336176541556
           ]
         ]
       }
@@ -2740,24 +3240,25 @@
       "properties": {
         "index": 56,
         "sequence": 56,
-        "kind": "connector",
-        "length_m": 1.004996,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776661025886,
-            35.60232083728411
+            110.6477588518972,
+            35.602336176541556
           ],
           [
-            110.64776655506462,
-            35.60232083699885
-          ],
-          [
-            110.64776662479862,
-            35.60231179068005
+            110.64744900966927,
+            35.6023345751971
           ]
         ]
       }
@@ -2767,20 +3268,25 @@
       "properties": {
         "index": 57,
         "sequence": 57,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 2.94201,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776662479862,
-            35.60231179068005
+            110.64744900966927,
+            35.6023345751971
           ],
           [
-            110.64744131528259,
-            35.60231010939666
+            110.64741650615792,
+            35.60233440721058
           ]
         ]
       }
@@ -2790,20 +3296,25 @@
       "properties": {
         "index": 58,
         "sequence": 58,
-        "kind": "connector",
-        "length_m": 1.529457,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744131528259,
-            35.60231010939666
+            110.64741650615792,
+            35.60233440721058
           ],
           [
-            110.64742441774321,
-            35.60231002206583
+            110.64729433587935,
+            35.6023337758031
           ]
         ]
       }
@@ -2813,20 +3324,29 @@
       "properties": {
         "index": 59,
         "sequence": 59,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742441774321,
-            35.60231002206583
+            110.64729433587935,
+            35.6023337758031
           ],
           [
-            110.64728678017653,
-            35.60230931071942
+            110.64729433204951,
+            35.60233377578331
+          ],
+          [
+            110.64729440178351,
+            35.602324729464506
           ]
         ]
       }
@@ -2836,24 +3356,25 @@
       "properties": {
         "index": 60,
         "sequence": 60,
-        "kind": "connector",
-        "length_m": 2.000693,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728678017653,
-            35.60230931071942
+            110.64729440178351,
+            35.602324729464506
           ],
           [
-            110.64728677251686,
-            35.602309310679836
-          ],
-          [
-            110.64728691198486,
-            35.602291218042225
+            110.64741657206208,
+            35.60232536087198
           ]
         ]
       }
@@ -2863,20 +3384,25 @@
       "properties": {
         "index": 61,
         "sequence": 61,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 2.937361,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728691198486,
-            35.602291218042225
+            110.64741657206208,
+            35.60232536087198
           ],
           [
-            110.64742454955153,
-            35.60229192938863
+            110.64744902420904,
+            35.602325528593035
           ]
         ]
       }
@@ -2886,24 +3412,25 @@
       "properties": {
         "index": 62,
         "sequence": 62,
-        "kind": "connector",
-        "length_m": 1.000347,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742454955153,
-            35.60229192938863
+            110.64744902420904,
+            35.602325528593035
           ],
           [
-            110.6474245457217,
-            35.60229192936883
-          ],
-          [
-            110.64742461545569,
-            35.60228288305003
+            110.64775886643696,
+            35.60232712993749
           ]
         ]
       }
@@ -2913,20 +3440,29 @@
       "properties": {
         "index": 63,
         "sequence": 63,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 1.004996,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742461545569,
-            35.60228288305003
+            110.64775886643696,
+            35.60232712993749
           ],
           [
-            110.64728697788902,
-            35.60228217170363
+            110.64775881124274,
+            35.60232712965223
+          ],
+          [
+            110.64775888097672,
+            35.60231808333343
           ]
         ]
       }
@@ -2936,24 +3472,25 @@
       "properties": {
         "index": 64,
         "sequence": 64,
-        "kind": "connector",
-        "length_m": 2.000693,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728697788902,
-            35.60228217170363
+            110.64775888097672,
+            35.60231808333343
           ],
           [
-            110.64728698554869,
-            35.60228217174321
-          ],
-          [
-            110.64728684608069,
-            35.60230026438082
+            110.6474490387488,
+            35.60231648198897
           ]
         ]
       }
@@ -2963,20 +3500,25 @@
       "properties": {
         "index": 65,
         "sequence": 65,
-        "kind": "coverage",
-        "length_m": 12.458072,
+        "kind": "connector",
+        "length_m": 2.932712,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728684608069,
-            35.60230026438082
+            110.6474490387488,
+            35.60231648198897
           ],
           [
-            110.64742448364737,
-            35.602300975727225
+            110.64741663796624,
+            35.60231631453338
           ]
         ]
       }
@@ -2986,20 +3528,25 @@
       "properties": {
         "index": 66,
         "sequence": 66,
-        "kind": "connector",
-        "length_m": 1.524808,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64742448364737,
-            35.602300975727225
+            110.64741663796624,
+            35.60231631453338
           ],
           [
-            110.64744132982236,
-            35.6023010627926
+            110.64729446768767,
+            35.60231568312591
           ]
         ]
       }
@@ -3009,20 +3556,29 @@
       "properties": {
         "index": 67,
         "sequence": 67,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 3.00104,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744132982236,
-            35.6023010627926
+            110.64729446768767,
+            35.60231568312591
           ],
           [
-            110.64776663933839,
-            35.602302744075985
+            110.64729445619817,
+            35.60231568306653
+          ],
+          [
+            110.64729466540015,
+            35.60228854411011
           ]
         ]
       }
@@ -3032,24 +3588,25 @@
       "properties": {
         "index": 68,
         "sequence": 68,
-        "kind": "connector",
-        "length_m": 1.004996,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776663933839,
-            35.602302744075985
+            110.64729466540015,
+            35.60228854411011
           ],
           [
-            110.64776658414415,
-            35.60230274379073
-          ],
-          [
-            110.64776665387815,
-            35.60229369747192
+            110.64741683567873,
+            35.60228917551758
           ]
         ]
       }
@@ -3059,20 +3616,29 @@
       "properties": {
         "index": 69,
         "sequence": 69,
-        "kind": "coverage",
-        "length_m": 29.444937,
+        "kind": "connector",
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E22"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776665387815,
-            35.60229369747192
+            110.64741683567873,
+            35.60228917551758
           ],
           [
-            110.64744134436212,
-            35.602292016188535
+            110.64741683950857,
+            35.60228917553738
+          ],
+          [
+            110.64741676977457,
+            35.60229822185618
           ]
         ]
       }
@@ -3082,8 +3648,217 @@
       "properties": {
         "index": 70,
         "sequence": 70,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741676977457,
+            35.60229822185618
+          ],
+          [
+            110.64729459949599,
+            35.60229759044871
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 71,
+        "sequence": 71,
         "kind": "connector",
-        "length_m": 49.71896,
+        "length_m": 1.000347,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729459949599,
+            35.60229759044871
+          ],
+          [
+            110.64729460332583,
+            35.6022975904685
+          ],
+          [
+            110.64729453359183,
+            35.60230663678731
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 72,
+        "sequence": 72,
+        "kind": "coverage",
+        "length_m": 11.058072,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729453359183,
+            35.60230663678731
+          ],
+          [
+            110.6474167038704,
+            35.60230726819478
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 73,
+        "sequence": 73,
+        "kind": "connector",
+        "length_m": 2.928062,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6474167038704,
+            35.60230726819478
+          ],
+          [
+            110.64744905328857,
+            35.60230743538491
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 74,
+        "sequence": 74,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64744905328857,
+            35.60230743538491
+          ],
+          [
+            110.64775889551649,
+            35.602309036729366
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 75,
+        "sequence": 75,
+        "kind": "connector",
+        "length_m": 1.004996,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64775889551649,
+            35.602309036729366
+          ],
+          [
+            110.64775884032227,
+            35.602309036444105
+          ],
+          [
+            110.64775891005627,
+            35.6022999901253
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 76,
+        "sequence": 76,
+        "kind": "coverage",
+        "length_m": 28.044937,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E22"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64775891005627,
+            35.6022999901253
+          ],
+          [
+            110.64744906782833,
+            35.602298388780845
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 77,
+        "sequence": 77,
+        "kind": "connector",
+        "length_m": 50.664351,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_22-23B",
         "from_region": "E22",
         "to_region": "E23"
@@ -3092,16 +3867,16 @@
         "type": "LineString",
         "coordinates": [
           [
-            110.64744134436212,
-            35.602292016188535
+            110.64744906782833,
+            35.602298388780845
           ],
           [
-            110.64776665387815,
-            35.60229369747192
+            110.64775891005627,
+            35.6022999901253
           ],
           [
-            110.6477666676399,
-            35.60228930313991
+            110.64775894357555,
+            35.602289286921874
           ],
           [
             110.64777328985258,
@@ -3116,177 +3891,8 @@
             35.60212145012239
           ],
           [
-            110.64776789985967,
-            35.60212322208021
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 71,
-        "sequence": 71,
-        "kind": "coverage",
-        "length_m": 43.351476,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776789985967,
-            35.60212322208021
-          ],
-          [
-            110.64728895178837,
-            35.60212052766808
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 72,
-        "sequence": 72,
-        "kind": "connector",
-        "length_m": 7.197419,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64728895178837,
-            35.60212052766808
-          ],
-          [
-            110.64720943454442,
-            35.602120080328916
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 73,
-        "sequence": 73,
-        "kind": "coverage",
-        "length_m": 5.215202,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64720943454442,
-            35.602120080328916
-          ],
-          [
-            110.64726705221496,
-            35.602120404467925
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 74,
-        "sequence": 74,
-        "kind": "connector",
-        "length_m": 2.981851,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64726705221496,
-            35.602120404467925
-          ],
-          [
-            110.64726697630925,
-            35.60212945075342
-          ],
-          [
-            110.64728887184717,
-            35.602129573930874
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 75,
-        "sequence": 75,
-        "kind": "coverage",
-        "length_m": 43.351476,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64728887184717,
-            35.602129573930874
-          ],
-          [
-            110.64776781991846,
-            35.602132268343006
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 76,
-        "sequence": 76,
-        "kind": "connector",
-        "length_m": 1.000365,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776781991846,
-            35.602132268343006
-          ],
-          [
-            110.64776781588294,
-            35.6021322683203
-          ],
-          [
-            110.64776773997725,
-            35.602141314605795
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 77,
-        "sequence": 77,
-        "kind": "coverage",
-        "length_m": 43.351476,
-        "region_id": "E23"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776773997725,
-            35.602141314605795
-          ],
-          [
-            110.64728879190595,
-            35.602138620193664
+            110.64776011028525,
+            35.60212951095726
           ]
         ]
       }
@@ -3296,24 +3902,25 @@
       "properties": {
         "index": 78,
         "sequence": 78,
-        "kind": "connector",
-        "length_m": 44.351111,
+        "kind": "coverage",
+        "length_m": 41.951476,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728879190595,
-            35.602138620193664
+            110.64776011028525,
+            35.60212951095726
           ],
           [
-            110.64728871600026,
-            35.60214766647916
-          ],
-          [
-            110.64776766003604,
-            35.60215036086859
+            110.64729662944511,
+            35.60212690355894
           ]
         ]
       }
@@ -3323,20 +3930,25 @@
       "properties": {
         "index": 79,
         "sequence": 79,
-        "kind": "coverage",
-        "length_m": 43.351476,
+        "kind": "connector",
+        "length_m": 7.189004,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776766003604,
-            35.60215036086859
+            110.64729662944511,
+            35.60212690355894
           ],
           [
-            110.64728871196475,
-            35.60214766645646
+            110.64721720516545,
+            35.602126456742766
           ]
         ]
       }
@@ -3346,24 +3958,25 @@
       "properties": {
         "index": 80,
         "sequence": 80,
-        "kind": "connector",
-        "length_m": 1.000365,
+        "kind": "coverage",
+        "length_m": 3.815202,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728871196475,
-            35.60214766645646
+            110.64721720516545,
+            35.602126456742766
           ],
           [
-            110.64728870792923,
-            35.60214766643376
-          ],
-          [
-            110.64728863202355,
-            35.60215671271925
+            110.64725935560483,
+            35.602126693867966
           ]
         ]
       }
@@ -3373,20 +3986,29 @@
       "properties": {
         "index": 81,
         "sequence": 81,
-        "kind": "coverage",
-        "length_m": 43.351476,
+        "kind": "connector",
+        "length_m": 4.373437,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728863202355,
-            35.60215671271925
+            110.64725935560483,
+            35.602126693867966
           ],
           [
-            110.64776758009484,
-            35.60215940713138
+            110.64725927969913,
+            35.60213574015346
+          ],
+          [
+            110.64729654950389,
+            35.60213594982173
           ]
         ]
       }
@@ -3396,24 +4018,25 @@
       "properties": {
         "index": 82,
         "sequence": 82,
-        "kind": "connector",
-        "length_m": 1.000365,
+        "kind": "coverage",
+        "length_m": 41.951476,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776758009484,
-            35.60215940713138
+            110.64729654950389,
+            35.60213594982173
           ],
           [
-            110.64776757605932,
-            35.60215940710868
-          ],
-          [
-            110.64776750015362,
-            35.60216845339418
+            110.64776003034405,
+            35.60213855722005
           ]
         ]
       }
@@ -3423,20 +4046,29 @@
       "properties": {
         "index": 83,
         "sequence": 83,
-        "kind": "coverage",
-        "length_m": 43.351476,
+        "kind": "connector",
+        "length_m": 1.000365,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776750015362,
-            35.60216845339418
+            110.64776003034405,
+            35.60213855722005
           ],
           [
-            110.64728855208233,
-            35.602165758982046
+            110.64776002630853,
+            35.60213855719735
+          ],
+          [
+            110.64775995040283,
+            35.60214760348285
           ]
         ]
       }
@@ -3446,24 +4078,25 @@
       "properties": {
         "index": 84,
         "sequence": 84,
-        "kind": "connector",
-        "length_m": 1.000365,
+        "kind": "coverage",
+        "length_m": 41.951476,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728855208233,
-            35.602165758982046
+            110.64775995040283,
+            35.60214760348285
           ],
           [
-            110.64728854804682,
-            35.602165758959345
-          ],
-          [
-            110.64728847214113,
-            35.60217480524484
+            110.64729646956269,
+            35.602144996084526
           ]
         ]
       }
@@ -3473,20 +4106,29 @@
       "properties": {
         "index": 85,
         "sequence": 85,
-        "kind": "coverage",
-        "length_m": 43.351476,
+        "kind": "connector",
+        "length_m": 42.951111,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E23"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64728847214113,
-            35.60217480524484
+            110.64729646956269,
+            35.602144996084526
           ],
           [
-            110.64776742021242,
-            35.602177499656975
+            110.64729639365699,
+            35.602154042370024
+          ],
+          [
+            110.64775987046163,
+            35.602156649745645
           ]
         ]
       }
@@ -3496,8 +4138,101 @@
       "properties": {
         "index": 86,
         "sequence": 86,
+        "kind": "coverage",
+        "length_m": 41.951476,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E23"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64775987046163,
+            35.602156649745645
+          ],
+          [
+            110.64729638962147,
+            35.602154042347316
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 87,
+        "sequence": 87,
         "kind": "connector",
-        "length_m": 13.608309,
+        "length_m": 1.000365,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
+        "region_id": "E23"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729638962147,
+            35.602154042347316
+          ],
+          [
+            110.64729638558596,
+            35.602154042324614
+          ],
+          [
+            110.64729630968027,
+            35.60216308861011
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 88,
+        "sequence": 88,
+        "kind": "coverage",
+        "length_m": 41.951476,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "E23"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729630968027,
+            35.60216308861011
+          ],
+          [
+            110.64775979052041,
+            35.602165696008434
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 89,
+        "sequence": 89,
+        "kind": "connector",
+        "length_m": 16.543432,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_23-24B",
         "from_region": "E23",
         "to_region": "E24"
@@ -3506,8 +4241,8 @@
         "type": "LineString",
         "coordinates": [
           [
-            110.64776742021242,
-            35.602177499656975
+            110.64775979052041,
+            35.602165696008434
           ],
           [
             110.64777398819749,
@@ -3518,81 +4253,8 @@
             35.60207865669918
           ],
           [
-            110.64776782052913,
-            35.602070760901526
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 87,
-        "sequence": 87,
-        "kind": "coverage",
-        "length_m": 50.54179,
-        "region_id": "E24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64776782052913,
-            35.602070760901526
-          ],
-          [
-            110.64720943410336,
-            35.6020675733901
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 88,
-        "sequence": 88,
-        "kind": "connector",
-        "length_m": 1.001525,
-        "region_id": "E24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64720943410336,
-            35.6020675733901
-          ],
-          [
-            110.64720945095476,
-            35.602067573486295
-          ],
-          [
-            110.64720952797686,
-            35.60205852720713
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 89,
-        "sequence": 89,
-        "kind": "coverage",
-        "length_m": 50.54179,
-        "region_id": "E24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64720952797686,
-            35.60205852720713
-          ],
-          [
-            110.64776791440264,
-            35.60206171471855
+            110.64776020895452,
+            35.60205895671687
           ]
         ]
       }
@@ -3602,24 +4264,25 @@
       "properties": {
         "index": 90,
         "sequence": 90,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776791440264,
-            35.60206171471855
+            110.64776020895452,
+            35.60205895671687
           ],
           [
-            110.64776793125404,
-            35.602061714814745
-          ],
-          [
-            110.64776800827615,
-            35.60205266853558
+            110.64721728974908,
+            35.60205585749903
           ]
         ]
       }
@@ -3629,20 +4292,29 @@
       "properties": {
         "index": 91,
         "sequence": 91,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776800827615,
-            35.60205266853558
+            110.64721728974908,
+            35.60205585749903
           ],
           [
-            110.64720962185037,
-            35.60204948102415
+            110.64721730660048,
+            35.602055857595225
+          ],
+          [
+            110.64721738362259,
+            35.60204681131606
           ]
         ]
       }
@@ -3652,24 +4324,25 @@
       "properties": {
         "index": 92,
         "sequence": 92,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64720962185037,
-            35.60204948102415
+            110.64721738362259,
+            35.60204681131606
           ],
           [
-            110.64720963870177,
-            35.602049481120346
-          ],
-          [
-            110.64720971572387,
-            35.60204043484118
+            110.64776030282803,
+            35.60204991053389
           ]
         ]
       }
@@ -3679,20 +4352,29 @@
       "properties": {
         "index": 93,
         "sequence": 93,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64720971572387,
-            35.60204043484118
+            110.64776030282803,
+            35.60204991053389
           ],
           [
-            110.64776810214966,
-            35.6020436223526
+            110.64776031967943,
+            35.602049910630086
+          ],
+          [
+            110.64776039670154,
+            35.60204086435092
           ]
         ]
       }
@@ -3702,24 +4384,25 @@
       "properties": {
         "index": 94,
         "sequence": 94,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776810214966,
-            35.6020436223526
+            110.64776039670154,
+            35.60204086435092
           ],
           [
-            110.64776811900106,
-            35.6020436224488
-          ],
-          [
-            110.64776819602315,
-            35.60203457616963
+            110.6472174774961,
+            35.602037765133076
           ]
         ]
       }
@@ -3729,20 +4412,29 @@
       "properties": {
         "index": 95,
         "sequence": 95,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776819602315,
-            35.60203457616963
+            110.6472174774961,
+            35.602037765133076
           ],
           [
-            110.64720980959738,
-            35.602031388658204
+            110.6472174943475,
+            35.60203776522928
+          ],
+          [
+            110.64721757136961,
+            35.6020287189501
           ]
         ]
       }
@@ -3752,24 +4444,25 @@
       "properties": {
         "index": 96,
         "sequence": 96,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64720980959738,
-            35.602031388658204
+            110.64721757136961,
+            35.6020287189501
           ],
           [
-            110.64720982644879,
-            35.6020313887544
-          ],
-          [
-            110.6472099034709,
-            35.60202234247523
+            110.64776049057504,
+            35.602031818167944
           ]
         ]
       }
@@ -3779,20 +4472,29 @@
       "properties": {
         "index": 97,
         "sequence": 97,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6472099034709,
-            35.60202234247523
+            110.64776049057504,
+            35.602031818167944
           ],
           [
-            110.64776828989666,
-            35.602025529986655
+            110.64776050742644,
+            35.60203181826414
+          ],
+          [
+            110.64776058444855,
+            35.60202277198497
           ]
         ]
       }
@@ -3802,24 +4504,25 @@
       "properties": {
         "index": 98,
         "sequence": 98,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776828989666,
-            35.602025529986655
+            110.64776058444855,
+            35.60202277198497
           ],
           [
-            110.64776830674806,
-            35.60202553008285
-          ],
-          [
-            110.64776838377017,
-            35.60201648380368
+            110.6472176652431,
+            35.60201967276713
           ]
         ]
       }
@@ -3829,20 +4532,29 @@
       "properties": {
         "index": 99,
         "sequence": 99,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776838377017,
-            35.60201648380368
+            110.6472176652431,
+            35.60201967276713
           ],
           [
-            110.6472099973444,
-            35.602013296292256
+            110.6472176820945,
+            35.60201967286333
+          ],
+          [
+            110.64721775911661,
+            35.60201062658415
           ]
         ]
       }
@@ -3852,24 +4564,25 @@
       "properties": {
         "index": 100,
         "sequence": 100,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6472099973444,
-            35.602013296292256
+            110.64721775911661,
+            35.60201062658415
           ],
           [
-            110.6472100141958,
-            35.60201329638845
-          ],
-          [
-            110.64721009121791,
-            35.60200425010928
+            110.64776067832206,
+            35.602013725801996
           ]
         ]
       }
@@ -3879,20 +4592,29 @@
       "properties": {
         "index": 101,
         "sequence": 101,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721009121791,
-            35.60200425010928
+            110.64776067832206,
+            35.602013725801996
           ],
           [
-            110.64776847764368,
-            35.602007437620706
+            110.64776069517346,
+            35.60201372589819
+          ],
+          [
+            110.64776077219557,
+            35.60200467961902
           ]
         ]
       }
@@ -3902,24 +4624,25 @@
       "properties": {
         "index": 102,
         "sequence": 102,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776847764368,
-            35.602007437620706
+            110.64776077219557,
+            35.60200467961902
           ],
           [
-            110.64776849449508,
-            35.6020074377169
-          ],
-          [
-            110.64776857151719,
-            35.60199839143773
+            110.64721785299012,
+            35.60200158040118
           ]
         ]
       }
@@ -3929,20 +4652,29 @@
       "properties": {
         "index": 103,
         "sequence": 103,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776857151719,
-            35.60199839143773
+            110.64721785299012,
+            35.60200158040118
           ],
           [
-            110.64721018509141,
-            35.60199520392631
+            110.64721786984153,
+            35.60200158049737
+          ],
+          [
+            110.64721794686363,
+            35.601992534218205
           ]
         ]
       }
@@ -3952,24 +4684,25 @@
       "properties": {
         "index": 104,
         "sequence": 104,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721018509141,
-            35.60199520392631
+            110.64721794686363,
+            35.601992534218205
           ],
           [
-            110.64721020194283,
-            35.6019952040225
-          ],
-          [
-            110.64721027896492,
-            35.601986157743326
+            110.64776086606908,
+            35.60199563343604
           ]
         ]
       }
@@ -3979,20 +4712,29 @@
       "properties": {
         "index": 105,
         "sequence": 105,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721027896492,
-            35.601986157743326
+            110.64776086606908,
+            35.60199563343604
           ],
           [
-            110.6477686653907,
-            35.60198934525476
+            110.64776088292048,
+            35.60199563353224
+          ],
+          [
+            110.64776095994259,
+            35.601986587253066
           ]
         ]
       }
@@ -4002,24 +4744,25 @@
       "properties": {
         "index": 106,
         "sequence": 106,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6477686653907,
-            35.60198934525476
+            110.64776095994259,
+            35.601986587253066
           ],
           [
-            110.6477686822421,
-            35.60198934535095
-          ],
-          [
-            110.64776875926421,
-            35.60198029907178
+            110.64721804073714,
+            35.60198348803523
           ]
         ]
       }
@@ -4029,20 +4772,29 @@
       "properties": {
         "index": 107,
         "sequence": 107,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776875926421,
-            35.60198029907178
+            110.64721804073714,
+            35.60198348803523
           ],
           [
-            110.64721037283843,
-            35.60197711156035
+            110.64721805758855,
+            35.601983488131424
+          ],
+          [
+            110.64721813461065,
+            35.601974441852256
           ]
         ]
       }
@@ -4052,24 +4804,25 @@
       "properties": {
         "index": 108,
         "sequence": 108,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721037283843,
-            35.60197711156035
+            110.64721813461065,
+            35.601974441852256
           ],
           [
-            110.64721038968983,
-            35.60197711165655
-          ],
-          [
-            110.64721046671194,
-            35.60196806537738
+            110.6477610538161,
+            35.60197754107009
           ]
         ]
       }
@@ -4079,20 +4832,29 @@
       "properties": {
         "index": 109,
         "sequence": 109,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721046671194,
-            35.60196806537738
+            110.6477610538161,
+            35.60197754107009
           ],
           [
-            110.64776885313772,
-            35.60197125288881
+            110.6477610706675,
+            35.60197754116629
+          ],
+          [
+            110.64776114768961,
+            35.60196849488712
           ]
         ]
       }
@@ -4102,24 +4864,25 @@
       "properties": {
         "index": 110,
         "sequence": 110,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776885313772,
-            35.60197125288881
+            110.64776114768961,
+            35.60196849488712
           ],
           [
-            110.64776886998912,
-            35.601971252985
-          ],
-          [
-            110.64776894701122,
-            35.601962206705835
+            110.64721822848416,
+            35.60196539566928
           ]
         ]
       }
@@ -4129,20 +4892,29 @@
       "properties": {
         "index": 111,
         "sequence": 111,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776894701122,
-            35.601962206705835
+            110.64721822848416,
+            35.60196539566928
           ],
           [
-            110.64721056058545,
-            35.6019590191944
+            110.64721824533557,
+            35.601965395765475
+          ],
+          [
+            110.64721832235766,
+            35.60195634948631
           ]
         ]
       }
@@ -4152,24 +4924,25 @@
       "properties": {
         "index": 112,
         "sequence": 112,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721056058545,
-            35.6019590191944
+            110.64721832235766,
+            35.60195634948631
           ],
           [
-            110.64721057743685,
-            35.601959019290604
-          ],
-          [
-            110.64721065445896,
-            35.60194997301143
+            110.6477612415631,
+            35.60195944870414
           ]
         ]
       }
@@ -4179,20 +4952,29 @@
       "properties": {
         "index": 113,
         "sequence": 113,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721065445896,
-            35.60194997301143
+            110.6477612415631,
+            35.60195944870414
           ],
           [
-            110.64776904088473,
-            35.601953160522854
+            110.6477612584145,
+            35.60195944880034
+          ],
+          [
+            110.64776133543661,
+            35.60195040252117
           ]
         ]
       }
@@ -4202,24 +4984,25 @@
       "properties": {
         "index": 114,
         "sequence": 114,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776904088473,
-            35.601953160522854
+            110.64776133543661,
+            35.60195040252117
           ],
           [
-            110.64776905773613,
-            35.601953160619054
-          ],
-          [
-            110.64776913475824,
-            35.60194411433988
+            110.64721841623117,
+            35.601947303303334
           ]
         ]
       }
@@ -4229,20 +5012,29 @@
       "properties": {
         "index": 115,
         "sequence": 115,
-        "kind": "coverage",
-        "length_m": 50.54179,
+        "kind": "connector",
+        "length_m": 1.001525,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776913475824,
-            35.60194411433988
+            110.64721841623117,
+            35.601947303303334
           ],
           [
-            110.64721074833247,
-            35.601940926828455
+            110.64721843308257,
+            35.60194730339953
+          ],
+          [
+            110.64721851010468,
+            35.60193825712036
           ]
         ]
       }
@@ -4252,24 +5044,25 @@
       "properties": {
         "index": 116,
         "sequence": 116,
-        "kind": "connector",
-        "length_m": 1.001525,
+        "kind": "coverage",
+        "length_m": 49.14179,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64721074833247,
-            35.601940926828455
+            110.64721851010468,
+            35.60193825712036
           ],
           [
-            110.64721076518387,
-            35.60194092692465
-          ],
-          [
-            110.64721084220598,
-            35.60193188064548
+            110.64776142931012,
+            35.601941356338195
           ]
         ]
       }
@@ -4279,39 +5072,21 @@
       "properties": {
         "index": 117,
         "sequence": 117,
-        "kind": "coverage",
-        "length_m": 50.54179,
-        "region_id": "E24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64721084220598,
-            35.60193188064548
-          ],
-          [
-            110.64776922863174,
-            35.601935068156905
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 118,
-        "sequence": 118,
         "kind": "connector",
-        "length_m": 0.849175,
+        "length_m": 1.839879,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776922863174,
-            35.601935068156905
+            110.64776142931012,
+            35.601941356338195
           ],
           [
             110.64777591376827,
@@ -4323,10 +5098,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 119,
-        "sequence": 119,
+        "index": 118,
+        "sequence": 118,
         "kind": "connector",
         "length_m": 51.842085,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_E24A-E24D"
       },
       "geometry": {
@@ -4346,10 +5126,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 120,
-        "sequence": 120,
+        "index": 119,
+        "sequence": 119,
         "kind": "connector",
         "length_m": 0.533577,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "E24"
       },
       "geometry": {
@@ -4369,10 +5154,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 121,
-        "sequence": 121,
+        "index": 120,
+        "sequence": 120,
         "kind": "connector",
         "length_m": 1.718753,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "bridge_front1-W24C"
       },
       "geometry": {
@@ -4392,10 +5182,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 122,
-        "sequence": 122,
+        "index": 121,
+        "sequence": 121,
         "kind": "connector",
-        "length_m": 15.611012,
+        "length_m": 14.357834,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -4406,8 +5201,36 @@
             35.601931086848886
           ],
           [
-            110.64717669373081,
-            35.60207219492583
+            110.64716899230073,
+            35.60206041467086
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 122,
+        "sequence": 122,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
+        "region_id": "W24"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64716899230073,
+            35.60206041467086
+          ],
+          [
+            110.64662606059692,
+            35.602059022444124
           ]
         ]
       }
@@ -4417,20 +5240,29 @@
       "properties": {
         "index": 123,
         "sequence": 123,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717669373081,
-            35.60207219492583
+            110.64662606059692,
+            35.602059022444124
           ],
           [
-            110.64661829450664,
-            35.6020707630361
+            110.64662605086657,
+            35.602059022419176
+          ],
+          [
+            110.64662608546622,
+            35.60204997596453
           ]
         ]
       }
@@ -4440,24 +5272,25 @@
       "properties": {
         "index": 124,
         "sequence": 124,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661829450664,
-            35.6020707630361
+            110.64662608546622,
+            35.60204997596453
           ],
           [
-            110.6466182847763,
-            35.60207076301115
-          ],
-          [
-            110.64661831937595,
-            35.602061716556506
+            110.64716901717003,
+            35.60205136819126
           ]
         ]
       }
@@ -4467,20 +5300,29 @@
       "properties": {
         "index": 125,
         "sequence": 125,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661831937595,
-            35.602061716556506
+            110.64716901717003,
+            35.60205136819126
           ],
           [
-            110.64717671860012,
-            35.602063148446234
+            110.64716900743969,
+            35.602051368166315
+          ],
+          [
+            110.64716904203934,
+            35.60204232171167
           ]
         ]
       }
@@ -4490,24 +5332,25 @@
       "properties": {
         "index": 126,
         "sequence": 126,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717671860012,
-            35.602063148446234
+            110.64716904203934,
+            35.60204232171167
           ],
           [
-            110.64717670886978,
-            35.60206314842128
-          ],
-          [
-            110.64717674346942,
-            35.60205410196664
+            110.64662611033552,
+            35.602040929484936
           ]
         ]
       }
@@ -4517,20 +5360,29 @@
       "properties": {
         "index": 127,
         "sequence": 127,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717674346942,
-            35.60205410196664
+            110.64662611033552,
+            35.602040929484936
           ],
           [
-            110.64661834424525,
-            35.602052670076915
+            110.64662610060518,
+            35.60204092945998
+          ],
+          [
+            110.64662613520483,
+            35.60203188300534
           ]
         ]
       }
@@ -4540,24 +5392,25 @@
       "properties": {
         "index": 128,
         "sequence": 128,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661834424525,
-            35.602052670076915
+            110.64662613520483,
+            35.60203188300534
           ],
           [
-            110.64661833451491,
-            35.60205267005196
-          ],
-          [
-            110.64661836911456,
-            35.60204362359732
+            110.64716906690865,
+            35.602033275232074
           ]
         ]
       }
@@ -4567,20 +5420,29 @@
       "properties": {
         "index": 129,
         "sequence": 129,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661836911456,
-            35.60204362359732
+            110.64716906690865,
+            35.602033275232074
           ],
           [
-            110.64717676833872,
-            35.60204505548705
+            110.6471690571783,
+            35.60203327520713
+          ],
+          [
+            110.64716909177795,
+            35.602024228752484
           ]
         ]
       }
@@ -4590,24 +5452,25 @@
       "properties": {
         "index": 130,
         "sequence": 130,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717676833872,
-            35.60204505548705
+            110.64716909177795,
+            35.602024228752484
           ],
           [
-            110.64717675860838,
-            35.60204505546209
-          ],
-          [
-            110.64717679320803,
-            35.60203600900745
+            110.64662616007413,
+            35.60202283652575
           ]
         ]
       }
@@ -4617,20 +5480,29 @@
       "properties": {
         "index": 131,
         "sequence": 131,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717679320803,
-            35.60203600900745
+            110.64662616007413,
+            35.60202283652575
           ],
           [
-            110.64661839398386,
-            35.60203457711772
+            110.64662615034379,
+            35.602022836500794
+          ],
+          [
+            110.64662618494344,
+            35.60201379004615
           ]
         ]
       }
@@ -4640,24 +5512,25 @@
       "properties": {
         "index": 132,
         "sequence": 132,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661839398386,
-            35.60203457711772
+            110.64662618494344,
+            35.60201379004615
           ],
           [
-            110.64661838425351,
-            35.60203457709277
-          ],
-          [
-            110.64661841885317,
-            35.60202553063813
+            110.64716911664725,
+            35.602015182272886
           ]
         ]
       }
@@ -4667,20 +5540,29 @@
       "properties": {
         "index": 133,
         "sequence": 133,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661841885317,
-            35.60202553063813
+            110.64716911664725,
+            35.602015182272886
           ],
           [
-            110.64717681807734,
-            35.60202696252785
+            110.6471691069169,
+            35.60201518224793
+          ],
+          [
+            110.64716914151656,
+            35.60200613579329
           ]
         ]
       }
@@ -4690,24 +5572,25 @@
       "properties": {
         "index": 134,
         "sequence": 134,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717681807734,
-            35.60202696252785
+            110.64716914151656,
+            35.60200613579329
           ],
           [
-            110.647176808347,
-            35.602026962502904
-          ],
-          [
-            110.64717684294664,
-            35.60201791604826
+            110.64662620981274,
+            35.60200474356655
           ]
         ]
       }
@@ -4717,20 +5600,29 @@
       "properties": {
         "index": 135,
         "sequence": 135,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717684294664,
-            35.60201791604826
+            110.64662620981274,
+            35.60200474356655
           ],
           [
-            110.64661844372247,
-            35.60201648415853
+            110.6466262000824,
+            35.602004743541606
+          ],
+          [
+            110.64662623468205,
+            35.60199569708696
           ]
         ]
       }
@@ -4740,24 +5632,25 @@
       "properties": {
         "index": 136,
         "sequence": 136,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661844372247,
-            35.60201648415853
+            110.64662623468205,
+            35.60199569708696
           ],
           [
-            110.64661843399213,
-            35.602016484133586
-          ],
-          [
-            110.64661846859177,
-            35.60200743767894
+            110.64716916638586,
+            35.6019970893137
           ]
         ]
       }
@@ -4767,20 +5660,29 @@
       "properties": {
         "index": 137,
         "sequence": 137,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661846859177,
-            35.60200743767894
+            110.64716916638586,
+            35.6019970893137
           ],
           [
-            110.64717686781594,
-            35.602008869568664
+            110.64716915665552,
+            35.601997089288744
+          ],
+          [
+            110.64716919125517,
+            35.6019880428341
           ]
         ]
       }
@@ -4790,24 +5692,25 @@
       "properties": {
         "index": 138,
         "sequence": 138,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717686781594,
-            35.602008869568664
+            110.64716919125517,
+            35.6019880428341
           ],
           [
-            110.6471768580856,
-            35.60200886954372
-          ],
-          [
-            110.64717689268525,
-            35.60199982308907
+            110.64662625955135,
+            35.601986650607365
           ]
         ]
       }
@@ -4817,20 +5720,29 @@
       "properties": {
         "index": 139,
         "sequence": 139,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717689268525,
-            35.60199982308907
+            110.64662625955135,
+            35.601986650607365
           ],
           [
-            110.64661849346108,
-            35.601998391199345
+            110.64662624982101,
+            35.60198665058242
+          ],
+          [
+            110.64662628442065,
+            35.601977604127775
           ]
         ]
       }
@@ -4840,24 +5752,25 @@
       "properties": {
         "index": 140,
         "sequence": 140,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661849346108,
-            35.601998391199345
+            110.64662628442065,
+            35.601977604127775
           ],
           [
-            110.64661848373073,
-            35.60199839117439
-          ],
-          [
-            110.64661851833038,
-            35.60198934471975
+            110.64716921612448,
+            35.601978996354504
           ]
         ]
       }
@@ -4867,20 +5780,29 @@
       "properties": {
         "index": 141,
         "sequence": 141,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661851833038,
-            35.60198934471975
+            110.64716921612448,
+            35.601978996354504
           ],
           [
-            110.64717691755456,
-            35.601990776609476
+            110.64716920639412,
+            35.60197899632956
+          ],
+          [
+            110.64716924099378,
+            35.60196994987491
           ]
         ]
       }
@@ -4890,24 +5812,25 @@
       "properties": {
         "index": 142,
         "sequence": 142,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717691755456,
-            35.601990776609476
+            110.64716924099378,
+            35.60196994987491
           ],
           [
-            110.64717690782422,
-            35.60199077658452
-          ],
-          [
-            110.64717694242385,
-            35.60198173012988
+            110.64662630928996,
+            35.60196855764818
           ]
         ]
       }
@@ -4917,20 +5840,29 @@
       "properties": {
         "index": 143,
         "sequence": 143,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717694242385,
-            35.60198173012988
+            110.64662630928996,
+            35.60196855764818
           ],
           [
-            110.64661854319968,
-            35.60198029824016
+            110.64662629955961,
+            35.60196855762322
+          ],
+          [
+            110.64662633415927,
+            35.60195951116858
           ]
         ]
       }
@@ -4940,24 +5872,25 @@
       "properties": {
         "index": 144,
         "sequence": 144,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661854319968,
-            35.60198029824016
+            110.64662633415927,
+            35.60195951116858
           ],
           [
-            110.64661853346934,
-            35.6019802982152
-          ],
-          [
-            110.64661856806899,
-            35.60197125176056
+            110.64716926586308,
+            35.601960903395316
           ]
         ]
       }
@@ -4967,20 +5900,29 @@
       "properties": {
         "index": 145,
         "sequence": 145,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661856806899,
-            35.60197125176056
+            110.64716926586308,
+            35.601960903395316
           ],
           [
-            110.64717696729316,
-            35.60197268365029
+            110.64716925613274,
+            35.60196090337037
+          ],
+          [
+            110.64716929073239,
+            35.601951856915726
           ]
         ]
       }
@@ -4990,24 +5932,25 @@
       "properties": {
         "index": 146,
         "sequence": 146,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717696729316,
-            35.60197268365029
+            110.64716929073239,
+            35.601951856915726
           ],
           [
-            110.64717695756282,
-            35.601972683625334
-          ],
-          [
-            110.64717699216247,
-            35.60196363717069
+            110.64662635902856,
+            35.60195046468899
           ]
         ]
       }
@@ -5017,20 +5960,29 @@
       "properties": {
         "index": 147,
         "sequence": 147,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 1.000881,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717699216247,
-            35.60196363717069
+            110.64662635902856,
+            35.60195046468899
           ],
           [
-            110.6466185929383,
-            35.60196220528096
+            110.64662634929822,
+            35.601950464664036
+          ],
+          [
+            110.64662638389787,
+            35.60194141820939
           ]
         ]
       }
@@ -5040,24 +5992,25 @@
       "properties": {
         "index": 148,
         "sequence": 148,
-        "kind": "connector",
-        "length_m": 1.000881,
+        "kind": "coverage",
+        "length_m": 49.141968,
+        "color": "#000000",
+        "stroke": "#000000",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "cleaning_area",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6466185929383,
-            35.60196220528096
+            110.64662638389787,
+            35.60194141820939
           ],
           [
-            110.64661858320795,
-            35.601962205256015
-          ],
-          [
-            110.64661861780759,
-            35.60195315880137
+            110.6471693156017,
+            35.60194281043613
           ]
         ]
       }
@@ -5067,20 +6020,25 @@
       "properties": {
         "index": 149,
         "sequence": 149,
-        "kind": "coverage",
-        "length_m": 50.541968,
+        "kind": "connector",
+        "length_m": 49.141968,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64661861780759,
-            35.60195315880137
+            110.6471693156017,
+            35.60194281043613
           ],
           [
-            110.64717701703178,
-            35.60195459069109
+            110.64662638389787,
+            35.60194141820939
           ]
         ]
       }
@@ -5091,161 +6049,20 @@
         "index": 150,
         "sequence": 150,
         "kind": "connector",
-        "length_m": 1.000881,
+        "length_m": 1.985809,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64717701703178,
-            35.60195459069109
-          ],
-          [
-            110.64717700730144,
-            35.601954590666146
-          ],
-          [
-            110.64717704190107,
-            35.6019455442115
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 151,
-        "sequence": 151,
-        "kind": "coverage",
-        "length_m": 50.541968,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64717704190107,
-            35.6019455442115
-          ],
-          [
-            110.6466186426769,
-            35.601944112321775
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 152,
-        "sequence": 152,
-        "kind": "connector",
-        "length_m": 1.000881,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6466186426769,
-            35.601944112321775
-          ],
-          [
-            110.64661863294656,
-            35.60194411229683
-          ],
-          [
-            110.6466186675462,
-            35.601935065842184
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 153,
-        "sequence": 153,
-        "kind": "coverage",
-        "length_m": 50.541968,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6466186675462,
-            35.601935065842184
-          ],
-          [
-            110.64717706677038,
-            35.601936497731906
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 154,
-        "sequence": 154,
-        "kind": "connector",
-        "length_m": 25.270984,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64717706677038,
-            35.601936497731906
-          ],
-          [
-            110.64689786715829,
-            35.60193578178704
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 155,
-        "sequence": 155,
-        "kind": "connector",
-        "length_m": 25.270984,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64689786715829,
-            35.60193578178704
-          ],
-          [
-            110.6466186675462,
-            35.601935065842184
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 156,
-        "sequence": 156,
-        "kind": "connector",
-        "length_m": 1.000423,
-        "region_id": "W24"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6466186675462,
-            35.601935065842184
+            110.64662638389787,
+            35.60194141820939
           ],
           [
             110.64660984388259,
@@ -5257,10 +6074,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 157,
-        "sequence": 157,
+        "index": 151,
+        "sequence": 151,
         "kind": "connector",
         "length_m": 51.941968,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_W24B-W24C_stop"
       },
       "geometry": {
@@ -5280,10 +6102,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 158,
-        "sequence": 158,
+        "index": 152,
+        "sequence": 152,
         "kind": "connector",
         "length_m": 1.828632,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5303,10 +6130,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 159,
-        "sequence": 159,
+        "index": 153,
+        "sequence": 153,
         "kind": "connector",
         "length_m": 51.842085,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_E24D-24A"
       },
       "geometry": {
@@ -5326,10 +6158,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 160,
-        "sequence": 160,
+        "index": 154,
+        "sequence": 154,
         "kind": "connector",
         "length_m": 16.56867,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5349,10 +6186,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 161,
-        "sequence": 161,
+        "index": 155,
+        "sequence": 155,
         "kind": "connector",
         "length_m": 4.230442,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_24B-23A"
       },
       "geometry": {
@@ -5372,10 +6214,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 162,
-        "sequence": 162,
+        "index": 156,
+        "sequence": 156,
         "kind": "connector",
         "length_m": 7.401076,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5395,10 +6242,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 163,
-        "sequence": 163,
+        "index": 157,
+        "sequence": 157,
         "kind": "connector",
         "length_m": 11.555288,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_23B-22A"
       },
       "geometry": {
@@ -5418,10 +6270,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 164,
-        "sequence": 164,
+        "index": 158,
+        "sequence": 158,
         "kind": "connector",
         "length_m": 13.173307,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5441,10 +6298,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 165,
-        "sequence": 165,
+        "index": 159,
+        "sequence": 159,
         "kind": "connector",
         "length_m": 3.598532,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_22B-21A"
       },
       "geometry": {
@@ -5464,10 +6326,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 166,
-        "sequence": 166,
+        "index": 160,
+        "sequence": 160,
         "kind": "connector",
         "length_m": 13.138531,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5487,10 +6354,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 167,
-        "sequence": 167,
+        "index": 161,
+        "sequence": 161,
         "kind": "connector",
         "length_m": 11.691265,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_21B-20A"
       },
       "geometry": {
@@ -5510,10 +6382,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 168,
-        "sequence": 168,
+        "index": 162,
+        "sequence": 162,
         "kind": "connector",
         "length_m": 18.847316,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5533,10 +6410,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 169,
-        "sequence": 169,
+        "index": 163,
+        "sequence": 163,
         "kind": "connector",
         "length_m": 3.563357,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_20B-19A"
       },
       "geometry": {
@@ -5556,10 +6438,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 170,
-        "sequence": 170,
+        "index": 164,
+        "sequence": 164,
         "kind": "connector",
         "length_m": 25.737669,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5579,10 +6466,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 171,
-        "sequence": 171,
+        "index": 165,
+        "sequence": 165,
         "kind": "connector",
         "length_m": 11.328804,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_19B-18A"
       },
       "geometry": {
@@ -5602,10 +6494,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 172,
-        "sequence": 172,
+        "index": 166,
+        "sequence": 166,
         "kind": "connector",
         "length_m": 7.399212,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5625,10 +6522,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 173,
-        "sequence": 173,
+        "index": 167,
+        "sequence": 167,
         "kind": "connector",
         "length_m": 3.894532,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_18B-17A"
       },
       "geometry": {
@@ -5648,10 +6550,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 174,
-        "sequence": 174,
+        "index": 168,
+        "sequence": 168,
         "kind": "connector",
         "length_m": 15.382607,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5671,10 +6578,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 175,
-        "sequence": 175,
+        "index": 169,
+        "sequence": 169,
         "kind": "connector",
         "length_m": 2.658948,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_17B-16A"
       },
       "geometry": {
@@ -5694,10 +6606,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 176,
-        "sequence": 176,
+        "index": 170,
+        "sequence": 170,
         "kind": "connector",
         "length_m": 15.425711,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5717,10 +6634,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 177,
-        "sequence": 177,
+        "index": 171,
+        "sequence": 171,
         "kind": "connector",
         "length_m": 12.282069,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_16B-15A"
       },
       "geometry": {
@@ -5740,10 +6662,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 178,
-        "sequence": 178,
+        "index": 172,
+        "sequence": 172,
         "kind": "connector",
         "length_m": 11.968207,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5763,10 +6690,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 179,
-        "sequence": 179,
+        "index": 173,
+        "sequence": 173,
         "kind": "connector",
         "length_m": 3.867796,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_15B-14A"
       },
       "geometry": {
@@ -5786,10 +6718,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 180,
-        "sequence": 180,
+        "index": 174,
+        "sequence": 174,
         "kind": "connector",
         "length_m": 20.009291,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5809,10 +6746,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 181,
-        "sequence": 181,
+        "index": 175,
+        "sequence": 175,
         "kind": "connector",
         "length_m": 12.146025,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_14B-13A"
       },
       "geometry": {
@@ -5832,10 +6774,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 182,
-        "sequence": 182,
+        "index": 176,
+        "sequence": 176,
         "kind": "connector",
         "length_m": 11.973921,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5855,10 +6802,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 183,
-        "sequence": 183,
+        "index": 177,
+        "sequence": 177,
         "kind": "connector",
         "length_m": 3.373068,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_13B-12A"
       },
       "geometry": {
@@ -5878,10 +6830,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 184,
-        "sequence": 184,
+        "index": 178,
+        "sequence": 178,
         "kind": "connector",
         "length_m": 14.27941,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5901,10 +6858,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 185,
-        "sequence": 185,
+        "index": 179,
+        "sequence": 179,
         "kind": "connector",
         "length_m": 11.671849,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_12B-11A"
       },
       "geometry": {
@@ -5924,10 +6886,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 186,
-        "sequence": 186,
+        "index": 180,
+        "sequence": 180,
         "kind": "connector",
         "length_m": 24.611399,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5947,10 +6914,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 187,
-        "sequence": 187,
+        "index": 181,
+        "sequence": 181,
         "kind": "connector",
         "length_m": 11.360912,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_11B-10A"
       },
       "geometry": {
@@ -5970,10 +6942,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 188,
-        "sequence": 188,
+        "index": 182,
+        "sequence": 182,
         "kind": "connector",
         "length_m": 16.306293,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -5993,10 +6970,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 189,
-        "sequence": 189,
+        "index": 183,
+        "sequence": 183,
         "kind": "connector",
         "length_m": 27.860092,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_9A-8B"
       },
       "geometry": {
@@ -6016,10 +6998,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 190,
-        "sequence": 190,
+        "index": 184,
+        "sequence": 184,
         "kind": "connector",
-        "length_m": 31.362912,
+        "length_m": 3.812188,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -6030,8 +7017,8 @@
             35.605252466171876
           ],
           [
-            110.64741623970805,
-            35.605286201553355
+            110.64776001450005,
+            35.605286952396405
           ]
         ]
       }
@@ -6039,22 +7026,27 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 191,
-        "sequence": 191,
+        "index": 185,
+        "sequence": 185,
         "kind": "connector",
         "length_m": 31.115786,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_7A-7bA"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64741623970805,
-            35.605286201553355
-          ],
-          [
             110.64776001450005,
             35.605286952396405
+          ],
+          [
+            110.64741623970805,
+            35.605286201553355
           ]
         ]
       }
@@ -6062,18 +7054,23 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 192,
-        "sequence": 192,
+        "index": 186,
+        "sequence": 186,
         "kind": "connector",
-        "length_m": 37.029711,
+        "length_m": 20.013521,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64776001450005,
-            35.605286952396405
+            110.64741623970805,
+            35.605286201553355
           ],
           [
             110.64741521205767,
@@ -6085,10 +7082,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 193,
-        "sequence": 193,
+        "index": 187,
+        "sequence": 187,
         "kind": "connector",
         "length_m": 3.916292,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_7bB-6A"
       },
       "geometry": {
@@ -6108,10 +7110,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 194,
-        "sequence": 194,
+        "index": 188,
+        "sequence": 188,
         "kind": "connector",
         "length_m": 20.017355,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -6131,10 +7138,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 195,
-        "sequence": 195,
+        "index": 189,
+        "sequence": 189,
         "kind": "connector",
         "length_m": 3.736123,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_6B-5A"
       },
       "geometry": {
@@ -6154,10 +7166,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 196,
-        "sequence": 196,
+        "index": 190,
+        "sequence": 190,
         "kind": "connector",
         "length_m": 20.011087,
+        "color": "#1f77b4",
+        "stroke": "#1f77b4",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "automatic_region_connector",
         "region_id": "W24"
       },
       "geometry": {
@@ -6177,10 +7194,15 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 197,
-        "sequence": 197,
+        "index": 191,
+        "sequence": 191,
         "kind": "connector",
         "length_m": 3.845443,
+        "color": "#d62728",
+        "stroke": "#d62728",
+        "stroke-width": 2,
+        "stroke-opacity": 1.0,
+        "style_class": "bridge_path",
         "connector_id": "back_5B-4A"
       },
       "geometry": {
