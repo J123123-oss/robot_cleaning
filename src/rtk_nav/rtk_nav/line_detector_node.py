@@ -13,7 +13,7 @@ from geometry_msgs.msg import Vector3
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Bool, Float32, String
 
 
 def wrap180(angle_deg):
@@ -232,6 +232,93 @@ def select_boundary_pair(lines, axis_angle_deg, width, height, max_gap_px):
     return left_line, right_line, left_projection, right_projection, center_projection
 
 
+def line_normal_offset_at_reference(
+    line, axis_angle_deg, width, height, axis_offset_px=0.0
+):
+    """计算无限拟合直线在固定路径截面上的法向偏移。"""
+    try:
+        x1, y1, x2, y2 = [float(line[index]) for index in range(4)]
+        values = [
+            float(value)
+            for value in (axis_angle_deg, width, height, axis_offset_px)
+        ]
+    except (IndexError, TypeError, ValueError):
+        return float('nan')
+    if not all(math.isfinite(value) for value in (x1, y1, x2, y2, *values)):
+        return float('nan')
+
+    axis_rad = math.radians(float(axis_angle_deg))
+    axis_x = math.cos(axis_rad)
+    axis_y = math.sin(axis_rad)
+    normal_x = -axis_y
+    normal_y = axis_x
+    center_x = float(width) / 2.0
+    center_y = float(height) / 2.0
+    reference_x = center_x + axis_x * float(axis_offset_px)
+    reference_y = center_y + axis_y * float(axis_offset_px)
+    line_dx = x2 - x1
+    line_dy = y2 - y1
+    denominator = normal_x * line_dy - normal_y * line_dx
+    if abs(denominator) < 1e-9:
+        return float('nan')
+
+    numerator = (
+        (x1 - reference_x) * line_dy
+        - (y1 - reference_y) * line_dx
+    )
+    offset = numerator / denominator
+    return offset if math.isfinite(offset) else float('nan')
+
+
+def select_reference_line(
+    lines,
+    axis_angle_deg,
+    width,
+    height,
+    target_offset_px,
+    max_error_px,
+    axis_offset_px=0.0,
+):
+    """选择最接近标定路径参考位置的单条平行线。
+
+    ``target_offset_px`` 是目标线路相对图像中心的法向投影，不能假定
+    目标路线位于两条检测线的中点。
+    """
+    if not lines:
+        return None
+    if not all(
+        math.isfinite(float(value))
+        for value in (
+            axis_angle_deg,
+            width,
+            height,
+            target_offset_px,
+            max_error_px,
+            axis_offset_px,
+        )
+    ) or float(max_error_px) < 0.0:
+        return None
+
+    candidates = []
+    for line in lines:
+        projection = line_normal_offset_at_reference(
+            line,
+            axis_angle_deg,
+            width,
+            height,
+            axis_offset_px,
+        )
+        if math.isfinite(projection):
+            candidates.append((abs(projection - target_offset_px), line, projection))
+    if not candidates:
+        return None
+
+    distance, line, projection = min(candidates, key=lambda item: item[0])
+    if distance > float(max_error_px):
+        return None
+    return line, projection, float(target_offset_px)
+
+
 class GridLineDetector(Node):
     """根据 RTK 当前路径段选择栅格线组并计算视觉纠偏量。"""
 
@@ -257,12 +344,30 @@ class GridLineDetector(Node):
             self.path_context_callback,
             10,
         )
+        self.path_reference_sub = self.create_subscription(
+            Vector3,
+            '/rtk/visual_path_reference',
+            self.path_reference_callback,
+            10,
+        )
 
         self.angle_pub = self.create_publisher(
             Vector3, '/grid_line/angle_deviation', 10
         )
         self.confidence_pub = self.create_publisher(
             Float32, '/grid_line/detection_confidence', 10
+        )
+        self.heading_valid_pub = self.create_publisher(
+            Bool, '/grid_line/heading_valid', 10
+        )
+        self.lateral_valid_pub = self.create_publisher(
+            Bool, '/grid_line/lateral_valid', 10
+        )
+        self.heading_confidence_pub = self.create_publisher(
+            Float32, '/grid_line/heading_confidence', 10
+        )
+        self.lateral_confidence_pub = self.create_publisher(
+            Float32, '/grid_line/lateral_confidence', 10
         )
         self.run_axis_pub = self.create_publisher(
             String, '/grid_line/run_axis', 10
@@ -284,6 +389,10 @@ class GridLineDetector(Node):
         self.declare_parameter('min_line_count', 2)
         self.declare_parameter('enable_visual_correction', True)
         self.declare_parameter('bypass_path_context_gate', True)
+        # self.declare_parameter('target_line_offset_m', float('nan'))
+        self.declare_parameter('target_line_offset_m', 0.12)
+        self.declare_parameter('target_line_match_tolerance_m', 0.5)
+        self.declare_parameter('reference_axis_offset_px', 0.0)
         self.declare_parameter('line_angle_tolerance_deg', 15.0)
         self.declare_parameter('path_context_timeout_sec', 0.5)
         self.declare_parameter('boundary_pair_max_gap_px', 1200.0)
@@ -315,6 +424,15 @@ class GridLineDetector(Node):
         )
         self.bypass_path_context_gate = bool(
             self.get_parameter('bypass_path_context_gate').value
+        )
+        self.target_line_offset_m = float(
+            self.get_parameter('target_line_offset_m').value
+        )
+        self.target_line_match_tolerance_m = float(
+            self.get_parameter('target_line_match_tolerance_m').value
+        )
+        self.reference_axis_offset_px = float(
+            self.get_parameter('reference_axis_offset_px').value
         )
         self.line_angle_tolerance_deg = float(
             self.get_parameter('line_angle_tolerance_deg').value
@@ -360,6 +478,15 @@ class GridLineDetector(Node):
             or self.path_context_timeout_sec <= 0.0
         ):
             raise ValueError('path_context_timeout_sec must be finite and > 0')
+        if (
+            not math.isfinite(self.target_line_match_tolerance_m)
+            or self.target_line_match_tolerance_m <= 0.0
+        ):
+            raise ValueError(
+                'target_line_match_tolerance_m must be finite and > 0'
+            )
+        if not math.isfinite(self.reference_axis_offset_px):
+            raise ValueError('reference_axis_offset_px must be finite')
         if (
             not math.isfinite(self.camera_height)
             or self.camera_height <= 0.0
@@ -424,7 +551,13 @@ class GridLineDetector(Node):
         self.path_context_valid = False
         self.last_path_context_time = 0.0
         self.last_path_direction_deg = None
+        self.path_reference_lateral_m = 0.0
+        self.path_reference_projection_ratio = 0.0
+        self.path_reference_valid = False
+        self.last_path_reference_time = 0.0
         self.valid_streak = 0
+        self.heading_valid_streak = 0
+        self.lateral_valid_streak = 0
 
         self.latest_frame_lock = threading.Lock()
         self.latest_compressed_data = None
@@ -444,7 +577,16 @@ class GridLineDetector(Node):
             image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
             if image is None:
                 raise ValueError('JPEG 解码失败')
-            angle, lateral_m, detected, confidence = (
+            (
+                angle,
+                lateral_m,
+                detected,
+                confidence,
+                heading_validity,
+                lateral_validity,
+                heading_confidence_value,
+                lateral_confidence_value,
+            ) = (
                 self.detect_and_draw_grid_lines(image)
             )
 
@@ -457,6 +599,36 @@ class GridLineDetector(Node):
             confidence_msg = Float32()
             confidence_msg.data = float(confidence)
             self.confidence_pub.publish(confidence_msg)
+
+            heading_valid_msg = Bool()
+            heading_valid_msg.data = bool(heading_validity)
+            self.heading_valid_pub.publish(heading_valid_msg)
+
+            lateral_valid_msg = Bool()
+            lateral_valid_msg.data = bool(lateral_validity)
+            self.lateral_valid_pub.publish(lateral_valid_msg)
+
+            heading_confidence_msg = Float32()
+            heading_confidence_msg.data = float(heading_confidence_value)
+            self.heading_confidence_pub.publish(heading_confidence_msg)
+
+            lateral_confidence_msg = Float32()
+            lateral_confidence_msg.data = float(lateral_confidence_value)
+            self.lateral_confidence_pub.publish(lateral_confidence_msg)
+
+            if (
+                lateral_validity
+                and self.path_reference_valid
+                and time.monotonic() - self.last_path_reference_time
+                <= self.path_context_timeout_sec
+            ):
+                delta = lateral_m - self.path_reference_lateral_m
+                self.get_logger().debug(
+                    f'RTK reference lateral={self.path_reference_lateral_m:.3f}m '
+                    f'projection={self.path_reference_projection_ratio:.3f} '
+                    f'visual lateral={lateral_m:.3f}m delta={delta:.3f}m',
+                    throttle_duration_sec=1.0,
+                )
         except Exception as exc:
             self.get_logger().error(
                 f'压缩图像处理错误: {exc}',
@@ -497,9 +669,35 @@ class GridLineDetector(Node):
         self.path_context_valid = True
         self.last_path_context_time = time.monotonic()
 
+    def path_reference_callback(self, msg):
+        """接收 RTK 当前路径段的横向参考，仅用于视觉结果评估。"""
+        try:
+            lateral_m = float(msg.x)
+            projection_ratio = float(msg.y)
+            validity = float(msg.z)
+            valid = (
+                math.isfinite(lateral_m)
+                and math.isfinite(projection_ratio)
+                and math.isfinite(validity)
+                and validity >= 0.5
+            )
+        except (AttributeError, TypeError, ValueError):
+            valid = False
+
+        if not valid:
+            self.path_reference_valid = False
+            return
+
+        self.path_reference_lateral_m = lateral_m
+        self.path_reference_projection_ratio = projection_ratio
+        self.path_reference_valid = True
+        self.last_path_reference_time = time.monotonic()
+
     def reset_reacquisition(self):
         """清除当前连续有效帧，避免沿用旧方向检测结果。"""
         self.valid_streak = 0
+        self.heading_valid_streak = 0
+        self.lateral_valid_streak = 0
 
     def publish_invalid(self):
         """发布明确的无效视觉结果。"""
@@ -510,6 +708,22 @@ class GridLineDetector(Node):
         confidence = Float32()
         confidence.data = 0.0
         self.confidence_pub.publish(confidence)
+
+        heading_valid = Bool()
+        heading_valid.data = False
+        self.heading_valid_pub.publish(heading_valid)
+
+        lateral_valid = Bool()
+        lateral_valid.data = False
+        self.lateral_valid_pub.publish(lateral_valid)
+
+        heading_confidence = Float32()
+        heading_confidence.data = 0.0
+        self.heading_confidence_pub.publish(heading_confidence)
+
+        lateral_confidence = Float32()
+        lateral_confidence.data = 0.0
+        self.lateral_confidence_pub.publish(lateral_confidence)
 
         axis = String()
         axis.data = 'invalid'
@@ -576,6 +790,34 @@ class GridLineDetector(Node):
             sin_pitch * focal_length_px
         )
         return lateral_m if math.isfinite(lateral_m) else float('nan')
+
+    def lateral_meters_to_pixels(self, lateral_m):
+        """将标定的地面横向位置转换为法向像素偏移。"""
+        lateral_m = float(lateral_m)
+        camera_height = float(self.camera_height)
+        camera_pitch_deg = float(self.camera_pitch_deg)
+        focal_length_px = float(self.focal_length_px)
+        if not all(
+            math.isfinite(value)
+            for value in (
+                lateral_m,
+                camera_height,
+                camera_pitch_deg,
+                focal_length_px,
+            )
+        ):
+            return float('nan')
+        if (
+            camera_height <= 0.0
+            or focal_length_px <= 0.0
+            or not 0.0 < camera_pitch_deg <= 90.0
+        ):
+            return float('nan')
+        sin_pitch = math.sin(math.radians(camera_pitch_deg))
+        if sin_pitch <= 0.0 or not math.isfinite(sin_pitch):
+            return float('nan')
+        pixels = lateral_m * sin_pitch * focal_length_px / camera_height
+        return pixels if math.isfinite(pixels) else float('nan')
 
     def detect_and_draw_grid_lines(self, image):
         """检测粗白光伏结构线并计算路径感知纠偏量。"""
@@ -707,12 +949,15 @@ class GridLineDetector(Node):
             self.coarse_line_min_support,
         )
         if not coarse_lines:
-            # self.get_logger().info('P:0 C:0')
+            self.get_logger().info(
+                'P:0 C:0',
+                throttle_duration_sec=1.0,
+            )
             self.reset_reacquisition()
             self.publish_debug_images_if_due(
                 display, gray_blur, white_mask, white_edges
             )
-            return 0.0, 0.0, False, 0.0
+            return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
         parallel_group = []
         perpendicular_group = []
@@ -772,48 +1017,102 @@ class GridLineDetector(Node):
             height,
             self.boundary_pair_max_gap_px,
         )
+        target_offset_px = self.lateral_meters_to_pixels(
+            self.target_line_offset_m
+        )
+        target_tolerance_px = self.lateral_meters_to_pixels(
+            self.target_line_match_tolerance_m
+        )
+        reference_line = None
+        if math.isfinite(target_offset_px) and math.isfinite(target_tolerance_px):
+            reference_line = select_reference_line(
+                parallel_group,
+                directed_path_axis_image,
+                width,
+                height,
+                target_offset_px,
+                target_tolerance_px,
+                self.reference_axis_offset_px,
+            )
         parallel_angle = weighted_line_angle(parallel_group)
-        valid_geometry = (
-            len(parallel_group) >= self.min_line_count
-            and pair is not None
+        heading_geometry = (
+            len(parallel_group) >= 1
             and parallel_angle is not None
             and math.isfinite(float(parallel_angle))
         )
-
-        if not valid_geometry:
-            self.reset_reacquisition()
-            self.publish_debug_images_if_due(
-                display, gray_blur, white_mask, white_edges
-            )
-            return 0.0, 0.0, False, 0.0
-
-        self.valid_streak += 1
-        heading_error = undirected_angle(parallel_angle - path_axis_image)
-        _, _, left_projection, right_projection, center_projection = pair
-        lateral_pixel_error = (
-            (left_projection + right_projection) / 2.0 - center_projection
+        lateral_geometry = (
+            heading_geometry
+            and reference_line is not None
         )
-        lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
-        if not math.isfinite(lateral_m):
+        valid_geometry = lateral_geometry
+
+        if not heading_geometry:
+            self.get_logger().info(
+                f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+                f'pair={pair is not None} reference={reference_line is not None} '
+                f'geometry={valid_geometry} '
+                f'streak=0/{self.reacquire_frames}'
+            )
             self.reset_reacquisition()
             self.publish_debug_images_if_due(
                 display, gray_blur, white_mask, white_edges
             )
-            return 0.0, 0.0, False, 0.0
+            return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
-        detected = self.valid_streak >= self.reacquire_frames
-        output_angle = heading_error if detected else 0.0
-        output_lateral = lateral_m if detected else 0.0
-        confidence = 0.0
-        if detected:
-            count_score = min(1.0, len(parallel_group) / 6.0)
+        self.heading_valid_streak += 1
+        if lateral_geometry:
+            self.lateral_valid_streak += 1
+        else:
+            self.lateral_valid_streak = 0
+        self.valid_streak = self.lateral_valid_streak
+        heading_error = undirected_angle(parallel_angle - path_axis_image)
+        lateral_pixel_error = 0.0
+        lateral_m = 0.0
+        if lateral_geometry:
+            _, observed_projection, target_projection = reference_line
+            lateral_pixel_error = observed_projection - target_projection
+            lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
+        if lateral_geometry and not math.isfinite(lateral_m):
+            self.get_logger().info(
+                f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+                f'pair={pair is not None} reference={reference_line is not None} '
+                f'geometry={valid_geometry} '
+                f'streak={self.valid_streak}/{self.reacquire_frames} '
+                f'lateral_px={lateral_pixel_error:.1f} lateral_m=invalid'
+            )
+            self.reset_reacquisition()
+            self.publish_debug_images_if_due(
+                display, gray_blur, white_mask, white_edges
+            )
+            return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
+
+        heading_valid = self.heading_valid_streak >= self.reacquire_frames
+        lateral_valid = self.lateral_valid_streak >= self.reacquire_frames
+        detected = heading_valid
+        output_angle = heading_error if heading_valid else 0.0
+        output_lateral = lateral_m if lateral_valid else 0.0
+        heading_confidence = 0.0
+        lateral_confidence = 0.0
+        if heading_valid:
             support_score = sum(
                 float(line[9]) for line in parallel_group
             ) / float(len(parallel_group))
-            confidence = max(
+            heading_confidence = max(
                 0.0,
-                min(1.0, 0.5 * count_score + 0.5 * support_score),
+                min(1.0, support_score),
             )
+        if lateral_valid:
+            lateral_confidence = heading_confidence * (1.0 if pair else 0.8)
+        confidence = max(heading_confidence, lateral_confidence)
+        self.get_logger().info(
+            f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+            f'pair={pair is not None} reference={reference_line is not None} '
+            f'geometry={valid_geometry} '
+            f'streak={self.valid_streak}/{self.reacquire_frames} '
+            f'detected={detected} lateral_px={lateral_pixel_error:.1f} '
+            f'lateral_m={lateral_m:.3f} '
+            f'heading_valid={heading_valid} lateral_valid={lateral_valid}'
+        )
 
         if display is not None:
             cv2.putText(
@@ -848,8 +1147,14 @@ class GridLineDetector(Node):
         )
 
         if not detected:
-            return 0.0, 0.0, False, 0.0
-        return output_angle, output_lateral, True, confidence
+            return (
+                0.0, 0.0, False, 0.0,
+                False, False, heading_confidence, lateral_confidence,
+            )
+        return (
+            output_angle, output_lateral, True, confidence,
+            heading_valid, lateral_valid, heading_confidence, lateral_confidence,
+        )
 
     def publish_debug_images_if_due(self, display, gray, binary, edges):
         """Publish debug images only when explicitly enabled and due."""

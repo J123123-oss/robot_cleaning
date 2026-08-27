@@ -18,7 +18,9 @@ def _helpers():
         "wrap180",
         "undirected_angle",
         "undirected_angle_distance",
+        "line_normal_offset_at_reference",
         "select_boundary_pair",
+        "select_reference_line",
     }
     nodes = [
         node for node in tree.body
@@ -92,6 +94,43 @@ def test_reversing_directed_axis_reverses_lateral_sign_basis():
     forward_error = (forward[2] + forward[3]) / 2.0 - forward[4]
     reverse_error = (reverse[2] + reverse[3]) / 2.0 - reverse[4]
     assert math.isclose(forward_error, -reverse_error, abs_tol=1e-9)
+
+
+def test_single_reference_line_uses_calibrated_target_not_image_center():
+    helpers = _helpers()
+    line = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0)
+    selected = helpers["select_reference_line"](
+        [line], 90.0, 640, 480, 0.0, 40.0
+    )
+    assert selected is not None
+    _, observed_projection, target_projection = selected
+    assert math.isclose(
+        observed_projection - target_projection, 20.0, abs_tol=1e-9
+    )
+
+
+def test_reference_line_returns_none_when_no_line_matches_target():
+    helpers = _helpers()
+    line = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0)
+    assert (
+        helpers["select_reference_line"](
+            [line], 90.0, 640, 480, 100.0, 40.0
+        )
+        is None
+    )
+
+
+def test_reference_line_position_is_invariant_to_visible_segment_range():
+    helpers = _helpers()
+    first = (250, 0, 370, 480, 494.0, 75.0, 310.0, 240.0)
+    second = (275, 100, 370, 480, 391.0, 75.0, 322.5, 290.0)
+    first_offset = helpers["line_normal_offset_at_reference"](
+        first, 90.0, 640, 480, 0.0
+    )
+    second_offset = helpers["line_normal_offset_at_reference"](
+        second, 90.0, 640, 480, 0.0
+    )
+    assert math.isclose(first_offset, second_offset, abs_tol=1e-9)
 
 
 class BoundaryPairGeometryTest(unittest.TestCase):

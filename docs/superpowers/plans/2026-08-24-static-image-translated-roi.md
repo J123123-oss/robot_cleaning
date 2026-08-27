@@ -76,6 +76,7 @@ def extract_translated_roi(
 ```
 
 The implementation must use source slicing only, preserving original pixels and fixed output dimensions.
+Implement a helper that validates the output size, rounds the requested origin, clamps it to valid source bounds, and returns a copied NumPy slice. The implementation must use source slicing only, preserving original pixels and fixed output dimensions.
 
 - [ ] **Step 2: Declare and read the four static-image parameters.**
 
@@ -121,3 +122,4 @@ git diff -- src/rtk_nav/rtk_nav/camera_publisher_node.py src/rtk_nav/test/test_v
 ```
 
 Confirm that no unrelated dirty files are staged, reverted, or included in the change.
+```

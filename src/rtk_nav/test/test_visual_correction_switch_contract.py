@@ -30,11 +30,14 @@ def _function(tree, name):
     )
 
 
-def test_launch_declares_visual_correction_default_off_and_passes_it_to_rtk():
+def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
     assert '"enable_visual_correction"' in source
-    assert 'default_value=TextSubstitution(text="false")' in source
+    assert 'default_value=TextSubstitution(text="true")' in source
+    assert '"bypass_path_context_gate"' in source
+    assert 'default_value=TextSubstitution(text="true")' in source
+    assert 'LaunchConfiguration("bypass_path_context_gate")' in source
     assert 'LaunchConfiguration("enable_visual_correction")' in source
     assert "value_type=bool" in source
     assert "executable='line_detector_node'" in source
@@ -55,14 +58,17 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         ("visual_heading_gain", "0.2"),
         ("visual_lateral_gain", "10.0"),
         ("visual_max_steering_deg", "3.0"),
-        ("visual_confidence_threshold", "0.5"),
+        ("visual_confidence_threshold", "0.75"),
         ("visual_timeout_sec", "0.5"),
+        ("target_line_offset_m", "nan"),
+        ("target_line_match_tolerance_m", "0.5"),
+        ("reference_axis_offset_px", "0.0"),
     ):
         assert f'"{name}"' in source
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 9
+    assert source.count("value_type=float") == 12
 
 
 def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
@@ -178,6 +184,26 @@ def test_line_detector_uses_single_rendered_argument_for_logger_calls():
     assert invalid_calls == []
 
 
+def test_line_detector_logs_parallel_and_perpendicular_group_counts():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "self.get_logger().info" in detector
+    assert "P:{len(parallel_group)} C:{len(perpendicular_group)}" in detector
+    assert "P:0 C:0" in detector
+
+
+def test_line_detector_logs_geometry_gate_state_for_offset_diagnostics():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "pair={pair is not None}" in detector
+    assert "geometry={valid_geometry}" in detector
+    assert "streak={self.valid_streak}/{self.reacquire_frames}" in detector
+
+
 def test_rtk_declares_and_reports_visual_correction_switch():
     source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -185,7 +211,7 @@ def test_rtk_declares_and_reports_visual_correction_switch():
     context_publisher = ast.unparse(_function(tree, "publish_nav_context"))
     visual_context = ast.unparse(_function(tree, "publish_visual_path_context"))
 
-    assert "self.declare_parameter('enable_visual_correction', False)" in initializer
+    assert "self.declare_parameter('enable_visual_correction', True)" in initializer
     assert "self.enable_visual_correction" in initializer
     assert "'enable_visual_correction'" in context_publisher
     assert "self.visual_path_context_pub.publish" in visual_context
@@ -193,7 +219,78 @@ def test_rtk_declares_and_reports_visual_correction_switch():
     assert "msg.z = 0.0" in visual_context
 
 
-def test_line_detector_publishes_invalid_output_when_visual_correction_is_disabled():
+def test_rtk_publishes_current_path_reference_with_validity_and_projection():
+    source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    reference = ast.unparse(_function(tree, "publish_visual_path_reference"))
+
+    assert "'/rtk/visual_path_reference'" in initializer
+    assert "self.visual_path_reference_pub" in initializer
+    assert "self.calculate_lateral_error" in reference
+    assert "self._get_projection_ratio" in reference
+    assert "msg.x" in reference
+    assert "msg.y" in reference
+    assert "msg.z = 0.0" in reference
+
+
+def test_line_detector_exposes_independent_visual_status_and_path_reference():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    callback = ast.unparse(_function(tree, "path_reference_callback"))
+    publish_invalid = ast.unparse(_function(tree, "publish_invalid"))
+
+    assert "'/rtk/visual_path_reference'" in initializer
+    assert "'/grid_line/heading_valid'" in initializer
+    assert "'/grid_line/lateral_valid'" in initializer
+    assert "'/grid_line/heading_confidence'" in initializer
+    assert "'/grid_line/lateral_confidence'" in initializer
+    assert "self.path_reference_valid" in callback
+    assert "self.path_reference_lateral_m" in callback
+    assert "self.path_reference_projection_ratio" in callback
+    assert "self.heading_valid_pub.publish" in publish_invalid
+    assert "self.lateral_valid_pub.publish" in publish_invalid
+    assert "self.heading_confidence_pub.publish" in publish_invalid
+    assert "self.lateral_confidence_pub.publish" in publish_invalid
+
+
+def test_line_detector_uses_calibrated_reference_line_for_lateral_offset():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+    reference_selector = ast.unparse(_function(tree, "select_reference_line"))
+
+    assert "target_line_offset_m" in initializer
+    assert "target_line_match_tolerance_m" in initializer
+    assert "reference_axis_offset_px" in initializer
+    assert "select_reference_line" in detector
+    assert "line_normal_offset_at_reference" in reference_selector
+    assert "target_line_offset_m" in detector
+    assert "reference_line is not None" in detector
+    assert "(left_projection + right_projection) / 2.0" not in detector
+
+
+def test_rtk_consumes_independent_visual_components_with_separate_gates():
+    source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    correction = ast.unparse(_function(tree, "get_visual_steering_correction"))
+
+    assert "self.visual_heading_valid_callback" in initializer
+    assert "self.visual_lateral_valid_callback" in initializer
+    assert "self.visual_heading_confidence_callback" in initializer
+    assert "self.visual_lateral_confidence_callback" in initializer
+    assert "self.visual_heading_valid" in correction
+    assert "self.visual_lateral_valid" in correction
+    assert "self.visual_heading_confidence" in correction
+    assert "self.visual_lateral_confidence" in correction
+    assert "self.visual_heading_valid" in correction
+    assert "self.visual_lateral_valid" in correction
+
+
+def test_line_detector_defaults_enabled_and_publishes_invalid_output_when_disabled():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     initializer = ast.unparse(_function(tree, "__init__"))
@@ -207,7 +304,7 @@ def test_line_detector_publishes_invalid_output_when_visual_correction_is_disabl
     assert "confidence.data = 0.0" in publish_invalid
 
 
-def test_line_detector_path_context_bypass_defaults_off_and_preserves_visual_switch():
+def test_line_detector_path_context_bypass_defaults_on_and_preserves_visual_switch():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     initializer = ast.unparse(_function(tree, "__init__"))
@@ -352,3 +449,61 @@ def test_visual_steering_correction_requires_fresh_confident_motion_sample():
     state.last_visual_angle_time = time.monotonic()
     state.nav_context["nav_state"] = "PAUSE"
     assert namespace["get_visual_steering_correction"](state) == 0.0
+
+
+def test_visual_steering_correction_uses_only_independently_valid_components():
+    tree = ast.parse(RTK_SOURCE_PATH.read_text(encoding="utf-8"))
+    helper = _function(tree, "get_visual_steering_correction")
+
+    class ControlModeConstants:
+        AUTO_CLEANING = "AUTO_CLEANING"
+
+    class NavStateConstants:
+        INITIAL_MOVE = "INITIAL_MOVE"
+        WAYPOINT_MOVE = "WAYPOINT_MOVE"
+
+    namespace = {
+        "math": math,
+        "time": time,
+        "ControlMode": ControlModeConstants,
+        "NavState": NavStateConstants,
+    }
+    exec(
+        compile(ast.Module(body=[helper], type_ignores=[]), str(RTK_SOURCE_PATH), "exec"),
+        namespace,
+    )
+
+    class VisualState:
+        enable_visual_correction = True
+        rtk_solution_ready = True
+        current_control_mode = ControlModeConstants.AUTO_CLEANING
+        nav_context = {"nav_state": NavStateConstants.WAYPOINT_MOVE}
+        boundary_correct_locked = False
+        visual_heading_valid = True
+        visual_lateral_valid = False
+        visual_heading_confidence = 0.8
+        visual_lateral_confidence = 0.0
+        last_visual_heading_time = time.monotonic()
+        last_visual_lateral_time = 0.0
+        visual_heading_error_deg = 2.0
+        visual_lateral_error_m = 100.0
+        visual_heading_gain = 1.0
+        visual_lateral_gain = 10.0
+        visual_max_steering_deg = 20.0
+        visual_confidence_threshold = 0.5
+        visual_timeout_sec = 0.5
+
+    state = VisualState()
+    assert math.isclose(
+        namespace["get_visual_steering_correction"](state), -2.0, abs_tol=1e-9
+    )
+
+    state.visual_heading_valid = False
+    state.visual_lateral_valid = True
+    state.visual_heading_confidence = 0.0
+    state.visual_lateral_confidence = 0.8
+    state.last_visual_heading_time = 0.0
+    state.last_visual_lateral_time = time.monotonic()
+    assert math.isclose(
+        namespace["get_visual_steering_correction"](state), 20.0, abs_tol=1e-9
+    )

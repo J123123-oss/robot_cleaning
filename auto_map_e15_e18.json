@@ -1,0 +1,1514 @@
+{
+  "format": "rtk_auto_map_v2",
+  "guides": [
+    [
+      [
+        110.64727306866325,
+        35.603468957737846
+      ],
+      [
+        110.64776810603713,
+        35.60346909433307
+      ]
+    ]
+  ],
+  "defaults": {
+    "interval": 1.0,
+    "start_corner": "top_left",
+    "swap_wh_select": false,
+    "edge_distance_lon": [
+      0.1,
+      0.1
+    ],
+    "edge_distance_lat": [
+      0.1,
+      0.1
+    ]
+  },
+  "regions": [
+    {
+      "id": "E15",
+      "polygons": [
+        {
+          "source_area": "E15_long_block_start",
+          "boundary": [
+            [
+              110.64727243530348,
+              35.60369818654844
+            ],
+            [
+              110.64742323532546,
+              35.6036984811552
+            ],
+            [
+              110.64742302745503,
+              35.60382746878024
+            ],
+            [
+              110.64727222743305,
+              35.60382717417348
+            ],
+            [
+              110.64727243530348,
+              35.60369818654844
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64727243530348,
+                35.60369818654844
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64742323532546,
+                35.6036984811552
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64742302745503,
+                35.60382746878024
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.64727222743305,
+                35.60382717417348
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64727243530348,
+                35.60369818654844
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64742323532546,
+              35.6036984811552
+            ],
+            "B": [
+              110.64742302745503,
+              35.60382746878024
+            ],
+            "C": [
+              110.64727222743305,
+              35.60382717417348
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.15,
+            0.5
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        },
+        {
+          "source_area": "E15",
+          "boundary": [
+            [
+              110.64743142483125,
+              35.60371926611277
+            ],
+            [
+              110.64776705903036,
+              35.60371975122639
+            ],
+            [
+              110.64776678225708,
+              35.60382802136538
+            ],
+            [
+              110.64743114805798,
+              35.60382753625176
+            ],
+            [
+              110.64743142483125,
+              35.60371926611277
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64743142483125,
+                35.60371926611277
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64776705903036,
+                35.60371975122639
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64776678225708,
+                35.60382802136538
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.64743114805798,
+                35.60382753625176
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64743142483125,
+                35.60371926611277
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64776705903036,
+              35.60371975122639
+            ],
+            "B": [
+              110.64776678225708,
+              35.60382802136538
+            ],
+            "C": [
+              110.64743114805798,
+              35.60382753625176
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.3,
+            0.1
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        }
+      ],
+      "connection_tolerance_m": 2.0
+    },
+    {
+      "id": "E16",
+      "polygons": [
+        {
+          "source_area": "E16",
+          "boundary": [
+            [
+              110.64727306866325,
+              35.603468957737846
+            ],
+            [
+              110.64776810603713,
+              35.60346909433307
+            ],
+            [
+              110.64776805468944,
+              35.603593856235435
+            ],
+            [
+              110.64727301731556,
+              35.60359371964021
+            ],
+            [
+              110.64727306866325,
+              35.603468957737846
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C_prime",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B, after orthogonalizing C against AB",
+              "note_zh": "西南角；由 A、B、C 自动正交化计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64727306866325,
+                35.603468957737846
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64776810603713,
+                35.60346909433307
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64776805468944,
+                35.603593856235435
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C_prime",
+              "map_position": "northwest",
+              "source": "automatic",
+              "manual_input_field": "calib_point_c",
+              "calculation": "orthogonal projection derived from A, B, and C",
+              "note_zh": "西北角；不是原始 C，按 A/B/C 自动正交化计算",
+              "point_number": 4,
+              "coordinate": [
+                110.64727301731556,
+                35.60359371964021
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64727306866325,
+                35.603468957737846
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64776810603713,
+              35.60346909433307
+            ],
+            "B": [
+              110.64776805468944,
+              35.603593856235435
+            ],
+            "C": [
+              110.6472730115645,
+              35.603607693253174
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.3,
+            0.5
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E17_up",
+      "polygons": [
+        {
+          "source_area": "E17_up",
+          "boundary": [
+            [
+              110.64727450976491,
+              35.60330484009559
+            ],
+            [
+              110.6474252497039,
+              35.60330511443972
+            ],
+            [
+              110.64742449566111,
+              35.603444344219525
+            ],
+            [
+              110.64727375572214,
+              35.603444069875394
+            ],
+            [
+              110.64727450976491,
+              35.60330484009559
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64727450976491,
+                35.60330484009559
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.6474252497039,
+                35.60330511443972
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64742449566111,
+                35.603444344219525
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.64727375572214,
+                35.603444069875394
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64727450976491,
+                35.60330484009559
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.6474252497039,
+              35.60330511443972
+            ],
+            "B": [
+              110.64742449566111,
+              35.603444344219525
+            ],
+            "C": [
+              110.64727375572214,
+              35.603444069875394
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.15,
+            0.5
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        }
+      ],
+      "guide": "vertical"
+    },
+    {
+      "id": "E17_down",
+      "polygons": [
+        {
+          "source_area": "E17_down",
+          "boundary": [
+            [
+              110.64746003129768,
+              35.60330539750442
+            ],
+            [
+              110.64776897053187,
+              35.603305884061356
+            ],
+            [
+              110.64776797468316,
+              35.60344504040682
+            ],
+            [
+              110.64745903544897,
+              35.603444553849876
+            ],
+            [
+              110.64746003129768,
+              35.60330539750442
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64746003129768,
+                35.60330539750442
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64776897053187,
+                35.603305884061356
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64776797468316,
+                35.60344504040682
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.64745903544897,
+                35.603444553849876
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64746003129768,
+                35.60330539750442
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64776897053187,
+              35.603305884061356
+            ],
+            "B": [
+              110.64776797468316,
+              35.60344504040682
+            ],
+            "C": [
+              110.64745903544897,
+              35.603444553849876
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.3,
+            0.1
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E18",
+      "polygons": [
+        {
+          "source_area": "E18_long_block",
+          "boundary": [
+            [
+              110.64727457343058,
+              35.603191164205064
+            ],
+            [
+              110.64742563166243,
+              35.60319254527348
+            ],
+            [
+              110.64742540106296,
+              35.603269692175225
+            ],
+            [
+              110.6472743428311,
+              35.60326831110682
+            ],
+            [
+              110.64727457343058,
+              35.603191164205064
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.64727457343058,
+                35.603191164205064
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64742563166243,
+                35.60319254527348
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64742540106296,
+                35.603269692175225
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.6472743428311,
+                35.60326831110682
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.64727457343058,
+                35.603191164205064
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64742563166243,
+              35.60319254527348
+            ],
+            "B": [
+              110.64742540106296,
+              35.603269692175225
+            ],
+            "C": [
+              110.6472743428311,
+              35.60326831110682
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.15,
+            0.5
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        },
+        {
+          "source_area": "E18",
+          "boundary": [
+            [
+              110.6474335934206,
+              35.60320276163544
+            ],
+            [
+              110.64776956203357,
+              35.60320371639688
+            ],
+            [
+              110.64776922016449,
+              35.60327065277348
+            ],
+            [
+              110.6474332515515,
+              35.60326969801204
+            ],
+            [
+              110.6474335934206,
+              35.60320276163544
+            ]
+          ],
+          "boundary_order": [
+            "D",
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
+          "boundary_point_annotations": [
+            {
+              "boundary_index": 0,
+              "label": "D",
+              "map_position": "southwest",
+              "source": "automatic",
+              "calculation": "A + C - B",
+              "note_zh": "西南角；由 A、B、C 自动计算",
+              "point_number": 1,
+              "coordinate": [
+                110.6474335934206,
+                35.60320276163544
+              ]
+            },
+            {
+              "boundary_index": 1,
+              "label": "A",
+              "map_position": "southeast",
+              "source": "manual",
+              "input_field": "calib_point_a",
+              "note_zh": "东南角；需要手动标记",
+              "point_number": 2,
+              "coordinate": [
+                110.64776956203357,
+                35.60320371639688
+              ]
+            },
+            {
+              "boundary_index": 2,
+              "label": "B",
+              "map_position": "northeast",
+              "source": "manual",
+              "input_field": "calib_point_b",
+              "note_zh": "东北角；需要手动标记",
+              "point_number": 3,
+              "coordinate": [
+                110.64776922016449,
+                35.60327065277348
+              ]
+            },
+            {
+              "boundary_index": 3,
+              "label": "C",
+              "map_position": "northwest",
+              "source": "manual",
+              "input_field": "calib_point_c",
+              "note_zh": "西北角；需要手动标记",
+              "point_number": 4,
+              "coordinate": [
+                110.6474332515515,
+                35.60326969801204
+              ]
+            },
+            {
+              "boundary_index": 4,
+              "label": "D",
+              "map_position": "closure",
+              "source": "automatic",
+              "calculation": "copy boundary[0]",
+              "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+              "point_number": 5,
+              "coordinate": [
+                110.6474335934206,
+                35.60320276163544
+              ]
+            }
+          ],
+          "manual_calibration_points": {
+            "A": [
+              110.64776956203357,
+              35.60320371639688
+            ],
+            "B": [
+              110.64776922016449,
+              35.60327065277348
+            ],
+            "C": [
+              110.6474332515515,
+              35.60326969801204
+            ]
+          },
+          "holes": [],
+          "edge_distance_lon": [
+            0.3,
+            0.1
+          ],
+          "edge_distance_lat": [
+            0.3,
+            0.3
+          ]
+        }
+      ],
+      "connection_tolerance_m": 2.0
+    }
+  ],
+  "connectors": [
+    {
+      "id": "bridge_5B-6B",
+      "path": [
+        [
+          110.64741549006075,
+          35.60589856772437
+        ],
+        [
+          110.64741642174106,
+          35.60568374013546
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_6A-7bB",
+      "path": [
+        [
+          110.64741690256913,
+          35.605502653578235
+        ],
+        [
+          110.64741521205767,
+          35.605467251897565
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_7bA-7A",
+      "path": [
+        [
+          110.64741623970805,
+          35.605286201553355
+        ],
+        [
+          110.64776001450005,
+          35.605286952396405
+        ]
+      ],
+      "edge_distance_lon": [
+        0.3,
+        0.3
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.5
+      ]
+    },
+    {
+      "id": "bridge_8B-9A",
+      "path": [
+        [
+          110.6477602879233,
+          35.605252466171876
+        ],
+        [
+          110.6477609856752,
+          35.60500043052129
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        -3.2,
+        2.3
+      ]
+    },
+    {
+      "id": "bridge_10A-11B",
+      "path": [
+        [
+          110.64776160546539,
+          35.60485301059596
+        ],
+        [
+          110.64776265157377,
+          35.60475014299974
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_11A-12B",
+      "path": [
+        [
+          110.64776313280512,
+          35.60452749634761
+        ],
+        [
+          110.64776416327175,
+          35.60442191035046
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_12A-13B",
+      "path": [
+        [
+          110.64776463744738,
+          35.60429273226822
+        ],
+        [
+          110.64776464459975,
+          35.60426221780848
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_13A-14B",
+      "path": [
+        [
+          110.64776491482968,
+          35.60415389596566
+        ],
+        [
+          110.64776557275421,
+          35.60404401827957
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_14A-15B",
+      "path": [
+        [
+          110.64776723843342,
+          35.603863009383225
+        ],
+        [
+          110.64776678225708,
+          35.60382802136538
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        -0.3
+      ]
+    },
+    {
+      "id": "bridge_15-16B",
+      "from": "E15",
+      "to": "E16",
+      "path": [
+        [
+          110.64776705903036,
+          35.60371975122639
+        ],
+        [
+          110.6477676095043,
+          35.60360864241737
+        ],
+        [
+          110.64776805468944,
+          35.603593856235435
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "bridge_16A-17downB",
+      "from": "E16",
+      "to": "E17_up",
+      "path": [
+        [
+          110.64776810603713,
+          35.60346909433307
+        ],
+        [
+          110.64776797468316,
+          35.60344504040682
+        ],
+        [
+          110.64745903544897,
+          35.603444553849876
+        ],
+        [
+          110.64742449566111,
+          35.603444344219525
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        -0.3
+      ]
+    },
+    {
+      "id": "E17_upB_downC",
+      "from": "E17_up",
+      "to": "E17_down",
+      "path": [
+        [
+          110.64742449566111,
+          35.603444344219525
+        ],
+        [
+          110.64745903544897,
+          35.603444553849876
+        ]
+      ],
+      "edge_distance_lon": [
+        0.3,
+        0.3
+      ],
+      "edge_distance_lat": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bridge_17A-18B",
+      "from": "E17_down",
+      "to": "E18",
+      "path": [
+        [
+          110.64776897053187,
+          35.603305884061356
+        ],
+        [
+          110.64776922016449,
+          35.60327065277348
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        -0.3
+      ]
+    },
+    {
+      "id": "back_18B-17A_stop",
+      "path": [
+        [
+          110.64776922016449,
+          35.60327065277348
+        ],
+        [
+          110.64776897053187,
+          35.603305884061356
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_17B-16A",
+      "path": [
+        [
+          110.64776797468316,
+          35.60344504040682
+        ],
+        [
+          110.64776810603713,
+          35.60346909433307
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_16B-15A",
+      "path": [
+        [
+          110.6477676095043,
+          35.60360864241737
+        ],
+        [
+          110.64776705903036,
+          35.60371975122639
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_15B-14A",
+      "path": [
+        [
+          110.64776678225708,
+          35.60382802136538
+        ],
+        [
+          110.64776723843342,
+          35.603863009383225
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_14B-13A",
+      "path": [
+        [
+          110.64776557275421,
+          35.60404401827957
+        ],
+        [
+          110.64776491482968,
+          35.60415389596566
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_13B-12A",
+      "path": [
+        [
+          110.64776464459975,
+          35.60426221780848
+        ],
+        [
+          110.64776463744738,
+          35.60429273226822
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_12B-11A",
+      "path": [
+        [
+          110.64776416327175,
+          35.60442191035046
+        ],
+        [
+          110.64776313280512,
+          35.60452749634761
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_11B-10A",
+      "path": [
+        [
+          110.64776265157377,
+          35.60475014299974
+        ],
+        [
+          110.64776183179559,
+          35.604852917286685
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_9A-8B",
+      "path": [
+        [
+          110.6477609856752,
+          35.60500043052129
+        ],
+        [
+          110.6477602879233,
+          35.605252466171876
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        -3.6
+      ]
+    },
+    {
+      "id": "back_7A-7bA",
+      "path": [
+        [
+          110.64776001450005,
+          35.605286952396405
+        ],
+        [
+          110.64741623970805,
+          35.605286201553355
+        ]
+      ],
+      "edge_distance_lon": [
+        0.3,
+        0.3
+      ],
+      "edge_distance_lat": [
+        0.6,
+        0.1
+      ]
+    },
+    {
+      "id": "back_7bB-6A",
+      "path": [
+        [
+          110.64741521205767,
+          35.605467251897565
+        ],
+        [
+          110.64741690256913,
+          35.605502653578235
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_6B-5A",
+      "path": [
+        [
+          110.64741642174106,
+          35.60568374013546
+        ],
+        [
+          110.64741639744143,
+          35.60571753896705
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    },
+    {
+      "id": "back_5B-4A",
+      "path": [
+        [
+          110.64741549006075,
+          35.60589856772437
+        ],
+        [
+          110.64741564488955,
+          35.605933355288805
+        ]
+      ],
+      "edge_distance_lon": [
+        0.1,
+        0.1
+      ],
+      "edge_distance_lat": [
+        0.1,
+        0.1
+      ]
+    }
+  ],
+  "order": [
+    "bridge_5B-6B",
+    "bridge_6A-7bB",
+    "bridge_7bA-7A",
+    "bridge_8B-9A",
+    "bridge_10A-11B",
+    "bridge_11A-12B",
+    "bridge_12A-13B",
+    "bridge_13A-14B",
+    "bridge_14A-15B",
+    "E15",
+    "bridge_15-16B",
+    "E16",
+    "bridge_16A-17downB",
+    "E17_up",
+    "E17_upB_downC",
+    "E17_down",
+    "bridge_17A-18B",
+    "E18",
+    "back_18B-17A_stop",
+    "back_17B-16A",
+    "back_16B-15A",
+    "back_15B-14A",
+    "back_14B-13A",
+    "back_13B-12A",
+    "back_12B-11A",
+    "back_11B-10A",
+    "back_9A-8B",
+    "back_7A-7bA",
+    "back_7bB-6A",
+    "back_6B-5A",
+    "back_5B-4A"
+  ]
+}

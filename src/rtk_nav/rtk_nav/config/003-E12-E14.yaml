@@ -44,6 +44,7 @@ areas:
     calib_point_a: {lon: 110.64776463744738, lat: 35.60429273226822}
     calib_point_b: {lon: 110.64776416327175, lat: 35.60442191035046}
     calib_point_c: {lon: 110.64727006172468, lat: 35.60442127126381}
+    guide: horizontal
     reverse_end_point: True
     edge_distance_lon: [0.3, 0.5]   
     edge_distance_lat: [0.3, 0.3]  
@@ -59,6 +60,7 @@ areas:
     calib_point_a: {lon: 110.64742160658875, lat: 35.604133122099874}
     calib_point_b: {lon: 110.64742115468336, lat: 35.60426196801417}
     calib_point_c: {lon: 110.64727076113923, lat: 35.604262094183206}
+    guide: horizontal
     start_corner: "bottom_right"
     edge_distance_lon: [0.15, 0.5]   
     edge_distance_lat: [0.3, 0.3] 
@@ -67,6 +69,7 @@ areas:
     calib_point_a: {lon: 110.64776491482968, lat: 35.60415389596566}
     calib_point_b: {lon: 110.64776464459975, lat: 35.60426221780848}
     calib_point_c: {lon: 110.64742914791067, lat: 35.60426198461625}
+    guide: horizontal
     start_corner: "top_right"
     edge_distance_lon: [0.3, 0.1]   
     edge_distance_lat: [0.3, 0.3] 
@@ -84,6 +87,7 @@ areas:
     calib_point_a: {lon: 110.64776723843342, lat: 35.603863009383225}
     calib_point_b: {lon: 110.64776609371995, lat: 35.60403166766645}
     calib_point_c: {lon: 110.64727126713728, lat: 35.60404198676027}
+    guide: horizontal
     reverse_end_point: True
     edge_distance_lon: [0.3, 0.5]   
     edge_distance_lat: [0.3, 0.3] 

@@ -32,7 +32,7 @@ INSTALL_HINT = (
 
 
 def positive_int(value: str) -> int:
-    """Parse a strictly positive integer."""
+    """Parse a strictly positive integer for image and timing settings."""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -43,7 +43,7 @@ def positive_int(value: str) -> int:
 
 
 def even_positive_int(value: str) -> int:
-    """Parse an even positive integer required by YUYV 4:2:2."""
+    """Parse a positive even integer required by the YUYV pixel format."""
     parsed = positive_int(value)
     if parsed % 2:
         raise argparse.ArgumentTypeError("value must be even for yuyv422 output")
@@ -217,6 +217,7 @@ class _TerminalController:
         self.stream = stream
         self.enabled = False
         self._fd = None
+        self._settings = None
         self._restore_settings = None
         self._previous_handlers = {}
         self._atexit_registered = False
@@ -286,6 +287,7 @@ class _TerminalController:
         for signal_value, previous_handler in self._previous_handlers.items():
             signal.signal(signal_value, previous_handler)
         self._previous_handlers = {}
+        self._settings = None
         self._restore_settings = None
         self._fd = None
         self.enabled = False
@@ -387,7 +389,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"Unable to resume paused ffmpeg: {exc}", file=sys.stderr)
 
     return process.returncode if process is not None else 130
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

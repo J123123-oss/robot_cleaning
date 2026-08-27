@@ -63,6 +63,18 @@ def extract_translated_roi(
     ].copy()
 
 
+def build_gstreamer_pipeline(device_id, pixel_format=''):
+    """Read the device's native frame size and resize after capture."""
+    source_caps = 'video/x-raw'
+    if pixel_format:
+        source_caps += f',format={pixel_format}'
+    return (
+        f'v4l2src device=/dev/video{int(device_id)} ! {source_caps} ! '
+        'videoconvert ! video/x-raw,format=BGR ! '
+        'appsink max-buffers=1 drop=true sync=false'
+    )
+
+
 class CameraPublisherNode(Node):
     def __init__(self):
         super().__init__('camera_publisher')
@@ -122,23 +134,9 @@ class CameraPublisherNode(Node):
 
             if self.use_gstreamer:
                 # 使用GStreamer管道，参考系统中的test_camera.sh
-                if self.pixel_format:
-                    gst_str = (
-                        f"v4l2src device=/dev/video{self.device_id} ! "
-                        f"video/x-raw,format={self.pixel_format},"
-                        f"width={self.width},height={self.height},"
-                        f"framerate={self.fps}/1 ! videoconvert ! "
-                        "video/x-raw,format=BGR ! "
-                        "appsink max-buffers=1 drop=true sync=false"
-                    )
-                else:
-                    gst_str = (
-                        f"v4l2src device=/dev/video{self.device_id} ! "
-                        f"video/x-raw,width={self.width},height={self.height},"
-                        f"framerate={self.fps}/1 ! videoconvert ! "
-                        "video/x-raw,format=BGR ! "
-                        "appsink max-buffers=1 drop=true sync=false"
-                    )
+                gst_str = build_gstreamer_pipeline(
+                    self.device_id, self.pixel_format
+                )
                 self.get_logger().info(f"使用GStreamer管道: {gst_str}")
                 self.cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
             else:
@@ -155,23 +153,9 @@ class CameraPublisherNode(Node):
                         continue
                     self.get_logger().info(f"尝试打开摄像头设备: /dev/video{device_id}")
                     if self.use_gstreamer:
-                        if self.pixel_format:
-                            gst_str = (
-                                f"v4l2src device=/dev/video{device_id} ! "
-                                f"video/x-raw,format={self.pixel_format},"
-                                f"width={self.width},height={self.height},"
-                                f"framerate={self.fps}/1 ! videoconvert ! "
-                                "video/x-raw,format=BGR ! "
-                                "appsink max-buffers=1 drop=true sync=false"
-                            )
-                        else:
-                            gst_str = (
-                                f"v4l2src device=/dev/video{device_id} ! "
-                                f"video/x-raw,width={self.width},height={self.height},"
-                                f"framerate={self.fps}/1 ! videoconvert ! "
-                                "video/x-raw,format=BGR ! "
-                                "appsink max-buffers=1 drop=true sync=false"
-                            )
+                        gst_str = build_gstreamer_pipeline(
+                            device_id, self.pixel_format
+                        )
                         cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
                     else:
                         cap = cv2.VideoCapture(device_id)
