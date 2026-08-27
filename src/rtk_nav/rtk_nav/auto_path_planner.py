@@ -859,13 +859,138 @@ def _yaml_rectangle_polygon(
     area: Mapping[str, Any],
     area_name: str,
     defaults: PlannerDefaults,
+    orthogonalize: bool = False,
 ) -> Tuple[dict[str, Any], Tuple[Point, ...]]:
     a = _yaml_area_point(area, area_name, "calib_point_a")
     b = _yaml_area_point(area, area_name, "calib_point_b")
     c = _yaml_area_point(area, area_name, "calib_point_c")
-    d = _approximate_fourth_corner(a, b, c)
-    boundary = [list(point) for point in (d, a, b, c, d)]
-    polygon: dict[str, Any] = {"boundary": boundary, "holes": []}
+    if orthogonalize:
+        # Match full_path_planner_dense: AB fixes the height and AC fixes the
+        # signed width after projection onto the perpendicular direction.
+        lon_scale = METERS_PER_DEGREE_LON * math.cos(math.radians(a[1]))
+        lat_scale = METERS_PER_DEGREE_LAT
+        ab = ((b[0] - a[0]) * lon_scale, (b[1] - a[1]) * lat_scale)
+        ac = ((c[0] - a[0]) * lon_scale, (c[1] - a[1]) * lat_scale)
+        ab_length = math.hypot(*ab)
+        if ab_length <= EPSILON:
+            raise PlanningError(f"area {area_name} has a degenerate height edge")
+        perpendicular = (-ab[1] / ab_length, ab[0] / ab_length)
+        width = ac[0] * perpendicular[0] + ac[1] * perpendicular[1]
+        d_xy = (perpendicular[0] * width, perpendicular[1] * width)
+        rect_c_xy = (d_xy[0] + ab[0], d_xy[1] + ab[1])
+        d = (a[0] + d_xy[0] / lon_scale, a[1] + d_xy[1] / lat_scale)
+        rect_c = (
+            a[0] + rect_c_xy[0] / lon_scale,
+            a[1] + rect_c_xy[1] / lat_scale,
+        )
+        boundary = [list(point) for point in (d, a, b, rect_c, d)]
+        corners = (a, b, rect_c, d)
+        boundary_point_annotations = [
+            {
+                "boundary_index": 0,
+                "label": "D",
+                "map_position": "southwest",
+                "source": "automatic",
+                "calculation": "A + C - B, after orthogonalizing C against AB",
+                "note_zh": "西南角；由 A、B、C 自动正交化计算",
+            },
+            {
+                "boundary_index": 1,
+                "label": "A",
+                "map_position": "southeast",
+                "source": "manual",
+                "input_field": "calib_point_a",
+                "note_zh": "东南角；需要手动标记",
+            },
+            {
+                "boundary_index": 2,
+                "label": "B",
+                "map_position": "northeast",
+                "source": "manual",
+                "input_field": "calib_point_b",
+                "note_zh": "东北角；需要手动标记",
+            },
+            {
+                "boundary_index": 3,
+                "label": "C_prime",
+                "map_position": "northwest",
+                "source": "automatic",
+                "manual_input_field": "calib_point_c",
+                "calculation": "orthogonal projection derived from A, B, and C",
+                "note_zh": "西北角；不是原始 C，按 A/B/C 自动正交化计算",
+            },
+            {
+                "boundary_index": 4,
+                "label": "D",
+                "map_position": "closure",
+                "source": "automatic",
+                "calculation": "copy boundary[0]",
+                "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+            },
+        ]
+        boundary_order = ["D", "A", "B", "C_prime", "D"]
+    else:
+        d = _approximate_fourth_corner(a, b, c)
+        boundary = [list(point) for point in (d, a, b, c, d)]
+        corners = (a, b, c, d)
+        boundary_point_annotations = [
+            {
+                "boundary_index": 0,
+                "label": "D",
+                "map_position": "southwest",
+                "source": "automatic",
+                "calculation": "A + C - B",
+                "note_zh": "西南角；由 A、B、C 自动计算",
+            },
+            {
+                "boundary_index": 1,
+                "label": "A",
+                "map_position": "southeast",
+                "source": "manual",
+                "input_field": "calib_point_a",
+                "note_zh": "东南角；需要手动标记",
+            },
+            {
+                "boundary_index": 2,
+                "label": "B",
+                "map_position": "northeast",
+                "source": "manual",
+                "input_field": "calib_point_b",
+                "note_zh": "东北角；需要手动标记",
+            },
+            {
+                "boundary_index": 3,
+                "label": "C",
+                "map_position": "northwest",
+                "source": "manual",
+                "input_field": "calib_point_c",
+                "note_zh": "西北角；需要手动标记",
+            },
+            {
+                "boundary_index": 4,
+                "label": "D",
+                "map_position": "closure",
+                "source": "automatic",
+                "calculation": "copy boundary[0]",
+                "note_zh": "闭合点；自动复制第 1 个点，不需要手动标记",
+            },
+        ]
+        boundary_order = ["D", "A", "B", "C", "D"]
+    for annotation in boundary_point_annotations:
+        annotation["point_number"] = annotation["boundary_index"] + 1
+        annotation["coordinate"] = list(boundary[annotation["boundary_index"]])
+    polygon: dict[str, Any] = {
+        "source_area": area_name,
+        "boundary": boundary,
+        "boundary_order": boundary_order,
+        "boundary_point_annotations": boundary_point_annotations,
+        "manual_calibration_points": {
+            "A": list(a),
+            "B": list(b),
+            "C": list(c),
+        },
+        "holes": [],
+    }
     for key in ("edge_distance_lon", "edge_distance_lat"):
         if key in area:
             polygon[key] = area[key]
@@ -875,7 +1000,7 @@ def _yaml_rectangle_polygon(
         defaults.edge_distance_lon,
         defaults.edge_distance_lat,
     )
-    return polygon, (a, b, c, d)
+    return polygon, corners
 
 
 def _nearest_corner(point: Point, corners: Sequence[Point]) -> Point:
@@ -912,32 +1037,64 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         raise PlanningError("input YAML areas must not be empty")
 
     defaults = _parse_defaults(payload.get("default"))
-    cleaning_region_names = {
-        "E12_start": "E12",
-        "E13_long_block": "E13",
-        "E13": "E13",
-        "E14": "E14",
-    }
-    inter_region_bridges = {
-        "bridge_12-13B": ("E12", "E13"),
-        "bridge_13-14B": ("E13", "E14"),
-    }
-    region_polygons: dict[str, list[dict[str, Any]]] = {
-        "E12": [],
-        "E13": [],
-        "E14": [],
-    }
-    region_corners: dict[str, list[Point]] = {
-        "E12": [],
-        "E13": [],
-        "E14": [],
-    }
+    region_polygons: dict[str, list[dict[str, Any]]] = {}
+    region_corners: dict[str, list[Point]] = {}
     region_guides: dict[str, str] = {}
+    region_order: list[str] = []
+    area_sequence: list[tuple[str, str]] = []
     pre_connectors: list[dict[str, Any]] = []
     post_connectors: list[dict[str, Any]] = []
-    inter_bridge_data: list[
-        Tuple[str, str, str, Point, Point, Tuple[float, float], Tuple[float, float]]
-    ] = []
+    bridge_areas: list[dict[str, Any]] = []
+    internal_bridge_areas: list[dict[str, Any]] = []
+
+    def area_region_id(area_name: str) -> Optional[str]:
+        """Return the logical region represented by a cleaning area name."""
+        prefix, separator, suffix = area_name.partition("_")
+        if not separator or not prefix.startswith("E") or not prefix[1:].isdigit():
+            if area_name.startswith("E") and area_name[1:].isdigit():
+                return area_name
+            return None
+        if area_name == "E17_upB_downC":
+            return None
+        if area_name in {"E17_up", "E17_down"}:
+            return area_name
+        return prefix
+
+    def add_region_area(
+        area_name: str,
+        raw_area: Mapping[str, Any],
+        index: int,
+    ) -> None:
+        region_id = area_region_id(area_name)
+        if region_id is None:
+            raise PlanningError(f"unsupported area name: {area_name}")
+        if region_id not in region_polygons:
+            region_polygons[region_id] = []
+            region_corners[region_id] = []
+            region_order.append(region_id)
+        guide = _parse_guide(raw_area.get("guide"), f"areas[{index}].guide")
+        existing_guide = region_guides.get(region_id)
+        if (
+            guide is not None
+            and existing_guide is not None
+            and guide != existing_guide
+        ):
+            raise PlanningError(
+                f"cleaning region {region_id} has conflicting guides: "
+                f"{existing_guide} and {guide}"
+            )
+        if guide is not None:
+            region_guides[region_id] = guide
+        polygon, corners = _yaml_rectangle_polygon(
+            raw_area,
+            area_name,
+            defaults,
+            orthogonalize=area_name == "E16",
+        )
+        region_polygons[region_id].append(polygon)
+        region_corners[region_id].extend(corners)
+        if not area_sequence or area_sequence[-1] != ("region", region_id):
+            area_sequence.append(("region", region_id))
 
     for index, raw_area in enumerate(raw_areas):
         if not isinstance(raw_area, Mapping):
@@ -947,46 +1104,32 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
             raise PlanningError(f"areas[{index}].name must be a non-empty string")
         area_name = raw_name.strip()
 
-        if area_name in cleaning_region_names:
-            region_id = cleaning_region_names[area_name]
-            guide = _parse_guide(
-                raw_area.get("guide"), f"areas[{index}].guide"
-            )
-            existing_guide = region_guides.get(region_id)
-            if (
-                guide is not None
-                and existing_guide is not None
-                and guide != existing_guide
-            ):
-                raise PlanningError(
-                    f"cleaning region {region_id} has conflicting guides: "
-                    f"{existing_guide} and {guide}"
-                )
-            if guide is not None:
-                region_guides[region_id] = guide
-            polygon, corners = _yaml_rectangle_polygon(
-                raw_area, area_name, defaults
-            )
-            region_polygons[region_id].append(polygon)
-            region_corners[region_id].extend(corners)
-            continue
-
-        if area_name in inter_region_bridges:
+        if area_name == "E17_upB_downC":
             a = _yaml_area_point(raw_area, area_name, "calib_point_a")
             b = _yaml_area_point(raw_area, area_name, "calib_point_b")
-            edge_distance_lon, edge_distance_lat = _yaml_connector_offsets(
-                raw_area, area_name, defaults
+            internal_bridge_areas.append(
+                {
+                    "id": area_name,
+                    "from": "E17_up",
+                    "to": "E17_down",
+                    "path": [list(a), list(b)],
+                    "edge_distance_lon": list(
+                        _yaml_connector_offsets(
+                            raw_area, area_name, defaults
+                        )[0]
+                    ),
+                    "edge_distance_lat": list(
+                        _yaml_connector_offsets(
+                            raw_area, area_name, defaults
+                        )[1]
+                    ),
+                }
             )
-            inter_bridge_data.append(
-                (
-                    area_name,
-                    *inter_region_bridges[area_name],
-                    a,
-                    b,
-                    edge_distance_lon,
-                    edge_distance_lat,
-                )
-            )
+            area_sequence.append(("connector", area_name))
+            continue
+
+        if area_region_id(area_name) is not None:
+            add_region_area(area_name, raw_area, index)
             continue
 
         if area_name.startswith("bridge_"):
@@ -995,14 +1138,16 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
             edge_distance_lon, edge_distance_lat = _yaml_connector_offsets(
                 raw_area, area_name, defaults
             )
-            pre_connectors.append(
+            bridge_areas.append(
                 {
                     "id": area_name,
-                    "path": [list(a), list(b)],
+                    "a": a,
+                    "b": b,
                     "edge_distance_lon": list(edge_distance_lon),
                     "edge_distance_lat": list(edge_distance_lat),
                 }
             )
+            area_sequence.append(("connector_candidate", area_name))
             continue
 
         if area_name.startswith("back_"):
@@ -1023,36 +1168,120 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
 
         raise PlanningError(f"unsupported area name: {area_name}")
 
-    missing_regions = [region_id for region_id, polygons in region_polygons.items() if not polygons]
+    missing_regions = [
+        region_id for region_id, polygons in region_polygons.items() if not polygons
+    ]
     if missing_regions:
         raise PlanningError(
             "input YAML is missing cleaning regions: " + ", ".join(missing_regions)
         )
 
-    inter_connectors = []
-    for (
-        bridge_id,
-        from_region,
-        to_region,
-        start,
-        end,
-        edge_distance_lon,
-        edge_distance_lat,
-    ) in inter_bridge_data:
-        path = [list(start), list(end)]
-        nearest = _nearest_corner(end, region_corners[to_region])
-        if _distance(end, nearest) > EPSILON:
-            path.append(list(nearest))
-        inter_connectors.append(
-            {
-                "id": bridge_id,
-                "from": from_region,
-                "to": to_region,
-                "path": path,
-                "edge_distance_lon": list(edge_distance_lon),
-                "edge_distance_lat": list(edge_distance_lat),
-            }
+    def token_region(token: str, point: Point) -> Optional[str]:
+        digits = ""
+        for character in token:
+            if not character.isdigit():
+                break
+            digits += character
+        if not digits:
+            return None
+        base = f"E{digits}"
+        candidates = [
+            region_id
+            for region_id in region_polygons
+            if region_id == base or region_id.startswith(f"{base}_")
+        ]
+        if not candidates:
+            return None
+        suffix = token[len(digits) :].lower()
+        if "up" in suffix:
+            up_candidates = [item for item in candidates if item.endswith("_up")]
+            if up_candidates:
+                return up_candidates[0]
+        if "down" in suffix:
+            down_candidates = [
+                item for item in candidates if item.endswith("_down")
+            ]
+            if down_candidates:
+                return down_candidates[0]
+        if len(candidates) == 1:
+            return candidates[0]
+        return min(
+            candidates,
+            key=lambda item: _distance(
+                point, _nearest_corner(point, region_corners[item])
+            ),
         )
+
+    inter_connectors: list[dict[str, Any]] = []
+    internal_by_id = {item["id"]: item for item in internal_bridge_areas}
+    for bridge in bridge_areas:
+        body = bridge["id"][len("bridge_") :]
+        if "-" not in body:
+            from_region = to_region = None
+        else:
+            from_token, to_token = body.split("-", 1)
+            from_region = token_region(from_token, bridge["a"])
+            to_region = token_region(to_token, bridge["b"])
+        path = [list(bridge["a"]), list(bridge["b"])]
+        if from_region is not None and to_region is not None:
+            if bridge["id"] == "bridge_16A-17downB" and "E17_up" in region_polygons:
+                internal = internal_by_id.get("E17_upB_downC")
+                if internal is not None:
+                    path.extend(
+                        [internal["path"][1], internal["path"][0]]
+                    )
+                    to_region = "E17_up"
+            nearest = _nearest_corner(path[-1], region_corners[to_region])
+            if _distance(path[-1], nearest) > EPSILON:
+                path.append(list(nearest))
+            inter_connectors.append(
+                {
+                    "id": bridge["id"],
+                    "from": from_region,
+                    "to": to_region,
+                    "path": path,
+                    "edge_distance_lon": bridge["edge_distance_lon"],
+                    "edge_distance_lat": bridge["edge_distance_lat"],
+                }
+            )
+        else:
+            pre_connectors.append(
+                {
+                    "id": bridge["id"],
+                    "path": path,
+                    "edge_distance_lon": bridge["edge_distance_lon"],
+                    "edge_distance_lat": bridge["edge_distance_lat"],
+                }
+            )
+
+    inter_connectors.extend(internal_bridge_areas)
+    # Keep the source order for the inter-region connectors, including the
+    # explicit E17 gap crossing, rather than grouping by connector type.
+    inter_by_id = {item["id"]: item for item in inter_connectors}
+    ordered_inter_connectors = [
+        inter_by_id[item_id]
+        for kind, item_id in area_sequence
+        if kind in {"connector", "connector_candidate"}
+        and item_id in inter_by_id
+    ]
+    inter_connectors = ordered_inter_connectors
+
+    connectors = pre_connectors + inter_connectors + post_connectors
+    ordered_regions_and_inter = [
+        item_id
+        for kind, item_id in area_sequence
+        if (kind == "region" and item_id in region_polygons)
+        or (
+            kind in {"connector", "connector_candidate"}
+            and item_id in inter_by_id
+        )
+    ]
+    seen_order_items = set()
+    physical_order = []
+    for item_id in ordered_regions_and_inter:
+        if item_id not in seen_order_items:
+            physical_order.append(item_id)
+            seen_order_items.add(item_id)
 
     default_payload = {
         "interval": defaults.interval,
@@ -1062,13 +1291,13 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         "edge_distance_lat": list(defaults.edge_distance_lat),
     }
     regions = []
-    for region_id in ("E12", "E13", "E14"):
+    for region_id in region_order:
         region: dict[str, Any] = {
             "id": region_id,
             "polygons": region_polygons[region_id],
         }
-        if region_id == "E13":
-            region["connection_tolerance_m"] = 3.0
+        if len(region_polygons[region_id]) > 1:
+            region["connection_tolerance_m"] = 3.0 if region_id == "E13" else 2.0
         if region_id in region_guides:
             region["guide"] = region_guides[region_id]
         regions.append(region)
@@ -1092,18 +1321,10 @@ def convert_legacy_yaml_to_map(source: JsonSource) -> dict[str, Any]:
         "guides": guides,
         "defaults": default_payload,
         "regions": regions,
-        "connectors": pre_connectors + inter_connectors + post_connectors,
-        "order": [
-            connector["id"] for connector in pre_connectors
-        ]
-        + [
-            "E12",
-            "bridge_12-13B",
-            "E13",
-            "bridge_13-14B",
-            "E14",
-        ]
-        + [connector["id"] for connector in post_connectors],
+        "connectors": connectors,
+        "order": [item["id"] for item in pre_connectors]
+        + physical_order
+        + [item["id"] for item in post_connectors],
     }
 
 
@@ -3942,12 +4163,13 @@ def _interpolate_geo_segment(
 
 def _txt_segment_label(segment: Segment) -> str:
     """Return a legacy TXT comment identifying one route segment."""
-    if segment.kind == "coverage":
-        return segment.region_id or "coverage"
-    if segment.connector_id is not None:
-        return f"connector:{segment.connector_id}"
     if segment.region_id is not None:
-        return f"{segment.region_id}_connector"
+        return segment.region_id
+    if segment.connector_id is not None:
+        # return f"connector:{segment.connector_id}"
+        return segment.connector_id
+    if segment.kind == "coverage":
+        return "coverage"
     return "connector"
 
 

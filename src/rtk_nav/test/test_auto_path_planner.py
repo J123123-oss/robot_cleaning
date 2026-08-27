@@ -237,6 +237,47 @@ class AutoPathPlannerTests(unittest.TestCase):
         ]
         self.assertLessEqual(max(distances), 15.0 + 1e-6)
 
+    def test_route_to_txt_groups_internal_connectors_under_region_label(self):
+        route = Route(
+            axis_angle_rad=0.0,
+            segments=(
+                Segment(
+                    kind="coverage",
+                    points=(_metric_point(0.0, 0.0), _metric_point(1.0, 0.0)),
+                    length_m=1.0,
+                    region_id="E12",
+                ),
+                Segment(
+                    kind="connector",
+                    points=(_metric_point(1.0, 0.0), _metric_point(1.0, 1.0)),
+                    length_m=1.0,
+                    region_id="E12",
+                ),
+                Segment(
+                    kind="coverage",
+                    points=(_metric_point(1.0, 1.0), _metric_point(2.0, 1.0)),
+                    length_m=1.0,
+                    region_id="E12",
+                ),
+                Segment(
+                    kind="connector",
+                    points=(_metric_point(2.0, 1.0), _metric_point(3.0, 1.0)),
+                    length_m=1.0,
+                    connector_id="bridge_12-13B",
+                ),
+            ),
+            total_length_m=4.0,
+            max_connector_length_m=1.0,
+        )
+
+        labels = [
+            line
+            for line in route_to_txt(route).splitlines()
+            if line.startswith("#")
+        ]
+
+        self.assertEqual(labels, ["#E12", "#connector:bridge_12-13B"])
+
     def test_route_to_txt_rejects_non_positive_spacing(self):
         route = Route(
             axis_angle_rad=0.0,

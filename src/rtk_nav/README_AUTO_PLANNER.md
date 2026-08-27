@@ -96,6 +96,17 @@
 `top_left/top_right/bottom_right/bottom_left` 命名角点。缺少 `guides` 时，规划器使用
 最长边推导清扫方向；缺少 `order` 时，仅在连接桥构成单向链的情况下自动推导顺序。
 
+由旧 YAML 三点标定转换生成的 `auto_map_*.json`，每个 polygon 还会包含
+`source_area`、`boundary_order`、`manual_calibration_points` 和
+`boundary_point_annotations`。由于 JSON 不支持 `//` 注释，点位说明保存在这些字段中：
+`boundary` 的五个点按 `D -> A -> B -> C -> D` 排列，其中第 1 个 D 是由
+`A + C - B` 自动计算的西南角，第 2 个 A、第 3 个 B 和第 4 个 C 是 YAML 中需要
+手动采集的三个标定点，第 5 个 D 是自动复制第 1 个点的闭合点。注释中的
+`source` 标记 `manual` 或 `automatic`，`coordinate` 是对应的实际坐标。
+E16 为了保持矩形，使用正交化逻辑，第 4 个点标记为 `C_prime`，它不是原始
+`calib_point_c`，而是根据 A/B/C 自动计算的正交角点；原始 C 仍保存在
+`manual_calibration_points.C` 中。
+
 根级 `defaults`（也兼容旧式 `default`）可提供旧 YAML 中的公共默认值：
 `interval`、`start_corner`、`swap_wh_select`、`edge_distance_lon` 和
 `edge_distance_lat`。边缘距离按“根级 → region 级 → polygon 级”继承，越具体的配置

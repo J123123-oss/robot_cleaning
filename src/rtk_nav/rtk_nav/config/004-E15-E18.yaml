@@ -101,6 +101,7 @@ areas:
     calib_point_a: {lon: 110.6474252497039, lat: 35.60330511443972}
     calib_point_b: {lon: 110.64742449566111, lat: 35.603444344219525}
     calib_point_c: {lon: 110.64727375572214, lat: 35.603444069875394}
+    guide: vertical
     swap_wh_select: True
     edge_distance_lon: [0.15, 0.5]  
     edge_distance_lat: [0.3, 0.3]  
