@@ -68,7 +68,7 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 10
+    assert source.count("value_type=float") == 12
 
 
 def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
@@ -82,7 +82,9 @@ def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
     assert "camera_publisher_node = rtk_nav.camera_publisher_node:main" in setup_source
     assert "executable='camera_publisher_node'" in launch_source
     assert "name='camera_publisher'" in launch_source
-    assert "self.create_publisher(Image, \"/camera/color/image_raw\", 10)" in camera_source
+    assert "CompressedImage" in camera_source
+    assert "/camera/color/image_compressed" in camera_source
+    assert "IMWRITE_JPEG_QUALITY" in camera_source
     assert "<exec_depend>python3-opencv</exec_depend>" in package_source
     assert "node = None" in camera_source
     assert "if node is not None:" in camera_source
@@ -294,8 +296,7 @@ def test_line_detector_defaults_enabled_and_publishes_invalid_output_when_disabl
     initializer = ast.unparse(_function(tree, "__init__"))
     image_callback = ast.unparse(_function(tree, "image_callback"))
 
-    assert "enable_visual_correction" in initializer
-    assert "True" in initializer
+    assert "self.declare_parameter('enable_visual_correction', True)" in initializer
     assert "self.enable_visual_correction" in image_callback
     assert "publish_invalid" in image_callback
     publish_invalid = ast.unparse(_function(tree, "publish_invalid"))

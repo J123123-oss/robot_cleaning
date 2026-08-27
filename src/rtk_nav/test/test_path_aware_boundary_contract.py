@@ -113,27 +113,21 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
         ):
             self.assertIn(name, declared)
 
-    def test_image_callback_gates_invalid_path_context_before_detection(self):
+    def test_image_callback_gates_invalid_path_context_before_buffering(self):
         tree = _source_tree()
         image_callback = _function(tree, "image_callback")
         self.assertIsNotNone(image_callback)
 
         detect_calls = _calls_named(image_callback, "detect_and_draw_grid_lines")
-        self.assertTrue(detect_calls)
-        first_detect_line = min(
-            (call.lineno, getattr(call, "col_offset", 0))
-            for call in detect_calls
-        )
+        self.assertFalse(detect_calls)
         gated_invalid_paths = []
         for node in ast.walk(image_callback):
             if not isinstance(node, ast.If):
                 continue
             condition = ast.unparse(node.test)
-            node_position = (node.lineno, getattr(node, "col_offset", 0))
             body_has_publish_invalid = bool(_calls_named(node, "publish_invalid"))
             if (
-                node_position < first_detect_line
-                and "path_context_valid" in condition
+                "path_context_valid" in condition
                 and "timeout" in condition
                 and body_has_publish_invalid
             ):
@@ -141,8 +135,14 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
 
         self.assertTrue(
             gated_invalid_paths,
-            "image_callback must publish an invalid result when path context is invalid or stale",
+            "image_callback must publish an invalid result before buffering an invalid frame",
         )
+
+    def test_timer_callback_decodes_and_detects_the_buffered_frame(self):
+        tree = _source_tree()
+        timer_callback = _function(tree, "timer_callback")
+        self.assertIsNotNone(timer_callback)
+        self.assertTrue(_calls_named(timer_callback, "detect_and_draw_grid_lines"))
 
     def test_publish_invalid_resets_result_and_confidence(self):
         tree = _source_tree()

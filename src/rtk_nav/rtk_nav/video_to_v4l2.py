@@ -72,8 +72,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=DEFAULT_DEVICE,
         help=f"V4L2 output device (default: {DEFAULT_DEVICE})",
     )
-    parser.add_argument("--width", default=640, type=even_positive_int)
-    parser.add_argument("--height", default=480, type=positive_int)
+    parser.add_argument("--width", default=360, type=even_positive_int)
+    parser.add_argument("--height", default=640, type=positive_int)
     parser.add_argument("--fps", default=30, type=positive_int)
     parser.add_argument(
         "--speed",
@@ -97,12 +97,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def build_video_filter(width: int, height: int, fps: int) -> str:
-    """Build a fixed-size filter without blank borders or non-uniform scaling."""
-    return (
-        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,"
-        f"fps={fps},format=yuyv422"
-    )
+    """Scale the portrait source to the requested size without crop or padding."""
+    return f"scale={width}:{height},fps={fps},format=yuyv422"
 
 
 def build_ffmpeg_command(
@@ -162,7 +158,6 @@ def ensure_v4l2_device(
     """Ensure the default loopback device exists, loading v4l2loopback if needed."""
     if path_exists(device):
         return False
-
     if device != DEFAULT_DEVICE:
         raise RuntimeError(
             f"{device} does not exist. Automatic creation only supports {DEFAULT_DEVICE}; "
@@ -172,8 +167,6 @@ def ensure_v4l2_device(
     modprobe = executable_finder("modprobe")
     if modprobe is None:
         raise RuntimeError(f"modprobe is unavailable. {INSTALL_HINT}")
-
-    root_check = is_root or _running_as_root
     command = [
         modprobe,
         "v4l2loopback",
@@ -183,6 +176,7 @@ def ensure_v4l2_device(
         "exclusive_caps=1",
         "sustain_framerate=1",
     ]
+    root_check = is_root or _running_as_root
     if not root_check():
         sudo = executable_finder("sudo")
         if sudo is None:
@@ -201,12 +195,10 @@ def ensure_v4l2_device(
         if path_exists(device):
             return True
         sleep_fn(0.1)
-
-    if not path_exists(device):
-        raise RuntimeError(
-            f"v4l2loopback loaded but {device} was not created. "
-            "Check the kernel module and permissions."
-        )
+    raise RuntimeError(
+        f"v4l2loopback loaded but {device} was not created. "
+        "Check the kernel module and permissions."
+    )
 
 
 def set_process_paused(process: subprocess.Popen, paused: bool) -> None:
@@ -233,11 +225,10 @@ class _TerminalController:
     def __enter__(self):
         if termios is None or tty is None or not self.stream.isatty():
             return self
-
         self._fd = self.stream.fileno()
         try:
-            self._settings = termios.tcgetattr(self._fd)
-            self._restore_settings = self._settings_for_exit(self._settings)
+            settings = termios.tcgetattr(self._fd)
+            self._restore_settings = self._settings_for_exit(settings)
             atexit.register(self.restore)
             self._atexit_registered = True
             for signal_name in ("SIGINT", "SIGTERM", "SIGHUP"):
@@ -258,16 +249,11 @@ class _TerminalController:
         """Repair a terminal left broken by an older interrupted run."""
         if len(settings) < 4:
             return settings
-
         local_flags = settings[3]
         canonical = getattr(termios, "ICANON", 0)
         echo = getattr(termios, "ECHO", 0)
-        if not (
-            (canonical and not local_flags & canonical)
-            or (echo and not local_flags & echo)
-        ):
+        if not ((canonical and not local_flags & canonical) or (echo and not local_flags & echo)):
             return settings
-
         recovered = list(settings)
         for flag_name in ("ICANON", "ECHO", "ISIG", "IEXTEN"):
             recovered[3] |= getattr(termios, flag_name, 0)
@@ -289,21 +275,15 @@ class _TerminalController:
         """Restore terminal and signal state; safe to call more than once."""
         if self._restore_settings is not None and self._fd is not None:
             try:
-                termios.tcsetattr(
-                    self._fd, termios.TCSADRAIN, self._restore_settings
-                )
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._restore_settings)
             except (OSError, ValueError):
                 try:
-                    termios.tcsetattr(
-                        self._fd, termios.TCSANOW, self._restore_settings
-                    )
+                    termios.tcsetattr(self._fd, termios.TCSANOW, self._restore_settings)
                 except (OSError, ValueError):
                     pass
-
         if self._atexit_registered:
             atexit.unregister(self.restore)
             self._atexit_registered = False
-
         for signal_value, previous_handler in self._previous_handlers.items():
             signal.signal(signal_value, previous_handler)
         self._previous_handlers = {}
@@ -341,21 +321,12 @@ def _shutdown_process(process, paused: bool) -> int:
     return _wait_for_process_exit(process)
 
 
-def _missing_device_error(device: str) -> RuntimeError:
-    return RuntimeError(
-        f"V4L2 device {device} does not exist. Load v4l2loopback first or remove "
-        "--no-create-device."
-    )
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Validate inputs, start ffmpeg, and return its exit status."""
     args = parse_args(argv)
-
     if not args.video.is_file():
         print(f"Input video does not exist: {args.video}", file=sys.stderr)
         return 2
-
     ffmpeg_binary = shutil.which("ffmpeg")
     if ffmpeg_binary is None:
         print(INSTALL_HINT, file=sys.stderr)
@@ -366,7 +337,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.create_device:
             device_created = ensure_v4l2_device(args.device)
         elif not os.path.exists(args.device):
-            raise _missing_device_error(args.device)
+            raise RuntimeError(
+                f"V4L2 device {args.device} does not exist. Load v4l2loopback first."
+            )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -394,7 +367,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 return_code = process.poll()
                 if return_code is not None:
                     return return_code
-
                 key = terminal.read_key()
                 if key in (" ", "p", "P"):
                     set_process_paused(process, not paused)

@@ -45,6 +45,37 @@ Expected: the new helper lookup or behavior tests fail because `extract_translat
 
 - [ ] **Step 1: Add the pure extraction helper.**
 
+Implement:
+
+```python
+def extract_translated_roi(
+    source,
+    crop_x,
+    crop_y,
+    output_width,
+    output_height,
+    translate_x,
+    translate_y,
+):
+    source_height, source_width = source.shape[:2]
+    output_width = int(output_width)
+    output_height = int(output_height)
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("输出图像尺寸必须为正数")
+    if output_width > source_width or output_height > source_height:
+        raise ValueError("原图尺寸小于请求的输出尺寸")
+
+    max_x = source_width - output_width
+    max_y = source_height - output_height
+    origin_x = int(round(float(crop_x) + float(translate_x)))
+    origin_y = int(round(float(crop_y) + float(translate_y)))
+    origin_x = max(0, min(max_x, origin_x))
+    origin_y = max(0, min(max_y, origin_y))
+    return source[origin_y:origin_y + output_height,
+                  origin_x:origin_x + output_width].copy()
+```
+
+The implementation must use source slicing only, preserving original pixels and fixed output dimensions.
 Implement a helper that validates the output size, rounds the requested origin, clamps it to valid source bounds, and returns a copied NumPy slice. The implementation must use source slicing only, preserving original pixels and fixed output dimensions.
 
 - [ ] **Step 2: Declare and read the four static-image parameters.**
@@ -54,6 +85,16 @@ Declare `crop_x`, `crop_y`, `translate_x`, and `translate_y` with default `0`, t
 - [ ] **Step 3: Use the helper in `timer_callback`.**
 
 Replace the static branch's direct `self.static_frame` assignment with a call to `extract_translated_roi`, passing the configured crop and translation parameters. Leave the live camera `cap.read()` branch unchanged.
+
+- [ ] **Step 4: Run the focused tests and verify GREEN.**
+
+Run:
+
+```powershell
+python -m pytest src/rtk_nav/test/test_visual_correction_switch_contract.py -q
+```
+
+Expected: all tests in the file pass.
 
 ### Task 3: Verify syntax, regression scope, and diff
 
@@ -77,4 +118,8 @@ python -c "import ast, py_compile; from pathlib import Path; files=['src/rtk_nav
 
 ```powershell
 git diff --check -- src/rtk_nav/rtk_nav/camera_publisher_node.py src/rtk_nav/test/test_visual_correction_switch_contract.py
+git diff -- src/rtk_nav/rtk_nav/camera_publisher_node.py src/rtk_nav/test/test_visual_correction_switch_contract.py
+```
+
+Confirm that no unrelated dirty files are staged, reverted, or included in the change.
 ```
