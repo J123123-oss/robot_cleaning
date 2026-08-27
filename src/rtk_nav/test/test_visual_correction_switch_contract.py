@@ -68,7 +68,7 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 12
+    assert source.count("value_type=float") == 11
 
 
 def test_camera_publisher_is_registered_and_enabled_with_visual_correction():

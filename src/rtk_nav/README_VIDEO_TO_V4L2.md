@@ -32,12 +32,15 @@ The replay command supports `--speed`, `--loop`, Space or `p` to pause/resume,
 v4l2loopback `sustain_framerate=1` option is used when the module is created to
 keep the last frame visible to readers.
 
-Debug image topics are disabled by default. Enable them at most once per
-second when needed:
+Debug image topics are disabled by default. Enable them when needed:
 
 ```bash
-ros2 launch rtk_nav run.launch.py enable_visual_correction:=true publish_debug_images:=true debug_image_fps:=1.0
+ros2 launch rtk_nav run.launch.py enable_visual_correction:=true publish_debug_images:=true
 ```
+
+When enabled, debug images follow the processed compressed-image frame rate.
+They are queued as a latest-frame-only payload and published asynchronously,
+so a slow image viewer cannot block `/grid_line/angle_deviation`.
 
 ## Replay details
 

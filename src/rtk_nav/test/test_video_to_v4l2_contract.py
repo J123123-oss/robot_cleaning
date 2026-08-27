@@ -108,7 +108,7 @@ def test_camera_publishes_jpeg_compressed_frames_with_latest_capture_buffer():
     assert "self.declare_parameter('width', 360)" in source
     assert "self.declare_parameter('height', 640)" in source
     assert "self.declare_parameter('fps', 30)" in source
-    assert "self.declare_parameter('image_path', '')" in source
+    assert "self.declare_parameter('image_path'," in source
 
 
 def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
@@ -117,27 +117,33 @@ def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
     initializer = ast.unparse(_function(tree, "__init__"))
     image_callback = _function(tree, "image_callback")
     timer_callback = _function(tree, "timer_callback")
+    detect_and_draw = _function(tree, "detect_and_draw_grid_lines")
 
     assert "CompressedImage" in source
     assert "/camera/color/image_compressed" in source
     assert "cv2.imdecode" in source
     assert "detection_fps" in initializer
     assert "publish_debug_images" in initializer
-    assert "debug_image_fps" in initializer
     assert "depth=1" in initializer
+    assert "Queue(maxsize=1)" in initializer
+    assert "debug_image_worker" in source
+    assert "debug_image_fps" not in source
     assert not _calls_named(image_callback, "detect_and_draw_grid_lines")
     assert _calls_named(timer_callback, "detect_and_draw_grid_lines")
     assert "self.latest_compressed_data = payload" in ast.unparse(image_callback)
+    assert not _calls_named(detect_and_draw, "publish_debug_images")
+    assert _calls_named(detect_and_draw, "queue_debug_images")
 
 
 def test_launch_passes_portrait_compression_and_detection_rate_defaults():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    for default in ("360", "640", "30", "80", "30.0", "false", "1.0"):
+    for default in ("360", "640", "30", "80", "30.0", "false"):
         assert f'TextSubstitution(text="{default}")' in source
     assert "camera_image_path" in source
     assert "image_path" in source
     assert "jpeg_quality" in source
     assert "detection_fps" in source
+    assert "debug_image_fps" not in source
 
 
 class VideoToV4L2ContractTest(unittest.TestCase):

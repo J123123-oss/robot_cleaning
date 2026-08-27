@@ -4,6 +4,7 @@
 import math
 import threading
 import time
+from queue import Empty, Full, Queue
 
 import cv2
 import numpy as np
@@ -372,14 +373,24 @@ class GridLineDetector(Node):
         self.run_axis_pub = self.create_publisher(
             String, '/grid_line/run_axis', 10
         )
+        debug_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         self.image_pub = self.create_publisher(
-            Image, '/grid_line/detected_image', 10
+            Image, '/grid_line/detected_image', debug_qos
         )
-        self.gray_pub = self.create_publisher(Image, '/grid_line/gray_image', 10)
+        self.gray_pub = self.create_publisher(
+            Image, '/grid_line/gray_image', debug_qos
+        )
         self.binary_pub = self.create_publisher(
-            Image, '/grid_line/binary_image', 10
+            Image, '/grid_line/binary_image', debug_qos
         )
-        self.edges_pub = self.create_publisher(Image, '/grid_line/edges_image', 10)
+        self.edges_pub = self.create_publisher(
+            Image, '/grid_line/edges_image', debug_qos
+        )
 
         # These five defaults are calibrated for the current camera installation.
         self.declare_parameter('camera_angle_offset', 0.0)
@@ -406,7 +417,6 @@ class GridLineDetector(Node):
         self.declare_parameter('white_line_scan_half_width_px', 8.0)
         self.declare_parameter('detection_fps', 30.0)
         self.declare_parameter('publish_debug_images', False)
-        self.declare_parameter('debug_image_fps', 1.0)
 
         self.camera_angle_offset = float(
             self.get_parameter('camera_angle_offset').value
@@ -471,7 +481,6 @@ class GridLineDetector(Node):
         self.publish_debug_images_enabled = bool(
             self.get_parameter('publish_debug_images').value
         )
-        self.debug_image_fps = float(self.get_parameter('debug_image_fps').value)
 
         if (
             not math.isfinite(self.path_context_timeout_sec)
@@ -543,8 +552,6 @@ class GridLineDetector(Node):
             )
         if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
             raise ValueError('detection_fps must be finite and > 0')
-        if not math.isfinite(self.debug_image_fps) or self.debug_image_fps <= 0.0:
-            raise ValueError('debug_image_fps must be finite and > 0')
 
         self.path_direction_deg = 0.0
         self.vehicle_heading_deg = 0.0
@@ -561,7 +568,16 @@ class GridLineDetector(Node):
 
         self.latest_frame_lock = threading.Lock()
         self.latest_compressed_data = None
-        self.last_debug_publish_time = 0.0
+        self.debug_frame_queue = Queue(maxsize=1)
+        self.debug_worker_stop = threading.Event()
+        self.debug_worker = None
+        if self.publish_debug_images_enabled:
+            self.debug_worker = threading.Thread(
+                target=self.debug_image_worker,
+                name='grid-line-debug-publisher',
+                daemon=True,
+            )
+            self.debug_worker.start()
         self.timer = self.create_timer(1.0 / self.detection_fps, self.timer_callback)
 
     def timer_callback(self):
@@ -822,10 +838,11 @@ class GridLineDetector(Node):
     def detect_and_draw_grid_lines(self, image):
         """检测粗白光伏结构线并计算路径感知纠偏量。"""
         height, width = image.shape[:2]
-        debug_due = self.publish_debug_images_enabled and (
-            self.last_debug_publish_time <= 0.0
-            or time.monotonic() - self.last_debug_publish_time
-            >= 1.0 / self.debug_image_fps
+        # Generate debug frames at the compressed input processing rate.
+        # Publication is asynchronous and never blocks the detector timer.
+        debug_due = (
+            self.publish_debug_images_enabled
+            and self.has_debug_subscribers()
         )
         gray_blur = None
         if debug_due:
@@ -954,7 +971,7 @@ class GridLineDetector(Node):
                 throttle_duration_sec=1.0,
             )
             self.reset_reacquisition()
-            self.publish_debug_images_if_due(
+            self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
@@ -1054,7 +1071,7 @@ class GridLineDetector(Node):
                 f'streak=0/{self.reacquire_frames}'
             )
             self.reset_reacquisition()
-            self.publish_debug_images_if_due(
+            self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
@@ -1081,7 +1098,7 @@ class GridLineDetector(Node):
                 f'lateral_px={lateral_pixel_error:.1f} lateral_m=invalid'
             )
             self.reset_reacquisition()
-            self.publish_debug_images_if_due(
+            self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
@@ -1142,7 +1159,7 @@ class GridLineDetector(Node):
                 (0, 255, 0),
                 2,
             )
-        self.publish_debug_images_if_due(
+        self.queue_debug_images(
             display, gray_blur, white_mask, white_edges
         )
 
@@ -1156,25 +1173,79 @@ class GridLineDetector(Node):
             heading_valid, lateral_valid, heading_confidence, lateral_confidence,
         )
 
-    def publish_debug_images_if_due(self, display, gray, binary, edges):
-        """Publish debug images only when explicitly enabled and due."""
+    def has_debug_subscribers(self):
+        """Return whether any debug image topic currently has a subscriber."""
+        return any(
+            publisher.get_subscription_count() > 0
+            for publisher in (
+                self.image_pub,
+                self.gray_pub,
+                self.binary_pub,
+                self.edges_pub,
+            )
+        )
+
+    def queue_debug_images(self, display, gray, binary, edges):
+        """Queue only the newest debug frame without blocking detection."""
         if not self.publish_debug_images_enabled or display is None:
             return
-        current_time = time.monotonic()
-        if (
-            current_time - self.last_debug_publish_time
-            < 1.0 / self.debug_image_fps
-        ):
+        payload = (display, gray, binary, edges)
+        try:
+            self.debug_frame_queue.put_nowait(payload)
             return
-        self.last_debug_publish_time = current_time
-        self.publish_debug_images(display, gray, binary, edges)
+        except Full:
+            pass
+
+        try:
+            self.debug_frame_queue.get_nowait()
+        except Empty:
+            return
+        try:
+            self.debug_frame_queue.put_nowait(payload)
+        except Full:
+            pass
+
+    def debug_image_worker(self):
+        """Publish queued debug images independently of the detector timer."""
+        while not self.debug_worker_stop.is_set():
+            try:
+                payload = self.debug_frame_queue.get(timeout=0.1)
+            except Empty:
+                continue
+            try:
+                self.publish_debug_images(*payload)
+            except Exception as exc:
+                if not self.debug_worker_stop.is_set():
+                    self.get_logger().warning(
+                        f'调试图像发布错误: {exc}',
+                        throttle_duration_sec=1.0,
+                    )
+
+    def stop_debug_image_worker(self):
+        """Stop the asynchronous debug publisher before ROS shutdown."""
+        self.debug_worker_stop.set()
+        if (
+            self.debug_worker is not None
+            and self.debug_worker.is_alive()
+            and threading.current_thread() is not self.debug_worker
+        ):
+            self.debug_worker.join(timeout=1.0)
+
+    def destroy_node(self):
+        """Stop background publication before destroying ROS publishers."""
+        self.stop_debug_image_worker()
+        super().destroy_node()
 
     def publish_debug_images(self, display, gray, binary, edges):
         """发布检测标注图和中间处理图。"""
-        self.image_pub.publish(self.bridge.cv2_to_imgmsg(display, 'bgr8'))
-        self.gray_pub.publish(self.bridge.cv2_to_imgmsg(gray, 'mono8'))
-        self.binary_pub.publish(self.bridge.cv2_to_imgmsg(binary, 'mono8'))
-        self.edges_pub.publish(self.bridge.cv2_to_imgmsg(edges, 'mono8'))
+        if self.image_pub.get_subscription_count() > 0:
+            self.image_pub.publish(self.bridge.cv2_to_imgmsg(display, 'bgr8'))
+        if self.gray_pub.get_subscription_count() > 0:
+            self.gray_pub.publish(self.bridge.cv2_to_imgmsg(gray, 'mono8'))
+        if self.binary_pub.get_subscription_count() > 0:
+            self.binary_pub.publish(self.bridge.cv2_to_imgmsg(binary, 'mono8'))
+        if self.edges_pub.get_subscription_count() > 0:
+            self.edges_pub.publish(self.bridge.cv2_to_imgmsg(edges, 'mono8'))
 
 
 def main(args=None):

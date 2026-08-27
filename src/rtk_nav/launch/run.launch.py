@@ -100,11 +100,6 @@ def generate_launch_description():
         default_value=TextSubstitution(text="false"),
         description="Publish grid-line debug images",
     )
-    declare_debug_image_fps_arg = DeclareLaunchArgument(
-        "debug_image_fps",
-        default_value=TextSubstitution(text="1.0"),
-        description="Maximum debug image publish FPS",
-    )
     declare_target_line_offset_arg = DeclareLaunchArgument(
         "target_line_offset_m",
         default_value=TextSubstitution(text="nan"),
@@ -248,9 +243,6 @@ def generate_launch_description():
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
                 ),
-                'debug_image_fps': ParameterValue(
-                    LaunchConfiguration('debug_image_fps'), value_type=float
-                ),
                 'bypass_path_context_gate': ParameterValue(
                     LaunchConfiguration("bypass_path_context_gate"),
                     value_type=bool,
@@ -341,7 +333,6 @@ def generate_launch_description():
     ld.add_action(declare_camera_jpeg_quality_arg)
     ld.add_action(declare_detection_fps_arg)
     ld.add_action(declare_publish_debug_images_arg)
-    ld.add_action(declare_debug_image_fps_arg)
     ld.add_action(declare_target_line_offset_arg)
     ld.add_action(declare_target_line_tolerance_arg)
     ld.add_action(declare_reference_axis_offset_arg)
