@@ -144,7 +144,7 @@
           0.3,
           0.3
         ],
-        "guide": "vertical"
+        "guide": "horizontal"
       },
       "geometry": {
         "type": "Polygon",
@@ -1263,6 +1263,29 @@
       "properties": {
         "index": 9,
         "sequence": 9,
+        "kind": "connector",
+        "length_m": 2.362112,
+        "region_id": "E15"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64776678225708,
+            35.60382802136538
+          ],
+          [
+            110.64775246487461,
+            35.60381015528628
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 10,
+        "sequence": 10,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1284,8 +1307,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 10,
-        "sequence": 10,
+        "index": 11,
+        "sequence": 11,
         "kind": "connector",
         "length_m": 2.986533,
         "region_id": "E15"
@@ -1307,8 +1330,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 11,
-        "sequence": 11,
+        "index": 12,
+        "sequence": 12,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1330,8 +1353,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 12,
-        "sequence": 12,
+        "index": 13,
+        "sequence": 13,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -1357,8 +1380,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 13,
-        "sequence": 13,
+        "index": 14,
+        "sequence": 14,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1380,8 +1403,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 14,
-        "sequence": 14,
+        "index": 15,
+        "sequence": 15,
         "kind": "connector",
         "length_m": 2.987306,
         "region_id": "E15"
@@ -1403,8 +1426,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 15,
-        "sequence": 15,
+        "index": 16,
+        "sequence": 16,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1426,8 +1449,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 16,
-        "sequence": 16,
+        "index": 17,
+        "sequence": 17,
         "kind": "connector",
         "length_m": 1.000328,
         "region_id": "E15"
@@ -1453,8 +1476,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 17,
-        "sequence": 17,
+        "index": 18,
+        "sequence": 18,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1476,8 +1499,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 18,
-        "sequence": 18,
+        "index": 19,
+        "sequence": 19,
         "kind": "connector",
         "length_m": 2.98808,
         "region_id": "E15"
@@ -1499,8 +1522,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 19,
-        "sequence": 19,
+        "index": 20,
+        "sequence": 20,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1522,8 +1545,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 20,
-        "sequence": 20,
+        "index": 21,
+        "sequence": 21,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -1549,8 +1572,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 21,
-        "sequence": 21,
+        "index": 22,
+        "sequence": 22,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1572,8 +1595,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 22,
-        "sequence": 22,
+        "index": 23,
+        "sequence": 23,
         "kind": "connector",
         "length_m": 2.988853,
         "region_id": "E15"
@@ -1595,8 +1618,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 23,
-        "sequence": 23,
+        "index": 24,
+        "sequence": 24,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1618,8 +1641,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 24,
-        "sequence": 24,
+        "index": 25,
+        "sequence": 25,
         "kind": "connector",
         "length_m": 1.000328,
         "region_id": "E15"
@@ -1645,8 +1668,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 25,
-        "sequence": 25,
+        "index": 26,
+        "sequence": 26,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1668,8 +1691,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 26,
-        "sequence": 26,
+        "index": 27,
+        "sequence": 27,
         "kind": "connector",
         "length_m": 2.989627,
         "region_id": "E15"
@@ -1691,8 +1714,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 27,
-        "sequence": 27,
+        "index": 28,
+        "sequence": 28,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1714,8 +1737,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 28,
-        "sequence": 28,
+        "index": 29,
+        "sequence": 29,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -1741,8 +1764,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 29,
-        "sequence": 29,
+        "index": 30,
+        "sequence": 30,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1764,8 +1787,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 30,
-        "sequence": 30,
+        "index": 31,
+        "sequence": 31,
         "kind": "connector",
         "length_m": 2.9904,
         "region_id": "E15"
@@ -1787,8 +1810,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 31,
-        "sequence": 31,
+        "index": 32,
+        "sequence": 32,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1810,8 +1833,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 32,
-        "sequence": 32,
+        "index": 33,
+        "sequence": 33,
         "kind": "connector",
         "length_m": 1.000328,
         "region_id": "E15"
@@ -1837,8 +1860,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 33,
-        "sequence": 33,
+        "index": 34,
+        "sequence": 34,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -1860,8 +1883,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 34,
-        "sequence": 34,
+        "index": 35,
+        "sequence": 35,
         "kind": "connector",
         "length_m": 2.991174,
         "region_id": "E15"
@@ -1883,8 +1906,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 35,
-        "sequence": 35,
+        "index": 36,
+        "sequence": 36,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1906,8 +1929,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 36,
-        "sequence": 36,
+        "index": 37,
+        "sequence": 37,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -1933,8 +1956,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 37,
-        "sequence": 37,
+        "index": 38,
+        "sequence": 38,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -1956,8 +1979,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 38,
-        "sequence": 38,
+        "index": 39,
+        "sequence": 39,
         "kind": "connector",
         "length_m": 2.991948,
         "region_id": "E15"
@@ -1979,8 +2002,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 39,
-        "sequence": 39,
+        "index": 40,
+        "sequence": 40,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -2002,8 +2025,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 40,
-        "sequence": 40,
+        "index": 41,
+        "sequence": 41,
         "kind": "connector",
         "length_m": 1.000328,
         "region_id": "E15"
@@ -2029,8 +2052,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 41,
-        "sequence": 41,
+        "index": 42,
+        "sequence": 42,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -2052,8 +2075,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 42,
-        "sequence": 42,
+        "index": 43,
+        "sequence": 43,
         "kind": "connector",
         "length_m": 2.992721,
         "region_id": "E15"
@@ -2075,8 +2098,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 43,
-        "sequence": 43,
+        "index": 44,
+        "sequence": 44,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -2098,8 +2121,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 44,
-        "sequence": 44,
+        "index": 45,
+        "sequence": 45,
         "kind": "connector",
         "length_m": 3.001337,
         "region_id": "E15"
@@ -2125,8 +2148,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 45,
-        "sequence": 45,
+        "index": 46,
+        "sequence": 46,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -2148,8 +2171,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 46,
-        "sequence": 46,
+        "index": 47,
+        "sequence": 47,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -2175,8 +2198,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 47,
-        "sequence": 47,
+        "index": 48,
+        "sequence": 48,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -2198,8 +2221,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 48,
-        "sequence": 48,
+        "index": 49,
+        "sequence": 49,
         "kind": "connector",
         "length_m": 1.000446,
         "region_id": "E15"
@@ -2225,8 +2248,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 49,
-        "sequence": 49,
+        "index": 50,
+        "sequence": 50,
         "kind": "coverage",
         "length_m": 10.998972,
         "region_id": "E15"
@@ -2248,8 +2271,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 50,
-        "sequence": 50,
+        "index": 51,
+        "sequence": 51,
         "kind": "connector",
         "length_m": 2.993495,
         "region_id": "E15"
@@ -2271,8 +2294,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 51,
-        "sequence": 51,
+        "index": 52,
+        "sequence": 52,
         "kind": "coverage",
         "length_m": 27.978364,
         "region_id": "E15"
@@ -2294,8 +2317,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 52,
-        "sequence": 52,
+        "index": 53,
+        "sequence": 53,
         "kind": "connector",
         "length_m": 17.531399,
         "connector_id": "bridge_15-16B",
@@ -2335,8 +2358,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 53,
-        "sequence": 53,
+        "index": 54,
+        "sequence": 54,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2358,8 +2381,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 54,
-        "sequence": 54,
+        "index": 55,
+        "sequence": 55,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2381,8 +2404,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 55,
-        "sequence": 55,
+        "index": 56,
+        "sequence": 56,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2404,8 +2427,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 56,
-        "sequence": 56,
+        "index": 57,
+        "sequence": 57,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2427,8 +2450,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 57,
-        "sequence": 57,
+        "index": 58,
+        "sequence": 58,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2450,8 +2473,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 58,
-        "sequence": 58,
+        "index": 59,
+        "sequence": 59,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2473,8 +2496,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 59,
-        "sequence": 59,
+        "index": 60,
+        "sequence": 60,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2496,8 +2519,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 60,
-        "sequence": 60,
+        "index": 61,
+        "sequence": 61,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2519,8 +2542,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 61,
-        "sequence": 61,
+        "index": 62,
+        "sequence": 62,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2542,8 +2565,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 62,
-        "sequence": 62,
+        "index": 63,
+        "sequence": 63,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2565,8 +2588,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 63,
-        "sequence": 63,
+        "index": 64,
+        "sequence": 64,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2588,8 +2611,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 64,
-        "sequence": 64,
+        "index": 65,
+        "sequence": 65,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2611,8 +2634,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 65,
-        "sequence": 65,
+        "index": 66,
+        "sequence": 66,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2634,8 +2657,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 66,
-        "sequence": 66,
+        "index": 67,
+        "sequence": 67,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2657,8 +2680,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 67,
-        "sequence": 67,
+        "index": 68,
+        "sequence": 68,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2680,8 +2703,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 68,
-        "sequence": 68,
+        "index": 69,
+        "sequence": 69,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2703,8 +2726,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 69,
-        "sequence": 69,
+        "index": 70,
+        "sequence": 70,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2726,8 +2749,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 70,
-        "sequence": 70,
+        "index": 71,
+        "sequence": 71,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2749,8 +2772,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 71,
-        "sequence": 71,
+        "index": 72,
+        "sequence": 72,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2772,8 +2795,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 72,
-        "sequence": 72,
+        "index": 73,
+        "sequence": 73,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2795,8 +2818,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 73,
-        "sequence": 73,
+        "index": 74,
+        "sequence": 74,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2818,8 +2841,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 74,
-        "sequence": 74,
+        "index": 75,
+        "sequence": 75,
         "kind": "connector",
         "length_m": 1.0,
         "region_id": "E16"
@@ -2841,8 +2864,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 75,
-        "sequence": 75,
+        "index": 76,
+        "sequence": 76,
         "kind": "coverage",
         "length_m": 42.005931,
         "region_id": "E16"
@@ -2864,10 +2887,10 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 76,
-        "sequence": 76,
+        "index": 77,
+        "sequence": 77,
         "kind": "connector",
-        "length_m": 47.811586,
+        "length_m": 38.232482,
         "connector_id": "bridge_16A-17downB",
         "from_region": "E16",
         "to_region": "E17_up"
@@ -2900,31 +2923,8 @@
             35.60344432410331
           ],
           [
-            110.64729099598274,
-            35.603432340796964
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 77,
-        "sequence": 77,
-        "kind": "coverage",
-        "length_m": 12.79061,
-        "region_id": "E17_up"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64729099598274,
-            35.603432340796964
-          ],
-          [
-            110.64729099598274,
-            35.60331663055564
+            110.64741189374546,
+            35.60342516856633
           ]
         ]
       }
@@ -2934,24 +2934,20 @@
       "properties": {
         "index": 78,
         "sequence": 78,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64729099598274,
-            35.60331663055564
+            110.64741189374546,
+            35.60342516856633
           ],
           [
-            110.64729099598274,
-            35.60331665066368
-          ],
-          [
-            110.64730204446201,
-            35.60331665066368
+            110.64729043086135,
+            35.60342516856633
           ]
         ]
       }
@@ -2961,20 +2957,24 @@
       "properties": {
         "index": 79,
         "sequence": 79,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64730204446201,
-            35.60331665066368
+            110.64729043086135,
+            35.60342516856633
           ],
           [
-            110.64730204446201,
-            35.60343236090501
+            110.64729047985551,
+            35.60342516856633
+          ],
+          [
+            110.64729047985551,
+            35.60341612206732
           ]
         ]
       }
@@ -2984,24 +2984,20 @@
       "properties": {
         "index": 80,
         "sequence": 80,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64730204446201,
-            35.60343236090501
+            110.64729047985551,
+            35.60341612206732
           ],
           [
-            110.64730204446201,
-            35.60343238101306
-          ],
-          [
-            110.64731309294127,
-            35.60343238101306
+            110.64741194273964,
+            35.60341612206732
           ]
         ]
       }
@@ -3011,20 +3007,24 @@
       "properties": {
         "index": 81,
         "sequence": 81,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64731309294127,
-            35.60343238101306
+            110.64741194273964,
+            35.60341612206732
           ],
           [
-            110.64731309294127,
-            35.603316670771726
+            110.6474119917338,
+            35.60341612206732
+          ],
+          [
+            110.6474119917338,
+            35.60340707556832
           ]
         ]
       }
@@ -3034,24 +3034,20 @@
       "properties": {
         "index": 82,
         "sequence": 82,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64731309294127,
-            35.603316670771726
+            110.6474119917338,
+            35.60340707556832
           ],
           [
-            110.64731309294127,
-            35.60331669087977
-          ],
-          [
-            110.64732414142054,
-            35.60331669087977
+            110.64729052884968,
+            35.60340707556832
           ]
         ]
       }
@@ -3061,20 +3057,24 @@
       "properties": {
         "index": 83,
         "sequence": 83,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64732414142054,
-            35.60331669087977
+            110.64729052884968,
+            35.60340707556832
           ],
           [
-            110.64732414142054,
-            35.6034324011211
+            110.64729057784385,
+            35.60340707556832
+          ],
+          [
+            110.64729057784385,
+            35.60339802906932
           ]
         ]
       }
@@ -3084,24 +3084,20 @@
       "properties": {
         "index": 84,
         "sequence": 84,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64732414142054,
-            35.6034324011211
+            110.64729057784385,
+            35.60339802906932
           ],
           [
-            110.64732414142054,
-            35.603432421229144
-          ],
-          [
-            110.64733518989979,
-            35.603432421229144
+            110.64741204072797,
+            35.60339802906932
           ]
         ]
       }
@@ -3111,20 +3107,24 @@
       "properties": {
         "index": 85,
         "sequence": 85,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64733518989979,
-            35.603432421229144
+            110.64741204072797,
+            35.60339802906932
           ],
           [
-            110.64733518989979,
-            35.60331671098782
+            110.64741208972214,
+            35.60339802906932
+          ],
+          [
+            110.64741208972214,
+            35.60338898257031
           ]
         ]
       }
@@ -3134,24 +3134,20 @@
       "properties": {
         "index": 86,
         "sequence": 86,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64733518989979,
-            35.60331671098782
+            110.64741208972214,
+            35.60338898257031
           ],
           [
-            110.64733518989979,
-            35.60331673109586
-          ],
-          [
-            110.64734623837906,
-            35.60331673109586
+            110.64729062683801,
+            35.60338898257031
           ]
         ]
       }
@@ -3161,20 +3157,24 @@
       "properties": {
         "index": 87,
         "sequence": 87,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64734623837906,
-            35.60331673109586
+            110.64729062683801,
+            35.60338898257031
           ],
           [
-            110.64734623837906,
-            35.60343244133719
+            110.6472906758322,
+            35.60338898257031
+          ],
+          [
+            110.6472906758322,
+            35.603379936071306
           ]
         ]
       }
@@ -3184,24 +3184,20 @@
       "properties": {
         "index": 88,
         "sequence": 88,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64734623837906,
-            35.60343244133719
+            110.6472906758322,
+            35.603379936071306
           ],
           [
-            110.64734623837906,
-            35.60343246144524
-          ],
-          [
-            110.64735728685832,
-            35.60343246144524
+            110.6474121387163,
+            35.603379936071306
           ]
         ]
       }
@@ -3211,20 +3207,24 @@
       "properties": {
         "index": 89,
         "sequence": 89,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64735728685832,
-            35.60343246144524
+            110.6474121387163,
+            35.603379936071306
           ],
           [
-            110.64735728685832,
-            35.603316751203906
+            110.64741218771047,
+            35.603379936071306
+          ],
+          [
+            110.64741218771047,
+            35.603370889572304
           ]
         ]
       }
@@ -3234,24 +3234,20 @@
       "properties": {
         "index": 90,
         "sequence": 90,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64735728685832,
-            35.603316751203906
+            110.64741218771047,
+            35.603370889572304
           ],
           [
-            110.64735728685832,
-            35.60331677131195
-          ],
-          [
-            110.64736833533759,
-            35.60331677131195
+            110.64729072482636,
+            35.603370889572304
           ]
         ]
       }
@@ -3261,20 +3257,24 @@
       "properties": {
         "index": 91,
         "sequence": 91,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64736833533759,
-            35.60331677131195
+            110.64729072482636,
+            35.603370889572304
           ],
           [
-            110.64736833533759,
-            35.60343248155328
+            110.64729077382053,
+            35.603370889572304
+          ],
+          [
+            110.64729077382053,
+            35.603361843073294
           ]
         ]
       }
@@ -3284,24 +3284,20 @@
       "properties": {
         "index": 92,
         "sequence": 92,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64736833533759,
-            35.60343248155328
+            110.64729077382053,
+            35.603361843073294
           ],
           [
-            110.64736833533759,
-            35.603432501661324
-          ],
-          [
-            110.64737938381685,
-            35.603432501661324
+            110.64741223670464,
+            35.603361843073294
           ]
         ]
       }
@@ -3311,20 +3307,24 @@
       "properties": {
         "index": 93,
         "sequence": 93,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64737938381685,
-            35.603432501661324
+            110.64741223670464,
+            35.603361843073294
           ],
           [
-            110.64737938381685,
-            35.60331679141999
+            110.6474122856988,
+            35.603361843073294
+          ],
+          [
+            110.6474122856988,
+            35.60335279657429
           ]
         ]
       }
@@ -3334,24 +3334,20 @@
       "properties": {
         "index": 94,
         "sequence": 94,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64737938381685,
-            35.60331679141999
+            110.6474122856988,
+            35.60335279657429
           ],
           [
-            110.64737938381685,
-            35.60331681152804
-          ],
-          [
-            110.64739043229612,
-            35.60331681152804
+            110.6472908228147,
+            35.60335279657429
           ]
         ]
       }
@@ -3361,20 +3357,24 @@
       "properties": {
         "index": 95,
         "sequence": 95,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64739043229612,
-            35.60331681152804
+            110.6472908228147,
+            35.60335279657429
           ],
           [
-            110.64739043229612,
-            35.60343252176937
+            110.64729087180886,
+            35.60335279657429
+          ],
+          [
+            110.64729087180886,
+            35.60334375007529
           ]
         ]
       }
@@ -3384,24 +3384,20 @@
       "properties": {
         "index": 96,
         "sequence": 96,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64739043229612,
-            35.60343252176937
+            110.64729087180886,
+            35.60334375007529
           ],
           [
-            110.64739043229612,
-            35.60343254187741
-          ],
-          [
-            110.64740148077539,
-            35.60343254187741
+            110.64741233469299,
+            35.60334375007529
           ]
         ]
       }
@@ -3411,20 +3407,24 @@
       "properties": {
         "index": 97,
         "sequence": 97,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64740148077539,
-            35.60343254187741
+            110.64741233469299,
+            35.60334375007529
           ],
           [
-            110.64740148077539,
-            35.603316831636086
+            110.64741238368715,
+            35.60334375007529
+          ],
+          [
+            110.64741238368715,
+            35.60333470357628
           ]
         ]
       }
@@ -3434,24 +3434,20 @@
       "properties": {
         "index": 98,
         "sequence": 98,
-        "kind": "connector",
-        "length_m": 1.002223,
+        "kind": "coverage",
+        "length_m": 10.993629,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64740148077539,
-            35.603316831636086
+            110.64741238368715,
+            35.60333470357628
           ],
           [
-            110.64740148077539,
-            35.60331685174413
-          ],
-          [
-            110.64741252925465,
-            35.60331685174413
+            110.64729092080303,
+            35.60333470357628
           ]
         ]
       }
@@ -3461,20 +3457,24 @@
       "properties": {
         "index": 99,
         "sequence": 99,
-        "kind": "coverage",
-        "length_m": 12.79061,
+        "kind": "connector",
+        "length_m": 1.004434,
         "region_id": "E17_up"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64741252925465,
-            35.60331685174413
+            110.64729092080303,
+            35.60333470357628
           ],
           [
-            110.64741252925465,
-            35.60343256198546
+            110.6472909697972,
+            35.60333470357628
+          ],
+          [
+            110.6472909697972,
+            35.60332565707728
           ]
         ]
       }
@@ -3484,8 +3484,81 @@
       "properties": {
         "index": 100,
         "sequence": 100,
+        "kind": "coverage",
+        "length_m": 10.993629,
+        "region_id": "E17_up"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6472909697972,
+            35.60332565707728
+          ],
+          [
+            110.64741243268132,
+            35.60332565707728
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 101,
+        "sequence": 101,
         "kind": "connector",
-        "length_m": 7.179194,
+        "length_m": 1.004434,
+        "region_id": "E17_up"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741243268132,
+            35.60332565707728
+          ],
+          [
+            110.64741248167549,
+            35.60332565707728
+          ],
+          [
+            110.64741248167549,
+            35.60331661057827
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 102,
+        "sequence": 102,
+        "kind": "coverage",
+        "length_m": 10.993629,
+        "region_id": "E17_up"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741248167549,
+            35.60331661057827
+          ],
+          [
+            110.64729101879136,
+            35.60331661057827
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 103,
+        "sequence": 103,
+        "kind": "connector",
+        "length_m": 31.689573,
         "connector_id": "E17_upB_downC",
         "from_region": "E17_up",
         "to_region": "E17_down"
@@ -3494,8 +3567,16 @@
         "type": "LineString",
         "coordinates": [
           [
-            110.64741252925465,
-            35.60343256198546
+            110.64729101879136,
+            35.60331661057827
+          ],
+          [
+            110.64741248167549,
+            35.60331661057827
+          ],
+          [
+            110.6474245387054,
+            35.603316613302326
           ],
           [
             110.64742449566111,
@@ -3515,8 +3596,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 101,
-        "sequence": 101,
+        "index": 104,
+        "sequence": 104,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3538,8 +3619,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 102,
-        "sequence": 102,
+        "index": 105,
+        "sequence": 105,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3565,8 +3646,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 103,
-        "sequence": 103,
+        "index": 106,
+        "sequence": 106,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3588,8 +3669,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 104,
-        "sequence": 104,
+        "index": 107,
+        "sequence": 107,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3615,8 +3696,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 105,
-        "sequence": 105,
+        "index": 108,
+        "sequence": 108,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3638,8 +3719,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 106,
-        "sequence": 106,
+        "index": 109,
+        "sequence": 109,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3665,8 +3746,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 107,
-        "sequence": 107,
+        "index": 110,
+        "sequence": 110,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3688,8 +3769,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 108,
-        "sequence": 108,
+        "index": 111,
+        "sequence": 111,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3715,8 +3796,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 109,
-        "sequence": 109,
+        "index": 112,
+        "sequence": 112,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3738,8 +3819,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 110,
-        "sequence": 110,
+        "index": 113,
+        "sequence": 113,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3765,8 +3846,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 111,
-        "sequence": 111,
+        "index": 114,
+        "sequence": 114,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3788,8 +3869,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 112,
-        "sequence": 112,
+        "index": 115,
+        "sequence": 115,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3815,8 +3896,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 113,
-        "sequence": 113,
+        "index": 116,
+        "sequence": 116,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3838,8 +3919,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 114,
-        "sequence": 114,
+        "index": 117,
+        "sequence": 117,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3865,8 +3946,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 115,
-        "sequence": 115,
+        "index": 118,
+        "sequence": 118,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3888,8 +3969,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 116,
-        "sequence": 116,
+        "index": 119,
+        "sequence": 119,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3915,8 +3996,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 117,
-        "sequence": 117,
+        "index": 120,
+        "sequence": 120,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3938,8 +4019,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 118,
-        "sequence": 118,
+        "index": 121,
+        "sequence": 121,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -3965,8 +4046,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 119,
-        "sequence": 119,
+        "index": 122,
+        "sequence": 122,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -3988,8 +4069,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 120,
-        "sequence": 120,
+        "index": 123,
+        "sequence": 123,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -4015,8 +4096,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 121,
-        "sequence": 121,
+        "index": 124,
+        "sequence": 124,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -4038,8 +4119,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 122,
-        "sequence": 122,
+        "index": 125,
+        "sequence": 125,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -4065,8 +4146,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 123,
-        "sequence": 123,
+        "index": 126,
+        "sequence": 126,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -4088,8 +4169,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 124,
-        "sequence": 124,
+        "index": 127,
+        "sequence": 127,
         "kind": "connector",
         "length_m": 1.003936,
         "region_id": "E17_down"
@@ -4115,8 +4196,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 125,
-        "sequence": 125,
+        "index": 128,
+        "sequence": 128,
         "kind": "coverage",
         "length_m": 25.562199,
         "region_id": "E17_down"
@@ -4138,10 +4219,10 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 126,
-        "sequence": 126,
+        "index": 129,
+        "sequence": 129,
         "kind": "connector",
-        "length_m": 7.693012,
+        "length_m": 8.444222,
         "connector_id": "bridge_17A-18B",
         "from_region": "E17_down",
         "to_region": "E18"
@@ -4166,77 +4247,8 @@
             35.60326793885107
           ],
           [
-            110.64775491855625,
-            35.60325860399835
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 127,
-        "sequence": 127,
-        "kind": "coverage",
-        "length_m": 28.008767,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64775491855625,
-            35.60325860399835
-          ],
-          [
-            110.64744546613488,
-            35.60325772459652
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 128,
-        "sequence": 128,
-        "kind": "connector",
-        "length_m": 2.962851,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744546613488,
-            35.60325772459652
-          ],
-          [
-            110.64741273132984,
-            35.603257631570756
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 129,
-        "sequence": 129,
-        "kind": "coverage",
-        "length_m": 11.022649,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64741273132984,
-            35.603257631570756
-          ],
-          [
-            110.64729094855048,
-            35.60325728548848
+            110.6477549647597,
+            35.603249557576156
           ]
         ]
       }
@@ -4246,24 +4258,20 @@
       "properties": {
         "index": 130,
         "sequence": 130,
-        "kind": "connector",
-        "length_m": 1.001023,
+        "kind": "coverage",
+        "length_m": 28.008767,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64729094855048,
-            35.60325728548848
+            110.6477549647597,
+            35.603249557576156
           ],
           [
-            110.64729093724569,
-            35.60325728545636
-          ],
-          [
-            110.64729097559126,
-            35.60324823901183
+            110.64744551233834,
+            35.60324867817433
           ]
         ]
       }
@@ -4273,16 +4281,16 @@
       "properties": {
         "index": 131,
         "sequence": 131,
-        "kind": "coverage",
-        "length_m": 11.022649,
+        "kind": "connector",
+        "length_m": 2.964586,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64729097559126,
-            35.60324823901183
+            110.64744551233834,
+            35.60324867817433
           ],
           [
             110.64741275837062,
@@ -4296,8 +4304,8 @@
       "properties": {
         "index": 132,
         "sequence": 132,
-        "kind": "connector",
-        "length_m": 2.964586,
+        "kind": "coverage",
+        "length_m": 11.022649,
         "region_id": "E18"
       },
       "geometry": {
@@ -4308,8 +4316,8 @@
             35.603248585094114
           ],
           [
-            110.64744551233834,
-            35.60324867817433
+            110.64729097559126,
+            35.60324823901183
           ]
         ]
       }
@@ -4319,20 +4327,24 @@
       "properties": {
         "index": 133,
         "sequence": 133,
-        "kind": "coverage",
-        "length_m": 28.008767,
+        "kind": "connector",
+        "length_m": 1.001023,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64744551233834,
-            35.60324867817433
+            110.64729097559126,
+            35.60324823901183
           ],
           [
-            110.6477549647597,
-            35.603249557576156
+            110.64729096428647,
+            35.60324823897971
+          ],
+          [
+            110.64729100263204,
+            35.60323919253519
           ]
         ]
       }
@@ -4342,24 +4354,20 @@
       "properties": {
         "index": 134,
         "sequence": 134,
-        "kind": "connector",
-        "length_m": 1.000711,
+        "kind": "coverage",
+        "length_m": 11.022649,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6477549647597,
-            35.603249557576156
+            110.64729100263204,
+            35.60323919253519
           ],
           [
-            110.64775497261758,
-            35.60324955759849
-          ],
-          [
-            110.64775501096317,
-            35.60324051115397
+            110.6474127854114,
+            35.603239538617466
           ]
         ]
       }
@@ -4369,16 +4377,16 @@
       "properties": {
         "index": 135,
         "sequence": 135,
-        "kind": "coverage",
-        "length_m": 28.008767,
+        "kind": "connector",
+        "length_m": 2.96632,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64775501096317,
-            35.60324051115397
+            110.6474127854114,
+            35.603239538617466
           ],
           [
             110.6474455585418,
@@ -4392,8 +4400,8 @@
       "properties": {
         "index": 136,
         "sequence": 136,
-        "kind": "connector",
-        "length_m": 2.96632,
+        "kind": "coverage",
+        "length_m": 28.008767,
         "region_id": "E18"
       },
       "geometry": {
@@ -4404,8 +4412,8 @@
             35.60323963175214
           ],
           [
-            110.6474127854114,
-            35.603239538617466
+            110.64775501096317,
+            35.60324051115397
           ]
         ]
       }
@@ -4415,20 +4423,24 @@
       "properties": {
         "index": 137,
         "sequence": 137,
-        "kind": "coverage",
-        "length_m": 11.022649,
+        "kind": "connector",
+        "length_m": 1.000711,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.6474127854114,
-            35.603239538617466
+            110.64775501096317,
+            35.60324051115397
           ],
           [
-            110.64729100263204,
-            35.60323919253519
+            110.64775501882103,
+            35.603240511176296
+          ],
+          [
+            110.64775505716662,
+            35.60323146473178
           ]
         ]
       }
@@ -4438,24 +4450,20 @@
       "properties": {
         "index": 138,
         "sequence": 138,
-        "kind": "connector",
-        "length_m": 1.001023,
+        "kind": "coverage",
+        "length_m": 28.008767,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64729100263204,
-            35.60323919253519
+            110.64775505716662,
+            35.60323146473178
           ],
           [
-            110.64729099132725,
-            35.60323919250306
-          ],
-          [
-            110.64729102967283,
-            35.60323014605854
+            110.64744560474526,
+            35.60323058532995
           ]
         ]
       }
@@ -4465,20 +4473,24 @@
       "properties": {
         "index": 139,
         "sequence": 139,
-        "kind": "coverage",
-        "length_m": 11.022649,
+        "kind": "connector",
+        "length_m": 1.000711,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64729102967283,
-            35.60323014605854
+            110.64744560474526,
+            35.60323058532995
           ],
           [
-            110.64741281245219,
-            35.603230492140824
+            110.64744561260314,
+            35.603230585352286
+          ],
+          [
+            110.64744565094873,
+            35.60322153890776
           ]
         ]
       }
@@ -4488,20 +4500,20 @@
       "properties": {
         "index": 140,
         "sequence": 140,
-        "kind": "connector",
-        "length_m": 2.968055,
+        "kind": "coverage",
+        "length_m": 28.008767,
         "region_id": "E18"
       },
       "geometry": {
         "type": "LineString",
         "coordinates": [
           [
-            110.64741281245219,
-            35.603230492140824
+            110.64744565094873,
+            35.60322153890776
           ],
           [
-            110.64744560474526,
-            35.60323058532995
+            110.64775510337007,
+            35.60322241830959
           ]
         ]
       }
@@ -4511,29 +4523,6 @@
       "properties": {
         "index": 141,
         "sequence": 141,
-        "kind": "coverage",
-        "length_m": 28.008767,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744560474526,
-            35.60323058532995
-          ],
-          [
-            110.64775505716662,
-            35.60323146473178
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 142,
-        "sequence": 142,
         "kind": "connector",
         "length_m": 1.000711,
         "region_id": "E18"
@@ -4542,227 +4531,12 @@
         "type": "LineString",
         "coordinates": [
           [
-            110.64775505716662,
-            35.60323146473178
-          ],
-          [
-            110.6477550650245,
-            35.60323146475411
-          ],
-          [
-            110.64775510337007,
-            35.60322241830959
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 143,
-        "sequence": 143,
-        "kind": "coverage",
-        "length_m": 28.008767,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
             110.64775510337007,
             35.60322241830959
           ],
           [
-            110.64744565094873,
-            35.60322153890776
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 144,
-        "sequence": 144,
-        "kind": "connector",
-        "length_m": 2.969789,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744565094873,
-            35.60322153890776
-          ],
-          [
-            110.64741283949297,
-            35.603221445664175
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 145,
-        "sequence": 145,
-        "kind": "coverage",
-        "length_m": 11.022649,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64741283949297,
-            35.603221445664175
-          ],
-          [
-            110.64729105671361,
-            35.6032210995819
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 146,
-        "sequence": 146,
-        "kind": "connector",
-        "length_m": 2.002046,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64729105671361,
-            35.6032210995819
-          ],
-          [
-            110.64729103410403,
-            35.60322109951765
-          ],
-          [
-            110.6472911107952,
-            35.603203006628604
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 147,
-        "sequence": 147,
-        "kind": "coverage",
-        "length_m": 11.022649,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6472911107952,
-            35.603203006628604
-          ],
-          [
-            110.64741289357454,
-            35.603203352710885
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 148,
-        "sequence": 148,
-        "kind": "connector",
-        "length_m": 12.021626,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64741289357454,
-            35.603203352710885
-          ],
-          [
-            110.64741285522896,
-            35.6032123991554
-          ],
-          [
-            110.6472910837544,
-            35.60321205310525
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 149,
-        "sequence": 149,
-        "kind": "coverage",
-        "length_m": 11.022649,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.6472910837544,
-            35.60321205310525
-          ],
-          [
-            110.64741286653376,
-            35.60321239918753
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 150,
-        "sequence": 150,
-        "kind": "connector",
-        "length_m": 2.971524,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64741286653376,
-            35.60321239918753
-          ],
-          [
-            110.64744569715218,
-            35.603212492485575
-          ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "index": 151,
-        "sequence": 151,
-        "kind": "coverage",
-        "length_m": 28.008767,
-        "region_id": "E18"
-      },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            110.64744569715218,
-            35.603212492485575
+            110.64775511122795,
+            35.60322241833192
           ],
           [
             110.64775514957354,
@@ -4774,8 +4548,346 @@
     {
       "type": "Feature",
       "properties": {
+        "index": 142,
+        "sequence": 142,
+        "kind": "coverage",
+        "length_m": 28.008767,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64775514957354,
+            35.6032133718874
+          ],
+          [
+            110.64744569715218,
+            35.603212492485575
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 143,
+        "sequence": 143,
+        "kind": "connector",
+        "length_m": 2.971524,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64744569715218,
+            35.603212492485575
+          ],
+          [
+            110.64741286653376,
+            35.60321239918753
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 144,
+        "sequence": 144,
+        "kind": "coverage",
+        "length_m": 11.022649,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741286653376,
+            35.60321239918753
+          ],
+          [
+            110.6472910837544,
+            35.60321205310525
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 145,
+        "sequence": 145,
+        "kind": "connector",
+        "length_m": 1.001023,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6472910837544,
+            35.60321205310525
+          ],
+          [
+            110.6472910724496,
+            35.60321205307313
+          ],
+          [
+            110.6472911107952,
+            35.603203006628604
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 146,
+        "sequence": 146,
+        "kind": "coverage",
+        "length_m": 11.022649,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.6472911107952,
+            35.603203006628604
+          ],
+          [
+            110.64741289357454,
+            35.603203352710885
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 147,
+        "sequence": 147,
+        "kind": "connector",
+        "length_m": 2.002046,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741289357454,
+            35.603203352710885
+          ],
+          [
+            110.64741291618414,
+            35.60320335277513
+          ],
+          [
+            110.64741283949297,
+            35.603221445664175
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 148,
+        "sequence": 148,
+        "kind": "coverage",
+        "length_m": 11.022649,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741283949297,
+            35.603221445664175
+          ],
+          [
+            110.64729105671361,
+            35.6032210995819
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 149,
+        "sequence": 149,
+        "kind": "connector",
+        "length_m": 12.023673,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729105671361,
+            35.6032210995819
+          ],
+          [
+            110.64729101836804,
+            35.60323014602642
+          ],
+          [
+            110.64741281245219,
+            35.603230492140824
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 150,
+        "sequence": 150,
+        "kind": "coverage",
+        "length_m": 11.022649,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741281245219,
+            35.603230492140824
+          ],
+          [
+            110.64729102967283,
+            35.60323014605854
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 151,
+        "sequence": 151,
+        "kind": "connector",
+        "length_m": 3.00307,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729102967283,
+            35.60323014605854
+          ],
+          [
+            110.64729106358722,
+            35.60323014615492
+          ],
+          [
+            110.64729094855048,
+            35.60325728548848
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "index": 152,
         "sequence": 152,
+        "kind": "coverage",
+        "length_m": 11.022649,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64729094855048,
+            35.60325728548848
+          ],
+          [
+            110.64741273132984,
+            35.603257631570756
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 153,
+        "sequence": 153,
+        "kind": "connector",
+        "length_m": 2.962851,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64741273132984,
+            35.603257631570756
+          ],
+          [
+            110.64744546613488,
+            35.60325772459652
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 154,
+        "sequence": 154,
+        "kind": "coverage",
+        "length_m": 28.008767,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64744546613488,
+            35.60325772459652
+          ],
+          [
+            110.64775491855625,
+            35.60325860399835
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 155,
+        "sequence": 155,
+        "kind": "connector",
+        "length_m": 1.857272,
+        "region_id": "E18"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            110.64775491855625,
+            35.60325860399835
+          ],
+          [
+            110.64776922016449,
+            35.60327065277348
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "index": 156,
+        "sequence": 156,
         "kind": "connector",
         "length_m": 3.894532,
         "connector_id": "back_18B-17A_stop"
@@ -4797,8 +4909,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 153,
-        "sequence": 153,
+        "index": 157,
+        "sequence": 157,
         "kind": "connector",
         "length_m": 2.658948,
         "connector_id": "back_17B-16A"
@@ -4820,8 +4932,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 154,
-        "sequence": 154,
+        "index": 158,
+        "sequence": 158,
         "kind": "connector",
         "length_m": 12.282069,
         "connector_id": "back_16B-15A"
@@ -4843,8 +4955,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 155,
-        "sequence": 155,
+        "index": 159,
+        "sequence": 159,
         "kind": "connector",
         "length_m": 3.867796,
         "connector_id": "back_15B-14A"
@@ -4866,8 +4978,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 156,
-        "sequence": 156,
+        "index": 160,
+        "sequence": 160,
         "kind": "connector",
         "length_m": 12.146025,
         "connector_id": "back_14B-13A"
@@ -4889,8 +5001,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 157,
-        "sequence": 157,
+        "index": 161,
+        "sequence": 161,
         "kind": "connector",
         "length_m": 3.373068,
         "connector_id": "back_13B-12A"
@@ -4912,8 +5024,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 158,
-        "sequence": 158,
+        "index": 162,
+        "sequence": 162,
         "kind": "connector",
         "length_m": 11.671849,
         "connector_id": "back_12B-11A"
@@ -4935,8 +5047,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 159,
-        "sequence": 159,
+        "index": 163,
+        "sequence": 163,
         "kind": "connector",
         "length_m": 11.360912,
         "connector_id": "back_11B-10A"
@@ -4958,8 +5070,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 160,
-        "sequence": 160,
+        "index": 164,
+        "sequence": 164,
         "kind": "connector",
         "length_m": 27.860092,
         "connector_id": "back_9A-8B"
@@ -4981,8 +5093,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 161,
-        "sequence": 161,
+        "index": 165,
+        "sequence": 165,
         "kind": "connector",
         "length_m": 31.115234,
         "connector_id": "back_7A-7bA"
@@ -5004,8 +5116,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 162,
-        "sequence": 162,
+        "index": 166,
+        "sequence": 166,
         "kind": "connector",
         "length_m": 3.916292,
         "connector_id": "back_7bB-6A"
@@ -5027,8 +5139,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 163,
-        "sequence": 163,
+        "index": 167,
+        "sequence": 167,
         "kind": "connector",
         "length_m": 3.736123,
         "connector_id": "back_6B-5A"
@@ -5050,8 +5162,8 @@
     {
       "type": "Feature",
       "properties": {
-        "index": 164,
-        "sequence": 164,
+        "index": 168,
+        "sequence": 168,
         "kind": "connector",
         "length_m": 3.845443,
         "connector_id": "back_5B-4A"

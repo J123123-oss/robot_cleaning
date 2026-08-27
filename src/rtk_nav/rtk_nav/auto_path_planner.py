@@ -1359,6 +1359,76 @@ def _local_distance(a: LocalPoint, b: LocalPoint) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def _nearest_region_corner(point: Point, region: Region) -> Tuple[int, int]:
+    """Return the outer-boundary vertex nearest to a bridge endpoint."""
+    candidates = [
+        (polygon_index, corner_index, corner)
+        for polygon_index, polygon in enumerate(region.polygons)
+        for corner_index, corner in enumerate(polygon.boundary[:-1])
+    ]
+    if not candidates:
+        raise PlanningError(f"region {region.id} has no usable boundary corner")
+    polygon_index, corner_index, _ = min(
+        candidates,
+        key=lambda item: _geo_distance_m(point, item[2]),
+    )
+    return polygon_index, corner_index
+
+
+def _nearest_region_endpoint(path: Sequence[Point], region: Region) -> int:
+    """Return the endpoint of an unbound path nearest to a region."""
+    if len(path) < 2:
+        raise PlanningError(f"connector path for {region.id} has no endpoints")
+    corners = [
+        corner
+        for polygon in region.polygons
+        for corner in polygon.boundary[:-1]
+    ]
+    return min(
+        range(2),
+        key=lambda index: min(
+            _geo_distance_m(path[index], corner) for corner in corners
+        ),
+    )
+
+
+def _ordered_unbound_connector_path(
+    connector: Connector,
+    previous_region: Optional[Region],
+    next_region: Optional[Region],
+) -> Tuple[Point, ...]:
+    """Orient an unbound connector according to its position in ``order``."""
+    path = connector.path
+    if next_region is not None and previous_region is None:
+        if _nearest_region_endpoint(path, next_region) == 0:
+            return tuple(reversed(path))
+    elif previous_region is not None and next_region is None:
+        if _nearest_region_endpoint(path, previous_region) == 1:
+            return tuple(reversed(path))
+    return path
+
+
+def _nearest_region_corner_target(
+    map_data: AutoMap,
+    region: Region,
+    point: Point,
+    axis_angle: float,
+    adjusted_geometry: "RotatedRegion",
+) -> Point:
+    """Map the nearest raw corner to its edge-adjusted routing corner."""
+    polygon_index, corner_index = _nearest_region_corner(point, region)
+    raw_boundary = region.polygons[polygon_index].boundary
+    adjusted_boundary = adjusted_geometry[polygon_index][0]
+    frame = _LocalFrame.from_map(map_data)
+    if len(adjusted_boundary) != len(raw_boundary):
+        # Edge adjustment currently preserves rectangular vertex indices. Keep
+        # this fallback for future geometry transformations.
+        local_point = _rotate(frame.to_xy(raw_boundary[corner_index]), axis_angle)
+    else:
+        local_point = adjusted_boundary[corner_index]
+    return frame.from_xy(_unrotate(local_point, axis_angle))
+
+
 def estimate_axis_angle(guides: Sequence[Sequence[Point]]) -> float:
     """Estimate an undirected dominant guide angle in radians."""
     sum_cos = 0.0
@@ -3473,6 +3543,8 @@ def _segments_from_start(
     local_segments: Sequence[Tuple[LocalPoint, LocalPoint]],
     start_point: Optional[Point] = None,
     exit_point: Optional[Point] = None,
+    start_selection_point: Optional[Point] = None,
+    exit_selection_point: Optional[Point] = None,
 ) -> list[Tuple[LocalPoint, LocalPoint]]:
     selected_start = map_data.start if start_point is None else start_point
     frame = _LocalFrame.from_map(map_data)
@@ -3486,23 +3558,49 @@ def _segments_from_start(
         if exit_point is not None
         else None
     )
+    selection_start = (
+        start_selection_point
+        if start_selection_point is not None
+        else selected_start
+    )
+    selection_start_local = (
+        _rotate(frame.to_xy(selection_start), axis_angle)
+        if selection_start is not None
+        else None
+    )
+    selection_exit = (
+        exit_selection_point
+        if exit_selection_point is not None
+        else exit_point
+    )
+    selection_exit_local = (
+        _rotate(frame.to_xy(selection_exit), axis_angle)
+        if selection_exit is not None
+        else None
+    )
 
     def attachment_cost(
         candidate: Sequence[Tuple[LocalPoint, LocalPoint]],
-    ) -> Union[float, Tuple[float, float]]:
+    ) -> Union[float, Tuple[float, float, float]]:
         start_cost = (
             0.0
-            if start_local is None
-            else _local_distance(start_local, candidate[0][0])
+            if selection_start_local is None
+            else _local_distance(selection_start_local, candidate[0][0])
         )
-        if exit_local is None:
+        if selection_exit_local is None:
             return start_cost
 
-        # An explicit next-region connector defines where this region must
-        # finish. Prefer that endpoint first; otherwise a small saving at the
-        # entry can create a long return across the last polygon.
-        exit_cost = _local_distance(candidate[-1][1], exit_local)
-        return (exit_cost, start_cost)
+        direct_exit_cost = _local_distance(candidate[-1][1], selection_exit_local)
+        if selection_start_local is None:
+            # Preserve the existing exit-only behavior for a first region
+            # without an explicit map start or incoming bridge.
+            return direct_exit_cost
+        reverse_exit_cost = _local_distance(candidate[-1][0], selection_exit_local)
+        exit_cost = min(direct_exit_cost, reverse_exit_cost)
+        # Both ends are operationally meaningful: the bridge endpoint picks
+        # the nearest entry/exit corner. If the last sweep points away from
+        # the exit, the route can retrace it before making the bridge attach.
+        return (start_cost + exit_cost, start_cost, exit_cost)
 
     return min(_serpentine_candidates(local_segments), key=attachment_cost)
 
@@ -3521,6 +3619,8 @@ def _route_from_local_segments(
     connection_tolerance_m: float = 0.0,
     attachment_geometry: Optional[RotatedRegion] = None,
     prefer_diagonal_attachment: bool = False,
+    start_selection_point: Optional[Point] = None,
+    exit_selection_point: Optional[Point] = None,
 ) -> Route:
     if geometry is None:
         frame, boundary, no_go = _rotated_geometry(map_data, axis_angle)
@@ -3535,7 +3635,13 @@ def _route_from_local_segments(
         list(local_segments)
         if preserve_segment_order
         else _segments_from_start(
-            map_data, axis_angle, local_segments, selected_start, exit_point
+            map_data,
+            axis_angle,
+            local_segments,
+            selected_start,
+            exit_point,
+            start_selection_point,
+            exit_selection_point,
         )
     )
     output = []
@@ -3621,6 +3727,41 @@ def _route_from_local_segments(
         previous_end = end
 
     total_length = sum(segment.length_m for segment in output)
+    if (
+        ordered_segments
+        and start_selection_point is not None
+        and exit_selection_point is not None
+    ):
+        exit_selection_local = _rotate(
+            frame.to_xy(exit_selection_point), axis_angle
+        )
+        final_start, final_end = ordered_segments[-1]
+        direct_exit_cost = _local_distance(final_end, exit_selection_local)
+        reverse_exit_cost = _local_distance(final_start, exit_selection_local)
+        if reverse_exit_cost + EPSILON < direct_exit_cost:
+            reverse_connector = _find_region_connector(
+                final_end,
+                final_start,
+                geometry,
+                max_connector,
+                connection_tolerance_m,
+            )
+            reverse_points = tuple(
+                frame.from_xy(_unrotate(point, axis_angle))
+                for point in reverse_connector
+            )
+            reverse_length = _path_length(reverse_connector)
+            output.append(
+                Segment(
+                    "connector",
+                    reverse_points,
+                    reverse_length,
+                    region_id=output_region_id,
+                )
+            )
+            max_connector_length = max(max_connector_length, reverse_length)
+            total_length += reverse_length
+
     return Route(
         axis_angle_rad=axis_angle,
         segments=tuple(output),
@@ -3768,6 +3909,7 @@ def plan_route(
     previous_region: Optional[Region] = None
     pending_entry: Optional[Point] = None
     pending_entry_uses_raw_geometry = False
+    previous_region_uses_reverse_end = False
 
     for index, item in enumerate(order):
         if item in regions:
@@ -3780,15 +3922,83 @@ def plan_route(
             if index == 0 and map_data.start is not None:
                 start_point = map_data.start
             next_item = order[index + 1] if index + 1 < len(order) else None
-            exit_point = (
-                effective_connector_paths[next_item][0][0]
+            incoming_connector = (
+                connectors[order[index - 1]]
+                if index > 0 and order[index - 1] in connectors
+                else None
+            )
+            outgoing_connector = (
+                connectors[next_item]
                 if next_item in connectors
-                and connectors[next_item].from_region is not None
+                else None
+            )
+            incoming_connector_path = (
+                _ordered_unbound_connector_path(
+                    incoming_connector,
+                    None,
+                    region,
+                )
+                if incoming_connector is not None
+                and incoming_connector.from_region is None
+                else None
+            )
+            outgoing_connector_path = (
+                _ordered_unbound_connector_path(
+                    outgoing_connector,
+                    region,
+                    None,
+                )
+                if outgoing_connector is not None
+                and outgoing_connector.from_region is None
+                else None
+            )
+            exit_point = (
+                (
+                    effective_connector_paths[next_item][0][0]
+                    if outgoing_connector_path is None
+                    else outgoing_connector_path[0]
+                )
+                if outgoing_connector is not None
+                and (
+                    outgoing_connector.from_region is not None
+                    or outgoing_connector_path is not None
+                )
                 else None
             )
             geometry, coverage_groups = _local_region_coverage_groups(
                 map_data, region, region_axis, sweep_spacing, edge_clearance
             )
+            start_selection_point = None
+            if index == 0 and map_data.start is not None:
+                start_selection_point = map_data.start
+            elif pending_entry is not None and incoming_connector is not None:
+                start_selection_point = _nearest_region_corner_target(
+                    map_data,
+                    region,
+                    (
+                        incoming_connector_path[-1]
+                        if incoming_connector_path is not None
+                        else incoming_connector.path[-1]
+                    ),
+                    region_axis,
+                    geometry,
+                )
+            elif pending_entry is None and region.start is not None:
+                start_selection_point = region.start
+
+            exit_selection_point = None
+            if outgoing_connector is not None:
+                exit_selection_point = _nearest_region_corner_target(
+                    map_data,
+                    region,
+                    (
+                        outgoing_connector_path[0]
+                        if outgoing_connector_path is not None
+                        else outgoing_connector.path[0]
+                    ),
+                    region_axis,
+                    geometry,
+                )
             local_segments = [
                 segment
                 for group in coverage_groups
@@ -3810,6 +4020,16 @@ def plan_route(
             )
             preserve_segment_order = False
             if len(region.polygons) > 1:
+                optimizer_start_point = (
+                    start_selection_point
+                    if start_selection_point is not None
+                    else start_point
+                )
+                optimizer_exit_point = (
+                    exit_selection_point
+                    if exit_selection_point is not None
+                    else exit_point
+                )
                 local_segments = _optimized_multi_polygon_groups(
                     map_data,
                     region_axis,
@@ -3817,8 +4037,8 @@ def plan_route(
                     routing_geometry,
                     max_connector,
                     region.connection_tolerance_m,
-                    start_point,
-                    exit_point,
+                    optimizer_start_point,
+                    optimizer_exit_point,
                     turn_penalty_m,
                     max_connector_penalty,
                     preserve_polygon_order,
@@ -3838,12 +4058,20 @@ def plan_route(
                 connection_tolerance_m=region.connection_tolerance_m,
                 attachment_geometry=attachment_geometry,
                 prefer_diagonal_attachment=prefer_diagonal_attachment,
+                start_selection_point=start_selection_point,
+                exit_selection_point=exit_selection_point,
             )
             output.extend(region_route.segments)
             max_connector_length = max(
                 max_connector_length, region_route.max_connector_length_m
             )
             previous_region = region
+            previous_region_uses_reverse_end = bool(
+                region_route.segments
+                and region_route.segments[-1].kind == "connector"
+                and region_route.segments[-1].connector_id is None
+                and region_route.segments[-1].region_id == region.id
+            )
             pending_entry = None
             pending_entry_uses_raw_geometry = False
             continue
@@ -3852,20 +4080,84 @@ def plan_route(
         if connector is None:
             raise PlanningError(f"order references unknown connector: {item}")
         if connector.from_region is None:
+            next_region = (
+                regions[order[index + 1]]
+                if index + 1 < len(order) and order[index + 1] in regions
+                else None
+            )
+            previous_region_for_unbound = (
+                regions[order[index - 1]]
+                if index > 0 and order[index - 1] in regions
+                else None
+            )
+            connector_path = _ordered_unbound_connector_path(
+                connector,
+                previous_region_for_unbound,
+                next_region,
+            )
+
             frame = _LocalFrame.from_map(map_data)
             local_path = tuple(
-                _rotate(frame.to_xy(point), axis_angle) for point in connector.path
+                _rotate(frame.to_xy(point), axis_angle) for point in connector_path
             )
+            if previous_region_for_unbound is not None:
+                _, source_attachment_geometry = _rotated_region_geometry(
+                    map_data,
+                    previous_region_for_unbound,
+                    axis_angle,
+                    apply_edge_distance=False,
+                )
+                previous_end_local = _rotate(
+                    frame.to_xy(output[-1].points[-1]), axis_angle
+                )
+                attach = (
+                    _find_region_connector(
+                        previous_end_local,
+                        local_path[0],
+                        source_attachment_geometry,
+                        max_connector,
+                        previous_region_for_unbound.connection_tolerance_m,
+                    )
+                    if previous_region_uses_reverse_end
+                    else _bridge_attachment_connector(
+                        previous_end_local,
+                        local_path[0],
+                        source_attachment_geometry,
+                        max_connector,
+                        previous_region_for_unbound.connection_tolerance_m,
+                    )
+                )
+                attach_points = tuple(
+                    frame.from_xy(_unrotate(point, axis_angle)) for point in attach
+                )
+                attach_length = _path_length(attach)
+                output.append(
+                    Segment(
+                        "connector",
+                        attach_points,
+                        attach_length,
+                        region_id=None
+                        if map_data.legacy
+                        else previous_region_for_unbound.id,
+                    )
+                )
+                max_connector_length = max(max_connector_length, attach_length)
             connector_length = _path_length(local_path)
             output.append(
                 Segment(
                     kind="connector",
-                    points=connector.path,
+                    points=connector_path,
                     length_m=connector_length,
                     connector_id=connector.id,
                 )
             )
             max_connector_length = max(max_connector_length, connector_length)
+            if (
+                index + 1 < len(order)
+                and order[index + 1] in regions
+            ):
+                pending_entry = connector_path[-1]
+                pending_entry_uses_raw_geometry = True
             continue
         if previous_region is None or previous_region.id != connector.from_region:
             raise PlanningError(f"connector {item} has no matching source region")
@@ -3924,12 +4216,22 @@ def plan_route(
         previous_end = output[-1].points[-1]
         previous_end_local = _rotate(frame.to_xy(previous_end), axis_angle)
         if _local_distance(previous_end_local, source_attachment_point) > EPSILON:
-            attach = _bridge_attachment_connector(
-                previous_end_local,
-                source_attachment_point,
-                source_attachment_geometry,
-                max_connector,
-                previous_region.connection_tolerance_m,
+            attach = (
+                _find_region_connector(
+                    previous_end_local,
+                    source_attachment_point,
+                    source_attachment_geometry,
+                    max_connector,
+                    previous_region.connection_tolerance_m,
+                )
+                if previous_region_uses_reverse_end
+                else _bridge_attachment_connector(
+                    previous_end_local,
+                    source_attachment_point,
+                    source_attachment_geometry,
+                    max_connector,
+                    previous_region.connection_tolerance_m,
+                )
             )
             attach_points = tuple(
                 frame.from_xy(_unrotate(point, axis_angle)) for point in attach

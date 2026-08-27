@@ -276,7 +276,7 @@ class AutoPathPlannerTests(unittest.TestCase):
             if line.startswith("#")
         ]
 
-        self.assertEqual(labels, ["#E12", "#connector:bridge_12-13B"])
+        self.assertEqual(labels, ["#E12", "#bridge_12-13B"])
 
     def test_route_to_txt_rejects_non_positive_spacing(self):
         route = Route(
@@ -1317,6 +1317,260 @@ class AutoPathPlannerTests(unittest.TestCase):
             access.points,
             tuple(tuple(point) for point in payload["connectors"][0]["path"]),
         )
+
+    def test_unbound_entry_and_exit_use_nearest_region_corners(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "defaults": {
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+                "start_corner": "top_left",
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "only",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 6), (0, 6)]),
+                }
+            ],
+            "connectors": [
+                {
+                    "id": "access",
+                    "path": [_metric_point(11, 5.9), _metric_point(10, 5.9)],
+                },
+                {
+                    "id": "back_only",
+                    "path": [_metric_point(0, 0.1), _metric_point(-1, 0.1)],
+                },
+            ],
+            "order": ["access", "only", "back_only"],
+        }
+
+        route = plan_route(
+            load_map(payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        coverage = [segment for segment in route.segments if segment.kind == "coverage"]
+        self.assertTrue(coverage)
+
+        first_x, first_y = _metric_xy(coverage[0].points[0])
+        last_x, last_y = _metric_xy(coverage[-1].points[-1])
+        self.assertGreater(first_x, 9.0)
+        self.assertGreater(first_y, 3.0)
+        self.assertLess(last_x, 1.0)
+        self.assertLess(last_y, 2.0)
+
+        access_index = next(
+            index for index, segment in enumerate(route.segments)
+            if segment.connector_id == "access"
+        )
+        back_index = next(
+            index for index, segment in enumerate(route.segments)
+            if segment.connector_id == "back_only"
+        )
+        self.assertEqual(
+            route.segments[access_index].points[-1],
+            route.segments[access_index + 1].points[0],
+        )
+        self.assertEqual(
+            route.segments[back_index - 1].points[-1],
+            route.segments[back_index].points[0],
+        )
+
+    def test_unbound_bridge_corner_selection_ignores_start_corner_default(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "defaults": {
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+                "start_corner": "top_left",
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "only",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 8), (0, 8)]),
+                }
+            ],
+            "connectors": [
+                {
+                    "id": "access",
+                    "path": [_metric_point(11, 7.9), _metric_point(10, 7.9)],
+                }
+            ],
+            "order": ["access", "only"],
+        }
+
+        top_left_route = plan_route(
+            load_map(payload), sweep_spacing=2.0, edge_clearance=0.2, max_connector=20.0
+        )
+        payload["defaults"]["start_corner"] = "bottom_right"
+        bottom_right_route = plan_route(
+            load_map(payload), sweep_spacing=2.0, edge_clearance=0.2, max_connector=20.0
+        )
+
+        top_left_coverage = [
+            segment.points for segment in top_left_route.segments if segment.kind == "coverage"
+        ]
+        bottom_right_coverage = [
+            segment.points
+            for segment in bottom_right_route.segments
+            if segment.kind == "coverage"
+        ]
+        self.assertEqual(top_left_coverage, bottom_right_coverage)
+
+    def test_exit_bridge_uses_reverse_end_when_entry_and_exit_share_corner(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "defaults": {
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "only",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 6), (0, 6)]),
+                }
+            ],
+            "connectors": [
+                {
+                    "id": "access",
+                    "path": [_metric_point(11, 5.9), _metric_point(10, 5.9)],
+                },
+                {
+                    "id": "back",
+                    "path": [_metric_point(11, 5.9), _metric_point(10, 5.9)],
+                },
+            ],
+            "order": ["access", "only", "back"],
+        }
+
+        route = plan_route(
+            load_map(payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        coverage = [segment for segment in route.segments if segment.kind == "coverage"]
+        back_index = next(
+            index
+            for index, segment in enumerate(route.segments)
+            if segment.connector_id == "back"
+        )
+        reverse_end = route.segments[back_index - 2]
+        exit_attachment = route.segments[back_index - 1]
+
+        self.assertEqual(reverse_end.kind, "connector")
+        self.assertEqual(reverse_end.region_id, "only")
+        self.assertIsNone(reverse_end.connector_id)
+        self.assertEqual(reverse_end.points[0], coverage[-1].points[-1])
+        self.assertEqual(reverse_end.points[-1], coverage[-1].points[0])
+
+        attachment_start_x, attachment_start_y = _metric_xy(exit_attachment.points[0])
+        attachment_end_x, attachment_end_y = _metric_xy(exit_attachment.points[-1])
+        self.assertTrue(math.isclose(attachment_start_x, 9.8, abs_tol=0.01))
+        self.assertTrue(math.isclose(attachment_end_x, 10.0, abs_tol=0.01))
+        self.assertGreater(attachment_end_y, attachment_start_y)
+
+        for first, second in zip(exit_attachment.points, exit_attachment.points[1:]):
+            first_x, first_y = _metric_xy(first)
+            second_x, second_y = _metric_xy(second)
+            self.assertTrue(
+                math.isclose(first_x, second_x, abs_tol=1e-6)
+                or math.isclose(first_y, second_y, abs_tol=1e-6)
+            )
+
+    def test_bound_exit_bridge_merges_reverse_end_before_bridge_path(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "start": _metric_point(10, 5.9),
+            "defaults": {
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "source",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 6), (0, 6)]),
+                },
+                {
+                    "id": "destination",
+                    "boundary": _ring([(0, 8), (10, 8), (10, 14), (0, 14)]),
+                },
+            ],
+            "connectors": [
+                {
+                    "id": "bridge",
+                    "from": "source",
+                    "to": "destination",
+                    "path": [_metric_point(10, 6), _metric_point(10, 8)],
+                }
+            ],
+            "order": ["source", "bridge", "destination"],
+        }
+
+        route = plan_route(
+            load_map(payload),
+            sweep_spacing=2.0,
+            edge_clearance=0.2,
+            max_connector=20.0,
+        )
+        source_coverage = [
+            segment
+            for segment in route.segments
+            if segment.kind == "coverage" and segment.region_id == "source"
+        ]
+        bridge = next(
+            segment
+            for segment in route.segments
+            if segment.connector_id == "bridge"
+        )
+
+        self.assertEqual(bridge.points[0], source_coverage[-1].points[-1])
+        first_x, first_y = _metric_xy(bridge.points[0])
+        reverse_x, reverse_y = _metric_xy(bridge.points[1])
+        attached_x, attached_y = _metric_xy(bridge.points[2])
+        self.assertGreater(reverse_x, first_x)
+        self.assertTrue(math.isclose(reverse_y, first_y, abs_tol=0.01))
+        self.assertTrue(math.isclose(attached_y, reverse_y, abs_tol=0.01))
+        self.assertTrue(math.isclose(attached_x, 10.0, abs_tol=0.01))
+        next_x, next_y = _metric_xy(bridge.points[3])
+        self.assertTrue(math.isclose(next_x, attached_x, abs_tol=0.01))
+        self.assertGreater(next_y, attached_y)
+
+    def test_unbound_entry_path_is_oriented_by_order_when_recorded_backwards(self):
+        payload = {
+            "format": "rtk_auto_map_v2",
+            "defaults": {
+                "edge_distance_lon": 0.0,
+                "edge_distance_lat": 0.0,
+            },
+            "guides": [[_metric_point(0, 0), _metric_point(10, 0)]],
+            "regions": [
+                {
+                    "id": "only",
+                    "boundary": _ring([(0, 0), (10, 0), (10, 6), (0, 6)]),
+                }
+            ],
+            "connectors": [
+                {
+                    "id": "access",
+                    "path": [_metric_point(10, 5.9), _metric_point(11, 5.9)],
+                }
+            ],
+            "order": ["access", "only"],
+        }
+
+        route = plan_route(
+            load_map(payload), sweep_spacing=2.0, edge_clearance=0.2, max_connector=20.0
+        )
+        access = next(segment for segment in route.segments if segment.connector_id == "access")
+        self.assertEqual(access.points[0], tuple(_metric_point(11, 5.9)))
+        self.assertEqual(access.points[-1], tuple(_metric_point(10, 5.9)))
 
     def test_bridge_attachment_falls_back_when_diagonal_crosses_hole(self):
         boundary = (
