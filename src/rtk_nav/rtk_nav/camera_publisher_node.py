@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-图像发布节点：从 /dev/video0 或静态图片读取图像并发布到 /camera/color/image_raw
-"""
+"""Read /dev/video0 and publish JPEG frames for the vision pipeline."""
 
 import rclpy
 from rclpy.node import Node
-from cv_bridge import CvBridge
-from sensor_msgs.msg import Image
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import CompressedImage
 import cv2
 
 
@@ -18,6 +16,21 @@ def load_static_image(image_path):
     if frame is None:
         raise RuntimeError(f"无法读取图片文件: {image_path}")
     return frame
+
+
+def resize_frame_to_output(frame, width, height):
+    """Resize a captured BGR frame without cropping or adding borders."""
+    target_width = int(width)
+    target_height = int(height)
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError("output image dimensions must be positive")
+    if frame.shape[1] == target_width and frame.shape[0] == target_height:
+        return frame
+    return cv2.resize(
+        frame,
+        (target_width, target_height),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 def extract_translated_roi(
@@ -56,10 +69,11 @@ class CameraPublisherNode(Node):
 
         # 获取参数
         self.declare_parameter('device_id', 0)  # 默认设备ID为0 (/dev/video0)
-        self.declare_parameter('width', 640)
-        self.declare_parameter('height', 480)
+        self.declare_parameter('width', 360)
+        self.declare_parameter('height', 640)
         self.declare_parameter('fps', 30)
         self.declare_parameter('image_path', '')
+        self.declare_parameter('jpeg_quality', 80)
         self.declare_parameter('crop_x', 0)
         self.declare_parameter('crop_y', 0)
         self.declare_parameter('translate_x', 0)
@@ -73,6 +87,7 @@ class CameraPublisherNode(Node):
         self.height = self.get_parameter('height').get_parameter_value().integer_value
         self.fps = self.get_parameter('fps').get_parameter_value().integer_value
         self.image_path = self.get_parameter('image_path').get_parameter_value().string_value
+        self.jpeg_quality = self.get_parameter('jpeg_quality').get_parameter_value().integer_value
         self.crop_x = self.get_parameter('crop_x').get_parameter_value().integer_value
         self.crop_y = self.get_parameter('crop_y').get_parameter_value().integer_value
         self.translate_x = self.get_parameter('translate_x').get_parameter_value().integer_value
@@ -81,8 +96,8 @@ class CameraPublisherNode(Node):
         self.use_gstreamer = self.get_parameter('use_gstreamer').get_parameter_value().bool_value
         self.io_mode = self.get_parameter('io_mode').get_parameter_value().integer_value
 
-        # 创建CvBridge对象用于ROS图像和OpenCV图像之间的转换
-        self.bridge = CvBridge()
+        if not 0 < self.jpeg_quality <= 100:
+            raise ValueError('jpeg_quality must be in [1, 100]')
 
         self.cap = None
         self.static_frame = None
@@ -108,9 +123,22 @@ class CameraPublisherNode(Node):
             if self.use_gstreamer:
                 # 使用GStreamer管道，参考系统中的test_camera.sh
                 if self.pixel_format:
-                    gst_str = f"v4l2src device=/dev/video{self.device_id} ! video/x-raw,format={self.pixel_format},width={self.width},height={self.height},framerate={self.fps}/1 ! videoconvert ! appsink"
+                    gst_str = (
+                        f"v4l2src device=/dev/video{self.device_id} ! "
+                        f"video/x-raw,format={self.pixel_format},"
+                        f"width={self.width},height={self.height},"
+                        f"framerate={self.fps}/1 ! videoconvert ! "
+                        "video/x-raw,format=BGR ! "
+                        "appsink max-buffers=1 drop=true sync=false"
+                    )
                 else:
-                    gst_str = f"v4l2src device=/dev/video{self.device_id} ! video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1 ! videoconvert ! appsink"
+                    gst_str = (
+                        f"v4l2src device=/dev/video{self.device_id} ! "
+                        f"video/x-raw,width={self.width},height={self.height},"
+                        f"framerate={self.fps}/1 ! videoconvert ! "
+                        "video/x-raw,format=BGR ! "
+                        "appsink max-buffers=1 drop=true sync=false"
+                    )
                 self.get_logger().info(f"使用GStreamer管道: {gst_str}")
                 self.cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
             else:
@@ -128,9 +156,22 @@ class CameraPublisherNode(Node):
                     self.get_logger().info(f"尝试打开摄像头设备: /dev/video{device_id}")
                     if self.use_gstreamer:
                         if self.pixel_format:
-                            gst_str = f"v4l2src device=/dev/video{device_id} ! video/x-raw,format={self.pixel_format},width={self.width},height={self.height},framerate={self.fps}/1 ! videoconvert ! appsink"
+                            gst_str = (
+                                f"v4l2src device=/dev/video{device_id} ! "
+                                f"video/x-raw,format={self.pixel_format},"
+                                f"width={self.width},height={self.height},"
+                                f"framerate={self.fps}/1 ! videoconvert ! "
+                                "video/x-raw,format=BGR ! "
+                                "appsink max-buffers=1 drop=true sync=false"
+                            )
                         else:
-                            gst_str = f"v4l2src device=/dev/video{device_id} ! video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1 ! videoconvert ! appsink"
+                            gst_str = (
+                                f"v4l2src device=/dev/video{device_id} ! "
+                                f"video/x-raw,width={self.width},height={self.height},"
+                                f"framerate={self.fps}/1 ! videoconvert ! "
+                                "video/x-raw,format=BGR ! "
+                                "appsink max-buffers=1 drop=true sync=false"
+                            )
                         cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
                     else:
                         cap = cv2.VideoCapture(device_id)
@@ -153,6 +194,10 @@ class CameraPublisherNode(Node):
                     self.get_logger().warn(f"设置像素格式失败: {str(e)}")
 
             if not self.use_gstreamer:
+                try:
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception as exc:
+                    self.get_logger().debug(f"设置相机缓冲区深度失败: {exc}")
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -167,8 +212,17 @@ class CameraPublisherNode(Node):
             f"(实际: {int(actual_width)}x{int(actual_height)} @ {int(actual_fps)} fps)"
         )
 
-        # 发布图像话题
-        self.image_pub = self.create_publisher(Image, "/camera/color/image_raw", 10)
+        image_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self.image_pub = self.create_publisher(
+            CompressedImage,
+            "/camera/color/image_compressed",
+            image_qos,
+        )
 
         # 创建定时器
         self.timer = self.create_timer(1.0/self.fps, self.timer_callback)
@@ -195,20 +249,27 @@ class CameraPublisherNode(Node):
                 self.get_logger().warn("无法从摄像头读取帧", throttle_duration_sec=1)
                 return
 
+        frame = resize_frame_to_output(frame, self.width, self.height)
+
         # 每30帧记录一次日志
         self.frame_count += 1
         if self.frame_count % 30 == 0:
             self.get_logger().debug(f"成功读取帧: {frame.shape[1]}x{frame.shape[0]}")
 
         try:
-            # 将OpenCV图像转换为ROS图像消息
-            image_msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+            encoded_ok, encoded = cv2.imencode(
+                '.jpg',
+                frame,
+                [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality],
+            )
+            if not encoded_ok:
+                raise RuntimeError('JPEG 编码失败')
 
-            # 添加时间戳
+            image_msg = CompressedImage()
             image_msg.header.stamp = self.get_clock().now().to_msg()
             image_msg.header.frame_id = "camera_frame"
-
-            # 发布图像消息
+            image_msg.format = 'jpeg'
+            image_msg.data = encoded.tobytes()
             self.image_pub.publish(image_msg)
 
         except Exception as e:

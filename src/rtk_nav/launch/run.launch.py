@@ -7,7 +7,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # 全局路径配置
-    rtk_path_file = '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001-E1-E8.txt'
+    rtk_path_file = '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001-E1-E8.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
     loading_gps = [110.64741424789473, 35.60594097811998, -90.0]
 
@@ -51,13 +51,53 @@ def generate_launch_description():
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
         "visual_confidence_threshold",
-        default_value=TextSubstitution(text="0.5"),
+        default_value=TextSubstitution(text="0.9"),
         description="Minimum visual confidence for correction",
     )
     declare_visual_timeout_arg = DeclareLaunchArgument(
         "visual_timeout_sec",
         default_value=TextSubstitution(text="0.5"),
         description="Visual sample timeout in seconds",
+    )
+    declare_camera_width_arg = DeclareLaunchArgument(
+        "camera_width",
+        default_value=TextSubstitution(text="360"),
+        description="Camera output width",
+    )
+    declare_camera_height_arg = DeclareLaunchArgument(
+        "camera_height",
+        default_value=TextSubstitution(text="640"),
+        description="Camera output height",
+    )
+    declare_camera_fps_arg = DeclareLaunchArgument(
+        "camera_fps",
+        default_value=TextSubstitution(text="30"),
+        description="Camera capture and publish FPS",
+    )
+    declare_camera_image_path_arg = DeclareLaunchArgument(
+        "camera_image_path",
+        default_value=TextSubstitution(text=""),
+        description="Optional static image path; empty reads /dev/video0",
+    )
+    declare_camera_jpeg_quality_arg = DeclareLaunchArgument(
+        "camera_jpeg_quality",
+        default_value=TextSubstitution(text="80"),
+        description="JPEG quality for the compressed camera topic",
+    )
+    declare_detection_fps_arg = DeclareLaunchArgument(
+        "detection_fps",
+        default_value=TextSubstitution(text="30.0"),
+        description="Grid line detection timer FPS",
+    )
+    declare_publish_debug_images_arg = DeclareLaunchArgument(
+        "publish_debug_images",
+        default_value=TextSubstitution(text="false"),
+        description="Publish grid-line debug images",
+    )
+    declare_debug_image_fps_arg = DeclareLaunchArgument(
+        "debug_image_fps",
+        default_value=TextSubstitution(text="1.0"),
+        description="Maximum debug image publish FPS",
     )
 
     # 定义电机控制节点
@@ -180,7 +220,16 @@ def generate_launch_description():
                 'enable_visual_correction': ParameterValue(
                     LaunchConfiguration('enable_visual_correction'),
                     value_type=bool,
-                )
+                ),
+                'detection_fps': ParameterValue(
+                    LaunchConfiguration('detection_fps'), value_type=float
+                ),
+                'publish_debug_images': ParameterValue(
+                    LaunchConfiguration('publish_debug_images'), value_type=bool
+                ),
+                'debug_image_fps': ParameterValue(
+                    LaunchConfiguration('debug_image_fps'), value_type=float
+                ),
             },
         ],
     )
@@ -191,6 +240,23 @@ def generate_launch_description():
         name='camera_publisher',
         output='screen',
         condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
+        parameters=[
+            {
+                'width': ParameterValue(
+                    LaunchConfiguration('camera_width'), value_type=int
+                ),
+                'height': ParameterValue(
+                    LaunchConfiguration('camera_height'), value_type=int
+                ),
+                'fps': ParameterValue(
+                    LaunchConfiguration('camera_fps'), value_type=int
+                ),
+                'image_path': LaunchConfiguration('camera_image_path'),
+                'jpeg_quality': ParameterValue(
+                    LaunchConfiguration('camera_jpeg_quality'), value_type=int
+                ),
+            },
+        ],
     )
 
     # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
@@ -230,6 +296,14 @@ def generate_launch_description():
     ld.add_action(declare_visual_max_steering_arg)
     ld.add_action(declare_visual_confidence_threshold_arg)
     ld.add_action(declare_visual_timeout_arg)
+    ld.add_action(declare_camera_width_arg)
+    ld.add_action(declare_camera_height_arg)
+    ld.add_action(declare_camera_fps_arg)
+    ld.add_action(declare_camera_image_path_arg)
+    ld.add_action(declare_camera_jpeg_quality_arg)
+    ld.add_action(declare_detection_fps_arg)
+    ld.add_action(declare_publish_debug_images_arg)
+    ld.add_action(declare_debug_image_fps_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 

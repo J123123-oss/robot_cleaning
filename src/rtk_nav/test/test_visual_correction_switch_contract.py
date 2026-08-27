@@ -62,7 +62,7 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 7
+    assert source.count("value_type=float") == 9
 
 
 def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
@@ -76,7 +76,9 @@ def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
     assert "camera_publisher_node = rtk_nav.camera_publisher_node:main" in setup_source
     assert "executable='camera_publisher_node'" in launch_source
     assert "name='camera_publisher'" in launch_source
-    assert "self.create_publisher(Image, \"/camera/color/image_raw\", 10)" in camera_source
+    assert "CompressedImage" in camera_source
+    assert "/camera/color/image_compressed" in camera_source
+    assert "IMWRITE_JPEG_QUALITY" in camera_source
     assert "<exec_depend>python3-opencv</exec_depend>" in package_source
     assert "node = None" in camera_source
     assert "if node is not None:" in camera_source
@@ -155,6 +157,27 @@ def test_camera_publisher_uses_source_slicing_for_static_translation():
         assert forbidden not in source
 
 
+def test_line_detector_uses_single_rendered_argument_for_logger_calls():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    invalid_calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"debug", "info", "warn", "warning", "error", "fatal"}:
+            continue
+        if isinstance(node.func.value, ast.Call):
+            if (
+                isinstance(node.func.value.func, ast.Attribute)
+                and node.func.value.func.attr == "get_logger"
+                and len(node.args) > 1
+            ):
+                invalid_calls.append(node.lineno)
+
+    assert invalid_calls == []
+
+
 def test_rtk_declares_and_reports_visual_correction_switch():
     source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -170,14 +193,13 @@ def test_rtk_declares_and_reports_visual_correction_switch():
     assert "msg.z = 0.0" in visual_context
 
 
-def test_line_detector_defaults_disabled_and_publishes_invalid_output_when_disabled():
+def test_line_detector_publishes_invalid_output_when_visual_correction_is_disabled():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     initializer = ast.unparse(_function(tree, "__init__"))
     image_callback = ast.unparse(_function(tree, "image_callback"))
 
-    assert "enable_visual_correction" in initializer
-    assert "False" in initializer
+    assert "self.declare_parameter('enable_visual_correction', True)" in initializer
     assert "self.enable_visual_correction" in image_callback
     assert "publish_invalid" in image_callback
     publish_invalid = ast.unparse(_function(tree, "publish_invalid"))
@@ -191,7 +213,7 @@ def test_line_detector_path_context_bypass_defaults_off_and_preserves_visual_swi
     initializer = ast.unparse(_function(tree, "__init__"))
     image_callback = ast.unparse(_function(tree, "image_callback"))
 
-    assert "self.declare_parameter('bypass_path_context_gate', False)" in initializer
+    assert "self.declare_parameter('bypass_path_context_gate', True)" in initializer
     assert "self.bypass_path_context_gate" in initializer
     assert "if not self.enable_visual_correction:" in image_callback
     assert "not self.bypass_path_context_gate" in image_callback

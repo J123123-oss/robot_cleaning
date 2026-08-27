@@ -2,6 +2,7 @@
 """RTK 路径感知的栅格线视觉纠偏节点。"""
 
 import math
+import threading
 import time
 
 import cv2
@@ -10,7 +11,8 @@ import rclpy
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Vector3
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Float32, String
 
 
@@ -237,11 +239,17 @@ class GridLineDetector(Node):
         super().__init__('grid_line_detector')
 
         self.bridge = CvBridge()
+        image_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         self.image_sub = self.create_subscription(
-            Image,
-            '/camera/color/image_raw',
+            CompressedImage,
+            '/camera/color/image_compressed',
             self.image_callback,
-            10,
+            image_qos,
         )
         self.path_context_sub = self.create_subscription(
             Vector3,
@@ -274,8 +282,8 @@ class GridLineDetector(Node):
         self.declare_parameter('camera_pitch_deg', 90.0)
         self.declare_parameter('focal_length_px', 132.0)
         self.declare_parameter('min_line_count', 2)
-        self.declare_parameter('enable_visual_correction', False)
-        self.declare_parameter('bypass_path_context_gate', False)
+        self.declare_parameter('enable_visual_correction', True)
+        self.declare_parameter('bypass_path_context_gate', True)
         self.declare_parameter('line_angle_tolerance_deg', 15.0)
         self.declare_parameter('path_context_timeout_sec', 0.5)
         self.declare_parameter('boundary_pair_max_gap_px', 1200.0)
@@ -287,6 +295,9 @@ class GridLineDetector(Node):
         self.declare_parameter('coarse_line_min_support', 0.55)
         self.declare_parameter('coarse_line_merge_gap_px', 10.0)
         self.declare_parameter('white_line_scan_half_width_px', 8.0)
+        self.declare_parameter('detection_fps', 30.0)
+        self.declare_parameter('publish_debug_images', False)
+        self.declare_parameter('debug_image_fps', 1.0)
 
         self.camera_angle_offset = float(
             self.get_parameter('camera_angle_offset').value
@@ -338,6 +349,11 @@ class GridLineDetector(Node):
         self.white_line_scan_half_width_px = float(
             self.get_parameter('white_line_scan_half_width_px').value
         )
+        self.detection_fps = float(self.get_parameter('detection_fps').value)
+        self.publish_debug_images_enabled = bool(
+            self.get_parameter('publish_debug_images').value
+        )
+        self.debug_image_fps = float(self.get_parameter('debug_image_fps').value)
 
         if (
             not math.isfinite(self.path_context_timeout_sec)
@@ -398,6 +414,10 @@ class GridLineDetector(Node):
             raise ValueError(
                 'white_line_scan_half_width_px must be finite and > 0'
             )
+        if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
+            raise ValueError('detection_fps must be finite and > 0')
+        if not math.isfinite(self.debug_image_fps) or self.debug_image_fps <= 0.0:
+            raise ValueError('debug_image_fps must be finite and > 0')
 
         self.path_direction_deg = 0.0
         self.vehicle_heading_deg = 0.0
@@ -406,12 +426,44 @@ class GridLineDetector(Node):
         self.last_path_direction_deg = None
         self.valid_streak = 0
 
-        self.last_process_time = time.monotonic()
-        self.min_process_interval = 0.1
-        self.timer = self.create_timer(0.1, self.timer_callback)
+        self.latest_frame_lock = threading.Lock()
+        self.latest_compressed_data = None
+        self.last_debug_publish_time = 0.0
+        self.timer = self.create_timer(1.0 / self.detection_fps, self.timer_callback)
 
     def timer_callback(self):
-        """保留定时器接口，图像回调负责实际处理。"""
+        """Decode and process only the newest compressed frame."""
+        with self.latest_frame_lock:
+            compressed_data = self.latest_compressed_data
+            self.latest_compressed_data = None
+        if compressed_data is None:
+            return
+
+        try:
+            encoded = np.frombuffer(compressed_data, dtype=np.uint8)
+            image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError('JPEG 解码失败')
+            angle, lateral_m, detected, confidence = (
+                self.detect_and_draw_grid_lines(image)
+            )
+
+            result = Vector3()
+            result.x = float(angle)
+            result.y = float(lateral_m)
+            result.z = 1.0 if detected else 0.0
+            self.angle_pub.publish(result)
+
+            confidence_msg = Float32()
+            confidence_msg.data = float(confidence)
+            self.confidence_pub.publish(confidence_msg)
+        except Exception as exc:
+            self.get_logger().error(
+                f'压缩图像处理错误: {exc}',
+                throttle_duration_sec=1.0,
+            )
+            self.reset_reacquisition()
+            self.publish_invalid()
 
     def path_context_callback(self, msg):
         """接收 RTK 当前路径方向和车体航向。"""
@@ -470,7 +522,7 @@ class GridLineDetector(Node):
         self.run_axis_pub.publish(axis)
 
     def image_callback(self, msg):
-        """处理图像并发布路径感知的视觉纠偏结果。"""
+        """Store the newest JPEG payload; processing runs in the timer."""
         if not self.enable_visual_correction:
             self.reset_reacquisition()
             self.publish_invalid()
@@ -488,32 +540,10 @@ class GridLineDetector(Node):
             self.reset_reacquisition()
             self.publish_invalid()
             return
-
-        current_time = time.monotonic()
-        if current_time - self.last_process_time < self.min_process_interval:
-            return
-
-        self.last_process_time = current_time
-        try:
-            image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-            angle, lateral_m, detected, confidence = (
-                self.detect_and_draw_grid_lines(image)
-            )
-
-            result = Vector3()
-            result.x = float(angle)
-            result.y = float(lateral_m)
-            result.z = 1.0 if detected else 0.0
-            self.angle_pub.publish(result)
-
-            confidence_msg = Float32()
-            confidence_msg.data = float(confidence)
-            self.confidence_pub.publish(confidence_msg)
-        except Exception as exc:
-            self.last_process_time = time.monotonic()
-            self.get_logger().error(f'图像处理错误: {exc}')
-            self.reset_reacquisition()
-            self.publish_invalid()
+        payload = bytes(msg.data)
+        if payload:
+            with self.latest_frame_lock:
+                self.latest_compressed_data = payload
 
     def pixels_to_lateral_meters(self, lateral_pixel_error):
         """将路径法向像素误差换算为米制横向误差。"""
@@ -550,8 +580,15 @@ class GridLineDetector(Node):
     def detect_and_draw_grid_lines(self, image):
         """检测粗白光伏结构线并计算路径感知纠偏量。"""
         height, width = image.shape[:2]
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray_blur = cv2.GaussianBlur(gray, (5, 5), 1.0)
+        debug_due = self.publish_debug_images_enabled and (
+            self.last_debug_publish_time <= 0.0
+            or time.monotonic() - self.last_debug_publish_time
+            >= 1.0 / self.debug_image_fps
+        )
+        gray_blur = None
+        if debug_due:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            gray_blur = cv2.GaussianBlur(gray, (5, 5), 1.0)
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         white_mask = cv2.inRange(
             hsv,
@@ -583,7 +620,7 @@ class GridLineDetector(Node):
             minLineLength=max(1, int(self.coarse_line_min_length_px)),
             maxLineGap=15,
         )
-        display = image.copy()
+        display = image.copy() if debug_due else None
 
         relative_path_heading = wrap180(
             self.path_direction_deg - self.vehicle_heading_deg
@@ -606,37 +643,36 @@ class GridLineDetector(Node):
             normal_y = tangent_x
             sample_count = max(2, int(segment_length / 8.0))
             half_width = int(round(self.white_line_scan_half_width_px))
-            widths = []
-            supported = 0
-            for sample_index in range(sample_count):
-                fraction = sample_index / float(sample_count - 1)
-                sample_x = x1 + (x2 - x1) * fraction
-                sample_y = y1 + (y2 - y1) * fraction
-                scan = []
-                for offset in range(-half_width, half_width + 1):
-                    pixel_x = int(round(sample_x + normal_x * offset))
-                    pixel_y = int(round(sample_y + normal_y * offset))
-                    if (
-                        0 <= pixel_x < width
-                        and 0 <= pixel_y < height
-                    ):
-                        scan.append(bool(white_mask[pixel_y, pixel_x]))
-                    else:
-                        scan.append(False)
-                if any(scan):
-                    supported += 1
-                longest_run = 0
-                current_run = 0
-                for is_white in scan:
-                    if is_white:
-                        current_run += 1
-                        longest_run = max(longest_run, current_run)
-                    else:
-                        current_run = 0
-                widths.append(float(longest_run))
-            if not widths:
+            fractions = np.linspace(0.0, 1.0, sample_count, dtype=np.float32)
+            offsets = np.arange(
+                -half_width, half_width + 1, dtype=np.float32
+            )
+            sample_x = x1 + (x2 - x1) * fractions[:, None]
+            sample_y = y1 + (y2 - y1) * fractions[:, None]
+            pixel_x = np.rint(sample_x + normal_x * offsets[None, :]).astype(int)
+            pixel_y = np.rint(sample_y + normal_y * offsets[None, :]).astype(int)
+            valid = (
+                (pixel_x >= 0)
+                & (pixel_x < width)
+                & (pixel_y >= 0)
+                & (pixel_y < height)
+            )
+            safe_x = np.clip(pixel_x, 0, width - 1)
+            safe_y = np.clip(pixel_y, 0, height - 1)
+            scan = white_mask[safe_y, safe_x] != 0
+            scan &= valid
+            supported = int(np.count_nonzero(np.any(scan, axis=1)))
+
+            # The scan is narrow, so a column-wise NumPy run length is cheaper
+            # than nested Python loops for every Hough segment.
+            current_run = np.zeros(sample_count, dtype=np.int16)
+            longest_run = np.zeros(sample_count, dtype=np.int16)
+            for column in range(scan.shape[1]):
+                current_run = np.where(scan[:, column], current_run + 1, 0)
+                longest_run = np.maximum(longest_run, current_run)
+            if sample_count <= 0:
                 return None
-            return float(np.mean(widths)), supported / float(sample_count)
+            return float(np.mean(longest_run)), supported / float(sample_count)
 
         coarse_lines = []
         if lines is not None:
@@ -671,8 +707,9 @@ class GridLineDetector(Node):
             self.coarse_line_min_support,
         )
         if not coarse_lines:
+            # self.get_logger().info('P:0 C:0')
             self.reset_reacquisition()
-            self.publish_debug_images(
+            self.publish_debug_images_if_due(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0
@@ -705,23 +742,28 @@ class GridLineDetector(Node):
             cross_axis_image,
             self.coarse_line_merge_gap_px,
         )
+        self.get_logger().debug(
+            f'P:{len(parallel_group)} C:{len(perpendicular_group)}',
+            throttle_duration_sec=1.0,
+        )
 
-        for line in parallel_group:
-            cv2.line(
-                display,
-                (line[0], line[1]),
-                (line[2], line[3]),
-                (0, 255, 0),
-                2,
-            )
-        for line in perpendicular_group:
-            cv2.line(
-                display,
-                (line[0], line[1]),
-                (line[2], line[3]),
-                (255, 0, 0),
-                2,
-            )
+        if display is not None:
+            for line in parallel_group:
+                cv2.line(
+                    display,
+                    (line[0], line[1]),
+                    (line[2], line[3]),
+                    (0, 255, 0),
+                    2,
+                )
+            for line in perpendicular_group:
+                cv2.line(
+                    display,
+                    (line[0], line[1]),
+                    (line[2], line[3]),
+                    (255, 0, 0),
+                    2,
+                )
 
         pair = select_boundary_pair(
             parallel_group,
@@ -740,7 +782,7 @@ class GridLineDetector(Node):
 
         if not valid_geometry:
             self.reset_reacquisition()
-            self.publish_debug_images(
+            self.publish_debug_images_if_due(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0
@@ -754,7 +796,7 @@ class GridLineDetector(Node):
         lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
         if not math.isfinite(lateral_m):
             self.reset_reacquisition()
-            self.publish_debug_images(
+            self.publish_debug_images_if_due(
                 display, gray_blur, white_mask, white_edges
             )
             return 0.0, 0.0, False, 0.0
@@ -773,40 +815,54 @@ class GridLineDetector(Node):
                 min(1.0, 0.5 * count_score + 0.5 * support_score),
             )
 
-        cv2.putText(
-            display,
-            f'Angle: {output_angle:.2f} deg',
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 0, 255),
-            2,
-        )
-        cv2.putText(
-            display,
-            f'Lat Dev: {output_lateral:.3f} m',
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 0, 0),
-            2,
-        )
-        cv2.putText(
-            display,
-            f'P:{len(parallel_group)} C:{len(perpendicular_group)}',
-            (10, 90),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2,
-        )
-        self.publish_debug_images(
+        if display is not None:
+            cv2.putText(
+                display,
+                f'Angle: {output_angle:.2f} deg',
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+            )
+            cv2.putText(
+                display,
+                f'Lat Dev: {output_lateral:.3f} m',
+                (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 0, 0),
+                2,
+            )
+            cv2.putText(
+                display,
+                f'P:{len(parallel_group)} C:{len(perpendicular_group)}',
+                (10, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
+            )
+        self.publish_debug_images_if_due(
             display, gray_blur, white_mask, white_edges
         )
 
         if not detected:
             return 0.0, 0.0, False, 0.0
         return output_angle, output_lateral, True, confidence
+
+    def publish_debug_images_if_due(self, display, gray, binary, edges):
+        """Publish debug images only when explicitly enabled and due."""
+        if not self.publish_debug_images_enabled or display is None:
+            return
+        current_time = time.monotonic()
+        if (
+            current_time - self.last_debug_publish_time
+            < 1.0 / self.debug_image_fps
+        ):
+            return
+        self.last_debug_publish_time = current_time
+        self.publish_debug_images(display, gray, binary, edges)
 
     def publish_debug_images(self, display, gray, binary, edges):
         """发布检测标注图和中间处理图。"""
