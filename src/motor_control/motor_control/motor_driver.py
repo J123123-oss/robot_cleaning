@@ -4,89 +4,105 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-from std_msgs.msg import Int32MultiArray
-from std_msgs.msg import Int32, UInt8
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
-import struct
+from geometry_msgs.msg import Quaternion
 import can
 import time
 import math
-from typing import Optional, List, Dict
+from typing import Optional
 import threading
 
 
+def build_sdo_frame(command: int, index: int, subindex: int,
+                    value: bytes = b'') -> bytes:
+    """Build an eight-byte expedited SDO frame.
+
+    The first four bytes are the command specifier, object index in
+    little-endian order, and subindex.  Expedited object data occupies bytes
+    4 through 7 and is also encoded little-endian by the caller.
+    """
+    if not 0 <= command <= 0xFF:
+        raise ValueError("SDO command must fit in one byte")
+    if not 0 <= index <= 0xFFFF:
+        raise ValueError("SDO index must fit in two bytes")
+    if not 0 <= subindex <= 0xFF:
+        raise ValueError("SDO subindex must fit in one byte")
+    if len(value) > 4:
+        raise ValueError("expedited SDO value cannot exceed four bytes")
+
+    frame = bytes((command, index & 0xFF, index >> 8, subindex)) + value
+    return frame.ljust(8, b'\x00')
+
+
+def decode_sdo_int32(data: bytes) -> int:
+    """Decode the signed INT32 value in bytes 4 through 7 of an SDO frame."""
+    if len(data) < 8:
+        raise ValueError("SDO response must contain eight data bytes")
+    return int.from_bytes(data[4:8], byteorder='little', signed=True)
+
+
 class CanMotorDriver(Node):
-    def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000):
+    def __init__(self, node_name='can_motor_driver', channel='can0',
+                 interface='socketcan', baudrate=1000000,
+                 velocity_ratio=10000.0):
 
         super().__init__(node_name)
 
         
         # CAN配置
         self.can_interface = channel  # can0
+        self.can_bus_interface = interface
+        self.can_bitrate = baudrate
         self.bus: Optional[can.Bus] = None
         self.can_initialized = False
+        # 上层速度值到电机脉冲数的比例；默认1个上层单位对应10000脉冲。
+        self.velocity_ratio = float(velocity_ratio)
+        if not math.isfinite(self.velocity_ratio) or self.velocity_ratio <= 0:
+            raise ValueError("velocity_ratio must be greater than zero")
         
-        # 电机配置 (基于jifeng系统中的3个电机)
+        # 电机运行状态。
+        # 当前CANopen对象字典能够写入目标速度、读取实际速度和故障状态，
+        # 因此这里只保存这些实际参与控制或能够从总线得到的字段。
         self.motors = [
             {
-                "id": 1,                        # 左轮电机ID
-                "velocity": 0.0,                # 目标速度（rad/s）
-                "actual_velocity": 0.0,         # 实际速度
-                "actual_position": 0.0,         # 实际位置
-                "actual_torque": 0.0,           # 实际扭矩
-                "actual_temperature": 0.0,      # 实际温度
-                "current_limit": 20.0,          # 电流限制（A）
-                "run_mode": 2,                  # 运行模式（2速度模式）
-                "fault_code": 0,                # 故障码
+                "id": motor_id,                 # CANopen节点ID：1左轮、2右轮、3毛刷
+                "velocity": 0.0,                # 目标速度，上层值会乘以velocity_ratio
+                "actual_velocity": 0.0,         # 0x606C读取的实际速度，已换算为上层值
+                "fault_code": 0,                # EMCY或0x2601读取到的故障状态
                 "send_errors": 0,               # 连续发送失败次数
-                "online": True                  # 电机是否在线
-            },
-            {
-                "id": 2,                        # 右轮电机ID
-                "velocity": 0.0,
-                "actual_velocity": 0.0,
-                "actual_position": 0.0,
-                "actual_torque": 0.0,
-                "actual_temperature": 0.0,
-                "current_limit": 20.0,
-                "run_mode": 2,
-                "fault_code": 0,
-                "send_errors": 0,
-                "online": True
-            },
-            {
-                "id": 3,                        # 前毛刷电机ID
-                "velocity": 0.0,
-                "actual_velocity": 0.0,
-                "actual_position": 0.0,
-                "actual_torque": 0.0,
-                "actual_temperature": 0.0,
-                "current_limit": 20.0,
-                "run_mode": 2,
-                "fault_code": 0,
-                "send_errors": 0,
-                "online": True
+                "online": True                  # 最近一次速度命令是否发送成功
             }
+            for motor_id in (1, 2, 3)
         ]
         self._send_tick = 0  # 发送周期计数，用于离线电机重试退避
         
-        # 主机ID (与jifeng系统保持一致)
-        self.motor_master_id = 99  # 0x63
-        
-        # 电机参数索引
-        self.RUN_MODE_INDEX = 0x7005    # 运行模式索引
-        self.SPEED_REF_INDEX = 0x700A   # 速度指令索引
-        self.LIMIT_CUR_INDEX = 0x7018   # 电流限制索引
-        self.OTHER_PARAM_INDEX = 0x7022 # 其他参数索引 (针对电机3)
-        
-        # 通信类型
-        self.COMM_WRITE_PARAM = 0x12    # 参数写入
-        self.COMM_ENABLE_MOTOR = 0x03   # 使能电机
-        self.COMM_DISABLE_MOTOR = 0x04  # 失能 / 清除故障
-        self.MC_CMD_SPEED_CLOSED_LOOP = 0xA2  # 速度闭环控制命令
-        self.MC_CMD_POS_SPEED_TORQUE_FEEDBACK = 0x02  # 位置、速度、扭矩反馈命令类型
-        self.MC_CMD_QUERY_MOTOR = 0x03  # 电机状态查询命令
+        # CANopen标准帧和对象字典。
+        # CANopen默认使用11位标准帧，下面的COB-ID基值需要加上电机节点ID。
+        # 例如节点1的请求ID为0x601，响应ID为0x581，EMCY ID为0x081。
+        self.SDO_RX_BASE = 0x600       # SDO下载请求：主站 -> 节点
+        self.SDO_TX_BASE = 0x580       # SDO上传响应：节点 -> 主站
+        self.EMCY_BASE = 0x80          # EMCY紧急错误：节点 -> 主站
+
+        # CiA 402控制对象。SDO数据帧的字节1~2为索引低字节在前，字节3为子索引。
+        self.CONTROLWORD_INDEX = 0x6040          # 控制字UINT16：0x000F使能，0x0006失能
+        self.MODES_OF_OPERATION_INDEX = 0x6060   # 运行模式INT8：0x03为速度模式
+        self.TARGET_VELOCITY_INDEX = 0x60FF      # 目标速度INT32：电机定义的脉冲数
+        self.ACTUAL_VELOCITY_INDEX = 0x606C      # 实际速度INT32：电机定义的脉冲数
+        self.POLARITY_INDEX = 0x607E             # 方向UINT8：0逆时针正转，1顺时针反转
+        self.ACCELERATION_INDEX = 0x6083         # 加速度UINT32：DEC值，低字节在前
+        self.DECELERATION_INDEX = 0x6084         # 减速度UINT32：DEC值，低字节在前
+        self.ERROR_CODE_INDEX = 0x2601           # 厂家错误状态：读取2或4字节，按厂家协议解释
+
+        # SDO命令字节（command specifier），位于数据帧Byte0。
+        self.SDO_READ = 0x40                 # 上传读取请求：Byte4~7填0
+        self.SDO_WRITE_1 = 0x2F              # 加速写入1字节：Byte4有效
+        self.SDO_WRITE_2 = 0x2B              # 加速写入2字节：Byte4~5有效
+        self.SDO_WRITE_4 = 0x23              # 加速写入4字节：Byte4~7有效
+        self.SDO_WRITE_RESPONSE = 0x60       # 写入成功响应：索引、子索引和数据回显
+        self.SDO_READ_2_RESPONSE = 0x4B     # 读取2字节成功：数据位于Byte4~5
+        self.SDO_READ_4_RESPONSE = 0x43     # 读取4字节成功：数据位于Byte4~7
+        self.SDO_ABORT = 0x80                # SDO中止响应：中止码位于Byte4~7
+        self.CANOPEN_VELOCITY_MODE = 0x03   # CiA 402 Profile Velocity Mode
         
         # 机器人参数
         self.wheel_radius = 0.05  # 轮子半径（米）
@@ -164,7 +180,11 @@ class CanMotorDriver(Node):
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             try:
-                self.bus = can.Bus(interface='socketcan', channel=self.can_interface, bitrate=1000000)
+                self.bus = can.Bus(
+                    interface=self.can_bus_interface,
+                    channel=self.can_interface,
+                    bitrate=self.can_bitrate,
+                )
                 self.can_initialized = True
                 self.get_logger().info(f'CAN bus {self.can_interface} initialized successfully')
                 return True
@@ -203,7 +223,8 @@ class CanMotorDriver(Node):
             )
             self.get_logger().info(f"CAN interface {self.can_interface} down for reset")
             subprocess.run(
-                ["ip", "link", "set", self.can_interface, "up", "type", "can", "bitrate", "1000000"],
+                ["ip", "link", "set", self.can_interface, "up", "type", "can",
+                 "bitrate", str(self.can_bitrate)],
                 capture_output=True, timeout=5.0
             )
             self.get_logger().info(f"CAN interface {self.can_interface} up after reset")
@@ -224,67 +245,114 @@ class CanMotorDriver(Node):
             return False
 
         try:
-            # 确保数据长度为8字节
+            # CANopen使用标准11位帧，SDO数据固定为8字节。
             if len(data) < 8:
                 data = data.ljust(8, b'\x00')
             elif len(data) > 8:
                 data = data[:8]
 
-            msg = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
+            if not 0 <= can_id <= 0x7FF:
+                raise ValueError(f"CANopen COB-ID out of range: 0x{can_id:X}")
+
+            msg = can.Message(arbitration_id=can_id, data=data,
+                              is_extended_id=False)
             self.bus.send(msg)
             time.sleep(0.01)
             return True
         except Exception as e:
             err_str = str(e)
-            can_id_str = f"0x{can_id:08X}"
+            can_id_str = f"0x{can_id:03X}"
             self.get_logger().error(f"Failed to send CAN frame (ID={can_id_str}): {err_str}")
             # 不重置 can_initialized、不关闭 bus——单路电机断线不应影响其他电机
             return False
 
-    # -------------------------------------------------------------------------
-    # 【新增】清除电机故障（官方指令：04 + 数据01）
-    # -------------------------------------------------------------------------
-    def motor_clear_fault(self, motor_id: int) -> bool:
-        can_id = (0x04 << 24) | (self.motor_master_id << 8) | motor_id
-        data = b'\x01\x00\x00\x00\x00\x00\x00\x00'
-        ret = self.send_can_frame(can_id, data)
-        if ret:
-            self.get_logger().info(f"✅ 电机{motor_id} 清除故障指令已发送")
-        return ret
-
-    # -------------------------------------------------------------------------
-    # 【新增】解析故障帧 0x15006301 ~ 0x15006303
-    # -------------------------------------------------------------------------
-    def parse_motor_fault(self, can_id: int, data: bytes):
-        motor_id = (can_id >> 8) & 0xFF
-        fault = data[0]
-
+    def _get_motor(self, motor_id: int):
+        """Return the configured motor with the requested CANopen node ID."""
         for motor in self.motors:
             if motor["id"] == motor_id:
-                motor["fault_code"] = fault
-                break
+                return motor
+        return None
 
-        self.get_logger().error("======================================")
-        self.get_logger().error(f"电机 {motor_id} 故障帧：0x{can_id:08X}")
-        self.get_logger().error(f"故障码：0x{fault:02X}")
+    def _validate_motor_id(self, motor_id: int) -> bool:
+        """Check that a motor ID is a valid CANopen node ID."""
+        if not isinstance(motor_id, int) or not 1 <= motor_id <= 0x7F:
+            self.get_logger().error(f"Invalid CANopen motor ID: {motor_id}")
+            return False
+        return True
 
-        if fault == 0x00:
-            self.get_logger().info("✅ 无故障")
-        else:
-            if fault & (1 << 3):
-                self.get_logger().error("🚨 过压故障")
-            if fault & (1 << 2):
-                self.get_logger().error("🚨 欠压故障")
-            if fault & (1 << 1):
-                self.get_logger().error("🚨 驱动芯片故障")
-            if fault & (1 << 0):
-                self.get_logger().error("🚨 电机过温故障")
-            if fault & (1 << 7):
-                self.get_logger().error("🚨 编码器未标定")
-            if fault & (1 << 14):
-                self.get_logger().error("🚨 堵转/过载故障")
-        self.get_logger().error("======================================")
+    def _sdo_write(self, motor_id: int, index: int, subindex: int,
+                   command: int, value: bytes = b'') -> bool:
+        """Send one expedited SDO request to a motor node.
 
+        ``motor_id`` is appended to 0x600 to produce the standard SDO
+        request COB-ID.  The motor's 0x580 response is handled asynchronously
+        by ``parse_sdo_response`` in the receive thread.
+        """
+        if not self._validate_motor_id(motor_id):
+            return False
+        try:
+            data = build_sdo_frame(command, index, subindex, value)
+        except ValueError as exc:
+            self.get_logger().error(f"Invalid SDO write: {exc}")
+            return False
+        return self.send_can_frame(self.SDO_RX_BASE + motor_id, data)
+
+    def _sdo_read(self, motor_id: int, index: int, subindex: int) -> bool:
+        """Send an SDO upload request for one object dictionary entry."""
+        return self._sdo_write(motor_id, index, subindex, self.SDO_READ)
+
+    def _encode_uint32(self, value, name: str) -> Optional[bytes]:
+        """Encode a non-negative DEC value as four little-endian bytes."""
+        try:
+            numeric_value = int(round(float(value)))
+        except (OverflowError, TypeError, ValueError):
+            self.get_logger().error(f"Invalid {name}: {value!r}")
+            return None
+        if not 0 <= numeric_value <= 0xFFFFFFFF:
+            self.get_logger().error(f"{name} out of uint32 range: {value!r}")
+            return None
+        return numeric_value.to_bytes(4, byteorder='little', signed=False)
+
+    def _encode_int32(self, value, name: str) -> Optional[bytes]:
+        """Encode a signed DEC value as four little-endian bytes."""
+        try:
+            numeric_value = int(round(float(value)))
+        except (OverflowError, TypeError, ValueError):
+            self.get_logger().error(f"Invalid {name}: {value!r}")
+            return None
+        if not -0x80000000 <= numeric_value <= 0x7FFFFFFF:
+            self.get_logger().error(f"{name} out of int32 range: {value!r}")
+            return None
+        return numeric_value.to_bytes(4, byteorder='little', signed=True)
+
+    def motor_clear_fault(self, motor_id: int) -> bool:
+        """Request a CANopen fault reset with controlword value 0x0080."""
+        value = (0x80).to_bytes(2, byteorder='little')
+        return self._sdo_write(motor_id, self.CONTROLWORD_INDEX, 0,
+                                self.SDO_WRITE_2, value)
+
+    def parse_motor_fault(self, can_id: int, data: bytes):
+        """Parse a CANopen EMCY frame with COB-ID 0x080 plus node ID.
+
+        The first two data bytes are the little-endian emergency error code;
+        byte 2 is the error register.  Both are saved for diagnostics, while
+        ``fault_code`` keeps the existing ROS fault topic compatible.
+        """
+        # EMCY ID的低7位对应节点ID；数据帧Byte0~1为紧急错误码，
+        # Byte2为错误寄存器，Byte3~7为厂家定义的错误状态附加数据。
+        motor_id = can_id - self.EMCY_BASE
+        motor = self._get_motor(motor_id)
+        if motor is None or len(data) < 3:
+            return
+
+        emergency_code = int.from_bytes(data[0:2], byteorder='little')
+        error_register = data[2]
+        motor["fault_code"] = emergency_code
+
+        self.get_logger().error(
+            f"电机 {motor_id} EMCY故障：紧急错误码=0x{emergency_code:04X}, "
+            f"错误寄存器=0x{error_register:02X}"
+        )
         self.publish_motor_fault_codes()
 
     def publish_motor_fault_codes(self):
@@ -294,94 +362,103 @@ class CanMotorDriver(Node):
         self.motor_fault_publisher.publish(fault_msg)
 
     def motor_set_mode(self, motor_id: int, mode: int) -> bool:
-        """设置电机模式"""
-        # 构造CAN数据段（8字节）：0x7005索引 + 模式值
-        can_data = bytearray(8)
-        struct.pack_into("<H", can_data, 0, self.RUN_MODE_INDEX)  # 0x7005（小端）
-        struct.pack_into("<B", can_data, 4, mode)                # 模式值存Byte4
-        # 构造29位CAN ID（通信类型=0x12=参数写入，主机ID=0x0063，电机ID=motor_id）
-        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
-        # 发送CAN帧
-        return self.send_can_frame(can_id, can_data)
-
-    def motor_set_current_limit(self, motor_id: int, current_limit: float) -> bool:
-        """设置电机电流限制"""
-        can_data = bytearray(8)
-        struct.pack_into("<H", can_data, 0, self.LIMIT_CUR_INDEX)  # 0x7018（小端）
-        struct.pack_into("<f", can_data, 4, current_limit)         # 电流值（float）
-        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
-
-    def motor_set_other_param(self, motor_id: int, param_value: float) -> bool:
-        """设置电机其他参数"""
-        can_data = bytearray(8)
-        struct.pack_into("<H", can_data, 0, self.OTHER_PARAM_INDEX)  # 0x7022（小端）
-        struct.pack_into("<f", can_data, 4, param_value)            # 参数值（float）
-        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
+        """Set object 0x6060 to CANopen Profile Velocity Mode (value 3)."""
+        # 上层旧接口使用2表示速度模式；新电机要求写入CANopen值3。
+        if mode not in (2, self.CANOPEN_VELOCITY_MODE):
+            self.get_logger().error(f"Unsupported motor mode: {mode}")
+            return False
+        return self._sdo_write(
+            motor_id, self.MODES_OF_OPERATION_INDEX, 0,
+            self.SDO_WRITE_1, bytes((self.CANOPEN_VELOCITY_MODE,))
+        )
 
     def motor_set_speed(self, motor_id: int, speed: float) -> bool:
-        """设置电机速度"""
-        can_data = bytearray(8)
-        struct.pack_into("<H", can_data, 0, self.SPEED_REF_INDEX)  # 0x700A（小端）
-        struct.pack_into("<f", can_data, 4, speed)                 # 速度值（float）
-        can_id = (self.COMM_WRITE_PARAM << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
+        """Write target velocity 0x60FF as a signed pulse count.
+
+        The existing upper-layer speed value is multiplied by
+        ``velocity_ratio`` (default 10000) before it is encoded as INT32
+        little-endian data bytes.
+        """
+        try:
+            speed_value = float(speed)
+        except (TypeError, ValueError):
+            self.get_logger().error(f"Invalid target velocity: {speed!r}")
+            return False
+        if not math.isfinite(speed_value):
+            self.get_logger().error(f"Invalid target velocity: {speed!r}")
+            return False
+        target_pulses = speed_value * self.velocity_ratio
+        value = self._encode_int32(target_pulses, "target velocity")
+        if value is None:
+            return False
+        return self._sdo_write(
+            motor_id, self.TARGET_VELOCITY_INDEX, 0,
+            self.SDO_WRITE_4, value
+        )
+
+    def motor_set_direction(self, motor_id: int, reverse: bool = False) -> bool:
+        """Write polarity 0x607E: 0 is forward, 1 reverses rotation."""
+        value = bytes((1 if reverse else 0,))
+        return self._sdo_write(
+            motor_id, self.POLARITY_INDEX, 0, self.SDO_WRITE_1, value
+        )
+
+    def motor_set_acceleration(self, motor_id: int, acceleration) -> bool:
+        """Write the non-negative UINT32 acceleration DEC value to 0x6083."""
+        value = self._encode_uint32(acceleration, "acceleration")
+        if value is None:
+            return False
+        return self._sdo_write(
+            motor_id, self.ACCELERATION_INDEX, 0, self.SDO_WRITE_4, value
+        )
+
+    def motor_set_deceleration(self, motor_id: int, deceleration) -> bool:
+        """Write the non-negative UINT32 deceleration DEC value to 0x6084."""
+        value = self._encode_uint32(deceleration, "deceleration")
+        if value is None:
+            return False
+        return self._sdo_write(
+            motor_id, self.DECELERATION_INDEX, 0, self.SDO_WRITE_4, value
+        )
 
     def motor_query_feedback(self, motor_id: int) -> bool:
-        """主动查询电机反馈数据"""
-        can_data = bytearray(8)
-        can_data[0] = self.MC_CMD_QUERY_MOTOR  # 查询命令
-        can_data[1] = 0x00  # 命令子类型，0表示查询位置、速度、扭矩
-        # 构造29位CAN ID（通信类型=0x03=查询命令，主机ID=0x0063，电机ID=motor_id）
-        can_id = (self.MC_CMD_QUERY_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
+        """Read actual velocity 0x606C as a signed four-byte pulse value."""
+        return self._sdo_read(motor_id, self.ACTUAL_VELOCITY_INDEX, 0)
+
+    def motor_query_error_code(self, motor_id: int) -> bool:
+        """Read manufacturer error status object 0x2601 from one motor."""
+        return self._sdo_read(motor_id, self.ERROR_CODE_INDEX, 0)
 
     def motor_enable(self, motor_id: int) -> bool:
-        """使能电机"""
-        can_data = b'\x00' * 8  # 使能指令数据段全零
-        can_id = (self.COMM_ENABLE_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
+        """Enable one motor with controlword 0x000F."""
+        value = (0x000F).to_bytes(2, byteorder='little')
+        return self._sdo_write(
+            motor_id, self.CONTROLWORD_INDEX, 0,
+            self.SDO_WRITE_2, value
+        )
         
     def motor_disable(self, motor_id: int) -> bool:
-        """停止单个电机"""
-        can_data = b'\x80'+b'\x00' * 7
-        can_id = (self.COMM_DISABLE_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
-        return self.send_can_frame(can_id, can_data)
+        """Disable one motor with controlword 0x0006."""
+        value = (0x0006).to_bytes(2, byteorder='little')
+        return self._sdo_write(
+            motor_id, self.CONTROLWORD_INDEX, 0,
+            self.SDO_WRITE_2, value
+        )
 
     def initialize_motors(self):
         """初始化所有电机"""
         self.get_logger().info("Initializing motors...")
         time.sleep(3.0)  # 等待CAN接口就绪，与jifeng系统保持一致
-        
-        # 初始化左轮电机 (ID=1)
-        self.get_logger().info("Initializing left wheel motor (ID=1)...")
-        self.motor_set_mode(1, 2)  # 设置速度模式
-        time.sleep(0.01)
-        self.motor_enable(1)  # 使能电机
-        time.sleep(0.01)
-        self.motor_set_current_limit(1, 20.0)  # 设置电流限制
-        time.sleep(0.01)
 
-        # 初始化右轮电机 (ID=2)
-        self.get_logger().info("Initializing right wheel motor (ID=2)...")
-        self.motor_set_mode(2, 2)  # 设置速度模式
-        time.sleep(0.01)
-        self.motor_enable(2)  # 使能电机
-        time.sleep(0.01)
-        self.motor_set_current_limit(2, 20.0)  # 设置电流限制
-        time.sleep(0.01)
-
-        # 初始化前毛刷电机 (ID=3)
-        self.get_logger().info("Initializing front brush motor (ID=3)...")
-        self.motor_set_mode(3, 2)  # 设置速度模式
-        time.sleep(0.01)
-        self.motor_set_other_param(3, 15.0)  # 设置特定参数
-        time.sleep(0.01)
-        self.motor_enable(3)  # 使能电机
-        time.sleep(0.01)
-        self.motor_set_current_limit(3, 20.0)  # 设置电流限制
-        time.sleep(0.01)
+        for motor in self.motors:
+            motor_id = motor["id"]
+            self.get_logger().info(
+                f"Initializing CANopen motor (ID={motor_id})..."
+            )
+            self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
+            time.sleep(0.01)
+            self.motor_enable(motor_id)
+            time.sleep(0.01)
 
     def speed_command_callback(self, msg: Float32MultiArray):
         """处理速度命令回调函数"""
@@ -431,50 +508,72 @@ class CanMotorDriver(Node):
             if not result:
                 self.get_logger().error(f"Failed to query motor {motor['id']} feedback")
 
-    def parse_motor_feedback(self, can_id: int, data: bytearray):
-        """解析电机反馈数据（RS02协议 type2）"""
-        motor_id = (can_id >> 8) & 0xFF
+    def parse_motor_feedback(self, can_id: int, data: bytes):
+        """Parse the 0x606C SDO response used as actual motor velocity.
 
-        motor = None
-        for m in self.motors:
-            if m["id"] == motor_id:
-                motor = m
-                break
+        This wrapper preserves the old method name used by the driver while
+        delegating common SDO header decoding to ``parse_sdo_response``.
+        """
+        self.parse_sdo_response(can_id, data)
 
-        if motor is None:
+    def parse_sdo_response(self, can_id: int, data: bytes):
+        """Parse CANopen SDO responses for speed, faults, and aborts.
+
+        Bytes 1-3 identify the object dictionary entry.  A 0x43 response
+        carries a four-byte value at bytes 4-7; a 0x4B response carries a
+        two-byte value at bytes 4-5.  For error status 0x0001, the next two
+        bytes are treated as the manufacturer's extended error code.
+        """
+        # SDO响应格式：Byte0命令字，Byte1~2索引（小端），Byte3子索引，
+        # Byte4~7为对象数据或SDO中止码。
+        motor_id = can_id - self.SDO_TX_BASE
+        motor = self._get_motor(motor_id)
+        if motor is None or len(data) < 8:
             return
 
-        try:
-            # Byte0~1: 当前角度 [0~65535] → -12.57~12.57 rad
-            position_raw = (data[0] << 8) | data[1]
+        command = data[0]
+        index = int.from_bytes(data[1:3], byteorder='little')
+        subindex = data[3]
 
-            # Byte2~3: 当前角速度 [0~65535] → -44~44 rad/s
-            speed_raw = (data[2] << 8) | data[3]
+        if command == self.SDO_ABORT:
+            # 中止响应的数据区是32位错误码，按小端格式读取。
+            abort_code = int.from_bytes(data[4:8], byteorder='little')
+            self.get_logger().error(
+                f"电机 {motor_id} SDO读取/写入失败："
+                f"index=0x{index:04X}, subindex=0x{subindex:02X}, "
+                f"abort=0x{abort_code:08X}"
+            )
+            return
 
-            # Byte4~5: 当前力矩 [0~65535] → -17~17 Nm
-            torque_raw = (data[4] << 8) | data[5]
+        if command == self.SDO_WRITE_RESPONSE:
+            # 0x60表示写入成功；写入命令的回应不需要更新运行状态。
+            return
 
-            # Byte6~7: 当前温度 = raw / 10 (摄氏度)
-            temp_raw = (data[6] << 8) | data[7]
-            temp = temp_raw / 10.0
+        if index == self.ACTUAL_VELOCITY_INDEX and command == self.SDO_READ_4_RESPONSE:
+            # 0x606C是有符号32位脉冲值，换算后保持上层原有速度接口单位。
+            actual_pulses = decode_sdo_int32(data)
+            motor["actual_velocity"] = actual_pulses / self.velocity_ratio
+            motor["online"] = True
+            return
 
-            position = self.uint16_to_float(position_raw, -12.57, 12.57, 16)
-            speed = self.uint16_to_float(speed_raw, -44.0, 44.0, 16)
-            torque = self.uint16_to_float(torque_raw, -17.0, 17.0, 16)
+        if index != self.ERROR_CODE_INDEX or command not in (
+                self.SDO_READ_2_RESPONSE,
+                self.SDO_READ_4_RESPONSE,
+                self.SDO_WRITE_4):
+            return
 
-            motor["actual_position"] = position
-            motor["actual_velocity"] = speed
-            motor["actual_torque"] = torque
-            motor["actual_temperature"] = temp
+        if command == self.SDO_READ_2_RESPONSE:
+            # 0x4B响应只使用Byte4~5作为16位错误状态值。
+            error_status = int.from_bytes(data[4:6], byteorder='little')
+        else:
+            # 0x43或厂家资料列出的0x23响应使用Byte4~7作为32位状态值。
+            error_status = int.from_bytes(data[4:8], byteorder='little')
+            # 0x0001 indicates that the following two bytes are extended.
+            if (error_status & 0xFFFF) == 0x0001:
+                error_status = int.from_bytes(data[6:8], byteorder='little')
 
-        except Exception as e:
-            self.get_logger().warn(f"Error parsing motor {motor_id} feedback: {str(e)}")
-
-    def uint16_to_float(self, x, x_min, x_max, bits):
-        """将16位整数转换为浮点数"""
-        span = (1 << bits) - 1
-        offset = x_max - x_min
-        return offset * x / span + x_min
+        motor["fault_code"] = error_status
+        self.publish_motor_fault_codes()
 
     def update_odometry(self):
         """更新里程信息"""
@@ -485,7 +584,7 @@ class CanMotorDriver(Node):
         if dt <= 0:
             return
 
-        # 获取左右轮的实际速度（rad/s）
+        # 获取左右轮的实际速度（驱动层已按velocity_ratio换算）
         left_vel = self.motors[0]["actual_velocity"]  # 左轮电机在索引0
         right_vel = self.motors[1]["actual_velocity"]  # 右轮电机在索引1
 
@@ -577,13 +676,16 @@ class CanMotorDriver(Node):
                     if msg is not None:
                         consecutive_errors = 0  # 成功收到帧，清零错误计数
                         can_id = msg.arbitration_id
-                        cmd_type = (can_id >> 24) & 0xFF
 
-                        # 故障帧 0x15
-                        if cmd_type == 0x15:
+                        # CANopen EMCY：0x80 + 节点ID。
+                        if self.EMCY_BASE < can_id <= self.EMCY_BASE + 0x7F:
                             self.parse_motor_fault(can_id, msg.data)
-                        elif cmd_type == 0x2:
-                            self.parse_motor_feedback(can_id, msg.data)
+                        # CANopen SDO响应：0x580 + 节点ID。
+                        elif (
+                            self.SDO_TX_BASE < can_id
+                            <= self.SDO_TX_BASE + 0x7F
+                        ):
+                            self.parse_sdo_response(can_id, msg.data)
                 else:
                     time.sleep(0.1)
             except Exception as e:
@@ -619,6 +721,9 @@ class CanMotorDriver(Node):
         """定时器回调函数，发送速度命令并发布电机状态"""
         # 发送速度命令给所有电机
         self.send_speed_commands()
+
+        # CANopen没有旧协议的周期反馈帧，需要主动读取0x606C。
+        self.query_motor_feedback()
         
         # 更新里程信息
         self.update_odometry()
@@ -628,17 +733,17 @@ class CanMotorDriver(Node):
         velocity_msg.data = [float(m["actual_velocity"]) for m in self.motors]
         self.velocity_publisher.publish(velocity_msg)
         
-        # 发布电机反馈信息（位置、速度、扭矩、温度）- 按电机ID分组
+        # 保留原反馈消息布局：[电机ID, 位置, 速度, 扭矩, 温度]。
+        # 新CANopen指令未提供位置、扭矩、温度，因此这些字段发布为0.0。
         feedback_msg = Float32MultiArray()
-        # 每个电机的数据按顺序：[电机ID, 位置, 速度, 扭矩, 温度]
         feedback_data = []
         for motor in self.motors:
             feedback_data.extend([
                 float(motor["id"]),               # 电机ID
-                motor["actual_position"],         # 位置
-                motor["actual_velocity"],         # 速度
-                motor["actual_torque"],           # 扭矩
-                motor["actual_temperature"]       # 温度
+                0.0,                               # 当前协议未读取位置
+                motor["actual_velocity"],         # 0x606C实际速度
+                0.0,                               # 当前协议未读取扭矩
+                0.0                                # 当前协议未读取温度
             ])
         feedback_msg.data = feedback_data
         self.motor_feedback_publisher.publish(feedback_msg)
