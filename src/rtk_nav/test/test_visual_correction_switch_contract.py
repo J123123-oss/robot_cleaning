@@ -244,8 +244,12 @@ def test_line_detector_subscribes_to_nav_state_for_lateral_gate():
     assert "'/rtk/nav_state'" in initializer
     assert "parse_nav_state_message" in callback
     assert "reset_line_tracking" in callback
+    assert "initial_lateral_offset_m = None" in callback
     assert "nav_state_allows_lateral_output" in detector
     assert "lateral_state_valid" in detector
+    assert "capture_initial_lateral_offset" in detector
+    assert "calculate_relative_lateral_offset" in detector
+    assert "output_lateral = relative_lateral_m if lateral_valid else 0.0" in detector
 
 
 def test_line_detector_keeps_eight_degree_line_angle_tolerance():

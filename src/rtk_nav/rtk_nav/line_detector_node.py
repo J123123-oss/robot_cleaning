@@ -50,6 +50,39 @@ def nav_state_allows_lateral_output(nav_state):
     return str(nav_state).strip().upper() == WAYPOINT_MOVE_STATE
 
 
+def capture_initial_lateral_offset(nav_state, lateral_m, initial_lateral_m):
+    """在航点移动状态下捕获一次首个有效横向偏移作为相对零点。"""
+    if initial_lateral_m is not None:
+        return initial_lateral_m
+    if not nav_state_allows_lateral_output(nav_state):
+        return None
+    try:
+        lateral_m = float(lateral_m)
+    except (TypeError, ValueError):
+        return None
+    return lateral_m if math.isfinite(lateral_m) else None
+
+
+def calculate_relative_lateral_offset(
+    nav_state, lateral_m, initial_lateral_m
+):
+    """计算相对本次航点移动初始位置的横向偏移。"""
+    if (
+        not nav_state_allows_lateral_output(nav_state)
+        or initial_lateral_m is None
+    ):
+        return float('nan')
+    try:
+        relative_lateral_m = float(lateral_m) - float(initial_lateral_m)
+    except (TypeError, ValueError):
+        return float('nan')
+    return (
+        relative_lateral_m
+        if math.isfinite(relative_lateral_m)
+        else float('nan')
+    )
+
+
 def resolve_effective_path_axis_image(
     path_context_valid,
     last_path_context_time,
@@ -871,10 +904,13 @@ class GridLineDetector(Node):
         self.last_path_relative_heading_deg = None
         # 横向纠偏只允许在 RTK 的实际航点移动状态中生效。
         self.nav_state = None
+        # 每次进入 WAYPOINT_MOVE 后，以首个有效视觉偏移作为相对零点。
+        self.initial_lateral_offset_m = None
         self.path_reference_lateral_m = 0.0
         self.path_reference_projection_ratio = 0.0
         self.path_reference_valid = False
         self.last_path_reference_time = 0.0
+        self.last_absolute_lateral_m = None
         self.valid_streak = 0
         self.heading_valid_streak = 0
         self.lateral_valid_streak = 0
@@ -955,17 +991,21 @@ class GridLineDetector(Node):
             lateral_confidence_msg.data = float(lateral_confidence_value)
             self.lateral_confidence_pub.publish(lateral_confidence_msg)
 
+            absolute_lateral_m = self.last_absolute_lateral_m
             if (
                 lateral_validity
+                and absolute_lateral_m is not None
+                and math.isfinite(absolute_lateral_m)
                 and self.path_reference_valid
                 and time.monotonic() - self.last_path_reference_time
                 <= self.path_context_timeout_sec
             ):
-                delta = lateral_m - self.path_reference_lateral_m
+                delta = absolute_lateral_m - self.path_reference_lateral_m
                 self.get_logger().debug(
                     f'RTK reference lateral={self.path_reference_lateral_m:.3f}m '
                     f'projection={self.path_reference_projection_ratio:.3f} '
-                    f'visual lateral={lateral_m:.3f}m delta={delta:.3f}m',
+                    f'visual absolute lateral={absolute_lateral_m:.3f}m '
+                    f'relative={lateral_m:.3f}m delta={delta:.3f}m',
                     throttle_duration_sec=1.0,
                 )
         except Exception as exc:
@@ -1024,14 +1064,16 @@ class GridLineDetector(Node):
         self.last_path_context_time = time.monotonic()
 
     def nav_state_callback(self, msg):
-        """接收 RTK 导航状态，并在状态切换时清除视觉跟踪锚点。"""
+        """接收导航状态，并在状态切换时清除跟踪锚点和横向零点。"""
         state = parse_nav_state_message(getattr(msg, 'data', None))
         if state is None:
             self.nav_state = None
+            self.initial_lateral_offset_m = None
             self.reset_line_tracking()
             return
         if state != self.nav_state:
             self.reset_line_tracking()
+            self.initial_lateral_offset_m = None
         self.nav_state = state
 
     def path_reference_callback(self, msg):
@@ -1281,6 +1323,7 @@ class GridLineDetector(Node):
     def detect_and_draw_grid_lines(self, image):
         """检测粗白光伏结构线并计算路径感知纠偏量。"""
         height, width = image.shape[:2]
+        self.last_absolute_lateral_m = None
         # Generate debug frames at the compressed input processing rate.
         # Publication is asynchronous and never blocks the detector timer.
         debug_due = (
@@ -1627,6 +1670,24 @@ class GridLineDetector(Node):
             )
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
+        self.initial_lateral_offset_m = capture_initial_lateral_offset(
+            self.nav_state,
+            lateral_m,
+            self.initial_lateral_offset_m,
+        )
+        self.last_absolute_lateral_m = lateral_m
+        relative_lateral_m = calculate_relative_lateral_offset(
+            self.nav_state,
+            lateral_m,
+            self.initial_lateral_offset_m,
+        )
+        lateral_reference_valid = math.isfinite(relative_lateral_m)
+        initial_lateral_text = (
+            'unset'
+            if self.initial_lateral_offset_m is None
+            else f'{self.initial_lateral_offset_m:.3f}'
+        )
+
         # Apply the navigation-state gate to every correction output so a
         # stale streak cannot expose angle or lateral data outside motion.
         heading_valid = (
@@ -1636,10 +1697,11 @@ class GridLineDetector(Node):
         lateral_valid = (
             lateral_state_valid
             and self.lateral_valid_streak >= self.reacquire_frames
+            and lateral_reference_valid
         )
         detected = heading_valid
         output_angle = heading_error if heading_valid else 0.0
-        output_lateral = lateral_m if lateral_valid else 0.0
+        output_lateral = relative_lateral_m if lateral_valid else 0.0
         heading_confidence = 0.0
         lateral_confidence = 0.0
         if heading_valid:
@@ -1662,6 +1724,8 @@ class GridLineDetector(Node):
             f'streak={self.valid_streak}/{self.reacquire_frames} '
             f'detected={detected} lateral_px={lateral_pixel_error:.1f} '
             f'lateral_m={lateral_m:.3f} '
+            f'initial_lateral={initial_lateral_text} '
+            f'relative_lateral={relative_lateral_m:.3f} '
             f'heading_valid={heading_valid} lateral_valid={lateral_valid}'
         )
 
