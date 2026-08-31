@@ -103,6 +103,12 @@ class PathAwareBoundaryContractTest(unittest.TestCase):
                 for call in subscriptions
             )
         )
+        self.assertTrue(
+            any(
+                _call_contains_string(call, "/rtk/nav_state")
+                for call in subscriptions
+            )
+        )
         self.assertIn("create_subscription", initializer_source)
         declared = _declared_parameter_names(initializer)
         for name in (

@@ -72,8 +72,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=DEFAULT_DEVICE,
         help=f"V4L2 output device (default: {DEFAULT_DEVICE})",
     )
-    parser.add_argument("--width", default=360, type=even_positive_int)
-    parser.add_argument("--height", default=640, type=positive_int)
+    parser.add_argument("--width", default=720, type=even_positive_int)
+    parser.add_argument("--height", default=1280, type=positive_int)
     parser.add_argument("--fps", default=30, type=positive_int)
     parser.add_argument(
         "--speed",

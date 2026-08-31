@@ -4,6 +4,7 @@
 # you may not use this file except in compliance with the License.
 
 import ast
+import json
 import math
 import unittest
 from pathlib import Path
@@ -18,7 +19,13 @@ def _helpers():
         "wrap180",
         "undirected_angle",
         "undirected_angle_distance",
+        "line_salience_score",
+        "select_most_salient_line",
         "line_normal_offset_at_reference",
+        "select_line_for_tracking",
+        "update_line_tracking_state",
+        "parse_nav_state_message",
+        "nav_state_allows_lateral_output",
         "select_boundary_pair",
         "select_reference_line",
     }
@@ -26,7 +33,11 @@ def _helpers():
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in names
     ]
-    namespace = {"math": math}
+    namespace = {
+        "json": json,
+        "math": math,
+        "WAYPOINT_MOVE_STATE": "WAYPOINT_MOVE",
+    }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE_PATH), "exec"), namespace)
     return namespace
 
@@ -37,6 +48,161 @@ def test_path_angles_use_undirected_180_degree_geometry():
     assert helpers["wrap180"](-190.0) == 170.0
     assert helpers["undirected_angle_distance"](0.0, 180.0) == 0.0
     assert helpers["undirected_angle_distance"](0.0, 90.0) == 90.0
+
+
+def test_single_line_selection_prefers_long_wide_well_supported_line():
+    helpers = _helpers()
+    shorter = (100, 0, 300, 480, 520.0, 90.0, 200.0, 240.0, 12.0, 0.95)
+    strongest = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 20.0, 0.95)
+    weaker_support = (500, 0, 500, 400, 400.0, 90.0, 500.0, 200.0, 20.0, 0.50)
+
+    selected = helpers["select_most_salient_line"](
+        [shorter, strongest, weaker_support]
+    )
+
+    assert selected == strongest
+
+
+def test_single_line_offset_is_measured_from_image_center():
+    helpers = _helpers()
+    center_line = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 12.0, 0.95)
+    shifted_line = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0, 12.0, 0.95)
+
+    center_offset = helpers["line_normal_offset_at_reference"](
+        center_line, 90.0, 640, 480, 0.0
+    )
+    shifted_offset = helpers["line_normal_offset_at_reference"](
+        shifted_line, 90.0, 640, 480, 0.0
+    )
+
+    assert math.isclose(center_offset, 0.0, abs_tol=1e-9)
+    assert math.isclose(shifted_offset, 20.0, abs_tol=1e-9)
+
+
+def test_tracking_prefers_previous_line_over_a_stronger_adjacent_line():
+    helpers = _helpers()
+    tracked = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0, 5.0, 0.80)
+    adjacent = (450, 0, 450, 480, 480.0, 90.0, 450.0, 240.0, 30.0, 1.00)
+
+    selected = helpers["select_line_for_tracking"](
+        [tracked, adjacent],
+        90.0,
+        640,
+        480,
+        previous_offset_px=20.0,
+        max_jump_px=30.0,
+    )
+
+    assert selected is not None
+    assert selected[0] == tracked
+    assert math.isclose(selected[1], 20.0, abs_tol=1e-9)
+
+
+def test_tracking_rejects_candidates_that_jump_beyond_gate():
+    helpers = _helpers()
+    line = (450, 0, 450, 480, 480.0, 90.0, 450.0, 240.0, 30.0, 1.00)
+
+    assert (
+        helpers["select_line_for_tracking"](
+            [line],
+            90.0,
+            640,
+            480,
+            previous_offset_px=20.0,
+            max_jump_px=30.0,
+        )
+        is None
+    )
+
+
+def test_tracking_reacquires_only_near_the_last_valid_anchor():
+    helpers = _helpers()
+    initial = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0, 5.0, 0.80)
+    adjacent = (450, 0, 450, 480, 480.0, 90.0, 450.0, 240.0, 30.0, 1.00)
+    nearby = (305, 0, 305, 480, 480.0, 90.0, 305.0, 240.0, 5.0, 0.80)
+
+    selected, anchor, missed, status = helpers["update_line_tracking_state"](
+        [initial], 90.0, 640, 480, max_jump_px=30.0, max_missed_frames=2
+    )
+    assert selected == initial
+    assert math.isclose(anchor, 20.0, abs_tol=1e-9)
+    assert missed == 0
+    assert status == "acquired"
+
+    selected, anchor, missed, status = helpers["update_line_tracking_state"](
+        [adjacent],
+        90.0,
+        640,
+        480,
+        previous_offset_px=anchor,
+        missed_frames=0,
+        max_jump_px=30.0,
+        max_missed_frames=2,
+    )
+    assert selected is None
+    assert math.isclose(anchor, 20.0, abs_tol=1e-9)
+    assert missed == 1
+    assert status == "rejected"
+
+    selected, anchor, missed, status = helpers["update_line_tracking_state"](
+        [],
+        90.0,
+        640,
+        480,
+        previous_offset_px=anchor,
+        missed_frames=missed,
+        max_jump_px=30.0,
+        max_missed_frames=2,
+    )
+    assert selected is None
+    assert math.isclose(anchor, 20.0, abs_tol=1e-9)
+    assert missed == 2
+    assert status == "reacquire"
+
+    selected, anchor, missed, status = helpers["update_line_tracking_state"](
+        [nearby],
+        90.0,
+        640,
+        480,
+        previous_offset_px=anchor,
+        missed_frames=missed,
+        max_jump_px=30.0,
+        max_missed_frames=2,
+    )
+    assert selected == nearby
+    assert math.isclose(anchor, 15.0, abs_tol=1e-9)
+    assert missed == 0
+    assert status == "reacquired"
+
+
+def test_nav_state_parser_accepts_rtk_json_and_manual_plain_text():
+    helpers = _helpers()
+    parse_state = helpers["parse_nav_state_message"]
+
+    assert parse_state('{"nav_state":"WAYPOINT_MOVE","seq":3}') == (
+        "WAYPOINT_MOVE"
+    )
+    assert parse_state(" waypoint_move ") == "WAYPOINT_MOVE"
+    assert parse_state('{"nav_state":"PAUSE"}') == "PAUSE"
+    assert parse_state('{"pause_reason":"test"}') is None
+    assert parse_state("") is None
+
+
+def test_only_waypoint_move_allows_lateral_output():
+    helpers = _helpers()
+    allows_lateral = helpers["nav_state_allows_lateral_output"]
+
+    assert allows_lateral("WAYPOINT_MOVE")
+    assert allows_lateral("waypoint_move")
+    for state in (
+        None,
+        "IDLE",
+        "INITIAL_MOVE",
+        "WAYPOINT_CALIB",
+        "PAUSE",
+        "COMPLETED",
+    ):
+        assert not allows_lateral(state)
 
 
 def test_boundary_pair_center_is_zero_when_boundaries_are_symmetric():

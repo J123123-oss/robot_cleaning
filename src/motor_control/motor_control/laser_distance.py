@@ -30,7 +30,14 @@ class LaserDistanceNode(Node):
         # 1. 声明并获取串口参数（支持launch配置）
         self.declare_parameter('serial_port', '/dev/laser')
         self.declare_parameter('baud_rate', 115200)
-        self.declare_parameter('laser_log_dir', '/home/ztl/robot_cleaning/motor_start_log/laser_log')
+        state_dir = os.environ.get(
+            'XDG_STATE_HOME',
+            os.path.join(os.path.expanduser('~'), '.local', 'state'),
+        )
+        self.declare_parameter(
+            'laser_log_dir',
+            os.path.join(state_dir, 'robot_cleaning', 'laser'),
+        )
 
         self.serial_port = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baud_rate = self.get_parameter('baud_rate').get_parameter_value().integer_value

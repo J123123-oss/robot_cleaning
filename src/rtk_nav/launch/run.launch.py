@@ -29,6 +29,14 @@ def generate_launch_description():
         default_value=TextSubstitution(text="true"),
         description="Bypass RTK path context gate for visual line testing",
     )
+    declare_fallback_path_axis_arg = DeclareLaunchArgument(
+        "fallback_path_axis_image_deg",
+        default_value=TextSubstitution(text="0.0"),
+        description=(
+            "Fallback motion axis in the image: 0 degrees right, "
+            "90 degrees down"
+        ),
+    )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
         "stanley_k_path",
@@ -90,10 +98,45 @@ def generate_launch_description():
         default_value=TextSubstitution(text="80"),
         description="JPEG quality for the compressed camera topic",
     )
+    declare_camera_crop_x_arg = DeclareLaunchArgument(
+        "camera_crop_x",
+        default_value=TextSubstitution(text="0"),
+        description="Camera ROI horizontal origin before translation",
+    )
+    declare_camera_crop_y_arg = DeclareLaunchArgument(
+        "camera_crop_y",
+        default_value=TextSubstitution(text="0"),
+        description="Camera ROI vertical origin before translation",
+    )
+    declare_camera_translate_x_arg = DeclareLaunchArgument(
+        "camera_translate_x",
+        default_value=TextSubstitution(text="0"),
+        description="Camera ROI horizontal translation",
+    )
+    declare_camera_translate_y_arg = DeclareLaunchArgument(
+        "camera_translate_y",
+        default_value=TextSubstitution(text="0"),
+        description="Camera ROI vertical translation",
+    )
     declare_detection_fps_arg = DeclareLaunchArgument(
         "detection_fps",
         default_value=TextSubstitution(text="30.0"),
         description="Grid line detection timer FPS",
+    )
+    declare_line_tracking_enabled_arg = DeclareLaunchArgument(
+        "line_tracking_enabled",
+        default_value=TextSubstitution(text="true"),
+        description="Track one parallel line across frames",
+    )
+    declare_line_tracking_jump_arg = DeclareLaunchArgument(
+        "max_line_tracking_jump_px",
+        default_value=TextSubstitution(text="30.0"),
+        description="Maximum accepted line-normal jump in pixels",
+    )
+    declare_line_tracking_missed_arg = DeclareLaunchArgument(
+        "max_line_tracking_missed_frames",
+        default_value=TextSubstitution(text="2"),
+        description="Missed frames before constrained line reacquisition",
     )
     declare_publish_debug_images_arg = DeclareLaunchArgument(
         "publish_debug_images",
@@ -240,12 +283,27 @@ def generate_launch_description():
                 'detection_fps': ParameterValue(
                     LaunchConfiguration('detection_fps'), value_type=float
                 ),
+                'line_tracking_enabled': ParameterValue(
+                    LaunchConfiguration('line_tracking_enabled'), value_type=bool
+                ),
+                'max_line_tracking_jump_px': ParameterValue(
+                    LaunchConfiguration('max_line_tracking_jump_px'),
+                    value_type=float,
+                ),
+                'max_line_tracking_missed_frames': ParameterValue(
+                    LaunchConfiguration('max_line_tracking_missed_frames'),
+                    value_type=int,
+                ),
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
                 ),
                 'bypass_path_context_gate': ParameterValue(
                     LaunchConfiguration("bypass_path_context_gate"),
                     value_type=bool,
+                ),
+                'fallback_path_axis_image_deg': ParameterValue(
+                    LaunchConfiguration("fallback_path_axis_image_deg"),
+                    value_type=float,
                 ),
                 'target_line_offset_m': ParameterValue(
                     LaunchConfiguration("target_line_offset_m"),
@@ -284,6 +342,18 @@ def generate_launch_description():
                 'jpeg_quality': ParameterValue(
                     LaunchConfiguration('camera_jpeg_quality'), value_type=int
                 ),
+                'crop_x': ParameterValue(
+                    LaunchConfiguration('camera_crop_x'), value_type=int
+                ),
+                'crop_y': ParameterValue(
+                    LaunchConfiguration('camera_crop_y'), value_type=int
+                ),
+                'translate_x': ParameterValue(
+                    LaunchConfiguration('camera_translate_x'), value_type=int
+                ),
+                'translate_y': ParameterValue(
+                    LaunchConfiguration('camera_translate_y'), value_type=int
+                ),
             },
         ],
     )
@@ -319,6 +389,7 @@ def generate_launch_description():
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
+    ld.add_action(declare_fallback_path_axis_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
     ld.add_action(declare_visual_heading_gain_arg)
@@ -331,7 +402,14 @@ def generate_launch_description():
     ld.add_action(declare_camera_fps_arg)
     ld.add_action(declare_camera_image_path_arg)
     ld.add_action(declare_camera_jpeg_quality_arg)
+    ld.add_action(declare_camera_crop_x_arg)
+    ld.add_action(declare_camera_crop_y_arg)
+    ld.add_action(declare_camera_translate_x_arg)
+    ld.add_action(declare_camera_translate_y_arg)
     ld.add_action(declare_detection_fps_arg)
+    ld.add_action(declare_line_tracking_enabled_arg)
+    ld.add_action(declare_line_tracking_jump_arg)
+    ld.add_action(declare_line_tracking_missed_arg)
     ld.add_action(declare_publish_debug_images_arg)
     ld.add_action(declare_target_line_offset_arg)
     ld.add_action(declare_target_line_tolerance_arg)

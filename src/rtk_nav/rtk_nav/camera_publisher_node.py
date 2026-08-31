@@ -11,7 +11,7 @@ import cv2
 
 
 def load_static_image(image_path):
-    """Load a static image as a BGR OpenCV frame."""
+    """读取静态图片，并返回 BGR 格式的 OpenCV 图像。"""
     frame = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if frame is None:
         raise RuntimeError(f"无法读取图片文件: {image_path}")
@@ -19,7 +19,7 @@ def load_static_image(image_path):
 
 
 def resize_frame_to_output(frame, width, height):
-    """Resize a captured BGR frame without cropping or adding borders."""
+    """将 BGR 图像调整为固定输出尺寸，不裁剪、不添加边框。"""
     target_width = int(width)
     target_height = int(height)
     if target_width <= 0 or target_height <= 0:
@@ -33,6 +33,34 @@ def resize_frame_to_output(frame, width, height):
     )
 
 
+def calculate_roi_origin(
+    source_width,
+    source_height,
+    output_width,
+    output_height,
+    crop_x,
+    crop_y,
+    translate_x,
+    translate_y,
+):
+    """计算固定尺寸 ROI 的左上角，并将坐标限制在源图像边界内。"""
+    output_width = int(output_width)
+    output_height = int(output_height)
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("output image dimensions must be positive")
+    if output_width > int(source_width) or output_height > int(source_height):
+        raise ValueError("source image is smaller than the requested output")
+
+    max_x = int(source_width) - output_width
+    max_y = int(source_height) - output_height
+    requested_x = int(round(float(crop_x) + float(translate_x)))
+    requested_y = int(round(float(crop_y) + float(translate_y)))
+    return (
+        max(0, min(max_x, requested_x)),
+        max(0, min(max_y, requested_y)),
+    )
+
+
 def extract_translated_roi(
     source,
     crop_x,
@@ -42,7 +70,7 @@ def extract_translated_roi(
     translate_x,
     translate_y,
 ):
-    """Extract a fixed-size ROI using only valid pixels from the source image."""
+    """从源图像提取固定尺寸 ROI，只使用边界内的有效像素。"""
     source_height, source_width = source.shape[:2]
     output_width = int(output_width)
     output_height = int(output_height)
@@ -51,20 +79,56 @@ def extract_translated_roi(
     if output_width > source_width or output_height > source_height:
         raise ValueError("source image is smaller than the requested output")
 
-    max_x = source_width - output_width
-    max_y = source_height - output_height
-    origin_x = int(round(float(crop_x) + float(translate_x)))
-    origin_y = int(round(float(crop_y) + float(translate_y)))
-    origin_x = max(0, min(max_x, origin_x))
-    origin_y = max(0, min(max_y, origin_y))
+    origin_x, origin_y = calculate_roi_origin(
+        source_width,
+        source_height,
+        output_width,
+        output_height,
+        crop_x,
+        crop_y,
+        translate_x,
+        translate_y,
+    )
     return source[
         origin_y:origin_y + output_height,
         origin_x:origin_x + output_width,
     ].copy()
 
 
+def prepare_output_frame(
+    source,
+    crop_x,
+    crop_y,
+    output_width,
+    output_height,
+    translate_x,
+    translate_y,
+):
+    """按 ROI 平移取图；输入不足时直接缩放，并保持固定输出尺寸。"""
+    source_height, source_width = source.shape[:2]
+    output_width = int(output_width)
+    output_height = int(output_height)
+
+    if source_width >= output_width and source_height >= output_height:
+        frame = extract_translated_roi(
+            source,
+            crop_x,
+            crop_y,
+            output_width,
+            output_height,
+            translate_x,
+            translate_y,
+        )
+    else:
+        # A smaller source cannot provide a valid fixed-size ROI. Resizing
+        # keeps the stream alive without introducing borders or edge replication.
+        frame = source
+
+    return resize_frame_to_output(frame, output_width, output_height)
+
+
 def build_gstreamer_pipeline(device_id, pixel_format=''):
-    """Read the device's native frame size and resize after capture."""
+    """构造 GStreamer 管道，读取设备原始尺寸并在 Python 中处理 ROI。"""
     source_caps = 'video/x-raw'
     if pixel_format:
         source_caps += f',format={pixel_format}'
@@ -77,21 +141,35 @@ def build_gstreamer_pipeline(device_id, pixel_format=''):
 
 class CameraPublisherNode(Node):
     def __init__(self):
+        """初始化相机输入、图像处理参数、压缩发布器和定时器。"""
         super().__init__('camera_publisher')
 
         # 获取参数
-        self.declare_parameter('device_id', 0)  # 默认设备ID为0 (/dev/video0)
+        # V4L2 设备编号；0 对应 /dev/video0。
+        self.declare_parameter('device_id', 0)
+        # 发布图像的固定宽度，单位为像素。
         self.declare_parameter('width', 360)
+        # 发布图像的固定高度，单位为像素。
         self.declare_parameter('height', 640)
+        # 相机读取、处理和发布的目标频率，单位为 FPS。
         self.declare_parameter('fps', 30)
+        # 静态图片路径；为空字符串时读取实时 V4L2 设备。
         self.declare_parameter('image_path', '')
+        # JPEG 压缩质量，取值范围为 1 到 100。
         self.declare_parameter('jpeg_quality', 80)
+        # ROI 的基础左上角 X 坐标，单位为源图像像素。
         self.declare_parameter('crop_x', 0)
+        # ROI 的基础左上角 Y 坐标，单位为源图像像素。
         self.declare_parameter('crop_y', 0)
+        # 在 crop_x 基础上的水平平移量，单位为源图像像素。
         self.declare_parameter('translate_x', 0)
+        # 在 crop_y 基础上的垂直平移量，单位为源图像像素。
         self.declare_parameter('translate_y', 0)
+        # 非 GStreamer 采集时请求的 V4L2 像素格式；为空使用设备默认格式。
         self.declare_parameter('pixel_format', '')
+        # 是否使用 GStreamer 读取设备；启用时保留设备原始采集尺寸。
         self.declare_parameter('use_gstreamer', True)
+        # OpenCV I/O 模式预留参数，当前由 GStreamer/默认后端决定。
         self.declare_parameter('io_mode', 0)
 
         self.device_id = self.get_parameter('device_id').get_parameter_value().integer_value
@@ -113,18 +191,11 @@ class CameraPublisherNode(Node):
 
         self.cap = None
         self.static_frame = None
+        self._processing_logged = False
 
         if self.image_path:
             self.static_frame = load_static_image(self.image_path)
-            extract_translated_roi(
-                self.static_frame,
-                self.crop_x,
-                self.crop_y,
-                self.width,
-                self.height,
-                self.translate_x,
-                self.translate_y,
-            )
+            self._process_frame(self.static_frame)
             actual_height, actual_width = self.static_frame.shape[:2]
             actual_fps = self.fps
             self.get_logger().info(f"使用静态图片: {self.image_path}")
@@ -182,8 +253,16 @@ class CameraPublisherNode(Node):
                     self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 except Exception as exc:
                     self.get_logger().debug(f"设置相机缓冲区深度失败: {exc}")
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                requested_origin_x = int(
+                    round(float(self.crop_x) + float(self.translate_x))
+                )
+                requested_origin_y = int(
+                    round(float(self.crop_y) + float(self.translate_y))
+                )
+                capture_width = self.width + max(0, requested_origin_x)
+                capture_height = self.height + max(0, requested_origin_y)
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps)
 
             actual_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -214,17 +293,9 @@ class CameraPublisherNode(Node):
         self.frame_count = 0
 
     def timer_callback(self):
-        """定时器回调函数"""
+        """按目标频率读取一帧，处理 ROI，JPEG 编码并发布压缩图像。"""
         if self.static_frame is not None:
-            frame = extract_translated_roi(
-                self.static_frame,
-                self.crop_x,
-                self.crop_y,
-                self.width,
-                self.height,
-                self.translate_x,
-                self.translate_y,
-            )
+            frame = self.static_frame
         else:
             # 读取摄像头帧
             ret, frame = self.cap.read()
@@ -233,7 +304,7 @@ class CameraPublisherNode(Node):
                 self.get_logger().warn("无法从摄像头读取帧", throttle_duration_sec=1)
                 return
 
-        frame = resize_frame_to_output(frame, self.width, self.height)
+        frame = self._process_frame(frame)
 
         # 每30帧记录一次日志
         self.frame_count += 1
@@ -259,13 +330,63 @@ class CameraPublisherNode(Node):
         except Exception as e:
             self.get_logger().error(f"图像转换或发布过程中出现错误: {str(e)}")
 
+    def _process_frame(self, frame):
+        """处理单帧源图像，并首次记录输入尺寸、ROI 坐标和输出尺寸。"""
+        source_height, source_width = frame.shape[:2]
+        has_valid_roi = (
+            source_width >= self.width and source_height >= self.height
+        )
+        if not self._processing_logged:
+            requested_x = int(
+                round(float(self.crop_x) + float(self.translate_x))
+            )
+            requested_y = int(
+                round(float(self.crop_y) + float(self.translate_y))
+            )
+            if has_valid_roi:
+                origin_x, origin_y = calculate_roi_origin(
+                    source_width,
+                    source_height,
+                    self.width,
+                    self.height,
+                    self.crop_x,
+                    self.crop_y,
+                    self.translate_x,
+                    self.translate_y,
+                )
+                self.get_logger().info(
+                    f"图像处理: 输入={source_width}x{source_height}, "
+                    f"请求ROI起点=({requested_x},{requested_y}), "
+                    f"实际ROI起点=({origin_x},{origin_y}), "
+                    f"输出={self.width}x{self.height}"
+                )
+            else:
+                self.get_logger().warn(
+                    f"输入帧 {source_width}x{source_height} 小于ROI/输出 "
+                    f"{self.width}x{self.height}; 将跳过裁剪并直接缩放，"
+                    "平移参数在当前采集分辨率下无法生效"
+                )
+            self._processing_logged = True
+
+        return prepare_output_frame(
+            frame,
+            self.crop_x,
+            self.crop_y,
+            self.width,
+            self.height,
+            self.translate_x,
+            self.translate_y,
+        )
+
     def destroy_node(self):
+        """释放视频采集设备，并销毁 ROS 节点资源。"""
         # 释放摄像头资源
         if self.cap is not None:
             self.cap.release()
         super().destroy_node()
 
 def main(args=None):
+    """初始化 ROS 2，运行相机发布节点，并在退出时释放资源。"""
     rclpy.init(args=args)
     node = None
 

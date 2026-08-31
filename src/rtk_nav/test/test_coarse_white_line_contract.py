@@ -223,7 +223,8 @@ class CoarseWhiteLineContractTest(unittest.TestCase):
                 for token in ("cv2.inRange", "COLOR_BGR2HSV", "COLOR_BGR2Lab")
             )
         )
-        self.assertIn("weighted_line_angle(parallel_group)", detector)
+        self.assertIn("choose_parallel_line", detector)
+        self.assertIn("selected_line_offset", detector)
         self.assertNotIn("len(perpendicular_group)>=self.min_line_count", normalized_source)
 
 

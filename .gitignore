@@ -1,5 +1,34 @@
-# 忽略 devel 和 build 文件夹
+# ROS 2 / colcon outputs
 devel/
 build/
 install/
 log/
+
+# Python caches and test outputs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# JavaScript dependencies
+node_modules/
+
+# Runtime logs and generated working files
+motor_start_log/
+tmp/
+outputs/
+*.log
+
+# Local assistant/tool state
+.claude/
+.codex/
+.playwright-mcp/
+.superpowers/

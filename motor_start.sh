@@ -1,5 +1,6 @@
 #!/bin/bash
 set -o pipefail
+export PYTHONDONTWRITEBYTECODE=1
 # export ROS_LOCALHOST_ONLY=1
 # GPIO_3控制开启RTK
 gpioset gpiochip3 3=0
