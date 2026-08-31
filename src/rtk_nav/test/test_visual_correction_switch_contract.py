@@ -30,6 +30,43 @@ def _function(tree, name):
     )
 
 
+def _class_method(tree, class_name, name):
+    class_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    return next(
+        node
+        for node in class_node.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+def _load_direction_helpers():
+    tree = ast.parse(LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            "wrap180",
+            "resolve_effective_path_axis_image",
+            "format_run_axis_debug",
+        }
+    ]
+    namespace = {"math": math, "time": time}
+    exec(
+        compile(
+            ast.Module(body=functions, type_ignores=[]),
+            str(LINE_DETECTOR_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+    return namespace["resolve_effective_path_axis_image"]
+
+
 def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
@@ -63,12 +100,179 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         ("target_line_offset_m", "nan"),
         ("target_line_match_tolerance_m", "0.5"),
         ("reference_axis_offset_px", "0.0"),
+        ("fallback_path_axis_image_deg", "0.0"),
     ):
         assert f'"{name}"' in source
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 11
+    assert source.count("value_type=float") == 13
+
+    for name, default, value_type in (
+        ("line_tracking_enabled", "true", "bool"),
+        ("max_line_tracking_jump_px", "30.0", "float"),
+        ("max_line_tracking_missed_frames", "2", "int"),
+    ):
+        assert f'"{name}"' in source
+        assert f'default_value=TextSubstitution(text="{default}")' in source
+        assert f"'{name}': ParameterValue(" in source
+        assert f"LaunchConfiguration('{name}')" in source or (
+            f'LaunchConfiguration("{name}")' in source
+        )
+        assert f"value_type={value_type}" in source
+
+
+def test_line_detector_uses_horizontal_fallback_without_rtk_and_rtk_when_fresh():
+    resolve_axis = _load_direction_helpers()
+
+    axis, source = resolve_axis(
+        False,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        now=10.0,
+    )
+    assert axis == 0.0
+    assert source == "fallback"
+
+    axis, source = resolve_axis(
+        True,
+        10.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        now=10.1,
+    )
+    assert axis == 90.0
+    assert source == "rtk"
+
+    axis, source = resolve_axis(
+        True,
+        10.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        now=11.0,
+    )
+    assert axis == 0.0
+    assert source == "fallback"
+
+
+def test_line_detector_exposes_runtime_run_axis_debug():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+    publisher = ast.unparse(_function(tree, "publish_run_axis"))
+
+    assert "fallback_path_axis_image_deg" in initializer
+    assert "'/grid_line/run_axis_debug'" in initializer
+    assert "resolve_effective_path_axis_image" in detector
+    assert "source" in publisher
+    assert "format_run_axis_debug" in publisher
+    assert "cv2.arrowedLine" in detector
+
+
+def test_run_axis_debug_distinguishes_rtk_heading_from_image_axis():
+    tree = ast.parse(LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"wrap180", "format_run_axis_debug"}
+    ]
+    namespace = {"math": math}
+    exec(
+        compile(
+            ast.Module(body=functions, type_ignores=[]),
+            str(LINE_DETECTOR_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+
+    debug = namespace["format_run_axis_debug"](
+        "vertical", 89.0, "rtk", 180.0, 179.0
+    )
+
+    assert "image_axis=89.0deg" in debug
+    assert "path_heading=180.0deg" in debug
+    assert "vehicle_heading=179.0deg" in debug
+    assert "relative_heading=1.0deg" in debug
+    assert "source=rtk" in debug
+
+
+def test_fallback_run_axis_debug_does_not_report_stale_rtk_heading():
+    tree = ast.parse(LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"wrap180", "format_run_axis_debug"}
+    ]
+    namespace = {"math": math}
+    exec(
+        compile(
+            ast.Module(body=functions, type_ignores=[]),
+            str(LINE_DETECTOR_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+
+    debug = namespace["format_run_axis_debug"](
+        "horizontal", -5.0, "fallback", 180.0, 179.0
+    )
+
+    assert debug == "axis=horizontal image_axis=-5.0deg source=fallback"
+
+
+def test_line_detector_subscribes_to_nav_state_for_lateral_gate():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    callback = ast.unparse(_function(tree, "nav_state_callback"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "'/rtk/nav_state'" in initializer
+    assert "parse_nav_state_message" in callback
+    assert "reset_line_tracking" in callback
+    assert "nav_state_allows_lateral_output" in detector
+    assert "lateral_state_valid" in detector
+
+
+def test_line_detector_keeps_eight_degree_line_angle_tolerance():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+
+    assert (
+        "self.declare_parameter('line_angle_tolerance_deg', 8.0)"
+        in initializer
+    )
+
+
+def test_line_detector_invalidates_all_visual_outputs_outside_waypoint_move():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert (
+        "lateral_state_valid and self.heading_valid_streak >= self.reacquire_frames"
+        in detector
+    )
+    assert (
+        "lateral_state_valid and self.lateral_valid_streak >= self.reacquire_frames"
+        in detector
+    )
+    assert "detected = heading_valid" in detector
 
 
 def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
@@ -93,6 +297,20 @@ def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
     ) >= 2
 
 
+def test_launch_forwards_camera_roi_and_translation_parameters():
+    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    for launch_name, parameter_name in (
+        ("camera_crop_x", "crop_x"),
+        ("camera_crop_y", "crop_y"),
+        ("camera_translate_x", "translate_x"),
+        ("camera_translate_y", "translate_y"),
+    ):
+        assert f'"{launch_name}"' in source
+        assert f"'{parameter_name}': ParameterValue(" in source
+        assert f"LaunchConfiguration('{launch_name}')" in source
+
+
 def test_camera_publisher_loads_static_images_as_color_frames():
     source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -109,7 +327,11 @@ def test_camera_publisher_loads_static_images_as_color_frames():
 
     namespace = {"cv2": FakeCv2}
     exec(
-        compile(ast.Module(body=[loader], type_ignores=[]), str(CAMERA_PUBLISHER_SOURCE_PATH), "exec"),
+        compile(
+            ast.Module(body=[loader], type_ignores=[]),
+            str(CAMERA_PUBLISHER_SOURCE_PATH),
+            "exec",
+        ),
         namespace,
     )
 
@@ -120,10 +342,11 @@ def test_camera_publisher_extracts_translated_roi_with_clamped_source_bounds():
     source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     extractor = _function(tree, "extract_translated_roi")
+    origin_calculator = _function(tree, "calculate_roi_origin")
     namespace = {}
     exec(
         compile(
-            ast.Module(body=[extractor], type_ignores=[]),
+            ast.Module(body=[origin_calculator, extractor], type_ignores=[]),
             str(CAMERA_PUBLISHER_SOURCE_PATH),
             "exec",
         ),
@@ -163,6 +386,96 @@ def test_camera_publisher_uses_source_slicing_for_static_translation():
         assert forbidden not in source
 
 
+def test_camera_publisher_applies_roi_to_live_frames_before_output_resize():
+    source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    processor = _function(tree, "prepare_output_frame")
+    extractor = _function(tree, "extract_translated_roi")
+    origin_calculator = _function(tree, "calculate_roi_origin")
+    resizer = _function(tree, "resize_frame_to_output")
+    namespace = {}
+    exec(
+        compile(
+            ast.Module(
+                body=[resizer, origin_calculator, extractor, processor],
+                type_ignores=[],
+            ),
+            str(CAMERA_PUBLISHER_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+
+    image = np.arange(8 * 10, dtype=np.uint8).reshape(8, 10)
+    processed = namespace["prepare_output_frame"](
+        image,
+        crop_x=2,
+        crop_y=1,
+        output_width=4,
+        output_height=3,
+        translate_x=1,
+        translate_y=2,
+    )
+
+    assert processed.shape == (3, 4)
+    assert np.array_equal(processed, image[3:6, 3:7])
+
+    process_method = ast.unparse(
+        _class_method(tree, "CameraPublisherNode", "_process_frame")
+    )
+    timer_callback = ast.unparse(_function(tree, "timer_callback"))
+    assert "prepare_output_frame" in process_method
+    assert "self._process_frame(frame)" in timer_callback
+    assert timer_callback.index("ret, frame = self.cap.read()") < timer_callback.index(
+        "self._process_frame(frame)"
+    )
+
+
+def test_camera_publisher_resizes_smaller_input_without_padding():
+    source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = [
+        _function(tree, name)
+        for name in (
+            "resize_frame_to_output",
+            "calculate_roi_origin",
+            "extract_translated_roi",
+            "prepare_output_frame",
+        )
+    ]
+
+    class FakeCv2:
+        INTER_AREA = 3
+
+        @staticmethod
+        def resize(frame, dimensions, interpolation):
+            assert interpolation == FakeCv2.INTER_AREA
+            return np.zeros((dimensions[1], dimensions[0]), dtype=frame.dtype)
+
+    namespace = {"cv2": FakeCv2}
+    exec(
+        compile(
+            ast.Module(body=functions, type_ignores=[]),
+            str(CAMERA_PUBLISHER_SOURCE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+
+    image = np.ones((2, 3), dtype=np.uint8)
+    processed = namespace["prepare_output_frame"](
+        image,
+        crop_x=100,
+        crop_y=100,
+        output_width=4,
+        output_height=5,
+        translate_x=50,
+        translate_y=50,
+    )
+
+    assert processed.shape == (5, 4)
+
+
 def test_line_detector_uses_single_rendered_argument_for_logger_calls():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -199,7 +512,7 @@ def test_line_detector_logs_geometry_gate_state_for_offset_diagnostics():
     tree = ast.parse(source)
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
 
-    assert "pair={pair is not None}" in detector
+    assert "line={selected_parallel_line is not None}" in detector
     assert "geometry={valid_geometry}" in detector
     assert "streak={self.valid_streak}/{self.reacquire_frames}" in detector
 
@@ -255,20 +568,19 @@ def test_line_detector_exposes_independent_visual_status_and_path_reference():
     assert "self.lateral_confidence_pub.publish" in publish_invalid
 
 
-def test_line_detector_uses_calibrated_reference_line_for_lateral_offset():
+def test_line_detector_uses_one_salient_line_and_image_center_for_lateral_offset():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     initializer = ast.unparse(_function(tree, "__init__"))
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
-    reference_selector = ast.unparse(_function(tree, "select_reference_line"))
+    salient_selector = ast.unparse(_function(tree, "select_most_salient_line"))
+    tracking_selector = ast.unparse(_function(tree, "choose_parallel_line"))
 
-    assert "target_line_offset_m" in initializer
-    assert "target_line_match_tolerance_m" in initializer
-    assert "reference_axis_offset_px" in initializer
-    assert "select_reference_line" in detector
-    assert "line_normal_offset_at_reference" in reference_selector
-    assert "target_line_offset_m" in detector
-    assert "reference_line is not None" in detector
+    assert "choose_parallel_line" in detector
+    assert "line_salience_score" in salient_selector
+    assert "line_normal_offset_at_reference" in tracking_selector
+    assert "selected_parallel_line" in detector
+    assert "0.0" in detector
     assert "(left_projection + right_projection) / 2.0" not in detector
 
 
@@ -310,7 +622,7 @@ def test_line_detector_path_context_bypass_defaults_on_and_preserves_visual_swit
     initializer = ast.unparse(_function(tree, "__init__"))
     image_callback = ast.unparse(_function(tree, "image_callback"))
 
-    assert "self.declare_parameter('bypass_path_context_gate', True)" in initializer
+    assert "self.declare_parameter('bypass_path_context_gate', False)" in initializer
     assert "self.bypass_path_context_gate" in initializer
     assert "if not self.enable_visual_correction:" in image_callback
     assert "not self.bypass_path_context_gate" in image_callback
@@ -325,10 +637,11 @@ def test_line_detector_implements_path_axis_groups_and_reacquisition():
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
 
     assert "wrap180" in callback
-    assert "reset_reacquisition" in callback
+    assert "reset_line_tracking" in callback
     assert "parallel_group" in detector
     assert "perpendicular_group" in detector
-    assert "select_boundary_pair" in detector
+    assert "choose_parallel_line" in detector
+    assert "update_tracking_axis" in detector
     assert "self.reacquire_frames" in detector
 
 
