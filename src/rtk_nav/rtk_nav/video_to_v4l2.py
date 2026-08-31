@@ -361,7 +361,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     process = None
     paused = False
     try:
-        process = subprocess.Popen(command)
+        # ffmpeg has its own terminal handling; keep it away from this TTY so
+        # it cannot race the wrapper while the wrapper restores terminal state.
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL)
         with _TerminalController(sys.stdin) as terminal:
             while True:
                 return_code = process.poll()

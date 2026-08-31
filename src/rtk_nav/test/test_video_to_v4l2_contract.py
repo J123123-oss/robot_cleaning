@@ -304,6 +304,24 @@ class VideoToV4L2ContractTest(unittest.TestCase):
 
         self.assertEqual(process.signals, ["STOP", "CONT"])
 
+    def test_ffmpeg_does_not_inherit_the_control_terminal(self):
+        source = VIDEO_SOURCE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        main = _function(tree, "main")
+        popen_calls = _calls_named(main, "Popen")
+
+        self.assertEqual(len(popen_calls), 1)
+        stdin_arguments = [
+            keyword.value
+            for keyword in popen_calls[0].keywords
+            if keyword.arg == "stdin"
+        ]
+        self.assertEqual(len(stdin_arguments), 1)
+        self.assertIsInstance(stdin_arguments[0], ast.Attribute)
+        self.assertIsInstance(stdin_arguments[0].value, ast.Name)
+        self.assertEqual(stdin_arguments[0].value.id, "subprocess")
+        self.assertEqual(stdin_arguments[0].attr, "DEVNULL")
+
     def test_terminal_controller_restores_terminal_state_idempotently(self):
         module = _load_module()
         termios_calls = []
