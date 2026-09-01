@@ -594,16 +594,75 @@ def test_rtk_consumes_independent_visual_components_with_separate_gates():
     initializer = ast.unparse(_function(tree, "__init__"))
     correction = ast.unparse(_function(tree, "get_visual_steering_correction"))
 
-    assert "self.visual_heading_valid_callback" in initializer
-    assert "self.visual_lateral_valid_callback" in initializer
-    assert "self.visual_heading_confidence_callback" in initializer
-    assert "self.visual_lateral_confidence_callback" in initializer
-    assert "self.visual_heading_valid" in correction
-    assert "self.visual_lateral_valid" in correction
-    assert "self.visual_heading_confidence" in correction
-    assert "self.visual_lateral_confidence" in correction
-    assert "self.visual_heading_valid" in correction
-    assert "self.visual_lateral_valid" in correction
+    assert "self.visual_sample_callback" in initializer
+    assert "'/grid_line/visual_sample'" in initializer
+    assert "self.visual_sample_heading_valid" in correction
+    assert "self.visual_sample_lateral_valid" in correction
+    assert "self.visual_sample_heading_confidence" in correction
+    assert "self.visual_sample_lateral_confidence" in correction
+    assert "self.last_visual_sample_time" in correction
+    assert "self.last_visual_heading_time" not in correction
+    assert "self.last_visual_lateral_time" not in correction
+
+
+def test_visual_correction_uses_one_atomic_sample_timestamp():
+    tree = ast.parse(RTK_SOURCE_PATH.read_text(encoding="utf-8"))
+    helper = _function(tree, "get_visual_steering_correction")
+
+    class ControlModeConstants:
+        AUTO_CLEANING = "AUTO_CLEANING"
+
+    class NavStateConstants:
+        INITIAL_MOVE = "INITIAL_MOVE"
+        WAYPOINT_MOVE = "WAYPOINT_MOVE"
+
+    namespace = {
+        "math": math,
+        "time": time,
+        "ControlMode": ControlModeConstants,
+        "NavState": NavStateConstants,
+    }
+    exec(
+        compile(ast.Module(body=[helper], type_ignores=[]), str(RTK_SOURCE_PATH), "exec"),
+        namespace,
+    )
+
+    class VisualState:
+        enable_visual_correction = True
+        rtk_solution_ready = True
+        current_control_mode = ControlModeConstants.AUTO_CLEANING
+        nav_context = {"nav_state": NavStateConstants.WAYPOINT_MOVE}
+        boundary_correct_locked = False
+        visual_sample_heading_valid = True
+        visual_sample_lateral_valid = False
+        visual_sample_heading_confidence = 0.8
+        visual_sample_lateral_confidence = 0.0
+        visual_sample_heading_error_deg = 2.0
+        visual_sample_lateral_error_m = 100.0
+        last_visual_sample_time = time.monotonic()
+        visual_heading_gain = 1.0
+        visual_lateral_gain = 10.0
+        visual_max_steering_deg = 20.0
+        visual_confidence_threshold = 0.5
+        visual_timeout_sec = 0.5
+
+        # The legacy per-topic state is intentionally fresh and conflicting.
+        visual_heading_valid = True
+        visual_lateral_valid = True
+        visual_heading_confidence = 0.8
+        visual_lateral_confidence = 0.8
+        last_visual_heading_time = time.monotonic()
+        last_visual_lateral_time = time.monotonic()
+        visual_heading_error_deg = 100.0
+        visual_lateral_error_m = 100.0
+
+    state = VisualState()
+    assert math.isclose(
+        namespace["get_visual_steering_correction"](state), 2.0, abs_tol=1e-9
+    )
+
+    state.last_visual_sample_time = time.monotonic() - 1.0
+    assert namespace["get_visual_steering_correction"](state) == 0.0
 
 
 def test_line_detector_defaults_enabled_and_publishes_invalid_output_when_disabled():
@@ -653,21 +712,21 @@ def test_rtk_stanley_consumes_fresh_visual_correction():
     source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     initializer = ast.unparse(_function(tree, "__init__"))
-    visual_callback = ast.unparse(_function(tree, "visual_angle_callback"))
+    visual_callback = ast.unparse(_function(tree, "visual_sample_callback"))
     visual_correction = ast.unparse(
         _function(tree, "get_visual_steering_correction")
     )
     stanley = ast.unparse(_function(tree, "stanley_steering_control"))
 
-    assert "'/grid_line/angle_deviation'" in initializer
-    assert "'/grid_line/detection_confidence'" in initializer
+    assert "'/grid_line/visual_sample'" in initializer
     assert "visual_heading_gain" in initializer
     assert "visual_lateral_gain" in initializer
     assert "visual_max_steering_deg" in initializer
     assert "visual_confidence_threshold" in initializer
     assert "visual_timeout_sec" in initializer
-    assert "self.visual_angle_callback" in initializer
-    assert "self.visual_detected" in visual_callback
+    assert "self.visual_sample_callback" in initializer
+    assert "len(values) != 6" in visual_callback
+    assert "self.last_visual_sample_time" in visual_callback
     assert "time.monotonic()" in visual_callback
     assert "self.rtk_solution_ready" in visual_correction
     assert "self.current_control_mode" in visual_correction
@@ -743,27 +802,29 @@ def test_visual_steering_correction_requires_fresh_confident_motion_sample():
             "force_bearing_mode": False,
         }
         boundary_correct_locked = False
-        visual_detected = True
-        visual_confidence = 0.8
-        visual_confidence_threshold = 0.5
-        visual_heading_error_deg = 1.0
-        visual_lateral_error_m = 0.2
+        visual_sample_heading_valid = True
+        visual_sample_lateral_valid = False
+        visual_sample_heading_confidence = 0.8
+        visual_sample_lateral_confidence = 0.0
+        visual_sample_heading_error_deg = 1.0
+        visual_sample_lateral_error_m = 0.2
         visual_heading_gain = 1.0
         visual_lateral_gain = 10.0
         visual_max_steering_deg = 10.0
+        visual_confidence_threshold = 0.5
         visual_timeout_sec = 0.5
-        last_visual_angle_time = time.monotonic()
+        last_visual_sample_time = time.monotonic()
 
     state = VisualState()
     correction = namespace["get_visual_steering_correction"](state)
     assert math.isclose(correction, 1.0, abs_tol=1e-9)
 
-    state.visual_confidence = 0.1
+    state.visual_sample_heading_confidence = 0.1
     assert namespace["get_visual_steering_correction"](state) == 0.0
-    state.visual_confidence = 0.8
-    state.last_visual_angle_time = time.monotonic() - 1.0
+    state.visual_sample_heading_confidence = 0.8
+    state.last_visual_sample_time = time.monotonic() - 1.0
     assert namespace["get_visual_steering_correction"](state) == 0.0
-    state.last_visual_angle_time = time.monotonic()
+    state.last_visual_sample_time = time.monotonic()
     state.nav_context["nav_state"] = "PAUSE"
     assert namespace["get_visual_steering_correction"](state) == 0.0
 
@@ -796,14 +857,13 @@ def test_visual_steering_correction_uses_only_independently_valid_components():
         current_control_mode = ControlModeConstants.AUTO_CLEANING
         nav_context = {"nav_state": NavStateConstants.WAYPOINT_MOVE}
         boundary_correct_locked = False
-        visual_heading_valid = True
-        visual_lateral_valid = False
-        visual_heading_confidence = 0.8
-        visual_lateral_confidence = 0.0
-        last_visual_heading_time = time.monotonic()
-        last_visual_lateral_time = 0.0
-        visual_heading_error_deg = 2.0
-        visual_lateral_error_m = 100.0
+        visual_sample_heading_valid = True
+        visual_sample_lateral_valid = False
+        visual_sample_heading_confidence = 0.8
+        visual_sample_lateral_confidence = 0.0
+        last_visual_sample_time = time.monotonic()
+        visual_sample_heading_error_deg = 2.0
+        visual_sample_lateral_error_m = 100.0
         visual_heading_gain = 1.0
         visual_lateral_gain = 10.0
         visual_max_steering_deg = 20.0
@@ -812,15 +872,14 @@ def test_visual_steering_correction_uses_only_independently_valid_components():
 
     state = VisualState()
     assert math.isclose(
-        namespace["get_visual_steering_correction"](state), -2.0, abs_tol=1e-9
+        namespace["get_visual_steering_correction"](state), 2.0, abs_tol=1e-9
     )
 
-    state.visual_heading_valid = False
-    state.visual_lateral_valid = True
-    state.visual_heading_confidence = 0.0
-    state.visual_lateral_confidence = 0.8
-    state.last_visual_heading_time = 0.0
-    state.last_visual_lateral_time = time.monotonic()
+    state.visual_sample_heading_valid = False
+    state.visual_sample_lateral_valid = True
+    state.visual_sample_heading_confidence = 0.0
+    state.visual_sample_lateral_confidence = 0.8
+    state.last_visual_sample_time = time.monotonic()
     assert math.isclose(
         namespace["get_visual_steering_correction"](state), 20.0, abs_tol=1e-9
     )

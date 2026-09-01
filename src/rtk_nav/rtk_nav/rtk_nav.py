@@ -11,7 +11,14 @@ import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
-from std_msgs.msg import String, UInt8, Float32, Int16, Bool  # 用于发布控制模式和导航状态
+from std_msgs.msg import (
+    String,
+    UInt8,
+    Float32,
+    Float32MultiArray,
+    Int16,
+    Bool,
+)  # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
 
@@ -316,7 +323,7 @@ class RTKNavControlNode(Node):
             0.0, float(self.get_parameter("stanley_k_near_target").value)
         )
         self.declare_parameter("visual_heading_gain", 0.2)
-        self.declare_parameter("visual_lateral_gain", 10.0)
+        self.declare_parameter("visual_lateral_gain", 1.0)
         self.declare_parameter("visual_max_steering_deg", 3.0)
         self.declare_parameter("visual_confidence_threshold", 0.75)
         self.declare_parameter("visual_timeout_sec", 0.5)
@@ -399,17 +406,14 @@ class RTKNavControlNode(Node):
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
         self.real_velocity = 0.0  # 当前真实速度 (m/s)
-        self.visual_heading_error_deg = 0.0
-        self.visual_lateral_error_m = 0.0
-        self.visual_detected = False
-        self.visual_confidence = 0.0
-        self.last_visual_angle_time = 0.0
-        self.visual_heading_valid = False
-        self.visual_lateral_valid = False
-        self.visual_heading_confidence = 0.0
-        self.visual_lateral_confidence = 0.0
-        self.last_visual_heading_time = 0.0
-        self.last_visual_lateral_time = 0.0
+        # All control inputs below are captured from one detector frame.
+        self.visual_sample_heading_error_deg = 0.0
+        self.visual_sample_lateral_error_m = 0.0
+        self.visual_sample_heading_valid = False
+        self.visual_sample_lateral_valid = False
+        self.visual_sample_heading_confidence = 0.0
+        self.visual_sample_lateral_confidence = 0.0
+        self.last_visual_sample_time = 0.0
 
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
@@ -430,40 +434,10 @@ class RTKNavControlNode(Node):
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
         self.nav_context_pub = self.create_publisher(String, "/rtk/nav_context", 10)  # 调试用：nav_context状态快照
 
-        self.visual_angle_sub = self.create_subscription(
-            Vector3,
-            "/grid_line/angle_deviation",
-            self.visual_angle_callback,
-            10,
-        )
-        self.visual_confidence_sub = self.create_subscription(
-            Float32,
-            "/grid_line/detection_confidence",
-            self.visual_confidence_callback,
-            10,
-        )
-        self.visual_heading_valid_sub = self.create_subscription(
-            Bool,
-            "/grid_line/heading_valid",
-            self.visual_heading_valid_callback,
-            10,
-        )
-        self.visual_lateral_valid_sub = self.create_subscription(
-            Bool,
-            "/grid_line/lateral_valid",
-            self.visual_lateral_valid_callback,
-            10,
-        )
-        self.visual_heading_confidence_sub = self.create_subscription(
-            Float32,
-            "/grid_line/heading_confidence",
-            self.visual_heading_confidence_callback,
-            10,
-        )
-        self.visual_lateral_confidence_sub = self.create_subscription(
-            Float32,
-            "/grid_line/lateral_confidence",
-            self.visual_lateral_confidence_callback,
+        self.visual_sample_sub = self.create_subscription(
+            Float32MultiArray,
+            "/grid_line/visual_sample",
+            self.visual_sample_callback,
             10,
         )
 
@@ -4452,50 +4426,31 @@ class RTKNavControlNode(Node):
             msg.z = 0.0
         self.visual_path_reference_pub.publish(msg)
 
-    def visual_angle_callback(self, msg: Vector3):
-        """缓存视觉航向/横向误差，并拒绝无效检测结果。"""
-        values = (float(msg.x), float(msg.y), float(msg.z))
-        if not all(math.isfinite(value) for value in values) or msg.z < 0.5:
-            self.visual_detected = False
-            self.last_visual_angle_time = 0.0
+    def visual_sample_callback(self, msg: Float32MultiArray):
+        """缓存同一检测帧的视觉误差、有效性和置信度。"""
+        try:
+            values = tuple(float(value) for value in msg.data)
+        except (AttributeError, TypeError, ValueError):
+            values = ()
+        if len(values) != 6 or not all(math.isfinite(value) for value in values):
+            self.last_visual_sample_time = 0.0
             return
-        self.visual_heading_error_deg = values[0]
-        self.visual_lateral_error_m = values[1]
-        self.visual_detected = True
-        self.last_visual_angle_time = time.monotonic()
 
-    def visual_confidence_callback(self, msg: Float32):
-        """缓存视觉检测置信度；非有限值按零处理。"""
-        confidence = float(msg.data)
-        self.visual_confidence = confidence if math.isfinite(confidence) else 0.0
-
-    def visual_heading_valid_callback(self, msg: Bool):
-        """缓存视觉航向分量有效性。"""
-        self.visual_heading_valid = bool(msg.data)
-        self.last_visual_heading_time = (
-            time.monotonic() if self.visual_heading_valid else 0.0
-        )
-
-    def visual_lateral_valid_callback(self, msg: Bool):
-        """缓存视觉横向分量有效性。"""
-        self.visual_lateral_valid = bool(msg.data)
-        self.last_visual_lateral_time = (
-            time.monotonic() if self.visual_lateral_valid else 0.0
-        )
-
-    def visual_heading_confidence_callback(self, msg: Float32):
-        """缓存视觉航向分量置信度。"""
-        confidence = float(msg.data)
-        self.visual_heading_confidence = (
-            confidence if math.isfinite(confidence) else 0.0
-        )
-
-    def visual_lateral_confidence_callback(self, msg: Float32):
-        """缓存视觉横向分量置信度。"""
-        confidence = float(msg.data)
-        self.visual_lateral_confidence = (
-            confidence if math.isfinite(confidence) else 0.0
-        )
+        (
+            heading_error_deg,
+            lateral_error_m,
+            heading_valid,
+            lateral_valid,
+            heading_confidence,
+            lateral_confidence,
+        ) = values
+        self.visual_sample_heading_error_deg = heading_error_deg
+        self.visual_sample_lateral_error_m = lateral_error_m
+        self.visual_sample_heading_valid = heading_valid >= 0.5
+        self.visual_sample_lateral_valid = lateral_valid >= 0.5
+        self.visual_sample_heading_confidence = heading_confidence
+        self.visual_sample_lateral_confidence = lateral_confidence
+        self.last_visual_sample_time = time.monotonic()
 
     def get_visual_steering_correction(self) -> float:
         """返回满足安全门控时的视觉附加转向角。"""
@@ -4517,63 +4472,46 @@ class RTKNavControlNode(Node):
             or self.nav_context.get("force_bearing_mode")
         ):
             return 0.0
-        if hasattr(self, "visual_heading_valid"):
-            now = time.monotonic()
-            heading_fresh = (
-                self.visual_heading_valid
-                and self.last_visual_heading_time > 0.0
-                and now - self.last_visual_heading_time <= self.visual_timeout_sec
-                and self.visual_heading_confidence
-                >= self.visual_confidence_threshold
+        now = time.monotonic()
+        sample_age = now - self.last_visual_sample_time
+        if (
+            self.last_visual_sample_time <= 0.0
+            or sample_age < 0.0
+            or sample_age > self.visual_timeout_sec
+        ):
+            return 0.0
+        heading_fresh = (
+            self.visual_sample_heading_valid
+            and self.visual_sample_heading_confidence
+            >= self.visual_confidence_threshold
+        )
+        lateral_fresh = (
+            self.visual_sample_lateral_valid
+            and self.visual_sample_lateral_confidence
+            >= self.visual_confidence_threshold
+        )
+        if not heading_fresh and not lateral_fresh:
+            return 0.0
+        if not all(
+            math.isfinite(value)
+            for value in (
+                self.visual_sample_heading_error_deg,
+                self.visual_sample_lateral_error_m,
+                self.visual_sample_heading_confidence,
+                self.visual_sample_lateral_confidence,
+                self.visual_heading_gain,
+                self.visual_lateral_gain,
             )
-            lateral_fresh = (
-                self.visual_lateral_valid
-                and self.last_visual_lateral_time > 0.0
-                and now - self.last_visual_lateral_time <= self.visual_timeout_sec
-                and self.visual_lateral_confidence
-                >= self.visual_confidence_threshold
+        ):
+            return 0.0
+        correction = 0.0
+        if heading_fresh:  # 视觉航向误差的符号很可能反了,已修改待验证
+            correction += (
+                self.visual_heading_gain * self.visual_sample_heading_error_deg
             )
-            if not heading_fresh and not lateral_fresh:
-                return 0.0
-            if not all(
-                math.isfinite(value)
-                for value in (
-                    self.visual_heading_error_deg,
-                    self.visual_lateral_error_m,
-                    self.visual_heading_gain,
-                    self.visual_lateral_gain,
-                )
-            ):
-                return 0.0
-            correction = 0.0
-            if heading_fresh:
-                correction -= (
-                    self.visual_heading_gain * self.visual_heading_error_deg
-                )
-            if lateral_fresh:
-                correction += (
-                    self.visual_lateral_gain * self.visual_lateral_error_m
-                )
-        else:
-            if not self.visual_detected:
-                return 0.0
-            if self.visual_confidence < self.visual_confidence_threshold:
-                return 0.0
-            if time.monotonic() - self.last_visual_angle_time > self.visual_timeout_sec:
-                return 0.0
-            if not all(
-                math.isfinite(value)
-                for value in (
-                    self.visual_heading_error_deg,
-                    self.visual_lateral_error_m,
-                    self.visual_heading_gain,
-                    self.visual_lateral_gain,
-                )
-            ):
-                return 0.0
-            correction = (
-                self.visual_lateral_gain * self.visual_lateral_error_m
-                - self.visual_heading_gain * self.visual_heading_error_deg
+        if lateral_fresh:
+            correction += (
+                self.visual_lateral_gain * self.visual_sample_lateral_error_m
             )
         return max(
             -self.visual_max_steering_deg,

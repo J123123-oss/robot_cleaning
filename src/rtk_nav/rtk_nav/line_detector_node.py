@@ -15,7 +15,7 @@ from geometry_msgs.msg import Vector3
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
-from std_msgs.msg import Bool, Float32, String
+from std_msgs.msg import Bool, Float32, Float32MultiArray, String
 
 
 WAYPOINT_MOVE_STATE = 'WAYPOINT_MOVE'
@@ -652,6 +652,9 @@ class GridLineDetector(Node):
         self.lateral_confidence_pub = self.create_publisher(
             Float32, '/grid_line/lateral_confidence', 10
         )
+        self.visual_sample_pub = self.create_publisher(
+            Float32MultiArray, '/grid_line/visual_sample', 10
+        )
         self.run_axis_pub = self.create_publisher(
             String, '/grid_line/run_axis', 10
         )
@@ -990,6 +993,14 @@ class GridLineDetector(Node):
             lateral_confidence_msg = Float32()
             lateral_confidence_msg.data = float(lateral_confidence_value)
             self.lateral_confidence_pub.publish(lateral_confidence_msg)
+            self.publish_visual_sample(
+                angle,
+                lateral_m,
+                heading_validity,
+                lateral_validity,
+                heading_confidence_value,
+                lateral_confidence_value,
+            )
 
             absolute_lateral_m = self.last_absolute_lateral_m
             if (
@@ -1199,6 +1210,7 @@ class GridLineDetector(Node):
         lateral_confidence = Float32()
         lateral_confidence.data = 0.0
         self.lateral_confidence_pub.publish(lateral_confidence)
+        self.publish_visual_sample(0.0, 0.0, False, False, 0.0, 0.0)
 
         axis = String()
         axis.data = 'invalid'
@@ -1206,6 +1218,27 @@ class GridLineDetector(Node):
         axis_debug = String()
         axis_debug.data = 'axis=invalid angle=nan deg source=none'
         self.run_axis_debug_pub.publish(axis_debug)
+
+    def publish_visual_sample(
+        self,
+        heading_error_deg,
+        lateral_error_m,
+        heading_valid,
+        lateral_valid,
+        heading_confidence,
+        lateral_confidence,
+    ):
+        """发布控制节点使用的同帧视觉快照。"""
+        sample = Float32MultiArray()
+        sample.data = [
+            float(heading_error_deg),
+            float(lateral_error_m),
+            1.0 if heading_valid else 0.0,
+            1.0 if lateral_valid else 0.0,
+            float(heading_confidence),
+            float(lateral_confidence),
+        ]
+        self.visual_sample_pub.publish(sample)
 
     def publish_run_axis(
         self,
@@ -1745,7 +1778,7 @@ class GridLineDetector(Node):
                 (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (255, 0, 165),
+                (0, 0, 255),
                 2,
             )
             cv2.putText(
