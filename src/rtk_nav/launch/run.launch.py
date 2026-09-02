@@ -1,7 +1,11 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.substitutions import LaunchConfiguration, TextSubstitution
-from launch.actions import DeclareLaunchArgument
+from launch.substitutions import (
+    LaunchConfiguration,
+    PythonExpression,
+    TextSubstitution,
+)
+from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -97,6 +101,36 @@ def generate_launch_description():
         "camera_jpeg_quality",
         default_value=TextSubstitution(text="80"),
         description="JPEG quality for the compressed camera topic",
+    )
+    declare_camera_source_arg = DeclareLaunchArgument(
+        "camera_source",
+        default_value=TextSubstitution(text="v4l2"),
+        description="Camera source: v4l2 or openmv_serial",
+    )
+    declare_camera_serial_port_arg = DeclareLaunchArgument(
+        "camera_serial_port",
+        default_value=TextSubstitution(text="/dev/ttyACM0"),
+        description="OpenMV USB serial device",
+    )
+    declare_camera_serial_baud_arg = DeclareLaunchArgument(
+        "camera_serial_baud",
+        default_value=TextSubstitution(text="921600"),
+        description="OpenMV serial baudrate",
+    )
+    declare_camera_serial_timeout_arg = DeclareLaunchArgument(
+        "camera_serial_timeout",
+        default_value=TextSubstitution(text="0.2"),
+        description="OpenMV serial read timeout in seconds",
+    )
+    declare_camera_serial_no_data_timeout_arg = DeclareLaunchArgument(
+        "camera_serial_no_data_timeout",
+        default_value=TextSubstitution(text="5.0"),
+        description="Reconnect OpenMV after this many seconds without bytes",
+    )
+    declare_camera_serial_max_frame_arg = DeclareLaunchArgument(
+        "camera_serial_max_frame_bytes",
+        default_value=TextSubstitution(text="2097152"),
+        description="Maximum accepted OpenMV JPEG payload size",
     )
     declare_camera_crop_x_arg = DeclareLaunchArgument(
         "camera_crop_x",
@@ -358,6 +392,44 @@ def generate_launch_description():
         ],
     )
 
+    camera_v4l2_group = GroupAction(
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('camera_source'), "' == 'v4l2'",
+        ])),
+        actions=[camera_publisher_node],
+    )
+
+    openmv_serial_publisher_node = Node(
+        package='rtk_nav',
+        executable='openmv_serial_publisher_node',
+        name='openmv_serial_publisher',
+        output='screen',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_visual_correction'),
+            "' == 'true' and '", LaunchConfiguration('camera_source'),
+            "' == 'openmv_serial'",
+        ])),
+        parameters=[
+            {
+                'serial_port': LaunchConfiguration('camera_serial_port'),
+                'baudrate': ParameterValue(
+                    LaunchConfiguration('camera_serial_baud'), value_type=int
+                ),
+                'read_timeout_sec': ParameterValue(
+                    LaunchConfiguration('camera_serial_timeout'), value_type=float
+                ),
+                'no_data_timeout_sec': ParameterValue(
+                    LaunchConfiguration('camera_serial_no_data_timeout'),
+                    value_type=float,
+                ),
+                'max_frame_bytes': ParameterValue(
+                    LaunchConfiguration('camera_serial_max_frame_bytes'),
+                    value_type=int,
+                ),
+            },
+        ],
+    )
+
     # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
     mqtt_ros_bridge_node = Node(
         package="mqtt_ros2",  # ROS2功能包名（替换为你的实际包名）
@@ -400,6 +472,12 @@ def generate_launch_description():
     ld.add_action(declare_camera_width_arg)
     ld.add_action(declare_camera_height_arg)
     ld.add_action(declare_camera_fps_arg)
+    ld.add_action(declare_camera_source_arg)
+    ld.add_action(declare_camera_serial_port_arg)
+    ld.add_action(declare_camera_serial_baud_arg)
+    ld.add_action(declare_camera_serial_timeout_arg)
+    ld.add_action(declare_camera_serial_no_data_timeout_arg)
+    ld.add_action(declare_camera_serial_max_frame_arg)
     ld.add_action(declare_camera_image_path_arg)
     ld.add_action(declare_camera_jpeg_quality_arg)
     ld.add_action(declare_camera_crop_x_arg)
@@ -425,6 +503,7 @@ def generate_launch_description():
     # # 若需要启用注释的节点，取消以下对应行的注释
     # ld.add_action(wtrtk_serial_driver_node)
     ld.add_action(line_detector_node)
-    ld.add_action(camera_publisher_node)
+    ld.add_action(camera_v4l2_group)
+    ld.add_action(openmv_serial_publisher_node)
 
     return ld

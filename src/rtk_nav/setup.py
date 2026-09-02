@@ -17,7 +17,7 @@ setup(
         (os.path.join('share', 'rtk_nav', 'launch'), [os.path.join('launch', f) for f in os.listdir('launch') if f.endswith('.launch.py')])
 
     ],
-    install_requires=['setuptools', 'custom_msgs'],
+    install_requires=['setuptools', 'custom_msgs', 'pyserial'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='a2723406795@gmail.com',
@@ -39,6 +39,7 @@ setup(
             'rtk_nav = rtk_nav.rtk_nav:main',
             'line_detector_node = rtk_nav.line_detector_node:main',
             'camera_publisher_node = rtk_nav.camera_publisher_node:main',
+            'openmv_serial_publisher_node = rtk_nav.openmv_serial_publisher_node:main',
             'video_to_v4l2 = rtk_nav.video_to_v4l2:main',
             'navsat_key_publisher = rtk_nav.navsat_key_publisher:main',
         ],
