@@ -44,7 +44,7 @@ def decode_sdo_int32(data: bytes) -> int:
 class CanMotorDriver(Node):
     def __init__(self, node_name='can_motor_driver', channel='can0',
                  interface='socketcan', baudrate=1000000,
-                 velocity_ratio=10000.0):
+                 velocity_ratio=10000.0, motor_ids=None):
 
         super().__init__(node_name)
 
@@ -59,20 +59,35 @@ class CanMotorDriver(Node):
         self.velocity_ratio = float(velocity_ratio)
         if not math.isfinite(self.velocity_ratio) or self.velocity_ratio <= 0:
             raise ValueError("velocity_ratio must be greater than zero")
+
+        # 默认使用左轮、右轮和两个滚刷；单滚刷设备由上层传入(1, 2, 3)。
+        # 只为实际存在的节点创建状态，避免周期任务访问不存在的4号电机。
+        if motor_ids is None:
+            motor_ids = (1, 2, 3, 4)
+        try:
+            self.motor_ids = tuple(int(motor_id) for motor_id in motor_ids)
+        except (TypeError, ValueError):
+            raise ValueError("motor_ids must be an iterable of CANopen node IDs")
+        if (
+            not self.motor_ids
+            or len(set(self.motor_ids)) != len(self.motor_ids)
+            or any(not 1 <= motor_id <= 0x7F for motor_id in self.motor_ids)
+        ):
+            raise ValueError("motor_ids must contain unique CANopen IDs in range 1..127")
         
         # 电机运行状态。
         # 当前CANopen对象字典能够写入目标速度、读取实际速度和故障状态，
         # 因此这里只保存这些实际参与控制或能够从总线得到的字段。
         self.motors = [
             {
-                "id": motor_id,                 # CANopen节点ID：1左轮、2右轮、3毛刷
+                "id": motor_id,                 # 1左轮、2右轮、3滚刷1、4滚刷2
                 "velocity": 0.0,                # 目标速度，上层值会乘以velocity_ratio
                 "actual_velocity": 0.0,         # 0x606C读取的实际速度，已换算为上层值
                 "fault_code": 0,                # EMCY或0x2601读取到的故障状态
                 "send_errors": 0,               # 连续发送失败次数
                 "online": True                  # 最近一次速度命令是否发送成功
             }
-            for motor_id in (1, 2, 3)
+            for motor_id in self.motor_ids
         ]
         self._send_tick = 0  # 发送周期计数，用于离线电机重试退避
         
@@ -153,7 +168,7 @@ class CanMotorDriver(Node):
             'motor_feedback',
             10)
             
-        # 创建发布者，用于发布三路电机故障码
+        # 创建发布者，用于发布实际配置的电机故障码
         self.motor_fault_publisher = self.create_publisher(
             Float32MultiArray,
             'motor_fault_codes',
@@ -461,12 +476,18 @@ class CanMotorDriver(Node):
             time.sleep(0.01)
 
     def speed_command_callback(self, msg: Float32MultiArray):
-        """处理速度命令回调函数"""
-        if len(msg.data) != 3:  # 3个电机的速度命令
-            self.get_logger().warn(f"Received speed command with incorrect length: {len(msg.data)}, expected: 3")
+        """接收按 ``self.motors`` 顺序排列的速度，兼容旧三路输入。"""
+        expected_length = len(self.motors)
+        if len(msg.data) not in (3, expected_length):
+            self.get_logger().warn(
+                f"Received speed command with incorrect length: {len(msg.data)}, "
+                f"expected: {expected_length} (or legacy 3)"
+            )
             return
             
         # 更新电机速度目标值
+        for motor in self.motors:
+            motor["velocity"] = 0.0
         for i in range(min(len(self.motors), len(msg.data))):
             self.motors[i]["velocity"] = float(msg.data[i])
         

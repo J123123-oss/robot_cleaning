@@ -125,6 +125,33 @@ class MotorControlNode(Node):
         self.current_left_speed = 0.0  # 当前左轮速度
         self.current_right_speed = 0.0  # 当前右轮速度
         self.mqtt_control_speed = 10.0  # MQTT控制速度
+
+        # 滚刷配置：数量只影响实际激活的CANopen节点，默认使用两个滚刷。
+        self.declare_parameter("brush_motor_count", 2)
+        try:
+            brush_motor_count = int(self.get_parameter("brush_motor_count").value)
+        except (TypeError, ValueError):
+            brush_motor_count = 2
+            self.get_logger().warn("brush_motor_count无效，回退为双滚刷")
+        if brush_motor_count not in (1, 2):
+            self.get_logger().warn(
+                f"brush_motor_count={brush_motor_count}无效，仅支持1或2，回退为2"
+            )
+            brush_motor_count = 2
+        self.brush_motor_count = brush_motor_count
+        self.brush_motor_ids = [3] if brush_motor_count == 1 else [3, 4]
+
+        # 双滚刷共用一个上层速度值；opposite仅对4号滚刷取反。
+        self.declare_parameter("brush_direction_mode", "same")
+        brush_direction_mode = str(
+            self.get_parameter("brush_direction_mode").value
+        ).strip().lower()
+        if brush_direction_mode not in ("same", "opposite"):
+            self.get_logger().warn(
+                f"brush_direction_mode={brush_direction_mode!r}无效，回退为same"
+            )
+            brush_direction_mode = "same"
+        self.brush_direction_mode = brush_direction_mode
         # UNLOADING parameters
         self.unloading_forword_threshold = 25.0 # seconds
         self.unloading_turn_start_time = None
@@ -221,7 +248,7 @@ class MotorControlNode(Node):
         self.charging_v = 0.0 # 停机仓充电电压
         self.charging_i = 0.0 # 停机仓充电电流
         self.charging_fault = 0 # 停机仓充电故障代码
-        self.motor_fault_codes = [0, 0, 0]  # 三路电机故障码
+        self.motor_fault_codes = [0, 0, 0]  # 创建驱动后按实际电机数量重置
         self.loading_timeout_error = False  # 进仓导航超时故障标志
         self.last_charging_fault = 0  # 上一次的充电故障代码（用于检测故障码变化）
         # self.battery_full_charge = False
@@ -232,7 +259,15 @@ class MotorControlNode(Node):
         self.last_charge_resume_time = 0.0  # 上次尝试恢复充电的时间戳
 
         # 1. 初始化电机控制模块
-        self.motor_ctrl = CanMotorDriver(node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000)
+        motor_ids = (1, 2) + tuple(self.brush_motor_ids)
+        self.motor_ctrl = CanMotorDriver(
+            node_name='can_motor_driver',
+            channel='can0',
+            interface='socketcan',
+            baudrate=1000000,
+            motor_ids=motor_ids,
+        )
+        self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
         
         # 2. 初始化遥控器模块
@@ -1067,27 +1102,31 @@ class MotorControlNode(Node):
         self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
 
     def motor_fault_callback(self, msg: Float32MultiArray):
-        """订阅电机故障码数组的回调函数"""
-        if len(msg.data) < 3:
-            self.get_logger().warn("电机故障码数据不完整!")
+        """更新已配置电机的故障码并请求清除当前故障。"""
+        motor_count = len(self.motor_ctrl.motors)
+        if len(msg.data) < motor_count:
+            self.get_logger().warn(
+                f"电机故障码数据不完整：收到{len(msg.data)}路，期望{motor_count}路"
+            )
             return
 
-        self.motor_fault_codes = [int(msg.data[0]), int(msg.data[1]), int(msg.data[2])]
+        self.motor_fault_codes = [int(msg.data[i]) for i in range(motor_count)]
         
         fault_codes = self.motor_fault_codes
         has_fault = False
         fault_str = ""
+        motor_names = {1: "左轮", 2: "右轮", 3: "滚刷1", 4: "滚刷2"}
         for i, code in enumerate(fault_codes):
             if code != 0:
                 has_fault = True
-                motor_name = ["左轮", "右轮", "前毛刷"][i]
+                motor_id = self.motor_ctrl.motors[i]["id"]
+                motor_name = motor_names.get(motor_id, f"电机{motor_id}")
                 fault_str += f"{motor_name}:0x{code:02X}; "
         
         if has_fault:
             self.get_logger().warn(f"[MotorControl] 电机故障: {fault_str}")
-            self.motor_ctrl.motor_clear_fault(1)
-            self.motor_ctrl.motor_clear_fault(2)
-            self.motor_ctrl.motor_clear_fault(3)
+            for motor in self.motor_ctrl.motors:
+                self.motor_ctrl.motor_clear_fault(motor["id"])
             self.get_logger().warn(f"发送清除故障指令！")
 
     def laser_callback(self, msg: UInt16MultiArray):
@@ -2533,13 +2572,33 @@ class MotorControlNode(Node):
         self.rc_channels_pub.publish(msg)
         
     def set_brush_speed(self, brush_speed: float) -> None:
-        """设置 刷 电机速度"""
-        # 刷盘电机（ID=3）
-        result = self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[2]["id"], brush_speed)
-        if result:
-            self.brush_speed = float(brush_speed)
+        """按配置向一个或两个滚刷下发同一输入速度。
+
+        ``same``模式下3、4号使用相同速度；``opposite``模式下4号速度取反。
+        单滚刷模式只发送3号，保留原有单值调用接口。
+        """
+        try:
+            brush_speed = float(brush_speed)
+        except (TypeError, ValueError):
+            self.get_logger().warn(f"[ROSNode] 滚刷速度无效：{brush_speed!r}")
+            return
+
+        brush_results = []
+        for motor_id in self.brush_motor_ids:
+            motor_speed = brush_speed
+            if motor_id == 4 and self.brush_direction_mode == "opposite":
+                motor_speed = -brush_speed
+            brush_results.append(
+                self.motor_ctrl.motor_set_speed(motor_id, motor_speed)
+            )
+
+        if all(brush_results):
+            self.brush_speed = brush_speed
         else:
-            self.get_logger().warn(f"[ROSNode] 刷盘电机速度下发失败：{brush_speed}")
+            self.get_logger().warn(
+                f"[ROSNode] 滚刷速度下发失败：{brush_speed}，"
+                f"模式={self.brush_direction_mode}，电机={self.brush_motor_ids}"
+            )
         
     # -------------------------- 异步调用方式（推荐，非阻塞） --------------------------
     def start_charge_async(self):

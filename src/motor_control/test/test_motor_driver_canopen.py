@@ -93,7 +93,7 @@ def _make_driver(module):
             "send_errors": 0,
             "online": True,
         }
-        for motor_id in (1, 2, 3)
+        for motor_id in (1, 2, 3, 4)
     ]
     driver.get_logger = Mock(return_value=Mock())
     driver.motor_fault_publisher = Mock()
@@ -151,6 +151,10 @@ def test_sdo_frame_builder_and_speed_commands():
     expected_pulses = (-12500).to_bytes(4, byteorder="little", signed=True)
     assert frames[-1] == (0x601, bytes((0x23, 0xFF, 0x60, 0x00)) + expected_pulses)
 
+    assert driver.motor_set_speed(4, 1.5)
+    expected_pulses = (15000).to_bytes(4, byteorder="little", signed=True)
+    assert frames[-1] == (0x604, bytes((0x23, 0xFF, 0x60, 0x00)) + expected_pulses)
+
     assert driver.motor_query_feedback(1)
     assert frames[-1] == (0x601, bytes.fromhex("40 6c 60 00 00 00 00 00"))
 
@@ -174,6 +178,24 @@ def test_direction_acceleration_deceleration_and_error_query():
 
     assert driver.motor_query_error_code(2)
     assert frames[-1] == (0x602, bytes.fromhex("40 01 26 00 00 00 00 00"))
+
+
+def test_legacy_three_motor_speed_command_clears_second_brush():
+    """Keep three-value speed messages compatible with the four-motor driver."""
+    module = _load_motor_driver_module()
+    driver = _make_driver(module)
+
+    class Message:
+        """Minimal speed command message."""
+
+        def __init__(self, data):
+            self.data = data
+
+    driver.speed_command_callback(Message([1.0, 2.0, 3.0]))
+    assert [motor["velocity"] for motor in driver.motors] == [1.0, 2.0, 3.0, 0.0]
+
+    driver.speed_command_callback(Message([4.0, 5.0, 6.0, 7.0]))
+    assert [motor["velocity"] for motor in driver.motors] == [4.0, 5.0, 6.0, 7.0]
 
 
 def test_sdo_feedback_and_fault_parsing():
