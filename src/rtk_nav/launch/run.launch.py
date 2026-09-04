@@ -22,6 +22,18 @@ def generate_launch_description():
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
+    # 滚刷配置：1只控制3号滚刷，2控制3、4号滚刷；方向模式只影响4号滚刷。
+    declare_brush_motor_count_arg = DeclareLaunchArgument(
+        "brush_motor_count",
+        default_value=TextSubstitution(text="2"),
+        description="滚刷电机数量，只支持1或2",
+    )
+    declare_brush_direction_mode_arg = DeclareLaunchArgument(
+        "brush_direction_mode",
+        default_value=TextSubstitution(text="same"),
+        description="双滚刷方向模式：same或opposite",
+    )
+
     declare_visual_correction_arg = DeclareLaunchArgument(
         "enable_visual_correction",
         default_value=TextSubstitution(text="true"),
@@ -202,7 +214,15 @@ def generate_launch_description():
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
             {'rtk_path_file': rtk_path_file},
-            {'loading_gps': loading_gps}
+            {'loading_gps': loading_gps},
+            {
+                'brush_motor_count': ParameterValue(
+                    LaunchConfiguration('brush_motor_count'), value_type=int
+                ),
+                'brush_direction_mode': LaunchConfiguration(
+                    'brush_direction_mode'
+                ),
+            },
         ]
     )
     sensors_485_node = Node(
@@ -459,6 +479,8 @@ def generate_launch_description():
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
     ld.add_action(declare_robot_id_arg)
+    ld.add_action(declare_brush_motor_count_arg)
+    ld.add_action(declare_brush_direction_mode_arg)
     ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_fallback_path_axis_arg)
