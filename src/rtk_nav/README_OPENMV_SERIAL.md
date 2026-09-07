@@ -5,7 +5,7 @@
 
 ```text
 OpenMV H7 Plus -> /dev/ttyACM0 -> openmv_serial_publisher_node
-                                      -> /camera/color/image_compressed
+                                      -> /camera/color/image/compressed
                                       -> line_detector_node
 ```
 
@@ -77,27 +77,30 @@ source /opt/ros/humble/setup.bash
   -p baudrate:=921600
 ```
 
-使用总启动文件时，将摄像头源切换为 OpenMV：
+使用总启动文件时：
 
 ```bash
 ros2 launch rtk_nav run.launch.py \
-  camera_source:=openmv_serial \
   camera_serial_port:=/dev/ttyACM0 \
   camera_serial_baud:=921600 \
   camera_serial_no_data_timeout:=5.0 \
   enable_visual_correction:=true
 ```
 
-`camera_source:=openmv_serial` 会禁用原来读取 `/dev/video0` 的 V4L2 节点，
-但会保留线检测节点。
+总启动文件固定使用 OpenMV 串口节点，不再启动 `camera_publisher_node`。
+识线节点与图像查看器共用标准压缩传输话题。
 
 ## 4. 验证 ROS 图像
 
 ```bash
-ros2 topic hz /camera/color/image_compressed
-ros2 topic echo /camera/color/image_compressed --once
+ros2 topic hz /camera/color/image/compressed
+ros2 topic echo /camera/color/image/compressed --once
 ros2 run rqt_image_view rqt_image_view
 ```
+
+在 `rqt_image_view` 中选择基础话题 `/camera/color/image`，传输方式选择
+`compressed`。不要把 `/camera/color/image/compressed` 当作基础话题再次拼接
+传输后缀。
 
 预期频率接近 OpenMV 脚本中的 `TARGET_FPS`。
 

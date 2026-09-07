@@ -1,4 +1,4 @@
-"""Unit tests for the CANopen motor protocol adapter."""
+"""Unit tests for the legacy RS02 motor protocol adapter."""
 
 import importlib.util
 import sys
@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 
 def _load_motor_driver_module():
-    """Load motor_driver.py with ROS message modules replaced by stubs."""
+    """Load motor_driver.py with ROS and python-can modules replaced by stubs."""
     rclpy = types.ModuleType("rclpy")
     rclpy_node = types.ModuleType("rclpy.node")
     rclpy_node.Node = object
@@ -61,34 +61,25 @@ def _load_motor_driver_module():
 
 
 def _make_driver(module):
-    """Create a driver instance without starting ROS or a receive thread."""
+    """Create a legacy driver instance without starting ROS or a receive thread."""
     driver = module.CanMotorDriver.__new__(module.CanMotorDriver)
-    driver.velocity_ratio = 10000.0
-    driver.SDO_RX_BASE = 0x600
-    driver.SDO_TX_BASE = 0x580
-    driver.EMCY_BASE = 0x80
-    driver.CONTROLWORD_INDEX = 0x6040
-    driver.MODES_OF_OPERATION_INDEX = 0x6060
-    driver.TARGET_VELOCITY_INDEX = 0x60FF
-    driver.ACTUAL_VELOCITY_INDEX = 0x606C
-    driver.POLARITY_INDEX = 0x607E
-    driver.ACCELERATION_INDEX = 0x6083
-    driver.DECELERATION_INDEX = 0x6084
-    driver.ERROR_CODE_INDEX = 0x2601
-    driver.SDO_READ = 0x40
-    driver.SDO_WRITE_1 = 0x2F
-    driver.SDO_WRITE_2 = 0x2B
-    driver.SDO_WRITE_4 = 0x23
-    driver.SDO_WRITE_RESPONSE = 0x60
-    driver.SDO_READ_2_RESPONSE = 0x4B
-    driver.SDO_READ_4_RESPONSE = 0x43
-    driver.SDO_ABORT = 0x80
-    driver.CANOPEN_VELOCITY_MODE = 0x03
+    driver.motor_master_id = 0x63
+    driver.RUN_MODE_INDEX = 0x7005
+    driver.SPEED_REF_INDEX = 0x700A
+    driver.LIMIT_CUR_INDEX = 0x7018
+    driver.OTHER_PARAM_INDEX = 0x7022
+    driver.COMM_WRITE_PARAM = 0x12
+    driver.COMM_ENABLE_MOTOR = 0x03
+    driver.COMM_DISABLE_MOTOR = 0x04
+    driver.MC_CMD_QUERY_MOTOR = 0x03
     driver.motors = [
         {
             "id": motor_id,
             "velocity": 0.0,
             "actual_velocity": 0.0,
+            "actual_position": 0.0,
+            "actual_torque": 0.0,
+            "actual_temperature": 0.0,
             "fault_code": 0,
             "send_errors": 0,
             "online": True,
@@ -100,13 +91,21 @@ def _make_driver(module):
     return driver
 
 
-def test_sdo_frame_builder_and_speed_commands():
-    """Verify command COB-IDs and all speed-related SDO payloads."""
+def test_legacy_frame_format_and_speed_commands():
+    """Verify RS02 extended IDs and parameter-write payloads."""
     module = _load_motor_driver_module()
     driver = _make_driver(module)
     frames = []
     assert set(driver.motors[0]) == {
-        "id", "velocity", "actual_velocity", "fault_code", "send_errors", "online"
+        "id",
+        "velocity",
+        "actual_velocity",
+        "actual_position",
+        "actual_torque",
+        "actual_temperature",
+        "fault_code",
+        "send_errors",
+        "online",
     }
 
     class Message:
@@ -128,56 +127,69 @@ def test_sdo_frame_builder_and_speed_commands():
 
     module.can.Message = Message
     driver.bus = Bus()
-    assert driver.send_can_frame(0x601, b"\x00")
-    assert driver.bus.messages[0].arbitration_id == 0x601
+    assert driver.send_can_frame(0x12006301, b"\x00")
+    assert driver.bus.messages[0].arbitration_id == 0x12006301
     assert driver.bus.messages[0].data == b"\x00" * 8
-    assert driver.bus.messages[0].is_extended_id is False
+    assert driver.bus.messages[0].is_extended_id is True
 
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
 
-    assert module.build_sdo_frame(0x2B, 0x6040, 0, b"\x0F\x00") == bytes.fromhex(
-        "2b 40 60 00 0f 00 00 00"
-    )
     assert driver.motor_enable(1)
-    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 0f 00 00 00"))
+    assert frames[-1] == (0x03006301, bytes(8))
 
     assert driver.motor_disable(1)
-    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 06 00 00 00"))
+    assert frames[-1] == (0x04006301, bytes.fromhex("80 00 00 00 00 00 00 00"))
 
     assert driver.motor_set_mode(1, 2)
-    assert frames[-1] == (0x601, bytes.fromhex("2f 60 60 00 03 00 00 00"))
+    assert frames[-1] == (0x12006301, bytes.fromhex("05 70 00 00 02 00 00 00"))
 
     assert driver.motor_set_speed(1, -1.25)
-    expected_pulses = (-12500).to_bytes(4, byteorder="little", signed=True)
-    assert frames[-1] == (0x601, bytes((0x23, 0xFF, 0x60, 0x00)) + expected_pulses)
+    assert frames[-1] == (0x12006301, bytes.fromhex("0a 70 00 00 00 00 a0 bf"))
 
     assert driver.motor_set_speed(4, 1.5)
-    expected_pulses = (15000).to_bytes(4, byteorder="little", signed=True)
-    assert frames[-1] == (0x604, bytes((0x23, 0xFF, 0x60, 0x00)) + expected_pulses)
+    assert frames[-1] == (0x12006304, bytes.fromhex("0a 70 00 00 00 00 c0 3f"))
 
     assert driver.motor_query_feedback(1)
-    assert frames[-1] == (0x601, bytes.fromhex("40 6c 60 00 00 00 00 00"))
+    assert frames[-1] == (0x03006301, bytes.fromhex("03 00 00 00 00 00 00 00"))
 
 
-def test_direction_acceleration_deceleration_and_error_query():
-    """Verify polarity, ramp, and error object requests."""
+def test_legacy_parameter_commands_and_fault_reset():
+    """Verify current-limit, extra-parameter, and fault-reset commands."""
     module = _load_motor_driver_module()
     driver = _make_driver(module)
     frames = []
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
 
-    assert driver.motor_set_direction(2)
-    assert frames[-1] == (0x602, bytes.fromhex("2f 7e 60 00 00 00 00 00"))
-    assert driver.motor_set_direction(2, reverse=True)
-    assert frames[-1] == (0x602, bytes.fromhex("2f 7e 60 00 01 00 00 00"))
+    assert driver.motor_set_current_limit(2, 20.0)
+    assert frames[-1] == (0x12006302, bytes.fromhex("18 70 00 00 00 00 a0 41"))
 
-    assert driver.motor_set_acceleration(2, 0x01020304)
-    assert frames[-1] == (0x602, bytes.fromhex("23 83 60 00 04 03 02 01"))
-    assert driver.motor_set_deceleration(2, 0x01020304)
-    assert frames[-1] == (0x602, bytes.fromhex("23 84 60 00 04 03 02 01"))
+    assert driver.motor_set_other_param(3, 15.0)
+    assert frames[-1] == (0x12006303, bytes.fromhex("22 70 00 00 00 00 70 41"))
 
-    assert driver.motor_query_error_code(2)
-    assert frames[-1] == (0x602, bytes.fromhex("40 01 26 00 00 00 00 00"))
+    assert driver.motor_clear_fault(4)
+    assert frames[-1] == (0x04006304, bytes.fromhex("01 00 00 00 00 00 00 00"))
+
+
+def test_stop_all_motors_sends_zero_speed_and_disable_frames():
+    """Stop directly on CAN so shutdown does not depend on ROS delivery."""
+    module = _load_motor_driver_module()
+    driver = _make_driver(module)
+    driver._stopping = False
+    frames = []
+    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+
+    driver.stop_all_motors()
+
+    assert frames == [
+        (0x12006301, bytes.fromhex("0a 70 00 00 00 00 00 00")),
+        (0x12006302, bytes.fromhex("0a 70 00 00 00 00 00 00")),
+        (0x12006303, bytes.fromhex("0a 70 00 00 00 00 00 00")),
+        (0x12006304, bytes.fromhex("0a 70 00 00 00 00 00 00")),
+        (0x04006301, bytes.fromhex("80 00 00 00 00 00 00 00")),
+        (0x04006302, bytes.fromhex("80 00 00 00 00 00 00 00")),
+        (0x04006303, bytes.fromhex("80 00 00 00 00 00 00 00")),
+        (0x04006304, bytes.fromhex("80 00 00 00 00 00 00 00")),
+    ]
 
 
 def test_legacy_three_motor_speed_command_clears_second_brush():
@@ -198,24 +210,22 @@ def test_legacy_three_motor_speed_command_clears_second_brush():
     assert [motor["velocity"] for motor in driver.motors] == [4.0, 5.0, 6.0, 7.0]
 
 
-def test_sdo_feedback_and_fault_parsing():
-    """Decode signed velocity, extended error status, and EMCY frames."""
+def test_legacy_feedback_and_fault_parsing_uses_low_byte_motor_id():
+    """Decode type-2 feedback and type-15 fault frames by motor ID."""
     module = _load_motor_driver_module()
     driver = _make_driver(module)
-
-    actual_pulses = -25000
-    velocity_response = bytes.fromhex("43 6c 60 00") + actual_pulses.to_bytes(
-        4, byteorder="little", signed=True
+    driver.parse_motor_feedback(
+        0x02006302,
+        bytes.fromhex("00 00 7f ff ff ff 01 f4"),
     )
-    driver.parse_sdo_response(0x581, velocity_response)
-    assert driver.motors[0]["actual_velocity"] == -2.5
+    motor = driver.motors[1]
+    assert abs(motor["actual_position"] + 12.57) < 1e-6
+    assert abs(motor["actual_velocity"] + (44.0 / 65535.0)) < 1e-6
+    assert abs(motor["actual_torque"] - 17.0) < 1e-6
+    assert motor["actual_temperature"] == 50.0
 
-    extended_error = bytes.fromhex("43 01 26 00 01 00 34 12")
-    driver.parse_sdo_response(0x581, extended_error)
-    assert driver.motors[0]["fault_code"] == 0x1234
-
-    driver.parse_sdo_response(0x582, bytes.fromhex("4b 01 26 00 00 00 00 00"))
-    assert driver.motors[1]["fault_code"] == 0
-
-    driver.parse_motor_fault(0x083, bytes.fromhex("10 42 23 00 00 00 00 00"))
-    assert driver.motors[2]["fault_code"] == 0x4210
+    driver.parse_motor_fault(
+        0x15006303,
+        bytes.fromhex("08 00 00 00 00 00 00 00"),
+    )
+    assert driver.motors[2]["fault_code"] == 0x08

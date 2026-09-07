@@ -10,6 +10,9 @@ NODE_SOURCE = (PACKAGE_ROOT / "rtk_nav" / "openmv_serial_publisher_node.py").rea
 OPENMV_SOURCE = (PACKAGE_ROOT / "rtk_nav" / "openmv_camera_stream.py").read_text(
     encoding="utf-8"
 )
+PROTOCOL_SOURCE = (PACKAGE_ROOT / "rtk_nav" / "openmv_serial_protocol.py").read_text(
+    encoding="utf-8"
+)
 SETUP_SOURCE = (PACKAGE_ROOT / "setup.py").read_text(encoding="utf-8")
 PACKAGE_SOURCE = (PACKAGE_ROOT / "package.xml").read_text(encoding="utf-8")
 LAUNCH_SOURCE = (PACKAGE_ROOT / "launch" / "run.launch.py").read_text(
@@ -18,15 +21,16 @@ LAUNCH_SOURCE = (PACKAGE_ROOT / "launch" / "run.launch.py").read_text(
 
 
 def test_openmv_protocol_is_shared_by_camera_and_host():
-    for source in (NODE_SOURCE, OPENMV_SOURCE):
+    assert "FrameStreamDecoder" in NODE_SOURCE
+    for source in (OPENMV_SOURCE, PROTOCOL_SOURCE):
         assert "OMV1" in source
         assert "HEADER_FORMAT" in source
         assert "crc32" in source
 
 
-def test_ros_node_publishes_existing_compressed_camera_topic():
+def test_ros_node_publishes_standard_compressed_camera_topic():
     assert "CompressedImage" in NODE_SOURCE
-    assert "/camera/color/image_compressed" in NODE_SOURCE
+    assert "/camera/color/image/compressed" in NODE_SOURCE
     assert "serial_port" in NODE_SOURCE
     assert "FrameStreamDecoder" in NODE_SOURCE
     assert "is_jpeg_payload" in NODE_SOURCE
@@ -46,11 +50,10 @@ def test_openmv_node_is_registered_and_serial_dependency_declared():
     assert "<exec_depend>python3-serial</exec_depend>" in PACKAGE_SOURCE
 
 
-def test_launch_selects_one_camera_source():
-    assert '"camera_source"' in LAUNCH_SOURCE
-    assert "camera_source')," in LAUNCH_SOURCE
-    assert "'v4l2'" in LAUNCH_SOURCE
-    assert "'openmv_serial'" in LAUNCH_SOURCE
+def test_launch_uses_openmv_as_the_only_runtime_camera_source():
+    assert "executable='openmv_serial_publisher_node'" in LAUNCH_SOURCE
+    assert "executable='camera_publisher_node'" not in LAUNCH_SOURCE
+    assert "'/camera/color/image/compressed'" in LAUNCH_SOURCE
     assert "openmv_serial_publisher_node" in LAUNCH_SOURCE
 
 

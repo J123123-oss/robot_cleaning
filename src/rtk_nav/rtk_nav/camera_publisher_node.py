@@ -283,7 +283,7 @@ class CameraPublisherNode(Node):
         )
         self.image_pub = self.create_publisher(
             CompressedImage,
-            "/camera/color/image_compressed",
+            "/camera/color/image/compressed",
             image_qos,
         )
 

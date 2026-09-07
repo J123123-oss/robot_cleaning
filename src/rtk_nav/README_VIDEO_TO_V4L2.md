@@ -1,10 +1,13 @@
 # Video to V4L2 and compressed vision pipeline
 
+This is a legacy offline replay tool. The normal robot launch uses the OpenMV
+serial publisher and does not start camera_publisher_node.
+
 The recorded video path is portrait-preserving:
 
 ```text
 720x1280 video --scale without crop/rotation--> /dev/video0 (YUYV 360x640 @ 30 FPS)
-    --> camera_publisher --JPEG quality 80--> /camera/color/image_compressed
+    --> camera_publisher --JPEG quality 80--> /camera/color/image/compressed
     --> grid_line_detector (latest frame only) --> /grid_line/angle_deviation
 ```
 
@@ -21,10 +24,11 @@ colcon build --symlink-install --packages-select rtk_nav
 source install/setup.bash
 
 python3 -m rtk_nav.video_to_v4l2 --video p.mp4 --loop
-ros2 launch rtk_nav run.launch.py enable_visual_correction:=true
-ros2 topic hz /camera/color/image_compressed
+ros2 run rtk_nav camera_publisher_node --ros-args \
+  -p device_id:=0 -p width:=360 -p height:=640 -p fps:=30
+ros2 topic hz /camera/color/image/compressed
 ros2 topic hz /grid_line/angle_deviation
-ros2 topic echo /camera/color/image_compressed --once
+ros2 topic echo /camera/color/image/compressed --once
 ```
 
 The replay command supports `--speed`, `--loop`, Space or `p` to pause/resume,
@@ -113,8 +117,8 @@ ros2 run rtk_nav camera_publisher_node --ros-args \
 Check that the ROS image topic receives frames:
 
 ```bash
-ros2 topic hz /camera/color/image_compressed
-ros2 topic echo /camera/color/image_compressed --once
+ros2 topic hz /camera/color/image/compressed
+ros2 topic echo /camera/color/image/compressed --once
 ```
 
 With `exclusive_caps=1`, `/dev/video0` may initially report an output-only

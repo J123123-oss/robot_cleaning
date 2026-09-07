@@ -35,7 +35,7 @@ class OpenMVSerialPublisherNode(Node):
     def __init__(self):
         super().__init__("openmv_serial_publisher")
 
-        self.declare_parameter("serial_port", "/dev/ttyACM0")
+        self.declare_parameter("serial_port", "/dev/OpenMV_Cam_H7_Plus")
         self.declare_parameter("baudrate", 921600)
         self.declare_parameter("read_timeout_sec", 0.2)
         self.declare_parameter("no_data_timeout_sec", 5.0)
@@ -43,7 +43,9 @@ class OpenMVSerialPublisherNode(Node):
         self.declare_parameter("max_frame_bytes", 2 * 1024 * 1024)
         self.declare_parameter("read_chunk_bytes", 4096)
         self.declare_parameter("frame_id", "camera_frame")
-        self.declare_parameter("topic", "/camera/color/image_compressed")
+        # Publish on the standard image_transport compressed suffix.  Consumers
+        # can select the base topic /camera/color/image with transport=compressed.
+        self.declare_parameter("topic", "/camera/color/image/compressed")
 
         self.serial_port = self.get_parameter("serial_port").value
         self.baudrate = int(self.get_parameter("baudrate").value)
@@ -168,7 +170,7 @@ class OpenMVSerialPublisherNode(Node):
                         continue
                     with self._latest_lock:
                         self._latest_packet = packet
-            except (serial.SerialException, OSError) as exc:
+            except (serial.SerialException, OSError, TypeError) as exc:
                 self.get_logger().warning(f"OpenMV 串口读取失败，将重连: {exc}")
                 self._close_serial()
                 self._stop_event.wait(self.reconnect_interval_sec)
@@ -197,9 +199,11 @@ class OpenMVSerialPublisherNode(Node):
     def destroy_node(self):
         """Stop the reader and release the USB serial device."""
         self._stop_event.set()
-        self._close_serial()
         if self._reader_thread.is_alive():
-            self._reader_thread.join(timeout=2.0)
+            # 先让 read() 因有限超时返回，再关闭串口，避免并发 close 导致
+            # serialposix.read() 使用 None 文件描述符。
+            self._reader_thread.join(timeout=max(2.0, self.read_timeout_sec * 2.0))
+        self._close_serial()
         super().destroy_node()
 
 

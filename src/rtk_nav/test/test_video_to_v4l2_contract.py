@@ -97,7 +97,7 @@ def test_camera_publishes_jpeg_compressed_frames_with_latest_capture_buffer():
 
     for required in (
         "CompressedImage",
-        "/camera/color/image_compressed",
+        "/camera/color/image/compressed",
         "jpeg_quality",
         "IMWRITE_JPEG_QUALITY",
         "max-buffers=1",
@@ -120,7 +120,7 @@ def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
     detect_and_draw = _function(tree, "detect_and_draw_grid_lines")
 
     assert "CompressedImage" in source
-    assert "/camera/color/image_compressed" in source
+    assert "/camera/color/image/compressed" in source
     assert "cv2.imdecode" in source
     assert "detection_fps" in initializer
     assert "publish_debug_images" in initializer
@@ -135,13 +135,13 @@ def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
     assert _calls_named(detect_and_draw, "queue_debug_images")
 
 
-def test_launch_passes_portrait_compression_and_detection_rate_defaults():
+def test_launch_uses_openmv_camera_and_detection_rate_defaults():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    for default in ("360", "640", "30", "80", "30.0", "false"):
+    for default in ("921600", "0.2", "5.0", "2097152", "30.0", "false"):
         assert f'TextSubstitution(text="{default}")' in source
-    assert "camera_image_path" in source
-    assert "image_path" in source
-    assert "jpeg_quality" in source
+    assert "executable='openmv_serial_publisher_node'" in source
+    assert "executable='camera_publisher_node'" not in source
+    assert "'topic': '/camera/color/image/compressed'" in source
     assert "detection_fps" in source
     assert "debug_image_fps" not in source
 
@@ -486,7 +486,7 @@ class VideoToV4L2ContractTest(unittest.TestCase):
         self.assertIn("sudo apt install ffmpeg v4l2loopback-dkms", readme_source)
         self.assertIn("ros2 run rtk_nav video_to_v4l2", readme_source)
         self.assertIn("ros2 run rtk_nav camera_publisher_node", readme_source)
-        self.assertIn("/camera/color/image_compressed", readme_source)
+        self.assertIn("/camera/color/image/compressed", readme_source)
         self.assertIn("--speed", readme_source)
         self.assertIn("Space", readme_source)
         self.assertIn("sustain_framerate=1", readme_source)

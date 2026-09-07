@@ -611,7 +611,7 @@ class GridLineDetector(Node):
         )
         self.image_sub = self.create_subscription(
             CompressedImage,
-            '/camera/color/image_compressed',
+            '/camera/color/image/compressed',
             self.image_callback,
             image_qos,
         )
@@ -652,6 +652,7 @@ class GridLineDetector(Node):
         self.lateral_confidence_pub = self.create_publisher(
             Float32, '/grid_line/lateral_confidence', 10
         )
+        # 保留给 RTK 导航节点的同帧原子视觉样本，兼容现有订阅接口。
         self.visual_sample_pub = self.create_publisher(
             Float32MultiArray, '/grid_line/visual_sample', 10
         )
@@ -693,6 +694,8 @@ class GridLineDetector(Node):
         self.declare_parameter('min_line_count', 2)
         # 是否启用视觉纠偏；关闭时发布无效结果。
         self.declare_parameter('enable_visual_correction', True)
+        # 独立室内测试模式；不依赖 RTK 或 /rtk/nav_state。
+        self.declare_parameter('indoor_test_mode', False)
         # 是否跳过 RTK 路径方向有效性门控，便于无 RTK 调试。
         self.declare_parameter('bypass_path_context_gate', False)
         # 没有新鲜 RTK 方向时使用的图像运行轴，单位为度。
@@ -731,9 +734,9 @@ class GridLineDetector(Node):
         # 粗白线候选沿线被白色掩膜支持的最小比例，范围为 0 到 1。
         self.declare_parameter('coarse_line_min_support', 0.3)
         # 同一粗白线边缘合并时允许的法向间隙，单位为像素。
-        self.declare_parameter('coarse_line_merge_gap_px', 100.0)
+        self.declare_parameter('coarse_line_merge_gap_px', 30.0)
         # 沿候选线法向扫描白色带宽度时的半窗口宽度，单位为像素。
-        self.declare_parameter('white_line_scan_half_width_px', 28.0)
+        self.declare_parameter('white_line_scan_half_width_px', 14.0)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
@@ -752,6 +755,9 @@ class GridLineDetector(Node):
         self.min_line_count = int(self.get_parameter('min_line_count').value)
         self.enable_visual_correction = bool(
             self.get_parameter('enable_visual_correction').value
+        )
+        self.indoor_test_mode = bool(
+            self.get_parameter('indoor_test_mode').value
         )
         self.bypass_path_context_gate = bool(
             self.get_parameter('bypass_path_context_gate').value
@@ -993,6 +999,7 @@ class GridLineDetector(Node):
             lateral_confidence_msg = Float32()
             lateral_confidence_msg.data = float(lateral_confidence_value)
             self.lateral_confidence_pub.publish(lateral_confidence_msg)
+
             self.publish_visual_sample(
                 angle,
                 lateral_m,
@@ -1210,6 +1217,7 @@ class GridLineDetector(Node):
         lateral_confidence = Float32()
         lateral_confidence.data = 0.0
         self.lateral_confidence_pub.publish(lateral_confidence)
+
         self.publish_visual_sample(0.0, 0.0, False, False, 0.0, 0.0)
 
         axis = String()
@@ -1277,7 +1285,8 @@ class GridLineDetector(Node):
             return
 
         if (
-            not self.bypass_path_context_gate
+            not self.indoor_test_mode
+            and not self.bypass_path_context_gate
             and (
                 not self.path_context_valid
                 or time.monotonic() - self.last_path_context_time
@@ -1400,9 +1409,14 @@ class GridLineDetector(Node):
         )
         display = image.copy() if debug_due else None
 
+        # 室内测试始终采用固定图像运行轴，即使有其他节点误发 RTK 上下文，
+        # 也不会让室内控制器意外切换到地理坐标系。
+        path_context_valid = (
+            self.path_context_valid and not self.indoor_test_mode
+        )
         directed_path_axis_image, path_axis_source = (
             resolve_effective_path_axis_image(
-                self.path_context_valid,
+                path_context_valid,
                 self.last_path_context_time,
                 self.path_context_timeout_sec,
                 self.path_direction_deg,
@@ -1428,7 +1442,10 @@ class GridLineDetector(Node):
                 else None
             ),
         )
-        lateral_state_valid = nav_state_allows_lateral_output(self.nav_state)
+        lateral_state_valid = (
+            self.indoor_test_mode
+            or nav_state_allows_lateral_output(self.nav_state)
+        )
         # The normal-offset coordinate is only comparable while the active
         # image axis is stable. A stale RTK axis or a sharp turn therefore
         # starts a new line lock instead of reusing an old anchor.
@@ -1703,17 +1720,27 @@ class GridLineDetector(Node):
             )
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
-        self.initial_lateral_offset_m = capture_initial_lateral_offset(
-            self.nav_state,
-            lateral_m,
-            self.initial_lateral_offset_m,
-        )
         self.last_absolute_lateral_m = lateral_m
-        relative_lateral_m = calculate_relative_lateral_offset(
-            self.nav_state,
-            lateral_m,
-            self.initial_lateral_offset_m,
-        )
+        if self.indoor_test_mode:
+            # 室内没有航点切换；首次有效线段作为本次测试的横向参考零点。
+            if self.initial_lateral_offset_m is None:
+                self.initial_lateral_offset_m = lateral_m
+                relative_lateral_m = 0.0
+            else:
+                relative_lateral_m = (
+                    lateral_m - self.initial_lateral_offset_m
+                )
+        else:
+            self.initial_lateral_offset_m = capture_initial_lateral_offset(
+                self.nav_state,
+                lateral_m,
+                self.initial_lateral_offset_m,
+            )
+            relative_lateral_m = calculate_relative_lateral_offset(
+                self.nav_state,
+                lateral_m,
+                self.initial_lateral_offset_m,
+            )
         lateral_reference_valid = math.isfinite(relative_lateral_m)
         initial_lateral_text = (
             'unset'
@@ -1778,7 +1805,7 @@ class GridLineDetector(Node):
                 (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 0, 255),
+                (255, 0, 165),
                 2,
             )
             cv2.putText(
@@ -1891,7 +1918,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

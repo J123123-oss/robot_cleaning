@@ -2,10 +2,9 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import (
     LaunchConfiguration,
-    PythonExpression,
     TextSubstitution,
 )
-from launch.actions import DeclareLaunchArgument, GroupAction
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -89,36 +88,6 @@ def generate_launch_description():
         default_value=TextSubstitution(text="0.5"),
         description="Visual sample timeout in seconds",
     )
-    declare_camera_width_arg = DeclareLaunchArgument(
-        "camera_width",
-        default_value=TextSubstitution(text="360"),
-        description="Camera output width",
-    )
-    declare_camera_height_arg = DeclareLaunchArgument(
-        "camera_height",
-        default_value=TextSubstitution(text="640"),
-        description="Camera output height",
-    )
-    declare_camera_fps_arg = DeclareLaunchArgument(
-        "camera_fps",
-        default_value=TextSubstitution(text="30"),
-        description="Camera capture and publish FPS",
-    )
-    declare_camera_image_path_arg = DeclareLaunchArgument(
-        "camera_image_path",
-        default_value=TextSubstitution(text=""),
-        description="Optional static image path; empty reads /dev/video0",
-    )
-    declare_camera_jpeg_quality_arg = DeclareLaunchArgument(
-        "camera_jpeg_quality",
-        default_value=TextSubstitution(text="80"),
-        description="JPEG quality for the compressed camera topic",
-    )
-    declare_camera_source_arg = DeclareLaunchArgument(
-        "camera_source",
-        default_value=TextSubstitution(text="v4l2"),
-        description="Camera source: v4l2 or openmv_serial",
-    )
     declare_camera_serial_port_arg = DeclareLaunchArgument(
         "camera_serial_port",
         default_value=TextSubstitution(text="/dev/ttyACM0"),
@@ -143,26 +112,6 @@ def generate_launch_description():
         "camera_serial_max_frame_bytes",
         default_value=TextSubstitution(text="2097152"),
         description="Maximum accepted OpenMV JPEG payload size",
-    )
-    declare_camera_crop_x_arg = DeclareLaunchArgument(
-        "camera_crop_x",
-        default_value=TextSubstitution(text="0"),
-        description="Camera ROI horizontal origin before translation",
-    )
-    declare_camera_crop_y_arg = DeclareLaunchArgument(
-        "camera_crop_y",
-        default_value=TextSubstitution(text="0"),
-        description="Camera ROI vertical origin before translation",
-    )
-    declare_camera_translate_x_arg = DeclareLaunchArgument(
-        "camera_translate_x",
-        default_value=TextSubstitution(text="0"),
-        description="Camera ROI horizontal translation",
-    )
-    declare_camera_translate_y_arg = DeclareLaunchArgument(
-        "camera_translate_y",
-        default_value=TextSubstitution(text="0"),
-        description="Camera ROI vertical translation",
     )
     declare_detection_fps_arg = DeclareLaunchArgument(
         "detection_fps",
@@ -375,62 +324,15 @@ def generate_launch_description():
         ],
     )
 
-    camera_publisher_node = Node(
-        package='rtk_nav',
-        executable='camera_publisher_node',
-        name='camera_publisher',
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
-        parameters=[
-            {
-                'width': ParameterValue(
-                    LaunchConfiguration('camera_width'), value_type=int
-                ),
-                'height': ParameterValue(
-                    LaunchConfiguration('camera_height'), value_type=int
-                ),
-                'fps': ParameterValue(
-                    LaunchConfiguration('camera_fps'), value_type=int
-                ),
-                'image_path': LaunchConfiguration('camera_image_path'),
-                'jpeg_quality': ParameterValue(
-                    LaunchConfiguration('camera_jpeg_quality'), value_type=int
-                ),
-                'crop_x': ParameterValue(
-                    LaunchConfiguration('camera_crop_x'), value_type=int
-                ),
-                'crop_y': ParameterValue(
-                    LaunchConfiguration('camera_crop_y'), value_type=int
-                ),
-                'translate_x': ParameterValue(
-                    LaunchConfiguration('camera_translate_x'), value_type=int
-                ),
-                'translate_y': ParameterValue(
-                    LaunchConfiguration('camera_translate_y'), value_type=int
-                ),
-            },
-        ],
-    )
-
-    camera_v4l2_group = GroupAction(
-        condition=IfCondition(PythonExpression([
-            "'", LaunchConfiguration('camera_source'), "' == 'v4l2'",
-        ])),
-        actions=[camera_publisher_node],
-    )
-
     openmv_serial_publisher_node = Node(
         package='rtk_nav',
         executable='openmv_serial_publisher_node',
         name='openmv_serial_publisher',
         output='screen',
-        condition=IfCondition(PythonExpression([
-            "'", LaunchConfiguration('enable_visual_correction'),
-            "' == 'true' and '", LaunchConfiguration('camera_source'),
-            "' == 'openmv_serial'",
-        ])),
+        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
         parameters=[
             {
+                'topic': '/camera/color/image/compressed',
                 'serial_port': LaunchConfiguration('camera_serial_port'),
                 'baudrate': ParameterValue(
                     LaunchConfiguration('camera_serial_baud'), value_type=int
@@ -491,21 +393,11 @@ def generate_launch_description():
     ld.add_action(declare_visual_max_steering_arg)
     ld.add_action(declare_visual_confidence_threshold_arg)
     ld.add_action(declare_visual_timeout_arg)
-    ld.add_action(declare_camera_width_arg)
-    ld.add_action(declare_camera_height_arg)
-    ld.add_action(declare_camera_fps_arg)
-    ld.add_action(declare_camera_source_arg)
     ld.add_action(declare_camera_serial_port_arg)
     ld.add_action(declare_camera_serial_baud_arg)
     ld.add_action(declare_camera_serial_timeout_arg)
     ld.add_action(declare_camera_serial_no_data_timeout_arg)
     ld.add_action(declare_camera_serial_max_frame_arg)
-    ld.add_action(declare_camera_image_path_arg)
-    ld.add_action(declare_camera_jpeg_quality_arg)
-    ld.add_action(declare_camera_crop_x_arg)
-    ld.add_action(declare_camera_crop_y_arg)
-    ld.add_action(declare_camera_translate_x_arg)
-    ld.add_action(declare_camera_translate_y_arg)
     ld.add_action(declare_detection_fps_arg)
     ld.add_action(declare_line_tracking_enabled_arg)
     ld.add_action(declare_line_tracking_jump_arg)
@@ -520,12 +412,11 @@ def generate_launch_description():
     # ld.add_action(sensors_485_node)
     # ld.add_action(laser_node)
     # ld.add_action(charging_node)
-    # # ld.add_action(wtrtk_parse_txt_node)
-    # ld.add_action(rtk_navigator)
+    # ld.add_action(wtrtk_parse_txt_node)
+    ld.add_action(rtk_navigator)
     # # 若需要启用注释的节点，取消以下对应行的注释
-    # ld.add_action(wtrtk_serial_driver_node)
+    ld.add_action(wtrtk_serial_driver_node)
     ld.add_action(line_detector_node)
-    ld.add_action(camera_v4l2_group)
     ld.add_action(openmv_serial_publisher_node)
 
     return ld

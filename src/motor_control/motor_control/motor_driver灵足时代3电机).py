@@ -4,83 +4,72 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32, UInt8
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
 import struct
 import can
 import time
 import math
-from typing import Optional
+from typing import Optional, List, Dict
 import threading
 
 
 class CanMotorDriver(Node):
-    def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000, motor_ids=None):
+    def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000):
 
         super().__init__(node_name)
-
-        # 默认使用旧版 RS02 协议；室内独立测试可选择单/双滚刷。
-        # 嵌入 motor_control 时由上层状态机显式使能，独立室内 launch 才开启。
-        self.declare_parameter('auto_enable', False)
-        # 速度命令超过此时间未更新时自动清零；0 表示关闭超时保护。
-        self.declare_parameter('command_timeout_sec', 0.0)
-        # 未显式传入 motor_ids 时，1/2/3/4 分别表示双轮和两个滚刷。
-        self.declare_parameter('brush_motor_count', 2)
-        self.auto_enable = bool(self.get_parameter('auto_enable').value)
-        self.command_timeout_sec = float(
-            self.get_parameter('command_timeout_sec').value
-        )
-        self.brush_motor_count = int(
-            self.get_parameter('brush_motor_count').value
-        )
-        if self.brush_motor_count not in (1, 2):
-            raise ValueError('brush_motor_count must be 1 or 2')
-        if (
-            not math.isfinite(self.command_timeout_sec)
-            or self.command_timeout_sec < 0.0
-        ):
-            raise ValueError('command_timeout_sec must be finite and >= 0')
 
 
         # CAN配置
         self.can_interface = channel  # can0
-        self.can_bus_interface = interface
-        self.can_bitrate = baudrate
         self.bus: Optional[can.Bus] = None
         self.can_initialized = False
 
-        # 电机配置：1、2号为左右轮，3、4号为滚刷；单滚刷时不创建4号节点。
-        if motor_ids is None:
-            motor_ids = (1, 2, 3) if self.brush_motor_count == 1 else (
-                1, 2, 3, 4
-            )
-        try:
-            self.motor_ids = tuple(int(motor_id) for motor_id in motor_ids)
-        except (TypeError, ValueError):
-            raise ValueError('motor_ids must be an iterable of motor IDs')
-        if (
-            not self.motor_ids
-            or len(set(self.motor_ids)) != len(self.motor_ids)
-            or any(not 1 <= motor_id <= 0xFF for motor_id in self.motor_ids)
-        ):
-            raise ValueError('motor_ids must contain unique IDs in range 1..255')
-
-        self.motors = []
-        for motor_id in self.motor_ids:
-            self.motors.append({
-                'id': motor_id,
-                'velocity': 0.0,                # 目标速度（rad/s）
-                'actual_velocity': 0.0,         # 实际速度
-                'actual_position': 0.0,         # 实际位置
-                'actual_torque': 0.0,            # 实际扭矩
-                'actual_temperature': 0.0,      # 实际温度
-                'fault_code': 0,                # 故障码
-                'send_errors': 0,               # 连续发送失败次数
-                'online': True,                 # 电机是否在线
-            })
+        # 电机配置 (基于jifeng系统中的3个电机)
+        self.motors = [
+            {
+                "id": 1,                        # 左轮电机ID
+                "velocity": 0.0,                # 目标速度（rad/s）
+                "actual_velocity": 0.0,         # 实际速度
+                "actual_position": 0.0,         # 实际位置
+                "actual_torque": 0.0,           # 实际扭矩
+                "actual_temperature": 0.0,      # 实际温度
+                "current_limit": 20.0,          # 电流限制（A）
+                "run_mode": 2,                  # 运行模式（2速度模式）
+                "fault_code": 0,                # 故障码
+                "send_errors": 0,               # 连续发送失败次数
+                "online": True                  # 电机是否在线
+            },
+            {
+                "id": 2,                        # 右轮电机ID
+                "velocity": 0.0,
+                "actual_velocity": 0.0,
+                "actual_position": 0.0,
+                "actual_torque": 0.0,
+                "actual_temperature": 0.0,
+                "current_limit": 20.0,
+                "run_mode": 2,
+                "fault_code": 0,
+                "send_errors": 0,
+                "online": True
+            },
+            {
+                "id": 3,                        # 前毛刷电机ID
+                "velocity": 0.0,
+                "actual_velocity": 0.0,
+                "actual_position": 0.0,
+                "actual_torque": 0.0,
+                "actual_temperature": 0.0,
+                "current_limit": 20.0,
+                "run_mode": 2,
+                "fault_code": 0,
+                "send_errors": 0,
+                "online": True
+            }
+        ]
         self._send_tick = 0  # 发送周期计数，用于离线电机重试退避
-        self.last_speed_command_time = time.monotonic()
-        self._stopping = False
 
         # 主机ID (与jifeng系统保持一致)
         self.motor_master_id = 99  # 0x63
@@ -90,7 +79,7 @@ class CanMotorDriver(Node):
         self.SPEED_REF_INDEX = 0x700A   # 速度指令索引
         self.LIMIT_CUR_INDEX = 0x7018   # 电流限制索引
         self.OTHER_PARAM_INDEX = 0x7022 # 其他参数索引 (针对电机3)
-        
+
         # 通信类型
         self.COMM_WRITE_PARAM = 0x12    # 参数写入
         self.COMM_ENABLE_MOTOR = 0x03   # 使能电机
@@ -98,19 +87,19 @@ class CanMotorDriver(Node):
         self.MC_CMD_SPEED_CLOSED_LOOP = 0xA2  # 速度闭环控制命令
         self.MC_CMD_POS_SPEED_TORQUE_FEEDBACK = 0x02  # 位置、速度、扭矩反馈命令类型
         self.MC_CMD_QUERY_MOTOR = 0x03  # 电机状态查询命令
-        
+
         # 机器人参数
         self.wheel_radius = 0.05  # 轮子半径（米）
         self.wheel_base = 0.3     # 轮距（米）
         self.encoder_resolution = 4096  # 编码器分辨率（每转脉冲数）
-        
+
         # 里程计参数
         self.x = 0.0  # 机器人位置x坐标
         self.y = 0.0  # 机器人位置y坐标
         self.th = 0.0  # 机器人方向角度
 
         self.BASE_SPEED = 2.0 # 导航目标速度（dps）= self.BASE_SPEED*10
-        # Sensor 
+        # Sensor
         self.front_left = None
         self.front_right = None
         self.mid_left = None
@@ -118,65 +107,64 @@ class CanMotorDriver(Node):
         self.back_left = None
         self.back_right = None
 
-        
+
         # 上次时间戳
         self.last_time = self.get_clock().now()
-        
+
         # 初始化CAN总线
         if not self.create_can_bus():
             self.get_logger().warn("Failed to initialize CAN bus, will retry periodically")
-            
-        # 初始化电机；嵌入 motor_control 时仍由上层状态机触发。
-        if self.auto_enable:
-            self.initialize_motors()
-        
+
+        # 初始化电机
+        # self.initialize_motors()
+
         # 创建订阅者，用于接收速度命令
         self.subscription = self.create_subscription(
             Float32MultiArray,
             'motor_speed_commands',
             self.speed_command_callback,
             10)
-            
+
         # 创建发布者，用于发布电机速度
         self.velocity_publisher = self.create_publisher(
-            Float32MultiArray, 
-            'motor_velocities', 
+            Float32MultiArray,
+            'motor_velocities',
             10)
-            
+
         # 创建发布者，用于发布电机状态（位置、速度、扭矩等）
         self.motor_feedback_publisher = self.create_publisher(
             Float32MultiArray,
             'motor_feedback',
             10)
-            
-        # 创建发布者，用于发布已配置电机的故障码
+
+        # 创建发布者，用于发布三路电机故障码
         self.motor_fault_publisher = self.create_publisher(
             Float32MultiArray,
             'motor_fault_codes',
             10)
-            
+
         # 创建发布者，用于发布里程信息
         self.odom_publisher = self.create_publisher(
             Odometry,
             'odom',
             10)
-        
+
         # 定时器，定期发送速度命令和发布电机状态
         self.timer = self.create_timer(0.1, self.timer_callback)  # 10Hz
-        
+
         # 启动接收线程
         self.receive_thread = None
         self.running = True
         self.start_receive_thread()
-        
-        self.get_logger().info('Legacy motor driver started')
+
+        self.get_logger().info('Motor Control Node has been started')
 
     def create_can_bus(self) -> bool:
         """初始化CAN总线（最多重试3次，间隔0.5s）"""
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             try:
-                self.bus = can.Bus(interface=self.can_bus_interface, channel=self.can_interface, bitrate=self.can_bitrate)
+                self.bus = can.Bus(interface='socketcan', channel=self.can_interface, bitrate=1000000)
                 self.can_initialized = True
                 self.get_logger().info(f'CAN bus {self.can_interface} initialized successfully')
                 return True
@@ -215,7 +203,7 @@ class CanMotorDriver(Node):
             )
             self.get_logger().info(f"CAN interface {self.can_interface} down for reset")
             subprocess.run(
-                ["ip", "link", "set", self.can_interface, "up", "type", "can", "bitrate", str(self.can_bitrate)],
+                ["ip", "link", "set", self.can_interface, "up", "type", "can", "bitrate", "1000000"],
                 capture_output=True, timeout=5.0
             )
             self.get_logger().info(f"CAN interface {self.can_interface} up after reset")
@@ -236,7 +224,7 @@ class CanMotorDriver(Node):
             return False
 
         try:
-            # 旧版 RS02 指令使用29位扩展帧，数据固定为8字节
+            # 确保数据长度为8字节
             if len(data) < 8:
                 data = data.ljust(8, b'\x00')
             elif len(data) > 8:
@@ -268,13 +256,7 @@ class CanMotorDriver(Node):
     # 【新增】解析故障帧 0x15006301 ~ 0x15006303
     # -------------------------------------------------------------------------
     def parse_motor_fault(self, can_id: int, data: bytes):
-        if not data:
-            self.get_logger().warn(
-                f"忽略空故障帧：0x{can_id:08X}"
-            )
-            return
-        # 旧版帧 ID 的最低字节是电机 ID，中间字节是主站 ID(0x63)。
-        motor_id = can_id & 0xFF
+        motor_id = (can_id >> 8) & 0xFF
         fault = data[0]
 
         for motor in self.motors:
@@ -339,7 +321,7 @@ class CanMotorDriver(Node):
         return self.send_can_frame(can_id, can_data)
 
     def motor_set_speed(self, motor_id: int, speed: float) -> bool:
-        """设置电机速度；旧版 RS02 使用 IEEE-754 小端 float。"""
+        """设置电机速度"""
         can_data = bytearray(8)
         struct.pack_into("<H", can_data, 0, self.SPEED_REF_INDEX)  # 0x700A（小端）
         struct.pack_into("<f", can_data, 4, speed)                 # 速度值（float）
@@ -360,7 +342,7 @@ class CanMotorDriver(Node):
         can_data = b'\x00' * 8  # 使能指令数据段全零
         can_id = (self.COMM_ENABLE_MOTOR << 24) | (self.motor_master_id << 8) | motor_id
         return self.send_can_frame(can_id, can_data)
-        
+
     def motor_disable(self, motor_id: int) -> bool:
         """停止单个电机"""
         can_data = b'\x80'+b'\x00' * 7
@@ -368,55 +350,50 @@ class CanMotorDriver(Node):
         return self.send_can_frame(can_id, can_data)
 
     def initialize_motors(self):
-        """按旧版 RS02 参数协议初始化所有已配置电机。"""
+        """初始化所有电机"""
         self.get_logger().info("Initializing motors...")
-        time.sleep(3.0)  # 等待CAN接口就绪，与旧系统保持一致
+        time.sleep(3.0)  # 等待CAN接口就绪，与jifeng系统保持一致
 
-        for motor in self.motors:
-            motor_id = motor['id']
-            self.get_logger().info(
-                f"Initializing legacy motor (ID={motor_id})..."
-            )
-            self.motor_set_mode(motor_id, 2)
-            time.sleep(0.01)
-            if motor_id == 3:
-                # 0x7022 是旧系统针对滚刷电机3的附加参数。
-                self.motor_set_other_param(motor_id, 15.0)
-                time.sleep(0.01)
-            self.motor_enable(motor_id)
-            time.sleep(0.01)
-            self.motor_set_current_limit(motor_id, 20.0)
-            time.sleep(0.01)
+        # 初始化左轮电机 (ID=1)
+        self.get_logger().info("Initializing left wheel motor (ID=1)...")
+        self.motor_set_mode(1, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_enable(1)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(1, 20.0)  # 设置电流限制
+        time.sleep(0.01)
+
+        # 初始化右轮电机 (ID=2)
+        self.get_logger().info("Initializing right wheel motor (ID=2)...")
+        self.motor_set_mode(2, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_enable(2)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(2, 20.0)  # 设置电流限制
+        time.sleep(0.01)
+
+        # 初始化前毛刷电机 (ID=3)
+        self.get_logger().info("Initializing front brush motor (ID=3)...")
+        self.motor_set_mode(3, 2)  # 设置速度模式
+        time.sleep(0.01)
+        self.motor_set_other_param(3, 15.0)  # 设置特定参数
+        time.sleep(0.01)
+        self.motor_enable(3)  # 使能电机
+        time.sleep(0.01)
+        self.motor_set_current_limit(3, 20.0)  # 设置电流限制
+        time.sleep(0.01)
 
     def speed_command_callback(self, msg: Float32MultiArray):
-        """接收按电机顺序排列的旧协议速度命令。"""
-        expected_length = len(self.motors)
-        if len(msg.data) not in (3, expected_length):
-            self.get_logger().warn(
-                f"Received speed command with incorrect length: {len(msg.data)}, "
-                f"expected: {expected_length} (or legacy 3)"
-            )
+        """处理速度命令回调函数"""
+        if len(msg.data) != 3:  # 3个电机的速度命令
+            self.get_logger().warn(f"Received speed command with incorrect length: {len(msg.data)}, expected: 3")
             return
 
-        try:
-            speeds = [float(value) for value in msg.data]
-        except (TypeError, ValueError):
-            self.get_logger().warn("Received non-numeric motor speed command")
-            return
-        if not all(math.isfinite(speed) for speed in speeds):
-            self.get_logger().warn("Received non-finite motor speed command")
-            return
+        # 更新电机速度目标值
+        for i in range(min(len(self.motors), len(msg.data))):
+            self.motors[i]["velocity"] = float(msg.data[i])
 
-        # 三路旧消息映射为1、2、3号电机，双滚刷下未提供的4号保持零速。
-        for motor in self.motors:
-            motor['velocity'] = 0.0
-        for index in range(min(len(self.motors), len(speeds))):
-            self.motors[index]['velocity'] = speeds[index]
-        self.last_speed_command_time = time.monotonic()
-        self.get_logger().debug(
-            f"Updated motor velocity targets: "
-            f"{[motor['velocity'] for motor in self.motors]}"
-        )
+        self.get_logger().debug(f"Updated motor velocity targets: {[m['velocity'] for m in self.motors]}")
 
     def send_speed_commands(self):
         """发送速度命令给所有在线电机，离线电机周期性重试"""
@@ -456,8 +433,7 @@ class CanMotorDriver(Node):
 
     def parse_motor_feedback(self, can_id: int, data: bytearray):
         """解析电机反馈数据（RS02协议 type2）"""
-        # 旧版帧 ID 的最低字节是电机 ID，中间字节是主站 ID(0x63)。
-        motor_id = can_id & 0xFF
+        motor_id = (can_id >> 8) & 0xFF
 
         motor = None
         for m in self.motors:
@@ -505,7 +481,7 @@ class CanMotorDriver(Node):
         current_time = self.get_clock().now()
         dt = (current_time.nanoseconds - self.last_time.nanoseconds) / 1e9
         self.last_time = current_time
-        
+
         if dt <= 0:
             return
 
@@ -537,7 +513,7 @@ class CanMotorDriver(Node):
     def publish_odometry(self, linear_velocity, angular_velocity):
         """发布里程计消息"""
         current_time = self.get_clock().now()
-        
+
         # 创建Odometry消息
         odom = Odometry()
         odom.header.stamp = current_time.to_msg()
@@ -579,7 +555,7 @@ class CanMotorDriver(Node):
         q.x = sr * cp * cy - cr * sp * sy
         q.y = cr * sp * cy + sr * cp * sy
         q.z = cr * cp * sy - sr * sp * cy
-        
+
         return q
 
     def receive_can_frames(self):
@@ -640,26 +616,18 @@ class CanMotorDriver(Node):
         self.receive_thread.start()
 
     def timer_callback(self):
-        """定时发送旧协议速度、反馈和里程信息。"""
-        if (
-            self.command_timeout_sec > 0.0
-            and time.monotonic() - self.last_speed_command_time
-            > self.command_timeout_sec
-        ):
-            for motor in self.motors:
-                motor['velocity'] = 0.0
-
+        """定时器回调函数，发送速度命令并发布电机状态"""
         # 发送速度命令给所有电机
         self.send_speed_commands()
-        
+
         # 更新里程信息
         self.update_odometry()
-        
+
         # 发布电机速度
         velocity_msg = Float32MultiArray()
         velocity_msg.data = [float(m["actual_velocity"]) for m in self.motors]
         self.velocity_publisher.publish(velocity_msg)
-        
+
         # 发布电机反馈信息（位置、速度、扭矩、温度）- 按电机ID分组
         feedback_msg = Float32MultiArray()
         # 每个电机的数据按顺序：[电机ID, 位置, 速度, 扭矩, 温度]
@@ -675,28 +643,21 @@ class CanMotorDriver(Node):
         feedback_msg.data = feedback_data
         self.motor_feedback_publisher.publish(feedback_msg)
 
-    def stop_all_motors(self):
-        """直接通过 CAN 发送零速和失能帧，不依赖 ROS context。"""
-        if self._stopping:
-            return
-
-        self._stopping = True
+    def destroy_node(self):
+        """节点销毁时停止所有电机"""
         self.get_logger().info("Stopping all motors...")
         self.running = False  # 停止接收线程
 
-        # 退出时不能依赖 /motor_speed_commands；launch 可能已关闭 ROS context。
+        # 发送速度为0的命令
         for motor in self.motors:
             motor["velocity"] = 0.0
-            self.motor_set_speed(motor["id"], 0.0)
-            time.sleep(0.01)
+        self.send_speed_commands()
+        time.sleep(0.01)
 
+        # 发送关闭命令
         for motor in self.motors:
             self.motor_disable(motor["id"])
             time.sleep(0.01)
-
-    def destroy_node(self):
-        """节点销毁时停止所有电机并关闭 CAN 总线。"""
-        self.stop_all_motors()
 
         if self.receive_thread:
             self.receive_thread.join(timeout=1.0)
@@ -706,14 +667,12 @@ class CanMotorDriver(Node):
             self.bus.shutdown()
             self.get_logger().info("CAN bus shutdown")
 
-        # rclpy 可能已在 SIGINT 时关闭 context，此时跳过 ROS 资源销毁。
-        if rclpy.ok():
-            super().destroy_node()
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    motor_driver = None
+
     try:
         motor_driver = CanMotorDriver()
         rclpy.spin(motor_driver)
@@ -722,12 +681,9 @@ def main(args=None):
     except Exception as e:
         print(f"Unexpected error: {e}")
     finally:
-        if motor_driver is not None:
-            # 即使 rclpy context 已关闭，也必须发送实际 CAN 停车帧。
-            motor_driver.stop_all_motors()
-            if rclpy.ok():
-                motor_driver.destroy_node()
         if rclpy.ok():
+            if 'motor_driver' in locals():
+                motor_driver.destroy_node()
             rclpy.shutdown()
 
 

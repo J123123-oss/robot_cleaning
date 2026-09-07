@@ -13,10 +13,16 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).parents[3]
 LAUNCH_SOURCE_PATH = Path(__file__).parents[1] / "launch" / "run.launch.py"
+INDOOR_LAUNCH_SOURCE_PATH = (
+    Path(__file__).parents[1] / "launch" / "camera_indoor_test.launch.py"
+)
 RTK_SOURCE_PATH = Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py"
 SETUP_SOURCE_PATH = Path(__file__).parents[1] / "setup.py"
 CAMERA_PUBLISHER_SOURCE_PATH = (
     Path(__file__).parents[1] / "rtk_nav" / "camera_publisher_node.py"
+)
+OPENMV_PUBLISHER_SOURCE_PATH = (
+    Path(__file__).parents[1] / "rtk_nav" / "openmv_serial_publisher_node.py"
 )
 LINE_DETECTOR_SOURCE_PATH = (
     Path(__file__).parents[1] / "rtk_nav" / "line_detector_node.py"
@@ -279,40 +285,46 @@ def test_line_detector_invalidates_all_visual_outputs_outside_waypoint_move():
     assert "detected = heading_valid" in detector
 
 
-def test_camera_publisher_is_registered_and_enabled_with_visual_correction():
+def test_openmv_publisher_is_the_only_runtime_camera_source():
     setup_source = SETUP_SOURCE_PATH.read_text(encoding="utf-8")
     launch_source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    camera_source = CAMERA_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+    openmv_source = OPENMV_PUBLISHER_SOURCE_PATH.read_text(encoding="utf-8")
+    detector_source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     package_source = (Path(__file__).parents[1] / "package.xml").read_text(
         encoding="utf-8"
     )
 
-    assert "camera_publisher_node = rtk_nav.camera_publisher_node:main" in setup_source
-    assert "executable='camera_publisher_node'" in launch_source
-    assert "name='camera_publisher'" in launch_source
-    assert "CompressedImage" in camera_source
-    assert "/camera/color/image_compressed" in camera_source
-    assert "IMWRITE_JPEG_QUALITY" in camera_source
+    assert "openmv_serial_publisher_node = rtk_nav.openmv_serial_publisher_node:main" in setup_source
+    assert "executable='openmv_serial_publisher_node'" in launch_source
+    assert "executable='camera_publisher_node'" not in launch_source
+    assert "CompressedImage" in openmv_source
+    assert "/camera/color/image/compressed" in openmv_source
+    assert "/camera/color/image/compressed" in detector_source
     assert "<exec_depend>python3-opencv</exec_depend>" in package_source
-    assert "node = None" in camera_source
-    assert "if node is not None:" in camera_source
-    assert launch_source.count(
-        "condition=IfCondition(LaunchConfiguration('enable_visual_correction'))"
-    ) >= 2
+    assert "'topic': '/camera/color/image/compressed'" in launch_source
 
 
-def test_launch_forwards_camera_roi_and_translation_parameters():
+def test_launch_forwards_openmv_serial_parameters():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
     for launch_name, parameter_name in (
-        ("camera_crop_x", "crop_x"),
-        ("camera_crop_y", "crop_y"),
-        ("camera_translate_x", "translate_x"),
-        ("camera_translate_y", "translate_y"),
+        ("camera_serial_port", "serial_port"),
+        ("camera_serial_baud", "baudrate"),
+        ("camera_serial_timeout", "read_timeout_sec"),
+        ("camera_serial_no_data_timeout", "no_data_timeout_sec"),
+        ("camera_serial_max_frame_bytes", "max_frame_bytes"),
     ):
         assert f'"{launch_name}"' in source
-        assert f"'{parameter_name}': ParameterValue(" in source
+        assert f"'{parameter_name}'" in source
         assert f"LaunchConfiguration('{launch_name}')" in source
+
+
+def test_indoor_launch_exposes_fallback_image_axis():
+    source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    assert "'fallback_path_axis_image_deg'" in source
+    assert "LaunchConfiguration('fallback_path_axis_image_deg')" in source
+    assert "'indoor_test_mode': True" in source
 
 
 def test_camera_publisher_loads_static_images_as_color_frames():
@@ -572,6 +584,24 @@ def test_line_detector_exposes_independent_visual_status_and_path_reference():
     assert "self.lateral_confidence_pub.publish" in publish_invalid
 
 
+def test_line_detector_keeps_atomic_visual_sample_compatibility_topic():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    timer_callback = ast.unparse(_function(tree, "timer_callback"))
+    publish_invalid = ast.unparse(_function(tree, "publish_invalid"))
+    sample_publisher = ast.unparse(
+        _function(tree, "publish_visual_sample")
+    )
+
+    assert "Float32MultiArray" in source
+    assert "'/grid_line/visual_sample'" in initializer
+    assert "self.publish_visual_sample" in timer_callback
+    assert "self.publish_visual_sample" in publish_invalid
+    assert "sample.data" in sample_publisher
+    assert "self.visual_sample_pub.publish(sample)" in sample_publisher
+
+
 def test_line_detector_uses_one_salient_line_and_image_center_for_lateral_offset():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -586,6 +616,17 @@ def test_line_detector_uses_one_salient_line_and_image_center_for_lateral_offset
     assert "selected_parallel_line" in detector
     assert "0.0" in detector
     assert "(left_projection + right_projection) / 2.0" not in detector
+
+
+def test_indoor_detector_initializes_lateral_reference_once():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "if self.initial_lateral_offset_m is None" in detector
+    assert "self.initial_lateral_offset_m = lateral_m" in detector
+    assert "relative_lateral_m = 0.0" in detector
+    assert "lateral_m - self.initial_lateral_offset_m" in detector
 
 
 def test_rtk_consumes_independent_visual_components_with_separate_gates():

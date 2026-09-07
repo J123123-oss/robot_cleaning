@@ -126,7 +126,7 @@ class MotorControlNode(Node):
         self.current_right_speed = 0.0  # 当前右轮速度
         self.mqtt_control_speed = 10.0  # MQTT控制速度
 
-        # 滚刷配置：数量只影响实际激活的CANopen节点，默认使用两个滚刷。
+        # 滚刷配置：数量只影响实际激活的旧版 RS02 节点，默认使用两个滚刷。
         self.declare_parameter("brush_motor_count", 2)
         try:
             brush_motor_count = int(self.get_parameter("brush_motor_count").value)
