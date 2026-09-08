@@ -26,9 +26,14 @@ LIGHT_COMMAND_READ_BYTES = 64
 LIGHT_ON_COMMAND = b"LIGHT_ON"
 LIGHT_OFF_COMMAND = b"LIGHT_OFF"
 LIGHT_HEARTBEAT_COMMAND = b"LIGHT_HEARTBEAT"
+LIGHT_BRIGHTNESS_COMMAND_PREFIX = b"LIGHT_BRIGHTNESS="
+LIGHT_BRIGHTNESS_ERROR = b"LIGHT_BRIGHTNESS_ERROR"
+LIGHT_BRIGHTNESS_MIN = 0
+LIGHT_BRIGHTNESS_MAX = 100
 
 pwm = PWM(Pin("P6"), freq=50_000, duty_u16=0)
 light_enabled = False
+light_brightness = LIGHT_BRIGHTNESS
 light_command_buffer = bytearray()
 last_light_heartbeat_ms = None
 last_light_status_ms = None
@@ -57,6 +62,11 @@ def build_frame_packet(payload, sequence):
 def build_light_status_packet(enabled):
     """Build a small status packet confirming the applied light state."""
     payload = LIGHT_ON_COMMAND if enabled else LIGHT_OFF_COMMAND
+    return build_light_status_payload_packet(payload)
+
+
+def build_light_status_payload_packet(payload):
+    """Build a status packet for a light command acknowledgement."""
     return build_packet(payload, 0, LIGHT_STATUS_PACKET_TYPE)
 
 
@@ -95,17 +105,36 @@ def send_all(usb, data, timeout_ms=USB_SEND_TIMEOUT_MS):
     return True
 
 
+def apply_fill_light():
+    """Apply the current enable state and brightness to the Light Shield PWM."""
+    duty_u16 = (
+        (light_brightness * 65535) // 100 if light_enabled else 0
+    )
+    pwm.duty_u16(duty_u16)
+
+
 def set_fill_light(enabled):
-    """Set the Light Shield brightness without changing it every frame."""
+    """Set the Light Shield state without changing it every frame."""
     global light_enabled
 
     enabled = bool(enabled)
     if enabled == light_enabled:
         return
 
-    duty_u16 = (LIGHT_BRIGHTNESS * 65535) // 100 if enabled else 0
-    pwm.duty_u16(duty_u16)
     light_enabled = enabled
+    apply_fill_light()
+
+
+def set_light_brightness(value):
+    """Update the PWM brightness immediately without resetting the camera."""
+    global light_brightness
+
+    if value < LIGHT_BRIGHTNESS_MIN or value > LIGHT_BRIGHTNESS_MAX:
+        return False
+
+    light_brightness = value
+    apply_fill_light()
+    return True
 
 
 def process_light_commands(usb):
@@ -119,7 +148,7 @@ def process_light_commands(usb):
     if not data:
         return
 
-    status_enabled = None
+    status_payload = None
     light_command_buffer.extend(data)
     if len(light_command_buffer) > 128:
         light_command_buffer = light_command_buffer[-128:]
@@ -135,14 +164,29 @@ def process_light_commands(usb):
         if command == LIGHT_ON_COMMAND or command == LIGHT_HEARTBEAT_COMMAND:
             last_light_heartbeat_ms = time.ticks_ms()
             set_fill_light(True)
-            status_enabled = True
+            status_payload = LIGHT_ON_COMMAND
         elif command == LIGHT_OFF_COMMAND:
             last_light_heartbeat_ms = None
             set_fill_light(False)
-            status_enabled = False
+            status_payload = LIGHT_OFF_COMMAND
+        elif command.startswith(LIGHT_BRIGHTNESS_COMMAND_PREFIX):
+            try:
+                brightness = int(
+                    command[len(LIGHT_BRIGHTNESS_COMMAND_PREFIX):].decode()
+                )
+            except (ValueError, TypeError):
+                brightness = None
 
-    if status_enabled is not None:
-        send_all(usb, build_light_status_packet(status_enabled))
+            if brightness is None or not set_light_brightness(brightness):
+                status_payload = LIGHT_BRIGHTNESS_ERROR
+            else:
+                status_payload = (
+                    LIGHT_BRIGHTNESS_COMMAND_PREFIX
+                    + str(light_brightness).encode()
+                )
+
+    if status_payload is not None:
+        send_all(usb, build_light_status_payload_packet(status_payload))
 
 
 def send_periodic_light_status(usb):

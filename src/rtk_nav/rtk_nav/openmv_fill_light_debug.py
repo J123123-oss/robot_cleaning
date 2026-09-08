@@ -19,11 +19,15 @@ COMMAND_READ_BYTES = 64
 LIGHT_ON_COMMAND = b"LIGHT_ON"
 LIGHT_OFF_COMMAND = b"LIGHT_OFF"
 LIGHT_HEARTBEAT_COMMAND = b"LIGHT_HEARTBEAT"
+LIGHT_BRIGHTNESS_COMMAND_PREFIX = b"LIGHT_BRIGHTNESS="
+LIGHT_BRIGHTNESS_MIN = 0
+LIGHT_BRIGHTNESS_MAX = 100
 
 
 usb = USB_VCP()
 command_buffer = bytearray()
 light_enabled = False
+light_brightness = LIGHT_BRIGHTNESS
 last_heartbeat_ms = None
 
 
@@ -46,6 +50,14 @@ except Exception as exc:
     send_log("PWM_INIT_ERROR pin=P6 error=" + str(exc))
 
 
+def apply_fill_light():
+    """Apply the current state and brightness to the Light Shield PWM."""
+    duty_u16 = (
+        (light_brightness * 65535) // 100 if light_enabled else 0
+    )
+    pwm.duty_u16(duty_u16)
+
+
 def set_fill_light(enabled):
     """Apply the requested state to the Light Shield PWM output."""
     global light_enabled
@@ -54,9 +66,22 @@ def set_fill_light(enabled):
         return False
 
     enabled = bool(enabled)
-    duty_u16 = (LIGHT_BRIGHTNESS * 65535) // 100 if enabled else 0
-    pwm.duty_u16(duty_u16)
     light_enabled = enabled
+    apply_fill_light()
+    return True
+
+
+def set_light_brightness(value):
+    """Update PWM brightness immediately without resetting the camera."""
+    global light_brightness
+
+    if pwm is None:
+        return False
+    if value < LIGHT_BRIGHTNESS_MIN or value > LIGHT_BRIGHTNESS_MAX:
+        return False
+
+    light_brightness = value
+    apply_fill_light()
     return True
 
 
@@ -75,6 +100,27 @@ def handle_command(command):
     """Handle one complete ASCII command and acknowledge it."""
     global last_heartbeat_ms
 
+    if command.startswith(LIGHT_BRIGHTNESS_COMMAND_PREFIX):
+        try:
+            brightness = int(
+                command[len(LIGHT_BRIGHTNESS_COMMAND_PREFIX):].decode()
+            )
+        except (ValueError, TypeError):
+            brightness = None
+
+        if brightness is None or not set_light_brightness(brightness):
+            send_log("RX LIGHT_BRIGHTNESS_ERROR")
+        else:
+            send_log(
+                "RX "
+                + command.decode()
+                + " -> brightness="
+                + str(light_brightness)
+                + "% duty_u16="
+                + str((light_brightness * 65535) // 100 if light_enabled else 0)
+            )
+        return
+
     if command == LIGHT_ON_COMMAND or command == LIGHT_HEARTBEAT_COMMAND:
         last_heartbeat_ms = time.ticks_ms()
         if set_fill_light(True):
@@ -82,7 +128,7 @@ def handle_command(command):
                 "RX "
                 + command.decode()
                 + " -> ON duty_u16="
-                + str((LIGHT_BRIGHTNESS * 65535) // 100)
+                + str((light_brightness * 65535) // 100)
             )
         return
 

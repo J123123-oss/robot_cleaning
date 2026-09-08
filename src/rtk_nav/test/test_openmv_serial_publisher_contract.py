@@ -37,6 +37,13 @@ def test_ros_node_publishes_standard_compressed_camera_topic():
     assert "reconnect" in NODE_SOURCE.lower()
 
 
+def test_ros_node_supports_camera_mounting_rotation():
+    assert 'self.declare_parameter("image_rotation_deg", 0)' in NODE_SOURCE
+    assert "transform_jpeg_payload" in NODE_SOURCE
+    assert "camera_image_rotation_deg" in LAUNCH_SOURCE
+    assert "default_value=TextSubstitution(text=\"180\")" in LAUNCH_SOURCE
+
+
 def test_ros_node_supports_direct_file_execution():
     assert "if __package__:" in NODE_SOURCE
     assert "from openmv_serial_protocol import" in NODE_SOURCE
@@ -46,12 +53,26 @@ def test_openmv_serial_baudrate_defaults_to_hardware_working_value():
     assert 'self.declare_parameter("baudrate", 115200)' in NODE_SOURCE
 
 
+def test_openmv_serial_node_exposes_runtime_light_brightness_parameter():
+    for required in (
+        'self.declare_parameter("light_brightness", 50)',
+        "LIGHT_BRIGHTNESS_COMMAND_PREFIX = b\"LIGHT_BRIGHTNESS=\"",
+        "from rcl_interfaces.msg import SetParametersResult",
+        "self.add_on_set_parameters_callback(self._on_parameter_set)",
+        "def _on_parameter_set(",
+        "def _send_light_brightness(",
+        "OpenMV 已确认补光灯亮度",
+    ):
+        assert required in NODE_SOURCE
+
+
 def test_openmv_node_is_registered_and_serial_dependency_declared():
     assert (
         "openmv_serial_publisher_node = "
         "rtk_nav.openmv_serial_publisher_node:main"
     ) in SETUP_SOURCE
     assert "<exec_depend>python3-serial</exec_depend>" in PACKAGE_SOURCE
+    assert "<depend>rcl_interfaces</depend>" in PACKAGE_SOURCE
 
 
 def test_launch_uses_openmv_as_the_only_runtime_camera_source():

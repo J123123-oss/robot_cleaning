@@ -20,6 +20,7 @@ def test_fill_light_uses_openmv_h7_plus_light_shield_pin():
 
 def test_fill_light_starts_off_until_the_host_claims_it():
     assert "LIGHT_BRIGHTNESS = 50" in OPENMV_SOURCE
+    assert "light_brightness = LIGHT_BRIGHTNESS" in OPENMV_SOURCE
     assert "LIGHT_HEARTBEAT_TIMEOUT_MS = 2000" in OPENMV_SOURCE
     assert "LIGHT_STATUS_INTERVAL_MS = 1000" in OPENMV_SOURCE
     assert "LIGHT_STATUS_PACKET_TYPE = 2" in OPENMV_SOURCE
@@ -32,14 +33,18 @@ def test_fill_light_accepts_host_commands_and_expires_without_heartbeat():
         "LIGHT_ON",
         "LIGHT_OFF",
         "LIGHT_HEARTBEAT",
+        "LIGHT_BRIGHTNESS_COMMAND_PREFIX",
         "usb.any()",
         "usb.recv(",
         "time.ticks_diff(",
         "def build_light_status_packet(",
         "def send_periodic_light_status(",
+        "def set_light_brightness(",
         "send_all(usb, build_light_status_packet(",
     ):
         assert required in OPENMV_SOURCE
+    assert "machine.reset" not in OPENMV_SOURCE
+    assert "machine.soft_reset" not in OPENMV_SOURCE
 
 
 def test_fill_light_is_released_when_usb_disconnects():
@@ -61,12 +66,16 @@ def test_standalone_debug_script_handles_light_commands_and_timeout():
         "LIGHT_ON_COMMAND",
         "LIGHT_OFF_COMMAND",
         "LIGHT_HEARTBEAT_COMMAND",
+        "LIGHT_BRIGHTNESS_COMMAND_PREFIX",
         "def handle_command(",
+        "def set_light_brightness(",
         "RX ",
         "def expire_heartbeat(",
         "HEARTBEAT_TIMEOUT -> OFF",
     ):
         assert required in DEBUG_SOURCE
+    assert "machine.reset" not in DEBUG_SOURCE
+    assert "machine.soft_reset" not in DEBUG_SOURCE
 
 
 def test_openmv_command_buffers_do_not_use_unsupported_bytearray_deletion():

@@ -83,6 +83,19 @@ LIGHT_HEARTBEAT
 仍保持连接，OpenMV 超过约 `2` 秒未收到心跳也会自动关闭补光灯。仅在 OpenMV IDE
 中单独运行脚本时，补光灯保持关闭。
 
+### 运行时修改补光灯亮度
+
+主机节点运行期间可以直接修改 `0` 到 `100` 的亮度百分比，OpenMV 会立即更新
+P6 的 PWM，不需要复位，也不会停止图像传输：
+
+```bash
+ros2 param set /openmv_serial_publisher light_brightness 70
+```
+
+底层串口命令为 `LIGHT_BRIGHTNESS=70`，必须以换行结束。节点断线重连时会自动重新
+下发当前亮度。H7 Plus 的 `machine.soft_reset()` 不会重新执行 `main.py`，因此本方案
+不使用软复位；亮度运行时修改也不需要 `machine.reset()`。
+
 ## 3. 构建并启动
 
 ```bash
