@@ -96,6 +96,56 @@ SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系
 # 填入现场标定的固定进仓点后，RTK导航结束会把该点追加到最后一个航点，且每轮任务只追加一次。
 BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
 
+
+def combine_stanley_and_visual_correction(
+    stanley_angle_deg: float,
+    visual_correction: float,
+    speed_scale: float,
+    max_correction: float,
+) -> Tuple[float, float, float]:
+    """把 Stanley 角度项和视觉速度纠偏合成为左右轮速度偏置。
+
+    视觉纠偏沿用室内控制器的电机速度单位。两项都按当前基础速度比例
+    缩放，且最终合计纠偏受同一个上限约束，避免两套控制器叠加后超调。
+    返回值依次为：缩放后的 Stanley 纠偏、缩放后的视觉纠偏、最终纠偏。
+    """
+    try:
+        stanley_angle_deg = float(stanley_angle_deg)
+        visual_correction = float(visual_correction)
+        speed_scale = float(speed_scale)
+        max_correction = float(max_correction)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0, 0.0, 0.0
+
+    if not math.isfinite(speed_scale) or speed_scale <= 0.0:
+        speed_scale = 1.0
+    speed_scale = min(speed_scale, 1.0)
+    if not math.isfinite(max_correction) or max_correction < 0.0:
+        max_correction = 0.0
+    if not math.isfinite(stanley_angle_deg):
+        stanley_angle_deg = 0.0
+    if not math.isfinite(visual_correction):
+        visual_correction = 0.0
+
+    stanley_angle_deg = max(-45.0, min(45.0, stanley_angle_deg))
+    visual_correction = max(
+        -max_correction, min(max_correction, visual_correction)
+    )
+    stanley_speed_correction = (
+        stanley_angle_deg / 45.0 * max_correction * speed_scale
+    )
+    visual_speed_correction = visual_correction * speed_scale
+    total_limit = max_correction * speed_scale
+    total_correction = max(
+        -total_limit,
+        min(total_limit, stanley_speed_correction + visual_speed_correction),
+    )
+    return (
+        stanley_speed_correction,
+        visual_speed_correction,
+        total_correction,
+    )
+
 BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
 # 边界航向角闭环矫正
@@ -322,9 +372,11 @@ class RTKNavControlNode(Node):
         self.stanley_k_near_target = max(
             0.0, float(self.get_parameter("stanley_k_near_target").value)
         )
-        self.declare_parameter("visual_heading_gain", 0.2)
-        self.declare_parameter("visual_lateral_gain", 1.0)
-        self.declare_parameter("visual_max_steering_deg", 3.0)
+        self.declare_parameter("visual_heading_gain", 0.05)
+        self.declare_parameter("visual_lateral_gain", 5.0)
+        self.declare_parameter("visual_max_correction", 1.5)
+        # 兼容旧 launch 参数；新代码统一使用速度纠偏单位。
+        self.declare_parameter("visual_max_steering_deg", -1.0)
         self.declare_parameter("visual_confidence_threshold", 0.75)
         self.declare_parameter("visual_timeout_sec", 0.5)
         self.visual_heading_gain = float(
@@ -333,9 +385,19 @@ class RTKNavControlNode(Node):
         self.visual_lateral_gain = float(
             self.get_parameter("visual_lateral_gain").value
         )
-        self.visual_max_steering_deg = max(
-            0.0, float(self.get_parameter("visual_max_steering_deg").value)
+        self.visual_max_correction = max(
+            0.0, float(self.get_parameter("visual_max_correction").value)
         )
+        legacy_visual_max = float(
+            self.get_parameter("visual_max_steering_deg").value
+        )
+        if legacy_visual_max >= 0.0:
+            self.get_logger().warn(
+                "visual_max_steering_deg已弃用，将其作为速度纠偏上限使用"
+            )
+            self.visual_max_correction = legacy_visual_max
+        # 保留属性名，避免旧测试和外部调试代码访问失败。
+        self.visual_max_steering_deg = self.visual_max_correction
         self.visual_confidence_threshold = float(
             self.get_parameter("visual_confidence_threshold").value
         )
@@ -2661,7 +2723,8 @@ class RTKNavControlNode(Node):
                                  path_direction: float,
                                  velocity: float,
                                  distance_to_target: float = float('inf'),
-                                 bearing_only: bool = False) -> Tuple[float, float]:
+                                 bearing_only: bool = False,
+                                 speed_scale: float = 1.0) -> Tuple[float, float]:
         """
         Stanley控制器计算左右轮速度
         使用自适应K值和横向误差限幅
@@ -2682,23 +2745,28 @@ class RTKNavControlNode(Node):
             lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
             k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
             steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
-        visual_correction = self.get_visual_steering_correction()
-        total_steering = steering_correction - heading_error + visual_correction
+        visual_correction_raw = self.get_visual_steering_correction()
+        total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5
-        total_steering_clamped = max(min(total_steering, 45.0), -45.0)
-        steering_factor = total_steering_clamped / 45.0
-        speed_diff = steering_factor * STRAIGHT_MAX_CORRECTION
+        stanley_speed_diff, visual_speed_diff, speed_diff = (
+            combine_stanley_and_visual_correction(
+                total_steering,
+                visual_correction_raw,
+                speed_scale,
+                STRAIGHT_MAX_CORRECTION,
+            )
+        )
         if not hasattr(self, '_stanley_log_counter'):
             self._stanley_log_counter = 0
         self._stanley_log_counter += 1
         if self._stanley_log_counter % 5 == 0:
-            # self.get_logger().info(
-            #     f"[Stanley-DBG] hdg_err={heading_error:.1f}°, lat_err={lateral_error:.3f}m, "
-            #     f"st_corr={steering_correction:.1f}°, total={total_steering:.1f}°, "
-            #     f"real_v={real_velocity:.3f}m/s, k={k:.2f}, path_dir={path_direction:.1f}°, imu={current_heading:.1f}°"
-            # )
-            pass
+            self.get_logger().debug(
+                f"[Stanley-DBG] base={velocity:.2f}, scale={speed_scale:.2f}, "
+                f"stanley_corr={stanley_speed_diff:.2f}, "
+                f"visual_raw={visual_correction_raw:.2f}, "
+                f"visual_corr={visual_speed_diff:.2f}, total_corr={speed_diff:.2f}"
+            )
         left_speed = -velocity + speed_diff
         right_speed = velocity + speed_diff
         left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
@@ -3150,7 +3218,8 @@ class RTKNavControlNode(Node):
                 path_direction=path_direction,
                 velocity=current_base_speed,
                 distance_to_target=distance,
-                bearing_only=self.nav_context.get("force_bearing_mode", False)
+                bearing_only=self.nav_context.get("force_bearing_mode", False),
+                speed_scale=speed_scale,
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
@@ -3199,6 +3268,7 @@ class RTKNavControlNode(Node):
                 lateral_err = self.calculate_lateral_error(current_pos, path_start, path_end)
                 self.get_logger().info(
                     f"[Stanley] 初始移动：left={left_speed:.2f}, right={right_speed:.2f}, "
+                    f"base={current_base_speed:.2f}, scale={speed_scale:.2f}, "
                     f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°, t={t:.3f}"
                 )
             last_left_speed = left_speed
@@ -4181,7 +4251,8 @@ class RTKNavControlNode(Node):
                     path_direction=path_direction,
                     velocity=current_base_speed,
                     distance_to_target=distance,
-                    bearing_only=in_bearing_mode
+                    bearing_only=in_bearing_mode,
+                    speed_scale=speed_scale,
                 )
 
                 # 正常行驶时原始 IO 首帧立即零速，等待确认后再进入边界矫正/P1。
@@ -4208,6 +4279,7 @@ class RTKNavControlNode(Node):
                     lateral_err = self.calculate_lateral_error(current_pos, self.stanley_path_start, path_end)
                     self.get_logger().info(
                         f"[Stanley] 航点{self.current_waypoint_idx}：距离{distance:.2f}m, left={left_speed:.2f}, right={right_speed:.2f}, "
+                        f"base={current_base_speed:.2f}, scale={speed_scale:.2f}, "
                         f"lat_err={lateral_err:.3f}m, hdg_err={heading_err:.1f}°, path_dir={path_direction:.1f}°, imu={self.imu_yaw:.1f}°, t={t:.3f}"
                     )
 
@@ -4453,7 +4525,11 @@ class RTKNavControlNode(Node):
         self.last_visual_sample_time = time.monotonic()
 
     def get_visual_steering_correction(self) -> float:
-        """返回满足安全门控时的视觉附加转向角。"""
+        """返回满足安全门控时的原始视觉速度纠偏量。
+
+        返回值单位与室内摄像头控制器一致，调用方再根据当前距离的
+        ``speed_scale`` 缩放，并与 Stanley 纠偏统一限幅。
+        """
         if not self.enable_visual_correction:
             return 0.0
         if not self.rtk_solution_ready:
@@ -4513,10 +4589,14 @@ class RTKNavControlNode(Node):
             correction += (
                 self.visual_lateral_gain * self.visual_sample_lateral_error_m
             )
-        return max(
-            -self.visual_max_steering_deg,
-            min(self.visual_max_steering_deg, correction),
+        max_correction = getattr(
+            self,
+            "visual_max_correction",
+            getattr(self, "visual_max_steering_deg", 0.0),
         )
+        if not math.isfinite(max_correction) or max_correction < 0.0:
+            return 0.0
+        return max(-max_correction, min(max_correction, correction))
 
     def update_rtk_error_status(self, error_code: int, force: bool = False):
         if not force and error_code == self.rtk_error_code:

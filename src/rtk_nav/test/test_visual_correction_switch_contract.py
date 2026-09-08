@@ -79,7 +79,11 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     assert '"enable_visual_correction"' in source
     assert 'default_value=TextSubstitution(text="true")' in source
     assert '"bypass_path_context_gate"' in source
-    assert 'default_value=TextSubstitution(text="true")' in source
+    assert (
+        'declare_bypass_path_context_gate_arg = DeclareLaunchArgument(\n'
+        '        "bypass_path_context_gate",\n'
+        '        default_value=TextSubstitution(text="false"),' in source
+    )
     assert 'LaunchConfiguration("bypass_path_context_gate")' in source
     assert 'LaunchConfiguration("enable_visual_correction")' in source
     assert "value_type=bool" in source
@@ -87,6 +91,7 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     assert "IfCondition(LaunchConfiguration('enable_visual_correction'))" in source
     assert "'visual_heading_gain': ParameterValue" in source
     assert "'visual_lateral_gain': ParameterValue" in source
+    assert "'visual_max_correction': ParameterValue" in source
     assert "'visual_max_steering_deg': ParameterValue" in source
     assert "'visual_confidence_threshold': ParameterValue" in source
     assert "'visual_timeout_sec': ParameterValue" in source
@@ -98,21 +103,23 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
     for name, default in (
         ("stanley_k_path", "0.45"),
         ("stanley_k_near_target", "0.42"),
-        ("visual_heading_gain", "0.2"),
-        ("visual_lateral_gain", "10.0"),
-        ("visual_max_steering_deg", "3.0"),
+        ("visual_heading_gain", "0.05"),
+        ("visual_lateral_gain", "5.0"),
+        ("visual_max_correction", "1.5"),
+        ("visual_max_steering_deg", "-1.0"),
         ("visual_confidence_threshold", "0.75"),
         ("visual_timeout_sec", "0.5"),
         ("target_line_offset_m", "nan"),
         ("target_line_match_tolerance_m", "0.5"),
         ("reference_axis_offset_px", "0.0"),
         ("fallback_path_axis_image_deg", "0.0"),
+        ("camera_angle_offset", "0.0"),
     ):
         assert f'"{name}"' in source
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 13
+    assert source.count("value_type=float") == 17
 
     for name, default, value_type in (
         ("line_tracking_enabled", "true", "bool"),
@@ -171,6 +178,35 @@ def test_line_detector_uses_horizontal_fallback_without_rtk_and_rtk_when_fresh()
     assert source == "fallback"
 
 
+def test_line_detector_applies_camera_angle_offset_only_to_fresh_rtk_axis():
+    resolve_axis = _load_direction_helpers()
+
+    axis, source = resolve_axis(
+        True,
+        10.0,
+        0.5,
+        100.0,
+        90.0,
+        5.0,
+        -5.0,
+        now=10.1,
+    )
+    assert math.isclose(axis, 85.0, abs_tol=1e-9)
+    assert source == "rtk"
+
+    axis, source = resolve_axis(
+        False,
+        0.0,
+        0.5,
+        100.0,
+        90.0,
+        25.0,
+        -5.0,
+        now=10.1,
+    )
+    assert math.isclose(axis, -5.0, abs_tol=1e-9)
+    assert source == "fallback"
+
 def test_line_detector_exposes_runtime_run_axis_debug():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -179,11 +215,20 @@ def test_line_detector_exposes_runtime_run_axis_debug():
     publisher = ast.unparse(_function(tree, "publish_run_axis"))
 
     assert "fallback_path_axis_image_deg" in initializer
+    assert "camera_angle_offset" in initializer
     assert "'/grid_line/run_axis_debug'" in initializer
     assert "resolve_effective_path_axis_image" in detector
     assert "source" in publisher
     assert "format_run_axis_debug" in publisher
     assert "cv2.arrowedLine" in detector
+
+
+def test_outdoor_launch_forwards_camera_angle_offset():
+    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    assert '"camera_angle_offset"' in source
+    assert "'camera_angle_offset': ParameterValue(" in source
+    assert 'LaunchConfiguration("camera_angle_offset")' in source
 
 
 def test_run_axis_debug_distinguishes_rtk_heading_from_image_axis():
@@ -205,13 +250,14 @@ def test_run_axis_debug_distinguishes_rtk_heading_from_image_axis():
     )
 
     debug = namespace["format_run_axis_debug"](
-        "vertical", 89.0, "rtk", 180.0, 179.0
+        "vertical", 89.0, "rtk", 180.0, 179.0, 5.0
     )
 
     assert "image_axis=89.0deg" in debug
     assert "path_heading=180.0deg" in debug
     assert "vehicle_heading=179.0deg" in debug
     assert "relative_heading=1.0deg" in debug
+    assert "camera_offset=5.0deg" in debug
     assert "source=rtk" in debug
 
 
@@ -326,6 +372,8 @@ def test_indoor_launch_exposes_fallback_image_axis():
 
     assert "'fallback_path_axis_image_deg'" in source
     assert "LaunchConfiguration('fallback_path_axis_image_deg')" in source
+    assert "'image_rotation_deg'" in source
+    assert "LaunchConfiguration('camera_image_rotation_deg')" in source
     assert "'indoor_test_mode': True" in source
 
 
@@ -515,24 +563,48 @@ def test_line_detector_uses_single_rendered_argument_for_logger_calls():
     assert invalid_calls == []
 
 
-def test_line_detector_logs_parallel_and_perpendicular_group_counts():
+def test_line_detector_logs_line_tracking_status():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+    status_logger = ast.unparse(
+        _function(tree, "_log_line_status_if_changed")
+    )
 
-    assert "self.get_logger().info" in detector
-    assert "P:{len(parallel_group)} C:{len(perpendicular_group)}" in detector
-    assert "P:0 C:0" in detector
+    assert "_log_line_status_if_changed" in detector
+    assert "f'line={status[0]} track={status[1]} geometry={status[2]}'" in status_logger
+    assert "P:" not in status_logger
+    assert "C:" not in status_logger
 
 
 def test_line_detector_logs_geometry_gate_state_for_offset_diagnostics():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+    status_logger = ast.unparse(
+        _function(tree, "_log_line_status_if_changed")
+    )
 
-    assert "line={selected_parallel_line is not None}" in detector
-    assert "geometry={valid_geometry}" in detector
-    assert "streak={self.valid_streak}/{self.reacquire_frames}" in detector
+    assert "selected_parallel_line is not None" in detector
+    assert "line={status[0]}" in status_logger
+    assert "geometry={status[2]}" in status_logger
+    assert "streak=" not in detector
+
+
+def test_line_detector_logs_status_only_when_the_status_changes():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    status_logger = ast.unparse(
+        _function(tree, "_log_line_status_if_changed")
+    )
+
+    assert "self._last_line_status_log = None" in initializer
+    assert "if status == self._last_line_status_log" in status_logger
+    assert "self._last_line_status_log = status" in status_logger
+    assert "parallel_count" not in status_logger
+    assert "perpendicular_count" not in status_logger
+    assert "streak" not in status_logger
 
 
 def test_rtk_declares_and_reports_visual_correction_switch():
@@ -629,6 +701,17 @@ def test_indoor_detector_initializes_lateral_reference_once():
     assert "self.initial_lateral_offset_m = lateral_m" in detector
     assert "relative_lateral_m = 0.0" in detector
     assert "lateral_m - self.initial_lateral_offset_m" in detector
+
+
+def test_line_detector_applies_image_rotation_sign_before_reference_zero():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "image_rotation_deg" in initializer
+    assert "lateral_error_sign_for_image_rotation" in initializer
+    assert "lateral_m *= self.lateral_error_sign" in detector
 
 
 def test_rtk_consumes_independent_visual_components_with_separate_gates():
@@ -764,6 +847,7 @@ def test_rtk_stanley_consumes_fresh_visual_correction():
     assert "'/grid_line/visual_sample'" in initializer
     assert "visual_heading_gain" in initializer
     assert "visual_lateral_gain" in initializer
+    assert "visual_max_correction" in initializer
     assert "visual_max_steering_deg" in initializer
     assert "visual_confidence_threshold" in initializer
     assert "visual_timeout_sec" in initializer
@@ -776,9 +860,10 @@ def test_rtk_stanley_consumes_fresh_visual_correction():
     assert "NavState.INITIAL_MOVE" in visual_correction
     assert "NavState.WAYPOINT_MOVE" in visual_correction
     assert "self.boundary_correct_locked" in visual_correction
-    assert "self.visual_max_steering_deg" in visual_correction
+    assert "visual_max_correction" in visual_correction
     assert "visual_correction" in stanley
-    assert "total_steering = steering_correction - heading_error + visual_correction" in stanley
+    assert "total_steering = steering_correction - heading_error" in stanley
+    assert "combine_stanley_and_visual_correction" in stanley
 
 
 def test_rtk_stanley_gain_parameters_select_normal_and_near_target_values():

@@ -93,7 +93,12 @@ def resolve_effective_path_axis_image(
     fallback_path_axis_image_deg,
     now=None,
 ):
-    """解析图像中的运行方向，并返回方向角及其数据来源。"""
+    """解析图像中的运行方向，并返回方向角及其数据来源。
+
+    室内模式通过无效的路径上下文进入 fallback；新鲜 RTK 上下文则先
+    转换为车体相对航向，再叠加相机安装偏置。相机偏置只修正 RTK 轴，
+    不改变室内固定 fallback 轴。
+    """
     if now is None:
         now = time.monotonic()
     context_age = float(now) - float(last_path_context_time)
@@ -118,6 +123,7 @@ def format_run_axis_debug(
     source,
     path_direction_deg=None,
     vehicle_heading_deg=None,
+    camera_angle_offset=None,
 ):
     """格式化运行方向诊断，明确区分 RTK 航向和图像轴角度。"""
     debug = f'axis={axis_label} image_axis={float(image_axis_deg):.1f}deg'
@@ -135,6 +141,12 @@ def format_run_axis_debug(
                 f' vehicle_heading={vehicle_heading:.1f}deg'
                 f' relative_heading={relative_heading:.1f}deg'
             )
+            try:
+                camera_offset = float(camera_angle_offset)
+            except (TypeError, ValueError):
+                camera_offset = float('nan')
+            if math.isfinite(camera_offset):
+                debug += f' camera_offset={camera_offset:.1f}deg'
     return f'{debug} source={source}'
 
 
@@ -146,6 +158,18 @@ def undirected_angle(angle_deg):
 def undirected_angle_distance(angle_a, angle_b):
     """返回两条无向直线的最小夹角。"""
     return abs(undirected_angle(float(angle_a) - float(angle_b)))
+
+
+def lateral_error_sign_for_image_rotation(rotation_deg):
+    """返回图像旋转后横向误差相对车体坐标的符号补偿。"""
+    try:
+        rotation_deg = int(rotation_deg)
+    except (TypeError, ValueError, OverflowError):
+        return 1.0
+    # 180 度旋转会同时反转图像的左右和上下坐标；当前固定运行轴下，
+    # 线的无向角度不变，但法向横向偏移符号反转。90/270 度涉及轴交换，
+    # 不在本次固定 180 度翻转的补偿范围内。
+    return -1.0 if rotation_deg == 180 else 1.0
 
 
 def weighted_line_angle(lines):
@@ -546,6 +570,36 @@ def update_line_tracking_state(
     return line, offset, 0, status
 
 
+def select_line_tracking_recovery_output(
+    last_valid_result,
+    tracking_status,
+    missed_frames,
+    max_missed_frames,
+    recovery_active,
+):
+    """在短时丢线或重获确认期间返回上一帧有效控制结果。
+
+    ``last_valid_result`` 是完整的视觉发布元组。只有已经建立恢复状态
+    时才允许复用它；连续丢线超过 ``max_missed_frames`` 后必须返回
+    ``None``，由调用方发布无效结果并触发安全停车。
+    """
+    if last_valid_result is None or not recovery_active:
+        return None
+    try:
+        missed_frames = int(missed_frames)
+        max_missed_frames = int(max_missed_frames)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    if tracking_status in ('lost', 'rejected', 'reacquire'):
+        if 0 < missed_frames <= max_missed_frames:
+            return last_valid_result
+        return None
+    if tracking_status in ('reacquired', 'locked'):
+        return last_valid_result
+    return None
+
+
 def select_reference_line(
     lines,
     axis_angle_deg,
@@ -701,6 +755,8 @@ class GridLineDetector(Node):
         # 没有新鲜 RTK 方向时使用的图像运行轴，单位为度。
         # 图像坐标约定为 0 度向右、90 度向下。
         self.declare_parameter('fallback_path_axis_image_deg', -5.0)
+        # OpenMV 发布前的图像旋转角度；180 度时需要反转横向误差符号。
+        self.declare_parameter('image_rotation_deg', 180)
         # 已停用的旧参数声明，仅保留以兼容历史配置文件。
         # self.declare_parameter('target_line_offset_m', float('nan'))
         # 目标参考线相对图像中心的横向偏移，单位为米；当前单线模式以中心为零点。
@@ -720,9 +776,9 @@ class GridLineDetector(Node):
         # 是否启用单线位置跟踪；启用后按上一帧法向位置关联候选线。
         self.declare_parameter('line_tracking_enabled', True)
         # 相邻两帧允许的最大法向跳变，单位为像素；超出即拒绝本帧。
-        self.declare_parameter('max_line_tracking_jump_px', 30.0)
-        # 连续丢失达到该帧数后进入受限重获状态，仍以最后有效位置为锚点。
-        self.declare_parameter('max_line_tracking_missed_frames', 2)
+        self.declare_parameter('max_line_tracking_jump_px', 100.0)
+        # 连续丢失最多保持该帧数的最后有效控制输出，之后发布无效结果。
+        self.declare_parameter('max_line_tracking_missed_frames', 4)
         # HSV 中白色线条的最小明度阈值，取值范围为 0 到 255。
         self.declare_parameter('white_line_value_threshold', 170.0)
         # HSV 中白色线条的最大饱和度阈值，取值范围为 0 到 255。
@@ -730,7 +786,7 @@ class GridLineDetector(Node):
         # 粗白线候选的最小线段长度，单位为像素。
         self.declare_parameter('coarse_line_min_length_px', 50.0)
         # 粗白线候选的最小估计宽度，单位为像素。
-        self.declare_parameter('coarse_line_min_width_px', 3.0)
+        self.declare_parameter('coarse_line_min_width_px', 4.0)
         # 粗白线候选沿线被白色掩膜支持的最小比例，范围为 0 到 1。
         self.declare_parameter('coarse_line_min_support', 0.3)
         # 同一粗白线边缘合并时允许的法向间隙，单位为像素。
@@ -764,6 +820,16 @@ class GridLineDetector(Node):
         )
         self.fallback_path_axis_image_deg = float(
             self.get_parameter('fallback_path_axis_image_deg').value
+        )
+        self.image_rotation_deg = int(
+            self.get_parameter('image_rotation_deg').value
+        )
+        if self.image_rotation_deg not in (0, 90, 180, 270):
+            raise ValueError(
+                'image_rotation_deg must be one of 0, 90, 180, 270'
+            )
+        self.lateral_error_sign = lateral_error_sign_for_image_rotation(
+            self.image_rotation_deg
         )
         self.target_line_offset_m = float(
             self.get_parameter('target_line_offset_m').value
@@ -827,6 +893,8 @@ class GridLineDetector(Node):
             or self.path_context_timeout_sec <= 0.0
         ):
             raise ValueError('path_context_timeout_sec must be finite and > 0')
+        if not math.isfinite(self.camera_angle_offset):
+            raise ValueError('camera_angle_offset must be finite')
         if (
             not math.isfinite(self.target_line_match_tolerance_m)
             or self.target_line_match_tolerance_m <= 0.0
@@ -933,6 +1001,10 @@ class GridLineDetector(Node):
         self.line_tracking_status = 'unlocked'
         self.last_tracking_axis_image_deg = None
         self.last_tracking_axis_source = None
+        # 缓存最近一次真正有效的控制输出，仅用于短时丢线恢复。
+        self.last_valid_visual_result = None
+        self.line_tracking_recovery_active = False
+        self._last_line_status_log = None
 
         self.latest_frame_lock = threading.Lock()
         self.latest_compressed_data = None
@@ -1125,7 +1197,7 @@ class GridLineDetector(Node):
         self.lateral_valid_streak = 0
 
     def reset_line_tracking(self):
-        """清除单线位置锚点和连续有效帧，等待新方向下重新锁定。"""
+        """清除线位置锚点、恢复缓存和连续有效帧，等待重新锁定。"""
         self.reset_reacquisition()
         self.tracked_line_offset_px = None
         self.last_valid_line_offset_px = None
@@ -1134,6 +1206,28 @@ class GridLineDetector(Node):
         self.line_tracking_status = 'unlocked'
         self.last_tracking_axis_image_deg = None
         self.last_tracking_axis_source = None
+        self.last_valid_visual_result = None
+        self.line_tracking_recovery_active = False
+
+    def _log_line_status_if_changed(
+        self,
+        line_detected,
+        tracking_status,
+        geometry_valid,
+    ):
+        """输出视觉状态变化，避免相同状态按帧重复刷屏。"""
+        status = (
+            bool(line_detected),
+            str(tracking_status),
+            bool(geometry_valid),
+        )
+        if status == self._last_line_status_log:
+            return
+
+        self._last_line_status_log = status
+        self.get_logger().info(
+            f'line={status[0]} track={status[1]} geometry={status[2]}'
+        )
 
     def update_tracking_axis(self, directed_path_axis_image, source):
         """检测运行方向来源或角度突变，并在变化时清除旧线锚点。"""
@@ -1167,6 +1261,7 @@ class GridLineDetector(Node):
                 return None, None, 'disabled'
             return selected, offset, 'disabled'
 
+        previous_missed_frames = self.line_tracking_missed_frames
         selected, offset, missed_frames, status = update_line_tracking_state(
             lines,
             axis_angle_deg,
@@ -1187,10 +1282,56 @@ class GridLineDetector(Node):
         if selected is not None and offset is not None:
             self.tracked_line_offset_px = offset
             self.last_valid_line_offset_px = offset
+            if previous_missed_frames > 0:
+                self.line_tracking_recovery_active = (
+                    self.last_valid_visual_result is not None
+                    and previous_missed_frames
+                    <= self.max_line_tracking_missed_frames
+                )
         else:
             # A rejected or missing candidate must never move the anchor.
             self.tracked_line_offset_px = None
+            self.line_tracking_recovery_active = (
+                self.last_valid_visual_result is not None
+                and 0 < missed_frames <= self.max_line_tracking_missed_frames
+            )
         return selected, offset, status
+
+    def get_line_tracking_recovery_output(
+        self, tracking_status, allow_recovery=True
+    ):
+        """返回短时恢复输出，并记录其原因；超时则返回 ``None``。"""
+        if not allow_recovery:
+            self.line_tracking_recovery_active = False
+            return None
+        result = select_line_tracking_recovery_output(
+            self.last_valid_visual_result,
+            tracking_status,
+            self.line_tracking_missed_frames,
+            self.max_line_tracking_missed_frames,
+            self.line_tracking_recovery_active,
+        )
+        if result is not None:
+            self.get_logger().info(
+                f'line tracking recovery=hold status={tracking_status} '
+                f'missed={self.line_tracking_missed_frames}',
+                throttle_duration_sec=1.0,
+            )
+        return result
+
+    def annotate_line_tracking_recovery(self, display):
+        """在调试图中标记当前帧使用的是缓存恢复输出。"""
+        if display is None or not self.line_tracking_recovery_active:
+            return
+        cv2.putText(
+            display,
+            f'Recovery: hold [{self.line_tracking_status}]',
+            (10, max(25, display.shape[0] - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+        )
 
     def publish_invalid(self):
         """发布明确的无效视觉结果。"""
@@ -1255,6 +1396,7 @@ class GridLineDetector(Node):
         source,
         path_direction_deg=None,
         vehicle_heading_deg=None,
+        camera_angle_offset=None,
     ):
         """发布方向分类和带来源的运行方向诊断。"""
         axis_label = (
@@ -1270,6 +1412,7 @@ class GridLineDetector(Node):
             source,
             path_direction_deg,
             vehicle_heading_deg,
+            camera_angle_offset,
         )
         self.run_axis_debug_pub.publish(axis_debug)
         self.get_logger().info(
@@ -1441,6 +1584,11 @@ class GridLineDetector(Node):
                 if path_axis_source == 'rtk'
                 else None
             ),
+            camera_angle_offset=(
+                self.camera_angle_offset
+                if path_axis_source == 'rtk'
+                else None
+            ),
         )
         lateral_state_valid = (
             self.indoor_test_mode
@@ -1575,15 +1723,22 @@ class GridLineDetector(Node):
             _, _, tracking_status = self.choose_parallel_line(
                 [], directed_path_axis_image, width, height
             )
-            self.get_logger().info(
-                f'P:0 C:0 line=False track={tracking_status} '
-                f'missed={self.line_tracking_missed_frames}',
-                throttle_duration_sec=1.0,
+            self._log_line_status_if_changed(
+                False,
+                tracking_status,
+                False,
             )
             self.reset_reacquisition()
+            recovery_result = self.get_line_tracking_recovery_output(
+                tracking_status, lateral_state_valid
+            )
+            if recovery_result is not None:
+                self.annotate_line_tracking_recovery(display)
             self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
+            if recovery_result is not None:
+                return recovery_result
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
         parallel_group = []
@@ -1614,10 +1769,6 @@ class GridLineDetector(Node):
             cross_axis_image,
             self.coarse_line_merge_gap_px,
         )
-        self.get_logger().debug(
-            f'P:{len(parallel_group)} C:{len(perpendicular_group)}',
-            throttle_duration_sec=1.0,
-        )
 
         selected_parallel_line, selected_line_offset, tracking_status = (
             self.choose_parallel_line(
@@ -1626,11 +1777,6 @@ class GridLineDetector(Node):
                 width,
                 height,
             )
-        )
-        selected_line_score = (
-            line_salience_score(selected_parallel_line)
-            if selected_parallel_line is not None
-            else 0.0
         )
 
         if display is not None:
@@ -1681,18 +1827,24 @@ class GridLineDetector(Node):
         )
         valid_geometry = lateral_geometry
 
+        self._log_line_status_if_changed(
+            selected_parallel_line is not None,
+            tracking_status,
+            valid_geometry,
+        )
+
         if not heading_geometry:
-            self.get_logger().info(
-                f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
-                f'line={selected_parallel_line is not None} '
-                f'track={tracking_status} '
-                f'geometry={valid_geometry} '
-                f'streak=0/{self.reacquire_frames}'
-            )
             self.reset_reacquisition()
+            recovery_result = self.get_line_tracking_recovery_output(
+                tracking_status, lateral_state_valid
+            )
+            if recovery_result is not None:
+                self.annotate_line_tracking_recovery(display)
             self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
+            if recovery_result is not None:
+                return recovery_result
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
         self.heading_valid_streak += 1
@@ -1705,19 +1857,21 @@ class GridLineDetector(Node):
         lateral_m = 0.0
         if lateral_geometry:
             lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
+            # 在建立室内初始零点前统一补偿，使绝对值、相对值和发布结果
+            # 都使用同一车体横向坐标约定。
+            lateral_m *= self.lateral_error_sign
         if lateral_geometry and not math.isfinite(lateral_m):
-            self.get_logger().info(
-                f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
-                f'line={selected_parallel_line is not None} '
-                f'track={tracking_status} '
-                f'geometry={valid_geometry} '
-                f'streak={self.valid_streak}/{self.reacquire_frames} '
-                f'lateral_px={lateral_pixel_error:.1f} lateral_m=invalid'
-            )
             self.reset_reacquisition()
+            recovery_result = self.get_line_tracking_recovery_output(
+                tracking_status, lateral_state_valid
+            )
+            if recovery_result is not None:
+                self.annotate_line_tracking_recovery(display)
             self.queue_debug_images(
                 display, gray_blur, white_mask, white_edges
             )
+            if recovery_result is not None:
+                return recovery_result
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
         self.last_absolute_lateral_m = lateral_m
@@ -1742,11 +1896,6 @@ class GridLineDetector(Node):
                 self.initial_lateral_offset_m,
             )
         lateral_reference_valid = math.isfinite(relative_lateral_m)
-        initial_lateral_text = (
-            'unset'
-            if self.initial_lateral_offset_m is None
-            else f'{self.initial_lateral_offset_m:.3f}'
-        )
 
         # Apply the navigation-state gate to every correction output so a
         # stale streak cannot expose angle or lateral data outside motion.
@@ -1773,21 +1922,6 @@ class GridLineDetector(Node):
         if lateral_valid:
             lateral_confidence = heading_confidence
         confidence = max(heading_confidence, lateral_confidence)
-        self.get_logger().info(
-            f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
-            f'line={selected_parallel_line is not None} '
-            f'score={selected_line_score:.1f} '
-            f'track={tracking_status} '
-            f'nav_state={self.nav_state or "unknown"} '
-            f'lateral_state={lateral_state_valid} '
-            f'geometry={valid_geometry} '
-            f'streak={self.valid_streak}/{self.reacquire_frames} '
-            f'detected={detected} lateral_px={lateral_pixel_error:.1f} '
-            f'lateral_m={lateral_m:.3f} '
-            f'initial_lateral={initial_lateral_text} '
-            f'relative_lateral={relative_lateral_m:.3f} '
-            f'heading_valid={heading_valid} lateral_valid={lateral_valid}'
-        )
 
         if display is not None:
             cv2.putText(
@@ -1819,19 +1953,30 @@ class GridLineDetector(Node):
                 (0, 255, 0),
                 2,
             )
+        recovery_result = None
+        if not detected:
+            recovery_result = self.get_line_tracking_recovery_output(
+                tracking_status, lateral_state_valid
+            )
+            if recovery_result is not None:
+                self.annotate_line_tracking_recovery(display)
         self.queue_debug_images(
             display, gray_blur, white_mask, white_edges
         )
-
+        if recovery_result is not None:
+            return recovery_result
         if not detected:
             return (
                 0.0, 0.0, False, 0.0,
                 False, False, heading_confidence, lateral_confidence,
             )
-        return (
+        current_result = (
             output_angle, output_lateral, True, confidence,
             heading_valid, lateral_valid, heading_confidence, lateral_confidence,
         )
+        self.last_valid_visual_result = current_result
+        self.line_tracking_recovery_active = False
+        return current_result
 
     def has_debug_subscribers(self):
         """检查调试图像话题是否存在订阅者，以决定是否生成调试图。"""

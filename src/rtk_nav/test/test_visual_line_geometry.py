@@ -19,6 +19,7 @@ def _helpers():
         "wrap180",
         "undirected_angle",
         "undirected_angle_distance",
+        "lateral_error_sign_for_image_rotation",
         "line_salience_score",
         "select_most_salient_line",
         "line_normal_offset_at_reference",
@@ -48,6 +49,14 @@ def test_path_angles_use_undirected_180_degree_geometry():
     assert helpers["wrap180"](-190.0) == 170.0
     assert helpers["undirected_angle_distance"](0.0, 180.0) == 0.0
     assert helpers["undirected_angle_distance"](0.0, 90.0) == 90.0
+
+
+def test_180_degree_image_rotation_reverses_lateral_error_sign():
+    helpers = _helpers()
+    sign_for_rotation = helpers["lateral_error_sign_for_image_rotation"]
+
+    assert sign_for_rotation(0) == 1.0
+    assert sign_for_rotation(180) == -1.0
 
 
 def test_single_line_selection_prefers_long_wide_well_supported_line():

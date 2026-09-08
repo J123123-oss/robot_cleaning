@@ -66,7 +66,7 @@ class OpenMVSerialPublisherNode(Node):
         self.declare_parameter("frame_id", "camera_frame")
         # Rotate the decoded image before republishing so camera mounting can
         # be corrected without changing the OpenMV firmware.
-        self.declare_parameter("image_rotation_deg", 0)
+        self.declare_parameter("image_rotation_deg", 180)
         # Publish on the standard image_transport compressed suffix.  Consumers
         # can select the base topic /camera/color/image with transport=compressed.
         self.declare_parameter("topic", "/camera/color/image/compressed")

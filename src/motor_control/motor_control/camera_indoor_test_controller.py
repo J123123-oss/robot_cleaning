@@ -16,7 +16,7 @@ def clamp(value, lower, upper):
     return max(float(lower), min(float(upper), float(value)))
 
 
-def compute_indoor_wheel_speeds(
+def compute_indoor_control(
     angle_deg,
     lateral_m,
     detected,
@@ -31,11 +31,13 @@ def compute_indoor_wheel_speeds(
     heading_deadband_deg=0.0,
     lateral_deadband_m=0.0,
 ):
-    """根据一帧视觉结果计算左右轮速度。
+    """根据一帧视觉结果计算纠偏量和左右轮速度。
 
     返回值沿用旧版 RS02 底盘的速度符号约定：前进为 ``(-v, +v)``。
     正的转向修正同时增加左右轮命令，使机器人向现有 RTK 控制器的同一
     方向约定转向；滚刷不参与此函数，调用方应明确发送零速。
+
+    返回值依次为：左轮速度、右轮速度、航向纠偏、横向纠偏和最终纠偏。
     """
     try:
         values = tuple(
@@ -54,10 +56,10 @@ def compute_indoor_wheel_speeds(
             )
         )
     except (TypeError, ValueError, OverflowError):
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
 
     if not all(math.isfinite(value) for value in values):
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     (
         angle_deg,
         lateral_m,
@@ -81,17 +83,58 @@ def compute_indoor_wheel_speeds(
         or not heading_valid
         or confidence < min_confidence
     ):
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
 
-    correction = 0.0
+    heading_correction = 0.0
     if abs(angle_deg) > heading_deadband_deg:
-        correction += heading_gain * angle_deg
+        heading_correction = heading_gain * angle_deg
+    lateral_correction = 0.0
     if lateral_valid and abs(lateral_m) > lateral_deadband_m:
-        correction += lateral_gain * lateral_m
+        lateral_correction = lateral_gain * lateral_m
+    correction = heading_correction + lateral_correction
     correction = clamp(correction, -max_correction, max_correction)
     # 不允许纠偏把前进中的一侧轮反向，避免室内测试变成原地旋转。
     correction = clamp(correction, -base_speed, base_speed)
-    return -base_speed + correction, base_speed + correction
+    return (
+        -base_speed + correction,
+        base_speed + correction,
+        heading_correction,
+        lateral_correction,
+        correction,
+    )
+
+
+def compute_indoor_wheel_speeds(
+    angle_deg,
+    lateral_m,
+    detected,
+    confidence,
+    heading_valid,
+    lateral_valid,
+    base_speed,
+    heading_gain,
+    lateral_gain,
+    max_correction,
+    min_confidence,
+    heading_deadband_deg=0.0,
+    lateral_deadband_m=0.0,
+):
+    """兼容旧调用方，仅返回由视觉结果计算出的左右轮速度。"""
+    return compute_indoor_control(
+        angle_deg,
+        lateral_m,
+        detected,
+        confidence,
+        heading_valid,
+        lateral_valid,
+        base_speed,
+        heading_gain,
+        lateral_gain,
+        max_correction,
+        min_confidence,
+        heading_deadband_deg,
+        lateral_deadband_m,
+    )[:2]
 
 
 class CameraIndoorTestController(Node):
@@ -108,7 +151,7 @@ class CameraIndoorTestController(Node):
         self.declare_parameter('min_confidence', 0.5)
         self.declare_parameter('visual_timeout_sec', 0.5)
         self.declare_parameter('heading_deadband_deg', 0.5)
-        self.declare_parameter('lateral_deadband_m', 0.01)
+        self.declare_parameter('lateral_deadband_m', 0.03)
         self.declare_parameter('control_frequency', 20.0)
         self.declare_parameter('brush_motor_count', 2)
 
@@ -150,6 +193,7 @@ class CameraIndoorTestController(Node):
         self.last_confidence_time = 0.0
         self.last_heading_valid_time = 0.0
         self.last_lateral_valid_time = 0.0
+        self._last_control_log_time = 0.0
 
         self.speed_pub = self.create_publisher(
             Float32MultiArray, '/motor_speed_commands', 10
@@ -262,7 +306,13 @@ class CameraIndoorTestController(Node):
         confidence_fresh = self._is_fresh(self.last_confidence_time, now)
         heading_fresh = self._is_fresh(self.last_heading_valid_time, now)
         lateral_fresh = self._is_fresh(self.last_lateral_valid_time, now)
-        left_speed, right_speed = compute_indoor_wheel_speeds(
+        (
+            left_speed,
+            right_speed,
+            heading_correction,
+            lateral_correction,
+            correction,
+        ) = compute_indoor_control(
             self.angle_deg,
             self.lateral_m,
             self.detected if angle_fresh else False,
@@ -277,6 +327,17 @@ class CameraIndoorTestController(Node):
             self.heading_deadband_deg,
             self.lateral_deadband_m,
         )
+        if now - self._last_control_log_time >= 1.0:
+            self.get_logger().info(
+                '室内直线控制: '
+                f'base_speed={self.base_speed:.3f}, '
+                f'heading_correction={heading_correction:+.3f}, '
+                f'lateral_correction={lateral_correction:+.3f}, '
+                f'correction={correction:+.3f}, '
+                f'left_speed={left_speed:+.3f}, '
+                f'right_speed={right_speed:+.3f}'
+            )
+            self._last_control_log_time = now
         msg = Float32MultiArray()
         msg.data = [float(left_speed), float(right_speed), 0.0]
         if self.brush_motor_count == 2:

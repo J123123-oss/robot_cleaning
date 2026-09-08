@@ -32,9 +32,14 @@ def generate_launch_description():
         default_value=TextSubstitution(text='2097152'),
         description='Maximum accepted OpenMV JPEG payload size',
     )
+    declare_camera_image_rotation_arg = DeclareLaunchArgument(
+        'camera_image_rotation_deg',
+        default_value=TextSubstitution(text='180'),
+        description='Rotate OpenMV image before publishing: 0, 90, 180, or 270 degrees',
+    )
     declare_base_speed_arg = DeclareLaunchArgument(
         'base_speed',
-        default_value=TextSubstitution(text='1.0'),
+        default_value=TextSubstitution(text='5.0'),
         description='Low indoor forward speed in motor driver units',
     )
     declare_heading_gain_arg = DeclareLaunchArgument(
@@ -69,7 +74,7 @@ def generate_launch_description():
     )
     declare_fallback_path_axis_arg = DeclareLaunchArgument(
         'fallback_path_axis_image_deg',
-        default_value=TextSubstitution(text='0.0'),
+        default_value=TextSubstitution(text='-90.0'),
         description=(
             'Indoor image run axis: 0 degrees right, 90 degrees down'
         ),
@@ -104,6 +109,10 @@ def generate_launch_description():
                     LaunchConfiguration('camera_serial_max_frame_bytes'),
                     value_type=int,
                 ),
+                'image_rotation_deg': ParameterValue(
+                    LaunchConfiguration('camera_image_rotation_deg'),
+                    value_type=int,
+                ),
             }
         ],
     )
@@ -121,6 +130,10 @@ def generate_launch_description():
                 'fallback_path_axis_image_deg': ParameterValue(
                     LaunchConfiguration('fallback_path_axis_image_deg'),
                     value_type=float,
+                ),
+                'image_rotation_deg': ParameterValue(
+                    LaunchConfiguration('camera_image_rotation_deg'),
+                    value_type=int,
                 ),
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
@@ -186,6 +199,7 @@ def generate_launch_description():
             declare_camera_serial_timeout_arg,
             declare_camera_serial_no_data_timeout_arg,
             declare_camera_serial_max_frame_arg,
+            declare_camera_image_rotation_arg,
             declare_base_speed_arg,
             declare_heading_gain_arg,
             declare_lateral_gain_arg,

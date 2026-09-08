@@ -12,21 +12,35 @@ SOURCE_PATH = (
 )
 
 
-def _compute():
-    """Load the pure helper without requiring a ROS installation."""
+def _load_control_functions():
+    """Load pure control helpers without requiring a ROS installation."""
     tree = ast.parse(SOURCE_PATH.read_text(encoding='utf-8'))
     functions = [
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in {'clamp', 'compute_indoor_wheel_speeds'}
+        and node.name in {
+            'clamp',
+            'compute_indoor_control',
+            'compute_indoor_wheel_speeds',
+        }
     ]
     namespace = {'math': math}
     exec(
         compile(ast.Module(body=functions, type_ignores=[]), str(SOURCE_PATH), 'exec'),
         namespace,
     )
-    return namespace['compute_indoor_wheel_speeds']
+    return namespace
+
+
+def _compute():
+    """Load the compatibility wheel-speed helper."""
+    return _load_control_functions()['compute_indoor_wheel_speeds']
+
+
+def _control():
+    """Load the helper that also exposes correction components."""
+    return _load_control_functions()['compute_indoor_control']
 
 
 def _speeds(**overrides):
@@ -84,3 +98,27 @@ def test_correction_does_not_reverse_a_wheel():
     left, right = _speeds(angle_deg=90.0, lateral_m=1.0)
     assert left <= 0.0
     assert right >= 0.0
+
+
+def test_control_result_exposes_corrections_used_by_debug_log():
+    """Debug values must match the correction applied to wheel commands."""
+    result = _control()(
+        angle_deg=10.0,
+        lateral_m=0.1,
+        detected=True,
+        confidence=0.9,
+        heading_valid=True,
+        lateral_valid=True,
+        base_speed=1.0,
+        heading_gain=0.05,
+        lateral_gain=5.0,
+        max_correction=0.8,
+        min_confidence=0.5,
+        heading_deadband_deg=0.5,
+        lateral_deadband_m=0.01,
+    )
+    expected = (-0.2, 1.8, 0.5, 0.5, 0.8)
+    assert all(
+        math.isclose(actual, target, rel_tol=0.0, abs_tol=1e-9)
+        for actual, target in zip(result, expected)
+    )

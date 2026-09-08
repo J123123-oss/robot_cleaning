@@ -41,8 +41,8 @@ def generate_launch_description():
 
     declare_bypass_path_context_gate_arg = DeclareLaunchArgument(
         "bypass_path_context_gate",
-        default_value=TextSubstitution(text="true"),
-        description="Bypass RTK path context gate for visual line testing",
+        default_value=TextSubstitution(text="false"),
+        description="Allow visual fallback without fresh RTK path context",
     )
     declare_fallback_path_axis_arg = DeclareLaunchArgument(
         "fallback_path_axis_image_deg",
@@ -51,6 +51,11 @@ def generate_launch_description():
             "Fallback motion axis in the image: 0 degrees right, "
             "90 degrees down"
         ),
+    )
+    declare_camera_angle_offset_arg = DeclareLaunchArgument(
+        "camera_angle_offset",
+        default_value=TextSubstitution(text="0.0"),
+        description="Outdoor camera installation angle correction in degrees",
     )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
@@ -65,18 +70,23 @@ def generate_launch_description():
     )
     declare_visual_heading_gain_arg = DeclareLaunchArgument(
         "visual_heading_gain",
-        default_value=TextSubstitution(text="0.2"),
-        description="Visual heading correction gain",
+        default_value=TextSubstitution(text="0.05"),
+        description="Visual heading correction gain in motor speed units per degree",
     )
     declare_visual_lateral_gain_arg = DeclareLaunchArgument(
         "visual_lateral_gain",
-        default_value=TextSubstitution(text="10.0"),
-        description="Visual lateral correction gain",
+        default_value=TextSubstitution(text="5.0"),
+        description="Visual lateral correction gain in motor speed units per meter",
+    )
+    declare_visual_max_correction_arg = DeclareLaunchArgument(
+        "visual_max_correction",
+        default_value=TextSubstitution(text="1.5"),
+        description="Maximum visual correction in motor speed units",
     )
     declare_visual_max_steering_arg = DeclareLaunchArgument(
         "visual_max_steering_deg",
-        default_value=TextSubstitution(text="3.0"),
-        description="Maximum visual correction steering angle in degrees",
+        default_value=TextSubstitution(text="-1.0"),
+        description="Deprecated visual correction limit alias",
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
         "visual_confidence_threshold",
@@ -112,6 +122,11 @@ def generate_launch_description():
         "camera_serial_max_frame_bytes",
         default_value=TextSubstitution(text="2097152"),
         description="Maximum accepted OpenMV JPEG payload size",
+    )
+    declare_camera_image_rotation_arg = DeclareLaunchArgument(
+        "camera_image_rotation_deg",
+        default_value=TextSubstitution(text="180"),
+        description="Rotate OpenMV image before publishing: 0, 90, 180, or 270 degrees",
     )
     declare_detection_fps_arg = DeclareLaunchArgument(
         "detection_fps",
@@ -232,6 +247,9 @@ def generate_launch_description():
                 'visual_lateral_gain': ParameterValue(
                     LaunchConfiguration("visual_lateral_gain"), value_type=float
                 ),
+                'visual_max_correction': ParameterValue(
+                    LaunchConfiguration("visual_max_correction"), value_type=float
+                ),
                 'visual_max_steering_deg': ParameterValue(
                     LaunchConfiguration("visual_max_steering_deg"), value_type=float
                 ),
@@ -308,6 +326,14 @@ def generate_launch_description():
                     LaunchConfiguration("fallback_path_axis_image_deg"),
                     value_type=float,
                 ),
+                'camera_angle_offset': ParameterValue(
+                    LaunchConfiguration("camera_angle_offset"),
+                    value_type=float,
+                ),
+                'image_rotation_deg': ParameterValue(
+                    LaunchConfiguration('camera_image_rotation_deg'),
+                    value_type=int,
+                ),
                 'target_line_offset_m': ParameterValue(
                     LaunchConfiguration("target_line_offset_m"),
                     value_type=float,
@@ -348,6 +374,10 @@ def generate_launch_description():
                     LaunchConfiguration('camera_serial_max_frame_bytes'),
                     value_type=int,
                 ),
+                'image_rotation_deg': ParameterValue(
+                    LaunchConfiguration('camera_image_rotation_deg'),
+                    value_type=int,
+                ),
             },
         ],
     )
@@ -386,10 +416,12 @@ def generate_launch_description():
     ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_fallback_path_axis_arg)
+    ld.add_action(declare_camera_angle_offset_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
     ld.add_action(declare_visual_heading_gain_arg)
     ld.add_action(declare_visual_lateral_gain_arg)
+    ld.add_action(declare_visual_max_correction_arg)
     ld.add_action(declare_visual_max_steering_arg)
     ld.add_action(declare_visual_confidence_threshold_arg)
     ld.add_action(declare_visual_timeout_arg)
@@ -398,6 +430,7 @@ def generate_launch_description():
     ld.add_action(declare_camera_serial_timeout_arg)
     ld.add_action(declare_camera_serial_no_data_timeout_arg)
     ld.add_action(declare_camera_serial_max_frame_arg)
+    ld.add_action(declare_camera_image_rotation_arg)
     ld.add_action(declare_detection_fps_arg)
     ld.add_action(declare_line_tracking_enabled_arg)
     ld.add_action(declare_line_tracking_jump_arg)
