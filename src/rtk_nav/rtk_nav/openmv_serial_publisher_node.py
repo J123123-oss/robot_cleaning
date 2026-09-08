@@ -14,6 +14,15 @@ try:
 except ImportError:  # pragma: no cover - exercised on an unconfigured host
     serial = None
 
+
+LIGHT_ON_COMMAND = b"LIGHT_ON\n"
+LIGHT_OFF_COMMAND = b"LIGHT_OFF\n"
+LIGHT_HEARTBEAT_COMMAND = b"LIGHT_HEARTBEAT\n"
+LIGHT_HEARTBEAT_INTERVAL_SEC = 0.5
+LIGHT_STATUS_PACKET_TYPE = 2
+LIGHT_STATUS_ON = b"LIGHT_ON"
+LIGHT_STATUS_OFF = b"LIGHT_OFF"
+
 if __package__:
     from .openmv_serial_protocol import FRAME_PACKET_TYPE, FrameStreamDecoder
 else:  # Support direct execution of this file during hardware bring-up.
@@ -36,7 +45,7 @@ class OpenMVSerialPublisherNode(Node):
         super().__init__("openmv_serial_publisher")
 
         self.declare_parameter("serial_port", "/dev/OpenMV_Cam_H7_Plus")
-        self.declare_parameter("baudrate", 921600)
+        self.declare_parameter("baudrate", 115200)
         self.declare_parameter("read_timeout_sec", 0.2)
         self.declare_parameter("no_data_timeout_sec", 5.0)
         self.declare_parameter("reconnect_interval_sec", 1.0)
@@ -90,11 +99,15 @@ class OpenMVSerialPublisherNode(Node):
 
         self._decoder = FrameStreamDecoder(self.max_frame_bytes)
         self._serial = None
+        self._serial_lock = threading.Lock()
         self._last_data_time = 0.0
         self._stop_event = threading.Event()
         self._latest_lock = threading.Lock()
         self._latest_packet = None
         self._published_count = 0
+        self._light_heartbeat_count = 0
+        self._light_status_count = 0
+        self._last_light_status = None
         self._reader_thread = threading.Thread(
             target=self._read_loop,
             name="openmv-serial-reader",
@@ -102,6 +115,9 @@ class OpenMVSerialPublisherNode(Node):
         )
         self._reader_thread.start()
         self._publish_timer = self.create_timer(0.01, self._publish_latest_frame)
+        self._light_timer = self.create_timer(
+            LIGHT_HEARTBEAT_INTERVAL_SEC, self._send_light_heartbeat
+        )
 
     def _try_open_serial(self):
         try:
@@ -120,23 +136,83 @@ class OpenMVSerialPublisherNode(Node):
             connection.close()
             return False
 
-        self._serial = connection
+        with self._serial_lock:
+            if self._stop_event.is_set():
+                connection.close()
+                return False
+            self._serial = connection
+        self._light_heartbeat_count = 0
+        self._light_status_count = 0
+        self._last_light_status = None
         self._decoder.reset()
         self._last_data_time = time.monotonic()
         self.get_logger().info(
             f"已连接 OpenMV 串口: {self.serial_port} @ {self.baudrate}"
         )
+
+        if not self._send_light_command(LIGHT_ON_COMMAND):
+            self.get_logger().warning("OpenMV 补光灯开启命令发送失败")
+            self._close_serial()
+            return False
+        self.get_logger().info("已发送 OpenMV 补光灯开启命令")
         return True
 
     def _close_serial(self):
-        connection = self._serial
-        self._serial = None
-        if connection is not None:
-            try:
-                connection.close()
-            except (OSError, serial.SerialException):
-                pass
+        with self._serial_lock:
+            connection = self._serial
+            self._serial = None
+            if connection is not None:
+                try:
+                    connection.close()
+                except (OSError, serial.SerialException):
+                    pass
         self._decoder.reset()
+
+    def _send_light_command(self, command):
+        """Send a light command while serial close/write operations are serialized."""
+        connection = self._serial
+        if connection is None:
+            return False
+
+        try:
+            with self._serial_lock:
+                if self._serial is not connection:
+                    return False
+                if self._stop_event.is_set() and command != LIGHT_OFF_COMMAND:
+                    return False
+                connection.write(command)
+                connection.flush()
+        except (serial.SerialException, OSError, TypeError):
+            return False
+        return True
+
+    def _send_light_heartbeat(self):
+        """Keep the camera-side fill-light lease alive while this node runs."""
+        if self._stop_event.is_set() or self._serial is None:
+            return
+        if not self._send_light_command(LIGHT_HEARTBEAT_COMMAND):
+            self.get_logger().warning("OpenMV 补光灯心跳发送失败，将重连")
+            self._close_serial()
+            return
+
+        self._light_heartbeat_count += 1
+        if self._light_heartbeat_count == 1:
+            self.get_logger().info("已发送 OpenMV 补光灯首个心跳")
+
+    def _handle_light_status(self, payload):
+        """Log the camera confirmation without treating it as an image frame."""
+        if self._stop_event.is_set():
+            return
+
+        if payload == LIGHT_STATUS_ON:
+            self._light_status_count += 1
+            if self._last_light_status != "ON":
+                self.get_logger().info("OpenMV 已确认补光灯开启")
+                self._last_light_status = "ON"
+        elif payload == LIGHT_STATUS_OFF:
+            if self._last_light_status != "OFF":
+                self.get_logger().info("OpenMV 补光灯状态: OFF")
+                self._last_light_status = "OFF"
 
     def _read_loop(self):
         while not self._stop_event.is_set():
@@ -161,6 +237,9 @@ class OpenMVSerialPublisherNode(Node):
                     continue
                 self._last_data_time = time.monotonic()
                 for packet in self._decoder.feed(data):
+                    if packet.packet_type == LIGHT_STATUS_PACKET_TYPE:
+                        self._handle_light_status(packet.payload)
+                        continue
                     if packet.packet_type != FRAME_PACKET_TYPE:
                         continue
                     if not is_jpeg_payload(packet.payload):
@@ -199,6 +278,9 @@ class OpenMVSerialPublisherNode(Node):
     def destroy_node(self):
         """Stop the reader and release the USB serial device."""
         self._stop_event.set()
+        if self._light_timer is not None:
+            self._light_timer.cancel()
+        self._send_light_command(LIGHT_OFF_COMMAND)
         if self._reader_thread.is_alive():
             # 先让 read() 因有限超时返回，再关闭串口，避免并发 close 导致
             # serialposix.read() 使用 None 文件描述符。

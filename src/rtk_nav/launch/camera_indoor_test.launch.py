@@ -14,7 +14,7 @@ def generate_launch_description():
     )
     declare_camera_serial_baud_arg = DeclareLaunchArgument(
         'camera_serial_baud',
-        default_value=TextSubstitution(text='921600'),
+        default_value=TextSubstitution(text='115200'),
         description='OpenMV serial baudrate',
     )
     declare_camera_serial_timeout_arg = DeclareLaunchArgument(

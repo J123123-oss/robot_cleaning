@@ -318,6 +318,8 @@ def test_launch_forwards_openmv_serial_parameters():
         assert f"'{parameter_name}'" in source
         assert f"LaunchConfiguration('{launch_name}')" in source
 
+    assert 'default_value=TextSubstitution(text="115200")' in source
+
 
 def test_indoor_launch_exposes_fallback_image_axis():
     source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")

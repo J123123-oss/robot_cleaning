@@ -48,6 +48,41 @@ OMV1 + version + type + sequence + payload_length + JPEG + CRC32
 
 启动 Ubuntu ROS 节点前，关闭 OpenMV IDE 对串口的占用。
 
+### 补光灯握手单独调试
+
+在主机节点未运行时，将 `src/rtk_nav/rtk_nav/openmv_fill_light_debug.py` 在
+OpenMV IDE 中打开，并下载到开发板为 `main.py`。该脚本不初始化摄像头，也不发送
+图像数据，只通过 USB 输出补光灯握手日志。
+
+串口助手中发送以下命令时必须带换行（`LF` 或 `CRLF` 均可）：
+
+```text
+LIGHT_OFF
+LIGHT_ON
+LIGHT_HEARTBEAT
+```
+
+预期看到：
+
+```text
+[FillLight] RX LIGHT_OFF -> OFF duty_u16=0
+[FillLight] RX LIGHT_ON -> ON duty_u16=32767
+[FillLight] RX LIGHT_HEARTBEAT -> ON duty_u16=32767
+```
+
+发送 `LIGHT_ON` 或 `LIGHT_HEARTBEAT` 后超过约 `2` 秒没有继续发送心跳，预期看到：
+
+```text
+[FillLight] HEARTBEAT_TIMEOUT -> OFF duty_u16=0
+```
+
+验证完成后，再把 `openmv_camera_stream.py` 下载为 `main.py`，恢复图像传输。
+
+补光灯使用 Light Shield 的 `P6`，默认由主机节点控制：节点连接后发送开启命令并
+每 `0.5` 秒发送一次心跳；节点正常退出会发送关闭命令。即使主机异常退出但 USB
+仍保持连接，OpenMV 超过约 `2` 秒未收到心跳也会自动关闭补光灯。仅在 OpenMV IDE
+中单独运行脚本时，补光灯保持关闭。
+
 ## 3. 构建并启动
 
 ```bash
@@ -62,7 +97,7 @@ source install/setup.bash
 ```bash
 ros2 run rtk_nav openmv_serial_publisher_node --ros-args \
   -p serial_port:=/dev/ttyACM0 \
-  -p baudrate:=921600
+  -p baudrate:=115200
 ```
 
 如果暂时不通过已安装的 ROS2 命令启动，也可以直接运行源码文件；此时必须
@@ -74,7 +109,7 @@ source /opt/ros/humble/setup.bash
   ~/robot_cleaning/src/rtk_nav/rtk_nav/openmv_serial_publisher_node.py \
   --ros-args \
   -p serial_port:=/dev/ttyACM0 \
-  -p baudrate:=921600
+  -p baudrate:=115200
 ```
 
 使用总启动文件时：
@@ -82,7 +117,7 @@ source /opt/ros/humble/setup.bash
 ```bash
 ros2 launch rtk_nav run.launch.py \
   camera_serial_port:=/dev/ttyACM0 \
-  camera_serial_baud:=921600 \
+  camera_serial_baud:=115200 \
   camera_serial_no_data_timeout:=5.0 \
   enable_visual_correction:=true
 ```

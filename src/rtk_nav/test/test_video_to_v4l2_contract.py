@@ -137,7 +137,7 @@ def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
 
 def test_launch_uses_openmv_camera_and_detection_rate_defaults():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    for default in ("921600", "0.2", "5.0", "2097152", "30.0", "false"):
+    for default in ("115200", "0.2", "5.0", "2097152", "30.0", "false"):
         assert f'TextSubstitution(text="{default}")' in source
     assert "executable='openmv_serial_publisher_node'" in source
     assert "executable='camera_publisher_node'" not in source

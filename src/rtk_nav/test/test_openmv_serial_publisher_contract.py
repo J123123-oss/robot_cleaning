@@ -42,6 +42,10 @@ def test_ros_node_supports_direct_file_execution():
     assert "from openmv_serial_protocol import" in NODE_SOURCE
 
 
+def test_openmv_serial_baudrate_defaults_to_hardware_working_value():
+    assert 'self.declare_parameter("baudrate", 115200)' in NODE_SOURCE
+
+
 def test_openmv_node_is_registered_and_serial_dependency_declared():
     assert (
         "openmv_serial_publisher_node = "
@@ -81,3 +85,23 @@ def test_serial_node_reconnects_after_stalled_input_and_returns_failure():
     assert "连续无数据" in NODE_SOURCE
     assert "exit_code = 1" in NODE_SOURCE
     assert "return exit_code" in NODE_SOURCE
+
+
+def test_serial_node_owns_fill_light_with_heartbeat_and_shutdown_command():
+    for required in (
+        "LIGHT_ON_COMMAND = b\"LIGHT_ON\\n\"",
+        "LIGHT_OFF_COMMAND = b\"LIGHT_OFF\\n\"",
+        "LIGHT_HEARTBEAT_COMMAND = b\"LIGHT_HEARTBEAT\\n\"",
+        "LIGHT_HEARTBEAT_INTERVAL_SEC = 0.5",
+        "LIGHT_STATUS_PACKET_TYPE = 2",
+        "self._last_light_status = None",
+        "self._send_light_command(LIGHT_ON_COMMAND)",
+        "self._send_light_command(LIGHT_OFF_COMMAND)",
+        "self._light_timer = self.create_timer(",
+        "self._send_light_heartbeat",
+        "已发送 OpenMV 补光灯首个心跳",
+        "OpenMV 已确认补光灯开启",
+        "OpenMV 补光灯状态: OFF",
+        "if self._stop_event.is_set():",
+    ):
+        assert required in NODE_SOURCE
