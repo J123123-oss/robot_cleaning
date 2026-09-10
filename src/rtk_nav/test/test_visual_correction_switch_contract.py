@@ -99,6 +99,83 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     assert "'visual_timeout_sec': ParameterValue" in source
 
 
+def test_launch_forwards_always_show_axis_debug_to_both_detectors():
+    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
+        source = launch_path.read_text(encoding="utf-8")
+
+        assert '"always_show_axis_debug"' in source or (
+            "'always_show_axis_debug'" in source
+        )
+        assert 'default_value=TextSubstitution(text="false")' in source or (
+            "default_value=TextSubstitution(text='false')" in source
+        )
+        assert "'always_show_axis_debug': ParameterValue(" in source
+        assert (
+            "LaunchConfiguration('always_show_axis_debug')" in source
+        )
+
+
+def test_line_detector_keeps_axis_debug_rows_together_with_runtime_switch():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    assert "always_show_axis_debug" in initializer
+    assert "self.always_show_axis_debug" in detector
+    assert "if self.always_show_axis_debug" in detector
+    assert "Image axis:" in detector
+    assert "RTK path:" in detector
+    assert "Vehicle:" in detector
+    assert "Relative:" in detector
+    assert "Angle ROI:" not in detector
+    assert "Angle: --" in detector
+    assert "Lat Dev: --" in detector
+
+
+def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
+    source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    initializer = ast.unparse(_function(tree, "__init__"))
+    detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
+
+    for parameter in (
+        "angle_line_min_width_px",
+        "angle_line_min_support",
+        "angle_line_hough_threshold",
+        "angle_line_gap_fill_px",
+        "angle_line_bridge_angle_tolerance_deg",
+        "angle_line_axis_tolerance_deg",
+        "angle_line_merge_gap_px",
+    ):
+        assert parameter in initializer
+    assert "angle_white_mask" in detector
+    assert "bridge_collinear_line_records" in detector
+    assert "close_directional_line_gaps" not in detector
+    assert "angle_hough_lines" in detector
+    assert "select_angle_line_candidates" in detector
+    assert "angle_reference_axis_image" in detector
+    assert "angle_parallel_group" in detector
+    assert "angle_lines = select_center_line_candidates" in detector
+    assert "angle_parallel_group" in detector.split(
+        "angle_lines = select_center_line_candidates", 1
+    )[1]
+    assert any(
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.BoolOp)
+        and isinstance(node.test.op, ast.And)
+        and {
+            operand.operand.id
+            for operand in node.test.values
+            if isinstance(operand, ast.UnaryOp)
+            and isinstance(operand.op, ast.Not)
+            and isinstance(operand.operand, ast.Name)
+        }
+        == {"coarse_lines", "angle_candidate_lines"}
+        for node in ast.walk(_function(tree, "detect_and_draw_grid_lines"))
+    )
+
+
 def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
     source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
@@ -117,13 +194,22 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         ("target_line_match_tolerance_m", "0.5"),
         ("reference_axis_offset_px", "0.0"),
         ("fallback_path_axis_image_deg", "-90.0"),
+        ("angle_reference_axis_image_deg", "-90.0"),
         ("camera_angle_offset", "0.0"),
     ):
         assert f'"{name}"' in source
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 21
+    assert "'angle_line_gap_fill_px': ParameterValue(" in source
+    assert 'default_value=TextSubstitution(text="6.0")' in source
+    assert "LaunchConfiguration('angle_line_gap_fill_px')" in source
+    assert "'angle_line_bridge_angle_tolerance_deg': ParameterValue(" in source
+    assert 'default_value=TextSubstitution(text="3.0")' in source
+    assert "LaunchConfiguration('angle_line_bridge_angle_tolerance_deg')" in source
+    assert "'angle_line_axis_tolerance_deg': ParameterValue(" in source
+    assert 'default_value=TextSubstitution(text="25.0")' in source
+    assert "LaunchConfiguration('angle_line_axis_tolerance_deg')" in source
 
     for name, default, value_type in (
         ("line_tracking_enabled", "true", "bool"),

@@ -73,6 +73,34 @@ def generate_launch_description():
         default_value=TextSubstitution(text='true'),
         description='Publish annotated and intermediate camera images',
     )
+    declare_always_show_axis_debug_arg = DeclareLaunchArgument(
+        'always_show_axis_debug',
+        default_value=TextSubstitution(text='false'),
+        description=(
+            'Show full axis, line-count, and RTK diagnostics in the debug image'
+        ),
+    )
+    declare_angle_line_gap_fill_arg = DeclareLaunchArgument(
+        'angle_line_gap_fill_px',
+        default_value=TextSubstitution(text='6.0'),
+        description=(
+            'Maximum gap to bridge between collinear grid-line segments'
+        ),
+    )
+    declare_angle_line_bridge_angle_arg = DeclareLaunchArgument(
+        'angle_line_bridge_angle_tolerance_deg',
+        default_value=TextSubstitution(text='3.0'),
+        description=(
+            'Maximum direction difference for bridging grid-line segments'
+        ),
+    )
+    declare_angle_line_axis_tolerance_arg = DeclareLaunchArgument(
+        'angle_line_axis_tolerance_deg',
+        default_value=TextSubstitution(text='25.0'),
+        description=(
+            'Maximum fine-grid angle difference from the camera reference axis'
+        ),
+    )
     declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
         'enable_grid_line_stream',
         default_value=TextSubstitution(text='true'),
@@ -119,6 +147,11 @@ def generate_launch_description():
         description=(
             'Indoor image run axis: 0 degrees right, 90 degrees down'
         ),
+    )
+    declare_angle_reference_axis_arg = DeclareLaunchArgument(
+        'angle_reference_axis_image_deg',
+        default_value=TextSubstitution(text='-90.0'),
+        description='Camera image reference axis for grid-line angle correction',
     )
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         'brush_motor_count',
@@ -172,12 +205,30 @@ def generate_launch_description():
                     LaunchConfiguration('fallback_path_axis_image_deg'),
                     value_type=float,
                 ),
+                'angle_reference_axis_image_deg': ParameterValue(
+                    LaunchConfiguration('angle_reference_axis_image_deg'),
+                    value_type=float,
+                ),
                 'image_rotation_deg': ParameterValue(
                     LaunchConfiguration('camera_image_rotation_deg'),
                     value_type=int,
                 ),
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
+                ),
+                'always_show_axis_debug': ParameterValue(
+                    LaunchConfiguration('always_show_axis_debug'), value_type=bool
+                ),
+                'angle_line_gap_fill_px': ParameterValue(
+                    LaunchConfiguration('angle_line_gap_fill_px'), value_type=float
+                ),
+                'angle_line_bridge_angle_tolerance_deg': ParameterValue(
+                    LaunchConfiguration('angle_line_bridge_angle_tolerance_deg'),
+                    value_type=float,
+                ),
+                'angle_line_axis_tolerance_deg': ParameterValue(
+                    LaunchConfiguration('angle_line_axis_tolerance_deg'),
+                    value_type=float,
                 ),
             }
         ],
@@ -273,6 +324,10 @@ def generate_launch_description():
             declare_min_confidence_arg,
             declare_visual_timeout_arg,
             declare_publish_debug_images_arg,
+            declare_always_show_axis_debug_arg,
+            declare_angle_line_gap_fill_arg,
+            declare_angle_line_bridge_angle_arg,
+            declare_angle_line_axis_tolerance_arg,
             declare_enable_grid_line_stream_arg,
             declare_grid_line_stream_rtsp_url_arg,
             declare_grid_line_stream_fps_arg,
@@ -281,6 +336,7 @@ def generate_launch_description():
             declare_grid_line_stream_reconnect_arg,
             declare_ffmpeg_path_arg,
             declare_fallback_path_axis_arg,
+            declare_angle_reference_axis_arg,
             declare_brush_motor_count_arg,
             motor_driver_node,
             openmv_camera_node,

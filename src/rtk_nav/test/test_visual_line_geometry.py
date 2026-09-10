@@ -20,6 +20,8 @@ def _helpers():
         "undirected_angle",
         "undirected_angle_distance",
         "weighted_line_angle",
+        "bridge_collinear_line_records",
+        "select_angle_line_candidates",
         "center_band_half_extent_px",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
@@ -112,6 +114,28 @@ def test_center_line_candidates_keep_multiple_lines_for_angle_average():
     assert math.isclose(average_angle, 81.0, abs_tol=0.2)
 
 
+def test_angle_candidates_follow_slanted_grid_not_rtk_axis():
+    helpers = _helpers()
+    first = (250, 0, 350, 480, 490.3, 78.2, 300.0, 240.0, 2.0, 0.85)
+    second = (300, 0, 400, 480, 490.3, 78.2, 350.0, 240.0, 2.0, 0.85)
+    horizontal = (0, 120, 640, 120, 640.0, 0.0, 320.0, 120.0, 2.0, 0.9)
+    edge = (-30, 0, 70, 480, 490.3, 78.2, 20.0, 240.0, 2.0, 0.85)
+
+    selected = helpers["select_angle_line_candidates"](
+        [first, second, horizontal, edge],
+        90.0,
+        640,
+        480,
+        center_band_ratio=0.8,
+        max_angle_delta_deg=25.0,
+    )
+
+    assert selected == [first, second]
+    assert math.isclose(
+        helpers["weighted_line_angle"](selected), 78.2, abs_tol=0.2
+    )
+
+
 def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
     helpers = _helpers()
     edge = (20, 0, 20, 480, 480.0, 90.0, 20.0, 240.0, 8.0, 0.90)
@@ -128,14 +152,61 @@ def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
     assert selected[0] == edge
 
 
-def test_center_band_default_is_eighty_percent_and_debug_marks_it():
+def test_center_band_default_is_eighty_percent_without_debug_boundary_overlay():
     source = SOURCE_PATH.read_text(encoding="utf-8")
     assert (
         "self.declare_parameter('angle_average_center_band_ratio', 0.8)"
         in source
     )
-    assert "Angle ROI:" in source
-    assert "(255, 0, 255)" in source
+    assert "Angle ROI:" not in source
+    assert "(255, 0, 255)" not in source
+
+
+def test_lateral_deviation_label_uses_bgr_red():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    colors = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "putText":
+            continue
+        if len(node.args) < 6:
+            continue
+        label = node.args[1]
+        if isinstance(label, (ast.JoinedStr, ast.IfExp)) and any(
+            isinstance(value, ast.Constant)
+            and "Lat Dev:" in str(value.value)
+            for value in ast.walk(label)
+        ):
+            colors.append(ast.literal_eval(node.args[5]))
+
+    assert colors == [(0, 0, 255)]
+
+
+def test_collinear_gap_bridge_uses_segment_geometry_and_angle_gate():
+    helpers = _helpers()
+    first = (40, 0, 40, 100, 100.0, 90.0, 40.0, 50.0, 2.0, 0.9)
+    second = (40, 106, 40, 200, 94.0, 90.0, 40.0, 153.0, 2.0, 0.8)
+    angle_mismatch = (40, 106, 48, 152, 46.7, 80.0, 44.0, 129.0, 2.0, 0.9)
+
+    bridge = helpers["bridge_collinear_line_records"](
+        [first, second], 90.0, 6.0, 5.0, 3.0
+    )
+    rejected = helpers["bridge_collinear_line_records"](
+        [first, angle_mismatch], 90.0, 6.0, 5.0, 3.0
+    )
+
+    assert len(bridge) == 1
+    assert math.isclose(float(bridge[0][4]), 194.0, abs_tol=1e-6)
+    assert len(rejected) == 2
+
+
+def test_gap_bridge_is_not_mask_morphology_fill():
+    source = SOURCE_PATH.read_text(encoding="utf-8")
+    assert "def bridge_collinear_line_records" in source
+    assert "bridge_collinear_line_records" in source
+    assert "angle_line_gap_fill_px" in source
+    assert "maxLineGap=1" in source
 
 
 def test_weighted_line_angle_handles_unequal_line_lengths():

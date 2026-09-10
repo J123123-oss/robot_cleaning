@@ -193,6 +193,157 @@ def weighted_line_angle(lines):
     return undirected_angle(math.degrees(0.5 * math.atan2(sin_sum, cos_sum)))
 
 
+def bridge_collinear_line_records(
+    lines,
+    axis_angle_deg,
+    max_axis_gap_px,
+    max_normal_gap_px,
+    max_angle_delta_deg,
+):
+    """按线段自身方向合并短断点，不修改原始掩膜。"""
+    if not lines:
+        return []
+    try:
+        axis_angle_deg = float(axis_angle_deg)
+        max_axis_gap_px = float(max_axis_gap_px)
+        max_normal_gap_px = float(max_normal_gap_px)
+        max_angle_delta_deg = float(max_angle_delta_deg)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not all(
+        math.isfinite(value)
+        for value in (
+            axis_angle_deg,
+            max_axis_gap_px,
+            max_normal_gap_px,
+            max_angle_delta_deg,
+        )
+    ) or min(
+        max_axis_gap_px, max_normal_gap_px, max_angle_delta_deg
+    ) < 0.0:
+        return []
+
+    axis_rad = math.radians(axis_angle_deg)
+    axis_x = math.cos(axis_rad)
+    axis_y = math.sin(axis_rad)
+    normal_x = -axis_y
+    normal_y = axis_x
+    valid_lines = []
+    for line in lines:
+        try:
+            values = [float(line[index]) for index in range(10)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in values):
+            continue
+        first_axis = values[0] * axis_x + values[1] * axis_y
+        second_axis = values[2] * axis_x + values[3] * axis_y
+        valid_lines.append(
+            {
+                'line': line,
+                'axis_start': min(first_axis, second_axis),
+                'axis_end': max(first_axis, second_axis),
+                'normal': (values[6] * normal_x + values[7] * normal_y),
+                'angle': values[5],
+            }
+        )
+    if not valid_lines:
+        return []
+
+    ordered = sorted(
+        valid_lines,
+        key=lambda item: (item['normal'], item['axis_start']),
+    )
+    clusters = []
+    cluster = [ordered[0]]
+    cluster_normal = ordered[0]['normal']
+    cluster_axis_start = ordered[0]['axis_start']
+    cluster_axis_end = ordered[0]['axis_end']
+    for item in ordered[1:]:
+        cluster_angle = weighted_line_angle(
+            [entry['line'] for entry in cluster]
+        )
+        normal_close = abs(item['normal'] - cluster_normal) <= (
+            max_normal_gap_px
+        )
+        angle_close = (
+            cluster_angle is not None
+            and undirected_angle_distance(item['angle'], cluster_angle)
+            <= max_angle_delta_deg
+        )
+        axis_gap = max(
+            0.0,
+            item['axis_start'] - cluster_axis_end,
+            cluster_axis_start - item['axis_end'],
+        )
+        if normal_close and angle_close and axis_gap <= max_axis_gap_px:
+            cluster.append(item)
+            cluster_normal = sum(
+                entry['normal'] * float(entry['line'][4])
+                for entry in cluster
+            ) / sum(float(entry['line'][4]) for entry in cluster)
+            cluster_axis_start = min(cluster_axis_start, item['axis_start'])
+            cluster_axis_end = max(cluster_axis_end, item['axis_end'])
+        else:
+            clusters.append(cluster)
+            cluster = [item]
+            cluster_normal = item['normal']
+            cluster_axis_start = item['axis_start']
+            cluster_axis_end = item['axis_end']
+    clusters.append(cluster)
+
+    merged = []
+    for cluster in clusters:
+        records = [entry['line'] for entry in cluster]
+        if len(records) == 1:
+            merged.append(records[0])
+            continue
+        first = min(cluster, key=lambda item: item['axis_start'])['line']
+        last = max(cluster, key=lambda item: item['axis_end'])['line']
+        first_projection = (
+            float(first[0]) * axis_x + float(first[1]) * axis_y,
+            float(first[2]) * axis_x + float(first[3]) * axis_y,
+        )
+        last_projection = (
+            float(last[0]) * axis_x + float(last[1]) * axis_y,
+            float(last[2]) * axis_x + float(last[3]) * axis_y,
+        )
+        start = (
+            (first[0], first[1])
+            if first_projection[0] <= first_projection[1]
+            else (first[2], first[3])
+        )
+        end = (
+            (last[2], last[3])
+            if last_projection[0] <= last_projection[1]
+            else (last[0], last[1])
+        )
+        total_length = sum(float(record[4]) for record in records)
+        if total_length <= 0.0 or not math.isfinite(total_length):
+            continue
+        average_angle = weighted_line_angle(records)
+        if average_angle is None:
+            continue
+        support = sum(
+            float(record[4]) * float(record[9]) for record in records
+        ) / total_length
+        merged.append(
+            (
+                int(round(start[0])),
+                int(round(start[1])),
+                int(round(end[0])),
+                int(round(end[1])),
+                total_length,
+                average_angle,
+                (float(start[0]) + float(end[0])) / 2.0,
+                (float(start[1]) + float(end[1])) / 2.0,
+                max(float(record[8]) for record in records),
+                support,
+            )
+        )
+    return merged
+
+
 def line_salience_score(line):
     """根据线段长度、粗细和白色支持度计算单线选择分数。"""
     if len(line) < 10:
@@ -523,6 +674,41 @@ def select_center_line_candidates(
     return selected
 
 
+def select_angle_line_candidates(
+    lines,
+    reference_axis_angle_deg,
+    width,
+    height,
+    center_band_ratio,
+    max_angle_delta_deg,
+):
+    """选择中心带内、接近相机参考轴的细栅格线。"""
+    try:
+        reference_axis_angle_deg = float(reference_axis_angle_deg)
+        max_angle_delta_deg = float(max_angle_delta_deg)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if (
+        not math.isfinite(reference_axis_angle_deg)
+        or not math.isfinite(max_angle_delta_deg)
+        or max_angle_delta_deg < 0.0
+    ):
+        return []
+    center_lines = select_center_line_candidates(
+        lines,
+        reference_axis_angle_deg,
+        width,
+        height,
+        center_band_ratio,
+    )
+    return [
+        line
+        for line in center_lines
+        if undirected_angle_distance(line[5], reference_axis_angle_deg)
+        <= max_angle_delta_deg
+    ]
+
+
 def select_line_for_tracking(
     lines,
     axis_angle_deg,
@@ -824,6 +1010,8 @@ class GridLineDetector(Node):
         # 没有新鲜 RTK 方向时使用的图像运行轴，单位为度。
         # 图像坐标约定为 0 度向右、90 度向下。
         self.declare_parameter('fallback_path_axis_image_deg', -5.0)
+        # 细栅格角度相对的相机参考轴，默认使用图像竖直方向，单位为度。
+        self.declare_parameter('angle_reference_axis_image_deg', -90.0)
         # OpenMV 发布前的图像旋转角度；180 度时需要反转横向误差符号。
         self.declare_parameter('image_rotation_deg', 180)
         # 已停用的旧参数声明，仅保留以兼容历史配置文件。
@@ -865,10 +1053,28 @@ class GridLineDetector(Node):
         # 用于计算角度平均的图像中心带比例，范围为 (0, 1]；中心带外
         # 的线条通常受镜头边缘畸变影响更大，不参与多线角度统计。
         self.declare_parameter('angle_average_center_band_ratio', 0.8)
+        # 角度统计保留更细栅格线的最小线段长度，单位为像素。
+        self.declare_parameter('angle_line_min_length_px', 30.0)
+        # 角度统计保留更细栅格线的最小估计宽度，单位为像素。
+        self.declare_parameter('angle_line_min_width_px', 1.0)
+        # 角度统计细线沿线被白色掩膜支持的最小比例。
+        self.declare_parameter('angle_line_min_support', 0.15)
+        # 角度统计细线的 Hough 累加阈值，低于粗线阈值以保留弱细线。
+        self.declare_parameter('angle_line_hough_threshold', 20)
+        # 细线相对相机参考轴的最大夹角，单位为度；不改变实际平均方向。
+        self.declare_parameter('angle_line_axis_tolerance_deg', 25.0)
+        # 角度统计在线段几何层连接的最大断点，单位为像素。
+        self.declare_parameter('angle_line_gap_fill_px', 6.0)
+        # 允许连接的两段细线最大方向差，单位为度。
+        self.declare_parameter('angle_line_bridge_angle_tolerance_deg', 3.0)
+        # 仅合并同一细线的两侧边缘，避免相邻栅格线被合并。
+        self.declare_parameter('angle_line_merge_gap_px', 5.0)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
         self.declare_parameter('publish_debug_images', True)
+        # 是否在图像中显示完整轴向、计数和 RTK 诊断信息；默认只显示结果。
+        self.declare_parameter('always_show_axis_debug', False)
 
         self.camera_angle_offset = float(
             self.get_parameter('camera_angle_offset').value
@@ -892,6 +1098,9 @@ class GridLineDetector(Node):
         )
         self.fallback_path_axis_image_deg = float(
             self.get_parameter('fallback_path_axis_image_deg').value
+        )
+        self.angle_reference_axis_image_deg = float(
+            self.get_parameter('angle_reference_axis_image_deg').value
         )
         self.image_rotation_deg = int(
             self.get_parameter('image_rotation_deg').value
@@ -958,9 +1167,38 @@ class GridLineDetector(Node):
         self.angle_average_center_band_ratio = float(
             self.get_parameter('angle_average_center_band_ratio').value
         )
+        self.angle_line_min_length_px = float(
+            self.get_parameter('angle_line_min_length_px').value
+        )
+        self.angle_line_min_width_px = float(
+            self.get_parameter('angle_line_min_width_px').value
+        )
+        self.angle_line_min_support = float(
+            self.get_parameter('angle_line_min_support').value
+        )
+        self.angle_line_hough_threshold = int(
+            self.get_parameter('angle_line_hough_threshold').value
+        )
+        self.angle_line_axis_tolerance_deg = float(
+            self.get_parameter('angle_line_axis_tolerance_deg').value
+        )
+        self.angle_line_gap_fill_px = float(
+            self.get_parameter('angle_line_gap_fill_px').value
+        )
+        self.angle_line_bridge_angle_tolerance_deg = float(
+            self.get_parameter(
+                'angle_line_bridge_angle_tolerance_deg'
+            ).value
+        )
+        self.angle_line_merge_gap_px = float(
+            self.get_parameter('angle_line_merge_gap_px').value
+        )
         self.detection_fps = float(self.get_parameter('detection_fps').value)
         self.publish_debug_images_enabled = bool(
             self.get_parameter('publish_debug_images').value
+        )
+        self.always_show_axis_debug = bool(
+            self.get_parameter('always_show_axis_debug').value
         )
 
         if (
@@ -1047,12 +1285,63 @@ class GridLineDetector(Node):
             raise ValueError(
                 'angle_average_center_band_ratio must be finite in (0, 1]'
             )
+        if (
+            not math.isfinite(self.angle_line_min_length_px)
+            or self.angle_line_min_length_px <= 0.0
+        ):
+            raise ValueError('angle_line_min_length_px must be finite and > 0')
+        if (
+            not math.isfinite(self.angle_line_min_width_px)
+            or self.angle_line_min_width_px <= 0.0
+        ):
+            raise ValueError('angle_line_min_width_px must be finite and > 0')
+        if (
+            not math.isfinite(self.angle_line_min_support)
+            or not 0.0 <= self.angle_line_min_support <= 1.0
+        ):
+            raise ValueError('angle_line_min_support must be finite in [0, 1]')
+        if self.angle_line_hough_threshold <= 0:
+            raise ValueError('angle_line_hough_threshold must be > 0')
+        if (
+            not math.isfinite(self.angle_line_axis_tolerance_deg)
+            or self.angle_line_axis_tolerance_deg < 0.0
+            or self.angle_line_axis_tolerance_deg > 90.0
+        ):
+            raise ValueError(
+                'angle_line_axis_tolerance_deg must be finite in [0, 90]'
+            )
+        if (
+            not math.isfinite(self.angle_line_gap_fill_px)
+            or self.angle_line_gap_fill_px < 0.0
+        ):
+            raise ValueError(
+                'angle_line_gap_fill_px must be finite and >= 0'
+            )
+        if (
+            not math.isfinite(self.angle_line_bridge_angle_tolerance_deg)
+            or self.angle_line_bridge_angle_tolerance_deg < 0.0
+        ):
+            raise ValueError(
+                'angle_line_bridge_angle_tolerance_deg must be finite and >= 0'
+            )
+        if (
+            not math.isfinite(self.angle_line_merge_gap_px)
+            or self.angle_line_merge_gap_px < 0.0
+        ):
+            raise ValueError(
+                'angle_line_merge_gap_px must be finite and >= 0'
+            )
         if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
             raise ValueError('detection_fps must be finite and > 0')
         if not math.isfinite(self.fallback_path_axis_image_deg):
             raise ValueError('fallback_path_axis_image_deg must be finite')
         self.fallback_path_axis_image_deg = wrap180(
             self.fallback_path_axis_image_deg
+        )
+        if not math.isfinite(self.angle_reference_axis_image_deg):
+            raise ValueError('angle_reference_axis_image_deg must be finite')
+        self.angle_reference_axis_image_deg = wrap180(
+            self.angle_reference_axis_image_deg
         )
 
         self.path_direction_deg = 0.0
@@ -1613,6 +1902,9 @@ class GridLineDetector(Node):
                 dtype=np.uint8,
             ),
         )
+        # Keep a minimally processed mask for angle statistics so 1-3 px grid
+        # lines are not erased by the coarse tracking mask's opening step.
+        angle_white_mask = white_mask.copy()
         white_mask = cv2.morphologyEx(
             white_mask,
             cv2.MORPH_OPEN,
@@ -1682,28 +1974,44 @@ class GridLineDetector(Node):
         self.update_tracking_axis(
             directed_path_axis_image, path_axis_source
         )
+        angle_reference_axis_image = undirected_angle(
+            self.angle_reference_axis_image_deg
+        )
+        # Keep the raw fine-line mask. Gap filling is performed after Hough
+        # detection using each segment's own direction and support metrics.
+        angle_edges = cv2.Canny(
+            angle_white_mask, 30, 100, apertureSize=3
+        )
+        angle_hough_lines = cv2.HoughLinesP(
+            angle_edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=self.angle_line_hough_threshold,
+            minLineLength=max(1, int(self.angle_line_min_length_px)),
+            maxLineGap=1,
+        )
         if display is not None:
-            center = (width // 2, height // 2)
-            arrow_length = max(40, int(min(width, height) * 0.25))
-            axis_radians = math.radians(directed_path_axis_image)
-            endpoint = (
-                int(round(center[0] + arrow_length * math.cos(axis_radians))),
-                int(round(center[1] + arrow_length * math.sin(axis_radians))),
-            )
-            cv2.arrowedLine(
-                display, center, endpoint, (0, 165, 255), 4, tipLength=0.2
-            )
-            cv2.putText(
-                display,
-                f'Image axis: {directed_path_axis_image:.1f} deg '
-                f'[{path_axis_source}]',
-                (10, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 165, 255),
-                2,
-            )
-            if path_axis_source == 'rtk':
+            if self.always_show_axis_debug:
+                center = (width // 2, height // 2)
+                arrow_length = max(40, int(min(width, height) * 0.25))
+                axis_radians = math.radians(directed_path_axis_image)
+                endpoint = (
+                    int(round(center[0] + arrow_length * math.cos(axis_radians))),
+                    int(round(center[1] + arrow_length * math.sin(axis_radians))),
+                )
+                cv2.arrowedLine(
+                    display, center, endpoint, (0, 165, 255), 4, tipLength=0.2
+                )
+                cv2.putText(
+                    display,
+                    f'Image axis: {directed_path_axis_image:.1f} deg '
+                    f'[{path_axis_source}]',
+                    (10, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 165, 255),
+                    2,
+                )
                 relative_heading = wrap180(
                     self.path_direction_deg - self.vehicle_heading_deg
                 )
@@ -1727,7 +2035,7 @@ class GridLineDetector(Node):
                     2,
                 )
 
-        def estimate_line_metrics(x1, y1, x2, y2):
+        def estimate_line_metrics(x1, y1, x2, y2, scan_mask):
             """沿线段法向扫描白色带宽度和支持度。"""
             segment_length = math.hypot(x2 - x1, y2 - y1)
             if segment_length <= 0.0 or not math.isfinite(segment_length):
@@ -1754,7 +2062,7 @@ class GridLineDetector(Node):
             )
             safe_x = np.clip(pixel_x, 0, width - 1)
             safe_y = np.clip(pixel_y, 0, height - 1)
-            scan = white_mask[safe_y, safe_x] != 0
+            scan = scan_mask[safe_y, safe_x] != 0
             scan &= valid
             supported = int(np.count_nonzero(np.any(scan, axis=1)))
 
@@ -1769,12 +2077,17 @@ class GridLineDetector(Node):
                 return None
             return float(np.mean(longest_run)), supported / float(sample_count)
 
-        coarse_lines = []
-        if lines is not None:
-            for raw_line in lines:
+        def make_line_records(raw_lines, scan_mask):
+            """将 Hough 线段转换为带宽度和支持度的候选记录。"""
+            records = []
+            if raw_lines is None:
+                return records
+            for raw_line in raw_lines:
                 x1, y1, x2, y2 = [int(value) for value in raw_line[0]]
                 length = math.hypot(x2 - x1, y2 - y1)
-                metrics = estimate_line_metrics(x1, y1, x2, y2)
+                metrics = estimate_line_metrics(
+                    x1, y1, x2, y2, scan_mask
+                )
                 if metrics is None:
                     continue
                 width_px, white_support = metrics
@@ -1793,7 +2106,13 @@ class GridLineDetector(Node):
                     width_px,
                     white_support,
                 )
-                coarse_lines.append(record)
+                records.append(record)
+            return records
+
+        coarse_lines = make_line_records(lines, white_mask)
+        angle_candidate_lines = make_line_records(
+            angle_hough_lines, angle_white_mask
+        )
 
         coarse_lines = select_coarse_white_lines(
             coarse_lines,
@@ -1801,7 +2120,13 @@ class GridLineDetector(Node):
             self.coarse_line_min_width_px,
             self.coarse_line_min_support,
         )
-        if not coarse_lines:
+        angle_candidate_lines = select_coarse_white_lines(
+            angle_candidate_lines,
+            self.angle_line_min_length_px,
+            self.angle_line_min_width_px,
+            self.angle_line_min_support,
+        )
+        if not coarse_lines and not angle_candidate_lines:
             _, _, tracking_status = self.choose_parallel_line(
                 [], directed_path_axis_image, width, height
             )
@@ -1860,11 +2185,29 @@ class GridLineDetector(Node):
                 height,
             )
         )
-        # Heading uses several center-band lines to reduce lens distortion;
+        # Fine-line heading is camera-referenced. RTK remains the lateral
+        # tracking coordinate system, but must not discard a grid family that
+        # is visibly slanted relative to the RTK-derived image axis.
+        angle_parallel_group = select_angle_line_candidates(
+            angle_candidate_lines,
+            angle_reference_axis_image,
+            width,
+            height,
+            self.angle_average_center_band_ratio,
+            self.angle_line_axis_tolerance_deg,
+        )
+        angle_parallel_group = bridge_collinear_line_records(
+            angle_parallel_group,
+            angle_reference_axis_image,
+            self.angle_line_gap_fill_px,
+            self.angle_line_merge_gap_px,
+            self.angle_line_bridge_angle_tolerance_deg,
+        )
+        # Heading uses more fine center-band lines to reduce lens distortion;
         # lateral position intentionally keeps the separately tracked line.
         angle_lines = select_center_line_candidates(
-            parallel_group,
-            directed_path_axis_image,
+            angle_parallel_group,
+            angle_reference_axis_image,
             width,
             height,
             self.angle_average_center_band_ratio,
@@ -1872,57 +2215,6 @@ class GridLineDetector(Node):
         parallel_angle = weighted_line_angle(angle_lines)
 
         if display is not None:
-            band_half_extent = center_band_half_extent_px(
-                width,
-                height,
-                directed_path_axis_image,
-                self.angle_average_center_band_ratio,
-            )
-            if math.isfinite(band_half_extent):
-                axis_rad = math.radians(directed_path_axis_image)
-                axis_x = math.cos(axis_rad)
-                axis_y = math.sin(axis_rad)
-                normal_x = -axis_y
-                normal_y = axis_x
-                center_x = width / 2.0
-                center_y = height / 2.0
-                half_length = math.hypot(width, height)
-                for side in (-1.0, 1.0):
-                    band_center = (
-                        center_x + side * band_half_extent * normal_x,
-                        center_y + side * band_half_extent * normal_y,
-                    )
-                    band_start = (
-                        int(round(band_center[0] - half_length * axis_x)),
-                        int(round(band_center[1] - half_length * axis_y)),
-                    )
-                    band_end = (
-                        int(round(band_center[0] + half_length * axis_x)),
-                        int(round(band_center[1] + half_length * axis_y)),
-                    )
-                    cv2.line(
-                        display,
-                        band_start,
-                        band_end,
-                        (255, 0, 255),
-                        2,
-                    )
-            for line in parallel_group:
-                cv2.line(
-                    display,
-                    (line[0], line[1]),
-                    (line[2], line[3]),
-                    (0, 255, 0),
-                    2,
-                )
-            for line in perpendicular_group:
-                cv2.line(
-                    display,
-                    (line[0], line[1]),
-                    (line[2], line[3]),
-                    (255, 0, 0),
-                    2,
-                )
             for line in angle_lines:
                 cv2.line(
                     display,
@@ -1984,7 +2276,7 @@ class GridLineDetector(Node):
             self.lateral_valid_streak = 0
         self.valid_streak = self.lateral_valid_streak
         heading_error = (
-            undirected_angle(parallel_angle - path_axis_image)
+            undirected_angle(parallel_angle - angle_reference_axis_image)
             if heading_geometry
             else 0.0
         )
@@ -2074,7 +2366,11 @@ class GridLineDetector(Node):
         if display is not None:
             cv2.putText(
                 display,
-                f'Angle: {output_angle:.2f} deg',
+                (
+                    f'Angle: {output_angle:.2f} deg'
+                    if heading_valid
+                    else 'Angle: --'
+                ),
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -2083,26 +2379,32 @@ class GridLineDetector(Node):
             )
             cv2.putText(
                 display,
-                f'Lat Dev: {output_lateral:.3f} m',
+                (
+                    f'Lat Dev: {output_lateral:.3f} m'
+                    if lateral_valid
+                    else 'Lat Dev: --'
+                ),
                 (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (255, 0, 165),
+                # OpenCV text colors use BGR order; keep this label red.
+                (0, 0, 255),
                 2,
             )
-            cv2.putText(
-                display,
-                f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
-                f'Angle ROI:{self.angle_average_center_band_ratio:.0%} '
-                f'angle_lines={len(angle_lines)} '
-                f'line={selected_parallel_line is not None} '
-                f'track={tracking_status}',
-                (10, 185),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
+            if self.always_show_axis_debug:
+                cv2.putText(
+                    display,
+                    f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+                    f'A:{len(angle_parallel_group)} '
+                    f'angle_lines={len(angle_lines)} '
+                    f'line={selected_parallel_line is not None} '
+                    f'track={tracking_status}',
+                    (10, 185),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
         recovery_result = None
         if not detected:
             recovery_result = self.get_line_tracking_recovery_output(

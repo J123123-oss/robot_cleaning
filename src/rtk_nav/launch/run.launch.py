@@ -52,6 +52,11 @@ def generate_launch_description():
             "90 degrees down"
         ),
     )
+    declare_angle_reference_axis_arg = DeclareLaunchArgument(
+        "angle_reference_axis_image_deg",
+        default_value=TextSubstitution(text="-90.0"),
+        description="Camera image reference axis for grid-line angle correction",
+    )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
         "stanley_k_path",
@@ -157,6 +162,34 @@ def generate_launch_description():
         "publish_debug_images",
         default_value=TextSubstitution(text="true"),
         description="Publish grid-line debug images",
+    )
+    declare_always_show_axis_debug_arg = DeclareLaunchArgument(
+        "always_show_axis_debug",
+        default_value=TextSubstitution(text="false"),
+        description=(
+            "Show full axis, line-count, and RTK diagnostics in the debug image"
+        ),
+    )
+    declare_angle_line_gap_fill_arg = DeclareLaunchArgument(
+        "angle_line_gap_fill_px",
+        default_value=TextSubstitution(text="6.0"),
+        description=(
+            "Maximum gap to bridge between collinear grid-line segments"
+        ),
+    )
+    declare_angle_line_bridge_angle_arg = DeclareLaunchArgument(
+        "angle_line_bridge_angle_tolerance_deg",
+        default_value=TextSubstitution(text="3.0"),
+        description=(
+            "Maximum direction difference for bridging grid-line segments"
+        ),
+    )
+    declare_angle_line_axis_tolerance_arg = DeclareLaunchArgument(
+        "angle_line_axis_tolerance_deg",
+        default_value=TextSubstitution(text="25.0"),
+        description=(
+            "Maximum fine-grid angle difference from the camera reference axis"
+        ),
     )
     declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
         "enable_grid_line_stream",
@@ -373,12 +406,30 @@ def generate_launch_description():
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
                 ),
+                'always_show_axis_debug': ParameterValue(
+                    LaunchConfiguration('always_show_axis_debug'), value_type=bool
+                ),
+                'angle_line_gap_fill_px': ParameterValue(
+                    LaunchConfiguration('angle_line_gap_fill_px'), value_type=float
+                ),
+                'angle_line_bridge_angle_tolerance_deg': ParameterValue(
+                    LaunchConfiguration('angle_line_bridge_angle_tolerance_deg'),
+                    value_type=float,
+                ),
+                'angle_line_axis_tolerance_deg': ParameterValue(
+                    LaunchConfiguration('angle_line_axis_tolerance_deg'),
+                    value_type=float,
+                ),
                 'bypass_path_context_gate': ParameterValue(
                     LaunchConfiguration("bypass_path_context_gate"),
                     value_type=bool,
                 ),
                 'fallback_path_axis_image_deg': ParameterValue(
                     LaunchConfiguration("fallback_path_axis_image_deg"),
+                    value_type=float,
+                ),
+                'angle_reference_axis_image_deg': ParameterValue(
+                    LaunchConfiguration("angle_reference_axis_image_deg"),
                     value_type=float,
                 ),
                 'camera_angle_offset': ParameterValue(
@@ -496,6 +547,7 @@ def generate_launch_description():
     ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_fallback_path_axis_arg)
+    ld.add_action(declare_angle_reference_axis_arg)
     ld.add_action(declare_camera_angle_offset_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
@@ -518,6 +570,10 @@ def generate_launch_description():
     ld.add_action(declare_line_tracking_jump_arg)
     ld.add_action(declare_line_tracking_missed_arg)
     ld.add_action(declare_publish_debug_images_arg)
+    ld.add_action(declare_always_show_axis_debug_arg)
+    ld.add_action(declare_angle_line_gap_fill_arg)
+    ld.add_action(declare_angle_line_bridge_angle_arg)
+    ld.add_action(declare_angle_line_axis_tolerance_arg)
     ld.add_action(declare_enable_grid_line_stream_arg)
     ld.add_action(declare_grid_line_stream_rtsp_url_arg)
     ld.add_action(declare_grid_line_stream_fps_arg)
