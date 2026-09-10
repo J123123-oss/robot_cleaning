@@ -454,6 +454,33 @@ def line_normal_offset_at_reference(
     return offset if math.isfinite(offset) else float('nan')
 
 
+def center_band_half_extent_px(width, height, axis_angle_deg, center_band_ratio):
+    """计算中心角度统计带沿运行轴法向的半宽度。"""
+    try:
+        width = float(width)
+        height = float(height)
+        axis_angle_deg = float(axis_angle_deg)
+        center_band_ratio = float(center_band_ratio)
+    except (TypeError, ValueError, OverflowError):
+        return float('nan')
+    if not all(
+        math.isfinite(value)
+        for value in (width, height, axis_angle_deg, center_band_ratio)
+    ):
+        return float('nan')
+    if width <= 0.0 or height <= 0.0 or not 0.0 < center_band_ratio <= 1.0:
+        return float('nan')
+
+    axis_rad = math.radians(axis_angle_deg)
+    normal_x = -math.sin(axis_rad)
+    normal_y = math.cos(axis_rad)
+    image_half_extent = 0.5 * (
+        abs(width * normal_x) + abs(height * normal_y)
+    )
+    half_extent = image_half_extent * center_band_ratio
+    return half_extent if math.isfinite(half_extent) else float('nan')
+
+
 def select_center_line_candidates(
     lines, axis_angle_deg, width, height, center_band_ratio
 ):
@@ -467,26 +494,11 @@ def select_center_line_candidates(
         axis_angle_deg = float(axis_angle_deg)
         width = float(width)
         height = float(height)
-        center_band_ratio = float(center_band_ratio)
     except (TypeError, ValueError, OverflowError):
         return []
-    if not all(
-        math.isfinite(value)
-        for value in (axis_angle_deg, width, height, center_band_ratio)
-    ):
-        return []
-    if width <= 0.0 or height <= 0.0 or not 0.0 < center_band_ratio <= 1.0:
-        return []
-
-    axis_rad = math.radians(axis_angle_deg)
-    normal_x = -math.sin(axis_rad)
-    normal_y = math.cos(axis_rad)
-    # Project the camera rectangle onto the path-normal axis so the center
-    # gate remains valid for horizontal, vertical, and diagonal path axes.
-    image_half_extent = 0.5 * (
-        abs(width * normal_x) + abs(height * normal_y)
+    max_center_offset = center_band_half_extent_px(
+        width, height, axis_angle_deg, center_band_ratio
     )
-    max_center_offset = image_half_extent * center_band_ratio
     if not math.isfinite(max_center_offset):
         return []
 
@@ -852,7 +864,7 @@ class GridLineDetector(Node):
         self.declare_parameter('white_line_scan_half_width_px', 14.0)
         # 用于计算角度平均的图像中心带比例，范围为 (0, 1]；中心带外
         # 的线条通常受镜头边缘畸变影响更大，不参与多线角度统计。
-        self.declare_parameter('angle_average_center_band_ratio', 0.5)
+        self.declare_parameter('angle_average_center_band_ratio', 0.8)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
@@ -1860,6 +1872,41 @@ class GridLineDetector(Node):
         parallel_angle = weighted_line_angle(angle_lines)
 
         if display is not None:
+            band_half_extent = center_band_half_extent_px(
+                width,
+                height,
+                directed_path_axis_image,
+                self.angle_average_center_band_ratio,
+            )
+            if math.isfinite(band_half_extent):
+                axis_rad = math.radians(directed_path_axis_image)
+                axis_x = math.cos(axis_rad)
+                axis_y = math.sin(axis_rad)
+                normal_x = -axis_y
+                normal_y = axis_x
+                center_x = width / 2.0
+                center_y = height / 2.0
+                half_length = math.hypot(width, height)
+                for side in (-1.0, 1.0):
+                    band_center = (
+                        center_x + side * band_half_extent * normal_x,
+                        center_y + side * band_half_extent * normal_y,
+                    )
+                    band_start = (
+                        int(round(band_center[0] - half_length * axis_x)),
+                        int(round(band_center[1] - half_length * axis_y)),
+                    )
+                    band_end = (
+                        int(round(band_center[0] + half_length * axis_x)),
+                        int(round(band_center[1] + half_length * axis_y)),
+                    )
+                    cv2.line(
+                        display,
+                        band_start,
+                        band_end,
+                        (255, 0, 255),
+                        2,
+                    )
             for line in parallel_group:
                 cv2.line(
                     display,
@@ -1876,14 +1923,6 @@ class GridLineDetector(Node):
                     (255, 0, 0),
                     2,
                 )
-            if selected_parallel_line is not None:
-                cv2.line(
-                    display,
-                    (selected_parallel_line[0], selected_parallel_line[1]),
-                    (selected_parallel_line[2], selected_parallel_line[3]),
-                    (0, 0, 255),
-                    4,
-                )
             for line in angle_lines:
                 cv2.line(
                     display,
@@ -1891,6 +1930,14 @@ class GridLineDetector(Node):
                     (line[2], line[3]),
                     (0, 255, 255),
                     3,
+                )
+            if selected_parallel_line is not None:
+                cv2.line(
+                    display,
+                    (selected_parallel_line[0], selected_parallel_line[1]),
+                    (selected_parallel_line[2], selected_parallel_line[3]),
+                    (0, 0, 255),
+                    4,
                 )
         heading_geometry = bool(angle_lines) and (
             parallel_angle is not None
@@ -2046,6 +2093,7 @@ class GridLineDetector(Node):
             cv2.putText(
                 display,
                 f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+                f'Angle ROI:{self.angle_average_center_band_ratio:.0%} '
                 f'angle_lines={len(angle_lines)} '
                 f'line={selected_parallel_line is not None} '
                 f'track={tracking_status}',

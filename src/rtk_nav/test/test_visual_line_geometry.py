@@ -20,6 +20,7 @@ def _helpers():
         "undirected_angle",
         "undirected_angle_distance",
         "weighted_line_angle",
+        "center_band_half_extent_px",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
         "select_most_salient_line",
@@ -77,8 +78,8 @@ def test_single_line_selection_prefers_long_wide_well_supported_line():
 def test_center_line_candidates_reject_lines_near_image_edges():
     helpers = _helpers()
     center = (300, 0, 300, 480, 480.0, 88.0, 300.0, 240.0, 8.0, 0.90)
-    left_edge = (70, 0, 70, 480, 480.0, 45.0, 70.0, 240.0, 8.0, 0.90)
-    right_edge = (570, 0, 570, 480, 480.0, -45.0, 570.0, 240.0, 8.0, 0.90)
+    left_edge = (20, 0, 20, 480, 480.0, 45.0, 20.0, 240.0, 8.0, 0.90)
+    right_edge = (620, 0, 620, 480, 480.0, -45.0, 620.0, 240.0, 8.0, 0.90)
     invalid = (0, 0, 100, 100, 100.0, float("nan"), 50.0, 50.0, 8.0, 0.90)
 
     selected = helpers["select_center_line_candidates"](
@@ -86,7 +87,7 @@ def test_center_line_candidates_reject_lines_near_image_edges():
         90.0,
         640,
         480,
-        center_band_ratio=0.5,
+        center_band_ratio=0.8,
     )
 
     assert selected == [center]
@@ -96,19 +97,45 @@ def test_center_line_candidates_keep_multiple_lines_for_angle_average():
     helpers = _helpers()
     first = (285, 0, 300, 480, 480.0, 80.0, 292.5, 240.0, 8.0, 0.90)
     second = (320, 0, 335, 480, 480.0, 82.0, 327.5, 240.0, 8.0, 0.90)
-    edge = (70, 0, 70, 480, 480.0, 40.0, 70.0, 240.0, 8.0, 0.90)
+    edge = (20, 0, 20, 480, 480.0, 40.0, 20.0, 240.0, 8.0, 0.90)
 
     selected = helpers["select_center_line_candidates"](
         [first, second, edge],
         90.0,
         640,
         480,
-        center_band_ratio=0.5,
+        center_band_ratio=0.8,
     )
     average_angle = helpers["weighted_line_angle"](selected)
 
     assert selected == [first, second]
     assert math.isclose(average_angle, 81.0, abs_tol=0.2)
+
+
+def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
+    helpers = _helpers()
+    edge = (20, 0, 20, 480, 480.0, 90.0, 20.0, 240.0, 8.0, 0.90)
+
+    selected = helpers["select_line_for_tracking"](
+        [edge],
+        90.0,
+        640,
+        480,
+        previous_offset_px=None,
+    )
+
+    assert selected is not None
+    assert selected[0] == edge
+
+
+def test_center_band_default_is_eighty_percent_and_debug_marks_it():
+    source = SOURCE_PATH.read_text(encoding="utf-8")
+    assert (
+        "self.declare_parameter('angle_average_center_band_ratio', 0.8)"
+        in source
+    )
+    assert "Angle ROI:" in source
+    assert "(255, 0, 255)" in source
 
 
 def test_weighted_line_angle_handles_unequal_line_lengths():
