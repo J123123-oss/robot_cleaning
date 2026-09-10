@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -49,7 +50,7 @@ def generate_launch_description():
     )
     declare_lateral_gain_arg = DeclareLaunchArgument(
         'lateral_gain',
-        default_value=TextSubstitution(text='5.0'),
+        default_value=TextSubstitution(text='3.0'),
         description='Lateral error gain in motor speed units per meter',
     )
     declare_max_correction_arg = DeclareLaunchArgument(
@@ -71,6 +72,46 @@ def generate_launch_description():
         'publish_debug_images',
         default_value=TextSubstitution(text='true'),
         description='Publish annotated and intermediate camera images',
+    )
+    declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
+        'enable_grid_line_stream',
+        default_value=TextSubstitution(text='true'),
+        description=(
+            'Start the host-side grid-line RTSP streamer; requires '
+            'publish_debug_images:=true'
+        ),
+    )
+    declare_grid_line_stream_rtsp_url_arg = DeclareLaunchArgument(
+        'grid_line_stream_rtsp_url',
+        default_value=TextSubstitution(
+            text='rtsp://127.0.0.1:8554/live/grid_line'
+        ),
+        description='RTSP publish URL for the grid-line detection stream',
+    )
+    declare_grid_line_stream_fps_arg = DeclareLaunchArgument(
+        'grid_line_stream_fps',
+        default_value=TextSubstitution(text='10.0'),
+        description='Grid-line RTSP stream frame rate',
+    )
+    declare_grid_line_stream_bitrate_arg = DeclareLaunchArgument(
+        'grid_line_stream_bitrate',
+        default_value=TextSubstitution(text='800k'),
+        description='Grid-line RTSP H.264 target bitrate',
+    )
+    declare_grid_line_stream_preset_arg = DeclareLaunchArgument(
+        'grid_line_stream_preset',
+        default_value=TextSubstitution(text='veryfast'),
+        description='Grid-line RTSP H.264 encoder preset',
+    )
+    declare_grid_line_stream_reconnect_arg = DeclareLaunchArgument(
+        'grid_line_stream_reconnect_sec',
+        default_value=TextSubstitution(text='2.0'),
+        description='Grid-line RTSP reconnect delay in seconds',
+    )
+    declare_ffmpeg_path_arg = DeclareLaunchArgument(
+        'ffmpeg_path',
+        default_value=TextSubstitution(text='ffmpeg'),
+        description='FFmpeg executable used by the grid-line streamer',
     )
     declare_fallback_path_axis_arg = DeclareLaunchArgument(
         'fallback_path_axis_image_deg',
@@ -142,6 +183,31 @@ def generate_launch_description():
         ],
     )
 
+    grid_line_streamer_node = Node(
+        package='rtk_nav',
+        executable='grid_line_streamer',
+        name='indoor_grid_line_streamer',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_grid_line_stream')),
+        parameters=[
+            {
+                'image_topic': '/grid_line/detected_image',
+                'rtsp_url': LaunchConfiguration('grid_line_stream_rtsp_url'),
+                'fps': ParameterValue(
+                    LaunchConfiguration('grid_line_stream_fps'),
+                    value_type=float,
+                ),
+                'bitrate': LaunchConfiguration('grid_line_stream_bitrate'),
+                'preset': LaunchConfiguration('grid_line_stream_preset'),
+                'reconnect_sec': ParameterValue(
+                    LaunchConfiguration('grid_line_stream_reconnect_sec'),
+                    value_type=float,
+                ),
+                'ffmpeg_path': LaunchConfiguration('ffmpeg_path'),
+            },
+        ],
+    )
+
     controller_node = Node(
         package='motor_control',
         executable='camera_indoor_test_controller',
@@ -207,11 +273,19 @@ def generate_launch_description():
             declare_min_confidence_arg,
             declare_visual_timeout_arg,
             declare_publish_debug_images_arg,
+            declare_enable_grid_line_stream_arg,
+            declare_grid_line_stream_rtsp_url_arg,
+            declare_grid_line_stream_fps_arg,
+            declare_grid_line_stream_bitrate_arg,
+            declare_grid_line_stream_preset_arg,
+            declare_grid_line_stream_reconnect_arg,
+            declare_ffmpeg_path_arg,
             declare_fallback_path_axis_arg,
             declare_brush_motor_count_arg,
             motor_driver_node,
             openmv_camera_node,
             line_detector_node,
+            grid_line_streamer_node,
             controller_node,
         ]
     )

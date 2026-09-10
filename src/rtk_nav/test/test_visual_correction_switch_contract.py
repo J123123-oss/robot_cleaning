@@ -82,7 +82,7 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     assert (
         'declare_bypass_path_context_gate_arg = DeclareLaunchArgument(\n'
         '        "bypass_path_context_gate",\n'
-        '        default_value=TextSubstitution(text="false"),' in source
+        '        default_value=TextSubstitution(text="true"),' in source
     )
     assert 'LaunchConfiguration("bypass_path_context_gate")' in source
     assert 'LaunchConfiguration("enable_visual_correction")' in source
@@ -92,7 +92,9 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
     assert "'visual_heading_gain': ParameterValue" in source
     assert "'visual_lateral_gain': ParameterValue" in source
     assert "'visual_max_correction': ParameterValue" in source
-    assert "'visual_max_steering_deg': ParameterValue" in source
+    assert "'rtk_correction_ratio': ParameterValue" in source
+    assert "'rtk_max_correction': ParameterValue" in source
+    assert "'visual_correction_ratio': ParameterValue" in source
     assert "'visual_confidence_threshold': ParameterValue" in source
     assert "'visual_timeout_sec': ParameterValue" in source
 
@@ -103,23 +105,25 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
     for name, default in (
         ("stanley_k_path", "0.45"),
         ("stanley_k_near_target", "0.42"),
-        ("visual_heading_gain", "0.05"),
+        ("rtk_correction_ratio", "1.0"),
+        ("rtk_max_correction", "1.5"),
+        ("visual_correction_ratio", "1.0"),
+        ("visual_heading_gain", "0.1"),
         ("visual_lateral_gain", "5.0"),
         ("visual_max_correction", "1.5"),
-        ("visual_max_steering_deg", "-1.0"),
         ("visual_confidence_threshold", "0.75"),
         ("visual_timeout_sec", "0.5"),
         ("target_line_offset_m", "nan"),
         ("target_line_match_tolerance_m", "0.5"),
         ("reference_axis_offset_px", "0.0"),
-        ("fallback_path_axis_image_deg", "0.0"),
+        ("fallback_path_axis_image_deg", "-90.0"),
         ("camera_angle_offset", "0.0"),
     ):
         assert f'"{name}"' in source
         assert f'default_value=TextSubstitution(text="{default}")' in source
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
-    assert source.count("value_type=float") == 17
+    assert source.count("value_type=float") == 21
 
     for name, default, value_type in (
         ("line_tracking_enabled", "true", "bool"),
@@ -768,7 +772,7 @@ def test_visual_correction_uses_one_atomic_sample_timestamp():
         last_visual_sample_time = time.monotonic()
         visual_heading_gain = 1.0
         visual_lateral_gain = 10.0
-        visual_max_steering_deg = 20.0
+        visual_max_correction = 20.0
         visual_confidence_threshold = 0.5
         visual_timeout_sec = 0.5
 
@@ -848,7 +852,9 @@ def test_rtk_stanley_consumes_fresh_visual_correction():
     assert "visual_heading_gain" in initializer
     assert "visual_lateral_gain" in initializer
     assert "visual_max_correction" in initializer
-    assert "visual_max_steering_deg" in initializer
+    assert "rtk_correction_ratio" in initializer
+    assert "rtk_max_correction" in initializer
+    assert "visual_correction_ratio" in initializer
     assert "visual_confidence_threshold" in initializer
     assert "visual_timeout_sec" in initializer
     assert "self.visual_sample_callback" in initializer
@@ -938,7 +944,7 @@ def test_visual_steering_correction_requires_fresh_confident_motion_sample():
         visual_sample_lateral_error_m = 0.2
         visual_heading_gain = 1.0
         visual_lateral_gain = 10.0
-        visual_max_steering_deg = 10.0
+        visual_max_correction = 10.0
         visual_confidence_threshold = 0.5
         visual_timeout_sec = 0.5
         last_visual_sample_time = time.monotonic()
@@ -994,7 +1000,7 @@ def test_visual_steering_correction_uses_only_independently_valid_components():
         visual_sample_lateral_error_m = 100.0
         visual_heading_gain = 1.0
         visual_lateral_gain = 10.0
-        visual_max_steering_deg = 20.0
+        visual_max_correction = 20.0
         visual_confidence_threshold = 0.5
         visual_timeout_sec = 0.5
 

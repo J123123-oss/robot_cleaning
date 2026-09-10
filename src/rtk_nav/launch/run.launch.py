@@ -10,21 +10,21 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # 全局路径配置
-    rtk_path_file = '/home/ubuntu/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001-E1-E8.txt'
+    rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
     loading_gps = [110.64741424789473, 35.60594097811998, -90.0]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HEJIN_Huaxinyuan_old"),  # 默认值
+        default_value=TextSubstitution(text="HANGZHOU_1"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
     # 滚刷配置：1只控制3号滚刷，2控制3、4号滚刷；方向模式只影响4号滚刷。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="2"),
+        default_value=TextSubstitution(text="1"),
         description="滚刷电机数量，只支持1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
@@ -41,21 +41,16 @@ def generate_launch_description():
 
     declare_bypass_path_context_gate_arg = DeclareLaunchArgument(
         "bypass_path_context_gate",
-        default_value=TextSubstitution(text="false"),
-        description="Allow visual fallback without fresh RTK path context",
+        default_value=TextSubstitution(text="true"),
+        description="Bypass RTK path context gate for visual line testing",
     )
     declare_fallback_path_axis_arg = DeclareLaunchArgument(
         "fallback_path_axis_image_deg",
-        default_value=TextSubstitution(text="0.0"),
+        default_value=TextSubstitution(text="-90.0"),
         description=(
             "Fallback motion axis in the image: 0 degrees right, "
             "90 degrees down"
         ),
-    )
-    declare_camera_angle_offset_arg = DeclareLaunchArgument(
-        "camera_angle_offset",
-        default_value=TextSubstitution(text="0.0"),
-        description="Outdoor camera installation angle correction in degrees",
     )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
@@ -68,25 +63,35 @@ def generate_launch_description():
         default_value=TextSubstitution(text="0.42"),
         description="Stanley lateral gain within 1.3 m of the target",
     )
+    declare_rtk_correction_ratio_arg = DeclareLaunchArgument(
+        "rtk_correction_ratio",
+        default_value=TextSubstitution(text="1.0"),
+        description="RTK/Stanley correction ratio applied to motor speed units",
+    )
+    declare_rtk_max_correction_arg = DeclareLaunchArgument(
+        "rtk_max_correction",
+        default_value=TextSubstitution(text="1.5"),
+        description="Maximum RTK correction in motor speed units",
+    )
+    declare_visual_correction_ratio_arg = DeclareLaunchArgument(
+        "visual_correction_ratio",
+        default_value=TextSubstitution(text="1.0"),
+        description="Visual correction ratio applied to motor speed units",
+    )
     declare_visual_heading_gain_arg = DeclareLaunchArgument(
         "visual_heading_gain",
-        default_value=TextSubstitution(text="0.05"),
-        description="Visual heading correction gain in motor speed units per degree",
+        default_value=TextSubstitution(text="0.1"),
+        description="Visual heading correction gain (motor speed units per degree)",
     )
     declare_visual_lateral_gain_arg = DeclareLaunchArgument(
         "visual_lateral_gain",
         default_value=TextSubstitution(text="5.0"),
-        description="Visual lateral correction gain in motor speed units per meter",
+        description="Visual lateral correction gain (motor speed units per meter)",
     )
     declare_visual_max_correction_arg = DeclareLaunchArgument(
         "visual_max_correction",
         default_value=TextSubstitution(text="1.5"),
         description="Maximum visual correction in motor speed units",
-    )
-    declare_visual_max_steering_arg = DeclareLaunchArgument(
-        "visual_max_steering_deg",
-        default_value=TextSubstitution(text="-1.0"),
-        description="Deprecated visual correction limit alias",
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
         "visual_confidence_threshold",
@@ -100,7 +105,7 @@ def generate_launch_description():
     )
     declare_camera_serial_port_arg = DeclareLaunchArgument(
         "camera_serial_port",
-        default_value=TextSubstitution(text="/dev/ttyACM0"),
+        default_value=TextSubstitution(text="/dev/OpenMV_Cam_H7_Plus"),
         description="OpenMV USB serial device",
     )
     declare_camera_serial_baud_arg = DeclareLaunchArgument(
@@ -150,8 +155,53 @@ def generate_launch_description():
     )
     declare_publish_debug_images_arg = DeclareLaunchArgument(
         "publish_debug_images",
-        default_value=TextSubstitution(text="false"),
+        default_value=TextSubstitution(text="true"),
         description="Publish grid-line debug images",
+    )
+    declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
+        "enable_grid_line_stream",
+        default_value=TextSubstitution(text="true"),
+        description=(
+            "Start the host-side grid-line RTSP streamer; requires "
+            "enable_visual_correction and publish_debug_images:=true"
+        ),
+    )
+    declare_camera_angle_offset_arg = DeclareLaunchArgument(
+        "camera_angle_offset",
+        default_value=TextSubstitution(text="0.0"),
+        description="Outdoor camera installation angle correction in degrees",
+    )
+    declare_grid_line_stream_rtsp_url_arg = DeclareLaunchArgument(
+        "grid_line_stream_rtsp_url",
+        default_value=TextSubstitution(
+            text="rtsp://127.0.0.1:8554/live/grid_line"
+        ),
+        description="RTSP publish URL for the grid-line detection stream",
+    )
+    declare_grid_line_stream_fps_arg = DeclareLaunchArgument(
+        "grid_line_stream_fps",
+        default_value=TextSubstitution(text="10.0"),
+        description="Grid-line RTSP stream frame rate",
+    )
+    declare_grid_line_stream_bitrate_arg = DeclareLaunchArgument(
+        "grid_line_stream_bitrate",
+        default_value=TextSubstitution(text="800k"),
+        description="Grid-line RTSP H.264 target bitrate",
+    )
+    declare_grid_line_stream_preset_arg = DeclareLaunchArgument(
+        "grid_line_stream_preset",
+        default_value=TextSubstitution(text="veryfast"),
+        description="Grid-line RTSP H.264 encoder preset",
+    )
+    declare_grid_line_stream_reconnect_arg = DeclareLaunchArgument(
+        "grid_line_stream_reconnect_sec",
+        default_value=TextSubstitution(text="2.0"),
+        description="Grid-line RTSP reconnect delay in seconds",
+    )
+    declare_ffmpeg_path_arg = DeclareLaunchArgument(
+        "ffmpeg_path",
+        default_value=TextSubstitution(text="ffmpeg"),
+        description="FFmpeg executable used by the grid-line streamer",
     )
     declare_target_line_offset_arg = DeclareLaunchArgument(
         "target_line_offset_m",
@@ -241,6 +291,15 @@ def generate_launch_description():
                 'stanley_k_near_target': ParameterValue(
                     LaunchConfiguration("stanley_k_near_target"), value_type=float
                 ),
+                'rtk_correction_ratio': ParameterValue(
+                    LaunchConfiguration("rtk_correction_ratio"), value_type=float
+                ),
+                'rtk_max_correction': ParameterValue(
+                    LaunchConfiguration("rtk_max_correction"), value_type=float
+                ),
+                'visual_correction_ratio': ParameterValue(
+                    LaunchConfiguration("visual_correction_ratio"), value_type=float
+                ),
                 'visual_heading_gain': ParameterValue(
                     LaunchConfiguration("visual_heading_gain"), value_type=float
                 ),
@@ -249,9 +308,6 @@ def generate_launch_description():
                 ),
                 'visual_max_correction': ParameterValue(
                     LaunchConfiguration("visual_max_correction"), value_type=float
-                ),
-                'visual_max_steering_deg': ParameterValue(
-                    LaunchConfiguration("visual_max_steering_deg"), value_type=float
                 ),
                 'visual_confidence_threshold': ParameterValue(
                     LaunchConfiguration("visual_confidence_threshold"), value_type=float
@@ -269,10 +325,10 @@ def generate_launch_description():
         name='wtrtk_parse_txt',
         output='screen',
         parameters=[
-            # {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
+            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/返回.txt'}
             # 原注释的其他参数可取消注释添加
-            # {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
-            {'file_path': '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            # {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
+            {'file_path': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/rtkmsgs/道路边轨迹3.txt'}
         ]
     )
 
@@ -283,9 +339,8 @@ def generate_launch_description():
         name='wtrtk_serial_driver',
         output='screen',
         parameters=[
-            # {'port': '/dev/WTRTK'},
-            {'port': '/dev/ttyS2'},
-            {'baud': 230400}
+            {'port': '/dev/WTRTK'},
+            {'baud': 460800}
         ]
     )
 
@@ -382,6 +437,31 @@ def generate_launch_description():
         ],
     )
 
+    grid_line_streamer_node = Node(
+        package='rtk_nav',
+        executable='grid_line_streamer',
+        name='grid_line_streamer',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_grid_line_stream')),
+        parameters=[
+            {
+                'image_topic': '/grid_line/detected_image',
+                'rtsp_url': LaunchConfiguration('grid_line_stream_rtsp_url'),
+                'fps': ParameterValue(
+                    LaunchConfiguration('grid_line_stream_fps'),
+                    value_type=float,
+                ),
+                'bitrate': LaunchConfiguration('grid_line_stream_bitrate'),
+                'preset': LaunchConfiguration('grid_line_stream_preset'),
+                'reconnect_sec': ParameterValue(
+                    LaunchConfiguration('grid_line_stream_reconnect_sec'),
+                    value_type=float,
+                ),
+                'ffmpeg_path': LaunchConfiguration('ffmpeg_path'),
+            },
+        ],
+    )
+
     # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
     mqtt_ros_bridge_node = Node(
         package="mqtt_ros2",  # ROS2功能包名（替换为你的实际包名）
@@ -419,10 +499,12 @@ def generate_launch_description():
     ld.add_action(declare_camera_angle_offset_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
+    ld.add_action(declare_rtk_correction_ratio_arg)
+    ld.add_action(declare_rtk_max_correction_arg)
+    ld.add_action(declare_visual_correction_ratio_arg)
     ld.add_action(declare_visual_heading_gain_arg)
     ld.add_action(declare_visual_lateral_gain_arg)
     ld.add_action(declare_visual_max_correction_arg)
-    ld.add_action(declare_visual_max_steering_arg)
     ld.add_action(declare_visual_confidence_threshold_arg)
     ld.add_action(declare_visual_timeout_arg)
     ld.add_action(declare_camera_serial_port_arg)
@@ -436,6 +518,13 @@ def generate_launch_description():
     ld.add_action(declare_line_tracking_jump_arg)
     ld.add_action(declare_line_tracking_missed_arg)
     ld.add_action(declare_publish_debug_images_arg)
+    ld.add_action(declare_enable_grid_line_stream_arg)
+    ld.add_action(declare_grid_line_stream_rtsp_url_arg)
+    ld.add_action(declare_grid_line_stream_fps_arg)
+    ld.add_action(declare_grid_line_stream_bitrate_arg)
+    ld.add_action(declare_grid_line_stream_preset_arg)
+    ld.add_action(declare_grid_line_stream_reconnect_arg)
+    ld.add_action(declare_ffmpeg_path_arg)
     ld.add_action(declare_target_line_offset_arg)
     ld.add_action(declare_target_line_tolerance_arg)
     ld.add_action(declare_reference_axis_offset_arg)
@@ -451,5 +540,6 @@ def generate_launch_description():
     ld.add_action(wtrtk_serial_driver_node)
     ld.add_action(line_detector_node)
     ld.add_action(openmv_serial_publisher_node)
+    ld.add_action(grid_line_streamer_node)
 
     return ld

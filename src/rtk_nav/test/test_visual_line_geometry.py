@@ -19,9 +19,11 @@ def _helpers():
         "wrap180",
         "undirected_angle",
         "undirected_angle_distance",
+        "weighted_line_angle",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
         "select_most_salient_line",
+        "select_center_line_candidates",
         "line_normal_offset_at_reference",
         "select_line_for_tracking",
         "update_line_tracking_state",
@@ -70,6 +72,85 @@ def test_single_line_selection_prefers_long_wide_well_supported_line():
     )
 
     assert selected == strongest
+
+
+def test_center_line_candidates_reject_lines_near_image_edges():
+    helpers = _helpers()
+    center = (300, 0, 300, 480, 480.0, 88.0, 300.0, 240.0, 8.0, 0.90)
+    left_edge = (70, 0, 70, 480, 480.0, 45.0, 70.0, 240.0, 8.0, 0.90)
+    right_edge = (570, 0, 570, 480, 480.0, -45.0, 570.0, 240.0, 8.0, 0.90)
+    invalid = (0, 0, 100, 100, 100.0, float("nan"), 50.0, 50.0, 8.0, 0.90)
+
+    selected = helpers["select_center_line_candidates"](
+        [center, left_edge, right_edge, invalid],
+        90.0,
+        640,
+        480,
+        center_band_ratio=0.5,
+    )
+
+    assert selected == [center]
+
+
+def test_center_line_candidates_keep_multiple_lines_for_angle_average():
+    helpers = _helpers()
+    first = (285, 0, 300, 480, 480.0, 80.0, 292.5, 240.0, 8.0, 0.90)
+    second = (320, 0, 335, 480, 480.0, 82.0, 327.5, 240.0, 8.0, 0.90)
+    edge = (70, 0, 70, 480, 480.0, 40.0, 70.0, 240.0, 8.0, 0.90)
+
+    selected = helpers["select_center_line_candidates"](
+        [first, second, edge],
+        90.0,
+        640,
+        480,
+        center_band_ratio=0.5,
+    )
+    average_angle = helpers["weighted_line_angle"](selected)
+
+    assert selected == [first, second]
+    assert math.isclose(average_angle, 81.0, abs_tol=0.2)
+
+
+def test_weighted_line_angle_handles_unequal_line_lengths():
+    helpers = _helpers()
+    short = (0, 0, 10, 56, 56.9, 70.0, 5.0, 28.0, 8.0, 0.9)
+    long = (0, 0, 10, 57, 57.9, 80.0, 5.0, 28.0, 8.0, 0.9)
+
+    average_angle = helpers["weighted_line_angle"]([short, long])
+
+    assert 74.0 < average_angle < 78.0
+
+
+def test_weighted_line_angle_handles_the_undirected_wrap_boundary():
+    helpers = _helpers()
+    first = (0, 0, 10, 10, 100.0, 89.0, 5.0, 5.0, 8.0, 0.9)
+    second = (0, 0, 10, 10, 100.0, -89.0, 5.0, 5.0, 8.0, 0.9)
+
+    average_angle = helpers["weighted_line_angle"]([first, second])
+
+    assert math.isclose(abs(average_angle), 90.0, abs_tol=1e-9)
+
+
+def test_detector_uses_center_average_for_heading_and_tracked_line_for_lateral():
+    source = SOURCE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    detector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "GridLineDetector"
+    )
+    detect_method = next(
+        node
+        for node in detector.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "detect_and_draw_grid_lines"
+    )
+    rendered = ast.unparse(detect_method)
+
+    assert "select_center_line_candidates" in rendered
+    assert "weighted_line_angle" in rendered
+    assert "selected_line_offset" in rendered
+    assert "lateral_pixel_error = selected_line_offset" in rendered
 
 
 def test_single_line_offset_is_measured_from_image_center():

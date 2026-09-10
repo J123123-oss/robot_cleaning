@@ -106,16 +106,16 @@ launches, following the existing package conventions:
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `enable_grid_line_stream` | `false` | Start the streamer node |
-| `grid_line_stream_rtsp_url` | empty | RTSP publish endpoint |
+| `enable_grid_line_stream` | `true` | Start the streamer node |
+| `grid_line_stream_rtsp_url` | `rtsp://127.0.0.1:8554/live/grid_line` | RTSP publish endpoint |
 | `grid_line_stream_fps` | `10.0` | Encoded stream frame rate |
 | `grid_line_stream_bitrate` | `800k` | H.264 target bitrate |
 | `grid_line_stream_preset` | `veryfast` | FFmpeg encoder preset |
 | `grid_line_stream_reconnect_sec` | `2.0` | Retry delay after failure |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg executable |
 
-The streamer is disabled by default. When enabled, launch validation must
-reject an empty RTSP URL with a clear error. The existing
+The streamer is enabled by default and targets the local ZLMediaKit RTSP
+endpoint. When enabled, launch validation must reject an empty RTSP URL with a clear error. The existing
 `publish_debug_images` setting remains the source of truth for whether the
 detected image is generated; the documentation and tests must make the
 required combination explicit.

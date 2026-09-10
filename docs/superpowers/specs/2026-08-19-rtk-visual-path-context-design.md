@@ -192,20 +192,37 @@ lateral_m = calibrated_pixel_to_meter(lateral_pixel_error)
 
 `rtk_nav.py` 订阅 `/grid_line/angle_deviation` 和
 `/grid_line/detection_confidence`。视觉样本只有在 `detected=1`、置信度达到
-阈值且未超过超时时间时才有效。有效样本产生独立的附加转向角：
+阈值且未超过超时时间时才有效。有效样本产生独立的视觉电机速度纠偏量。
+视觉输入误差仍使用角度和米，但经过增益换算后输出统一为电机速度指令值：
 
 ```text
-visual_correction = visual_lateral_gain * lateral_error_m
-                    - visual_heading_gain * heading_error_deg
+visual_heading_correction = visual_heading_gain * heading_error_deg
+visual_lateral_correction = visual_lateral_gain * lateral_error_m
+visual_speed_correction = visual_heading_correction
+                         + visual_lateral_correction
 ```
 
-附加转向角限制在 `[-visual_max_steering_deg, visual_max_steering_deg]`，再与
-现有 Stanley 结果相加，并继续使用原有总转向 `[-45°, 45°]` 限幅。视觉修正不
-替换 RTK 横向误差或 RTK 航向误差。
+`visual_speed_correction` 限制在 `[-visual_max_correction,
+visual_max_correction]`，其中 `visual_max_correction` 的单位也是电机速度
+指令值。RTK Stanley 的角度结果先转换为电机速度纠偏量，再分别应用
+`rtk_correction_ratio` 和 `visual_correction_ratio`；两类纠偏都不乘
+`base_speed` 或 `speed_scale`。两类纠偏相加后直接用于左右轮差速，最终左右轮
+输出统一限制在 `[-12, 12]`。视觉修正不替换 RTK 横向误差或 RTK 航向误差。
+
+对应参数及单位如下：
+
+```text
+rtk_correction_ratio       无量纲，RTK纠偏比例
+rtk_max_correction         电机速度指令值，RTK纠偏上限
+visual_correction_ratio    无量纲，视觉纠偏比例
+visual_heading_gain        电机速度指令值/度
+visual_lateral_gain        电机速度指令值/米
+visual_max_correction      电机速度指令值，视觉纠偏上限
+```
 
 视觉修正的运行门控包括：视觉总开关、RTK Fixed 就绪、`AUTO_CLEANING`、
 `INITIAL_MOVE`/`WAYPOINT_MOVE`、边界矫正未锁定、未处于原地校准/几何撤退/强制
-方位角模式。任一条件不满足时附加转向角为零。
+方位角模式。任一条件不满足时视觉电机速度纠偏量为零。
 
 ## 输出接口
 

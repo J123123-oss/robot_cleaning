@@ -454,6 +454,63 @@ def line_normal_offset_at_reference(
     return offset if math.isfinite(offset) else float('nan')
 
 
+def select_center_line_candidates(
+    lines, axis_angle_deg, width, height, center_band_ratio
+):
+    """选择图像中心带内的平行线，降低镜头边缘畸变对角度的影响。
+
+    ``center_band_ratio`` 表示中心带相对图像法向可视范围的比例，取值
+    为 ``(0, 1]``。候选线的位置使用运行轴法向投影判断，而不是使用
+    线段端点，因此对线段截取范围和运行轴方向都保持稳定。
+    """
+    try:
+        axis_angle_deg = float(axis_angle_deg)
+        width = float(width)
+        height = float(height)
+        center_band_ratio = float(center_band_ratio)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not all(
+        math.isfinite(value)
+        for value in (axis_angle_deg, width, height, center_band_ratio)
+    ):
+        return []
+    if width <= 0.0 or height <= 0.0 or not 0.0 < center_band_ratio <= 1.0:
+        return []
+
+    axis_rad = math.radians(axis_angle_deg)
+    normal_x = -math.sin(axis_rad)
+    normal_y = math.cos(axis_rad)
+    # Project the camera rectangle onto the path-normal axis so the center
+    # gate remains valid for horizontal, vertical, and diagonal path axes.
+    image_half_extent = 0.5 * (
+        abs(width * normal_x) + abs(height * normal_y)
+    )
+    max_center_offset = image_half_extent * center_band_ratio
+    if not math.isfinite(max_center_offset):
+        return []
+
+    selected = []
+    for line in lines or []:
+        try:
+            line_length = float(line[4])
+            line_angle = float(line[5])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(line_length)
+            or line_length <= 0.0
+            or not math.isfinite(line_angle)
+        ):
+            continue
+        offset = line_normal_offset_at_reference(
+            line, axis_angle_deg, width, height, 0.0
+        )
+        if math.isfinite(offset) and abs(offset) <= max_center_offset:
+            selected.append(line)
+    return selected
+
+
 def select_line_for_tracking(
     lines,
     axis_angle_deg,
@@ -650,7 +707,7 @@ def select_reference_line(
 
 
 class GridLineDetector(Node):
-    """根据 RTK 或回退图像方向选择一条最明显平行线并纠偏。"""
+    """按运行轴检测平行线，并用中心多线平均角度进行纠偏。"""
 
     def __init__(self):
         """初始化订阅、发布、检测参数、最新帧缓存和检测定时器。"""
@@ -744,7 +801,7 @@ class GridLineDetector(Node):
         self.declare_parameter('camera_pitch_deg', 90.0)
         # 相机等效焦距，单位为像素。
         self.declare_parameter('focal_length_px', 132.0)
-        # 兼容旧配置的最小线段数量；当前单线模式不以线段数量作为有效条件。
+        # 兼容旧配置的最小线段数量；当前不以线段数量作为有效条件。
         self.declare_parameter('min_line_count', 2)
         # 是否启用视觉纠偏；关闭时发布无效结果。
         self.declare_parameter('enable_visual_correction', True)
@@ -793,6 +850,9 @@ class GridLineDetector(Node):
         self.declare_parameter('coarse_line_merge_gap_px', 30.0)
         # 沿候选线法向扫描白色带宽度时的半窗口宽度，单位为像素。
         self.declare_parameter('white_line_scan_half_width_px', 14.0)
+        # 用于计算角度平均的图像中心带比例，范围为 (0, 1]；中心带外
+        # 的线条通常受镜头边缘畸变影响更大，不参与多线角度统计。
+        self.declare_parameter('angle_average_center_band_ratio', 0.5)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
@@ -883,6 +943,9 @@ class GridLineDetector(Node):
         self.white_line_scan_half_width_px = float(
             self.get_parameter('white_line_scan_half_width_px').value
         )
+        self.angle_average_center_band_ratio = float(
+            self.get_parameter('angle_average_center_band_ratio').value
+        )
         self.detection_fps = float(self.get_parameter('detection_fps').value)
         self.publish_debug_images_enabled = bool(
             self.get_parameter('publish_debug_images').value
@@ -964,6 +1027,13 @@ class GridLineDetector(Node):
         ):
             raise ValueError(
                 'white_line_scan_half_width_px must be finite and > 0'
+            )
+        if (
+            not math.isfinite(self.angle_average_center_band_ratio)
+            or not 0.0 < self.angle_average_center_band_ratio <= 1.0
+        ):
+            raise ValueError(
+                'angle_average_center_band_ratio must be finite in (0, 1]'
             )
         if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
             raise ValueError('detection_fps must be finite and > 0')
@@ -1415,10 +1485,10 @@ class GridLineDetector(Node):
             camera_angle_offset,
         )
         self.run_axis_debug_pub.publish(axis_debug)
-        self.get_logger().info(
-            f'运行方向: {axis_debug.data}',
-            throttle_duration_sec=1.0,
-        )
+        # self.get_logger().info(
+        #     f'运行方向: {axis_debug.data}',
+        #     throttle_duration_sec=1.0,
+        # )
 
     def image_callback(self, msg):
         """仅缓存最新 JPEG 数据，由检测定时器异步完成图像处理。"""
@@ -1778,6 +1848,16 @@ class GridLineDetector(Node):
                 height,
             )
         )
+        # Heading uses several center-band lines to reduce lens distortion;
+        # lateral position intentionally keeps the separately tracked line.
+        angle_lines = select_center_line_candidates(
+            parallel_group,
+            directed_path_axis_image,
+            width,
+            height,
+            self.angle_average_center_band_ratio,
+        )
+        parallel_angle = weighted_line_angle(angle_lines)
 
         if display is not None:
             for line in parallel_group:
@@ -1804,28 +1884,28 @@ class GridLineDetector(Node):
                     (0, 0, 255),
                     4,
                 )
-
-        # Both corrections must come from the same line.  This is important
-        # when the camera sees only one physical reference line.
-        parallel_angle = (
-            undirected_angle(float(selected_parallel_line[5]))
-            if selected_parallel_line is not None
-            else None
-        )
-        heading_geometry = (
-            selected_parallel_line is not None
-            and parallel_angle is not None
+            for line in angle_lines:
+                cv2.line(
+                    display,
+                    (line[0], line[1]),
+                    (line[2], line[3]),
+                    (0, 255, 255),
+                    3,
+                )
+        heading_geometry = bool(angle_lines) and (
+            parallel_angle is not None
             and math.isfinite(float(parallel_angle))
         )
         lateral_pixel_error = float('nan')
-        if heading_geometry:
+        if selected_parallel_line is not None:
             # Reuse the selector's offset so association and correction use
             # exactly the same image-center reference.
             lateral_pixel_error = selected_line_offset
-        lateral_geometry = heading_geometry and math.isfinite(
-            lateral_pixel_error
+        lateral_geometry = (
+            selected_parallel_line is not None
+            and math.isfinite(lateral_pixel_error)
         )
-        valid_geometry = lateral_geometry
+        valid_geometry = heading_geometry or lateral_geometry
 
         self._log_line_status_if_changed(
             selected_parallel_line is not None,
@@ -1833,7 +1913,7 @@ class GridLineDetector(Node):
             valid_geometry,
         )
 
-        if not heading_geometry:
+        if not heading_geometry and not lateral_geometry:
             self.reset_reacquisition()
             recovery_result = self.get_line_tracking_recovery_output(
                 tracking_status, lateral_state_valid
@@ -1847,14 +1927,23 @@ class GridLineDetector(Node):
                 return recovery_result
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
-        self.heading_valid_streak += 1
+        if heading_geometry:
+            self.heading_valid_streak += 1
+        else:
+            self.heading_valid_streak = 0
         if lateral_geometry and lateral_state_valid:
             self.lateral_valid_streak += 1
         else:
             self.lateral_valid_streak = 0
         self.valid_streak = self.lateral_valid_streak
-        heading_error = undirected_angle(parallel_angle - path_axis_image)
+        heading_error = (
+            undirected_angle(parallel_angle - path_axis_image)
+            if heading_geometry
+            else 0.0
+        )
         lateral_m = 0.0
+        relative_lateral_m = float('nan')
+        lateral_reference_valid = False
         if lateral_geometry:
             lateral_m = self.pixels_to_lateral_meters(lateral_pixel_error)
             # 在建立室内初始零点前统一补偿，使绝对值、相对值和发布结果
@@ -1874,28 +1963,32 @@ class GridLineDetector(Node):
                 return recovery_result
             return 0.0, 0.0, False, 0.0, False, False, 0.0, 0.0
 
-        self.last_absolute_lateral_m = lateral_m
-        if self.indoor_test_mode:
-            # 室内没有航点切换；首次有效线段作为本次测试的横向参考零点。
-            if self.initial_lateral_offset_m is None:
-                self.initial_lateral_offset_m = lateral_m
-                relative_lateral_m = 0.0
+        if lateral_geometry:
+            self.last_absolute_lateral_m = lateral_m
+            if self.indoor_test_mode:
+                # 室内没有航点切换；首次有效线段作为本次测试的横向参考零点。
+                if self.initial_lateral_offset_m is None:
+                    self.initial_lateral_offset_m = lateral_m
+                    relative_lateral_m = 0.0
+                else:
+                    relative_lateral_m = (
+                        lateral_m - self.initial_lateral_offset_m
+                    )
             else:
-                relative_lateral_m = (
-                    lateral_m - self.initial_lateral_offset_m
+                self.initial_lateral_offset_m = capture_initial_lateral_offset(
+                    self.nav_state,
+                    lateral_m,
+                    self.initial_lateral_offset_m,
                 )
+                relative_lateral_m = calculate_relative_lateral_offset(
+                    self.nav_state,
+                    lateral_m,
+                    self.initial_lateral_offset_m,
+                )
+            lateral_reference_valid = math.isfinite(relative_lateral_m)
         else:
-            self.initial_lateral_offset_m = capture_initial_lateral_offset(
-                self.nav_state,
-                lateral_m,
-                self.initial_lateral_offset_m,
-            )
-            relative_lateral_m = calculate_relative_lateral_offset(
-                self.nav_state,
-                lateral_m,
-                self.initial_lateral_offset_m,
-            )
-        lateral_reference_valid = math.isfinite(relative_lateral_m)
+            # A heading-only frame must not create or move the lateral zero.
+            self.last_absolute_lateral_m = None
 
         # Apply the navigation-state gate to every correction output so a
         # stale streak cannot expose angle or lateral data outside motion.
@@ -1913,14 +2006,22 @@ class GridLineDetector(Node):
         output_lateral = relative_lateral_m if lateral_valid else 0.0
         heading_confidence = 0.0
         lateral_confidence = 0.0
-        if heading_valid:
+        support_score = 0.0
+        if angle_lines:
+            support_scores = [float(line[9]) for line in angle_lines]
+            support_score = sum(support_scores) / len(support_scores)
+        elif selected_parallel_line is not None:
             support_score = float(selected_parallel_line[9])
+        if heading_valid:
             heading_confidence = max(
                 0.0,
                 min(1.0, support_score),
             )
         if lateral_valid:
-            lateral_confidence = heading_confidence
+            lateral_confidence = max(
+                0.0,
+                min(1.0, support_score),
+            )
         confidence = max(heading_confidence, lateral_confidence)
 
         if display is not None:
@@ -1945,6 +2046,7 @@ class GridLineDetector(Node):
             cv2.putText(
                 display,
                 f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
+                f'angle_lines={len(angle_lines)} '
                 f'line={selected_parallel_line is not None} '
                 f'track={tracking_status}',
                 (10, 185),
@@ -1967,8 +2069,14 @@ class GridLineDetector(Node):
             return recovery_result
         if not detected:
             return (
-                0.0, 0.0, False, 0.0,
-                False, False, heading_confidence, lateral_confidence,
+                output_angle,
+                output_lateral,
+                False,
+                confidence,
+                heading_valid,
+                lateral_valid,
+                heading_confidence,
+                lateral_confidence,
             )
         current_result = (
             output_angle, output_lateral, True, confidence,

@@ -51,10 +51,11 @@ TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
 TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
 TURN_SPEED_SLOW = 0.4 # 小误差慢速转向基准速度（草地需更高最低速克服静摩擦）
 MAX_CORRECTION = 2.0   # 车体停止后，旋转调整最大修正量
-# STRAIGHT_MAX_CORRECTION = 3.0 # 直线运行最大纠正量
-# straight line speed correction factor
+# RTK直线运行纠偏上限，单位为电机速度指令值。
 STRAIGHT_PID_SCALE = 2.0  # 2.0
-SPEED_LIMIT = 1.3 * LINEAR_SPEED_BASE
+RTK_MAX_CORRECTION_SPEED = 1.5  # 默认RTK纠偏上限，单位为电机速度指令值
+# RTK左右轮最终输出上限；基础巡航速度仍为LINEAR_SPEED_BASE=10.0。
+RTK_OUTPUT_SPEED_LIMIT = 12.0
 
 #近距离减速/REVERSE阈值
 LOW_DISTANCE = 1.5
@@ -81,15 +82,14 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
 })
 # 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
 # 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
-INITIAL_HEADING_MIN = -100.0
-INITIAL_HEADING_MAX = -80.0
+INITIAL_HEADING_MIN = -180 #-100.0
+INITIAL_HEADING_MAX = 180 #  -80.0
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
 STANLEY_MIN_SPEED = 0.15
 STANLEY_K_BASE = 0.5
 STANLEY_MAX_K = 1.0
 MAX_LATERAL_ERROR = 1.0
-STRAIGHT_MAX_CORRECTION = 1.5
 SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系数
 
 # 固定进仓RTK航点: (lon, lat, heading)。
@@ -100,46 +100,57 @@ BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
 def combine_stanley_and_visual_correction(
     stanley_angle_deg: float,
     visual_correction: float,
-    speed_scale: float,
-    max_correction: float,
+    rtk_max_correction: float,
+    visual_max_correction: float,
+    rtk_correction_ratio: float = 1.0,
+    visual_correction_ratio: float = 1.0,
 ) -> Tuple[float, float, float]:
     """把 Stanley 角度项和视觉速度纠偏合成为左右轮速度偏置。
 
-    视觉纠偏沿用室内控制器的电机速度单位。两项都按当前基础速度比例
-    缩放，且最终合计纠偏受同一个上限约束，避免两套控制器叠加后超调。
-    返回值依次为：缩放后的 Stanley 纠偏、缩放后的视觉纠偏、最终纠偏。
+    两类纠偏均直接使用电机速度指令单位，不依赖基础行驶速度或其缩放
+    比例。RTK 和视觉分别应用各自的上限与比例；左右轮最终输出的安全
+    限幅由调用方统一执行。
+    返回值依次为：RTK纠偏、视觉纠偏、两者合计纠偏。
     """
     try:
         stanley_angle_deg = float(stanley_angle_deg)
         visual_correction = float(visual_correction)
-        speed_scale = float(speed_scale)
-        max_correction = float(max_correction)
+        rtk_max_correction = float(rtk_max_correction)
+        visual_max_correction = float(visual_max_correction)
+        rtk_correction_ratio = float(rtk_correction_ratio)
+        visual_correction_ratio = float(visual_correction_ratio)
     except (TypeError, ValueError, OverflowError):
         return 0.0, 0.0, 0.0
 
-    if not math.isfinite(speed_scale) or speed_scale <= 0.0:
-        speed_scale = 1.0
-    speed_scale = min(speed_scale, 1.0)
-    if not math.isfinite(max_correction) or max_correction < 0.0:
-        max_correction = 0.0
+    if not math.isfinite(rtk_max_correction) or rtk_max_correction < 0.0:
+        rtk_max_correction = 0.0
+    if not math.isfinite(visual_max_correction) or visual_max_correction < 0.0:
+        visual_max_correction = 0.0
     if not math.isfinite(stanley_angle_deg):
         stanley_angle_deg = 0.0
     if not math.isfinite(visual_correction):
         visual_correction = 0.0
+    if not math.isfinite(rtk_correction_ratio) or rtk_correction_ratio < 0.0:
+        rtk_correction_ratio = 0.0
+    if not math.isfinite(visual_correction_ratio) or visual_correction_ratio < 0.0:
+        visual_correction_ratio = 0.0
 
     stanley_angle_deg = max(-45.0, min(45.0, stanley_angle_deg))
-    visual_correction = max(
-        -max_correction, min(max_correction, visual_correction)
+    stanley_speed_correction = max(
+        -rtk_max_correction,
+        min(
+            rtk_max_correction,
+            stanley_angle_deg / 45.0 * rtk_max_correction * rtk_correction_ratio,
+        ),
     )
-    stanley_speed_correction = (
-        stanley_angle_deg / 45.0 * max_correction * speed_scale
+    visual_speed_correction = max(
+        -visual_max_correction,
+        min(
+            visual_max_correction,
+            visual_correction * visual_correction_ratio,
+        ),
     )
-    visual_speed_correction = visual_correction * speed_scale
-    total_limit = max_correction * speed_scale
-    total_correction = max(
-        -total_limit,
-        min(total_limit, stanley_speed_correction + visual_speed_correction),
-    )
+    total_correction = stanley_speed_correction + visual_speed_correction
     return (
         stanley_speed_correction,
         visual_speed_correction,
@@ -161,19 +172,25 @@ ERROR_CALIB_TIMEOUT = 128    # 航向校准卡滞/超时及相关人工介入故
 # 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
-HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
-HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
-# 保留少量边界余量，避免滚动队列在恰好 30 秒时先删掉首帧，导致窗口永远无法 ready。
+HEADING_STABILITY_SETTLE_WINDOW = 15.0  # 慢漂移收敛窗口（秒）原先30
+HEADING_STABILITY_SETTLE_RANGE = 1.5    # 收敛窗口内最大允许变化（度）原先1.0
+# 保留少量边界余量，避免滚动队列在窗口边界时先删掉首帧，导致窗口永远无法 ready。
 HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
-# 短时定向失锁可保留航向稳定资格；Float 持续超过 3 秒才清空窗口并重新等待 30 秒。
-HEADING_QUALITY_GAP_MAX = 3.0          # 可桥接的最长非 Fixed 间隔（秒）
-HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）
+# 短时定向失锁可保留航向稳定资格；Float 持续超过质量去抖时间才进入暂停。
+HEADING_QUALITY_GAP_MAX = 10.0        # 可桥接的最长非 Fixed 间隔（秒）3.0
+HEADING_FIXED_CONFIRM_WINDOW = 8.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）1.0
+RTK_QUALITY_LOSS_DEBOUNCE = 5.0       # RTK非Fixed持续此时长后才暂停导航（秒）
 AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
 
 # 仅在直线航段运行中监视姿态角突变。触发后复用AUTO入口的航向稳定门控。
 WAYPOINT_ATTITUDE_WINDOW = 1.0
 WAYPOINT_ATTITUDE_CHANGE_THRESHOLD = 15.0
 WAYPOINT_ATTITUDE_CONFIRM_FRAMES = 3
+
+
+def has_rtk_quality_loss_exceeded(now: float, loss_since: Optional[float]) -> bool:
+    """Return whether a continuous RTK quality loss has exceeded the debounce window."""
+    return loss_since is not None and now - loss_since >= RTK_QUALITY_LOSS_DEBOUNCE
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -356,7 +373,7 @@ class RTKNavControlNode(Node):
 
 
         # 声明RTK路径参数
-        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
+        self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
         self.declare_parameter("enable_visual_correction", True)
         self.enable_visual_correction = (
@@ -372,11 +389,22 @@ class RTKNavControlNode(Node):
         self.stanley_k_near_target = max(
             0.0, float(self.get_parameter("stanley_k_near_target").value)
         )
-        self.declare_parameter("visual_heading_gain", 0.05)
+        # 比例作用于转换后的电机速度纠偏项；允许大于1用于增强，负值按0处理。
+        self.declare_parameter("rtk_correction_ratio", 1.0)
+        self.declare_parameter("visual_correction_ratio", 1.0)
+        self.declare_parameter("rtk_max_correction", RTK_MAX_CORRECTION_SPEED)
+        self.rtk_correction_ratio = max(
+            0.0, float(self.get_parameter("rtk_correction_ratio").value)
+        )
+        self.visual_correction_ratio = max(
+            0.0, float(self.get_parameter("visual_correction_ratio").value)
+        )
+        self.rtk_max_correction = max(
+            0.0, float(self.get_parameter("rtk_max_correction").value)
+        )
+        self.declare_parameter("visual_heading_gain", 0.1)
         self.declare_parameter("visual_lateral_gain", 5.0)
         self.declare_parameter("visual_max_correction", 1.5)
-        # 兼容旧 launch 参数；新代码统一使用速度纠偏单位。
-        self.declare_parameter("visual_max_steering_deg", -1.0)
         self.declare_parameter("visual_confidence_threshold", 0.75)
         self.declare_parameter("visual_timeout_sec", 0.5)
         self.visual_heading_gain = float(
@@ -388,16 +416,6 @@ class RTKNavControlNode(Node):
         self.visual_max_correction = max(
             0.0, float(self.get_parameter("visual_max_correction").value)
         )
-        legacy_visual_max = float(
-            self.get_parameter("visual_max_steering_deg").value
-        )
-        if legacy_visual_max >= 0.0:
-            self.get_logger().warn(
-                "visual_max_steering_deg已弃用，将其作为速度纠偏上限使用"
-            )
-            self.visual_max_correction = legacy_visual_max
-        # 保留属性名，避免旧测试和外部调试代码访问失败。
-        self.visual_max_steering_deg = self.visual_max_correction
         self.visual_confidence_threshold = float(
             self.get_parameter("visual_confidence_threshold").value
         )
@@ -408,7 +426,7 @@ class RTKNavControlNode(Node):
         # self.rtk_path_file = self.declare_parameter(
         #     'rtk_path_file',
         #     # "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
-        #     "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
+        #     "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
         # )
         
         # self.path_dir = os.path.dirname(self.rtk_path_file)  # 获取路径文件所在目录
@@ -459,6 +477,7 @@ class RTKNavControlNode(Node):
         self.last_orientation_status = -1
         self.position_data_valid = False
         self.rtk_solution_ready = False
+        self._rtk_quality_loss_since = None
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
         self.last_heading_check_log_time = 0.0
@@ -476,6 +495,9 @@ class RTKNavControlNode(Node):
         self.visual_sample_heading_confidence = 0.0
         self.visual_sample_lateral_confidence = 0.0
         self.last_visual_sample_time = 0.0
+        self._last_visual_heading_correction = 0.0
+        self._last_visual_lateral_correction = 0.0
+        self._last_stanley_log_time = 0.0
 
         # ROS2发布器/订阅器
         self.motor_speed_pub = self.create_publisher(Vector3, "/rtk/motor_speed", 10)
@@ -2126,17 +2148,39 @@ class RTKNavControlNode(Node):
         imu_msg.data = self.imu_yaw
         self.imu_heading_pub.publish(imu_msg)
 
-        # RTK 失锁后立即停车并进入航向门控。Float 不超过 3 秒时可以复用
-        # 原有收敛历史；超过 3 秒时清空历史，恢复双 Fixed 后重新采样 30 秒。
-        if (
-            not current_sample_fixed
-            and self.current_control_mode == ControlMode.AUTO_CLEANING
-            and hasattr(self, "nav_context")
-            and self.nav_context.get("nav_state") not in (
+        active_nav_state = (
+            self.nav_context.get("nav_state")
+            if hasattr(self, "nav_context")
+            else NavState.IDLE
+        )
+        active_nav = (
+            self.current_control_mode == ControlMode.AUTO_CLEANING
+            and active_nav_state not in (
                 NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
             )
-            and not self._auto_heading_gate_pending
-        ):
+        )
+        quality_loss_elapsed = 0.0
+        if current_sample_fixed:
+            if self._rtk_quality_loss_since is not None:
+                quality_loss_elapsed = now - self._rtk_quality_loss_since
+                if active_nav and not self._auto_heading_gate_pending:
+                    self.get_logger().info(
+                        f"[RTK质量去抖] 短时质量丢失{quality_loss_elapsed:.1f}s后恢复，"
+                        "未触发暂停"
+                    )
+            self._rtk_quality_loss_since = None
+        elif self._rtk_quality_loss_since is None:
+            self._rtk_quality_loss_since = now
+            if active_nav and not self._auto_heading_gate_pending:
+                self.get_logger().warn(
+                    f"[RTK质量去抖] 定位/定向离开Fixed，连续"
+                    f"{RTK_QUALITY_LOSS_DEBOUNCE:.1f}s后暂停导航"
+                )
+
+        quality_loss_exceeded = has_rtk_quality_loss_exceeded(
+            now, self._rtk_quality_loss_since
+        )
+        if quality_loss_exceeded and active_nav and not self._auto_heading_gate_pending:
             self._prepare_auto_cleaning_heading_gate(
                 "RTK质量丢失", force=True, preserve_heading_history=True
             )
@@ -2146,7 +2190,7 @@ class RTKNavControlNode(Node):
 
         if tracking_active:
             # 非 Fixed 帧不能进入稳定窗口。短时 Float 只桥接已有 Fixed 历史，
-            # 超过 3 秒的失锁会在上方清空历史，恢复后从新 Fixed 帧重新采集。
+            # 超过质量桥接窗口的失锁会在上方清空历史，恢复后从新 Fixed 帧重新采集。
             can_track_heading = current_sample_fixed
             short_range = float("inf")
             settle_range = float("inf")
@@ -2170,8 +2214,8 @@ class RTKNavControlNode(Node):
                         self._auto_heading_gate_start_time = None
                         self.get_logger().warn(
                             f"[AUTO航向门控] RTK质量失锁{gap_elapsed:.1f}s，"
-                            "超过3秒桥接窗口，清空航向稳定窗口；"
-                            "恢复双Fixed后需重新连续采样30秒"
+                            f"超过{HEADING_QUALITY_GAP_MAX:.1f}s桥接窗口，"
+                            "清空航向稳定窗口；恢复双Fixed后需重新连续采样"
                         )
                         self._auto_heading_gate_quality_gap_invalidated = True
                     self._auto_heading_gate_quality_fixed = False
@@ -2182,8 +2226,8 @@ class RTKNavControlNode(Node):
                         if self._auto_heading_gate_quality_lost_since is not None
                         else float("inf")
                     )
-                    # 首次 Fixed 或 Float 超过 3 秒后，必须开始一轮新的收敛采样。
-                    # 3 秒内的短时 Float 保留历史，仅增加 1 秒双 Fixed 确认。
+                    # 首次 Fixed 或质量桥接窗口超时后，必须开始一轮新的收敛采样。
+                    # 短时 Float 保留历史，仅增加连续 Fixed 确认。
                     if (
                         not self._auto_heading_gate_seen_fixed
                         or gap_elapsed > HEADING_QUALITY_GAP_MAX
@@ -2273,13 +2317,17 @@ class RTKNavControlNode(Node):
             if is_stable != self._last_heading_stable:
                 if is_stable:
                     self.get_logger().info(
-                        f"[航向稳定] 5s波动={short_range:.2f}°，"
-                        f"30s收敛波动={settle_range:.2f}°，通过AUTO门控"
+                        f"[航向稳定] {HEADING_STABILITY_WINDOW:.0f}s波动="
+                        f"{short_range:.2f}°，"
+                        f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛波动="
+                        f"{settle_range:.2f}°，通过AUTO门控"
                     )
                 else:
                     self.get_logger().warn(
-                        f"[航向不稳定] 5s波动={short_range:.2f}°，"
-                        f"30s收敛波动={settle_range:.2f}°"
+                        f"[航向不稳定] {HEADING_STABILITY_WINDOW:.0f}s波动="
+                        f"{short_range:.2f}°，"
+                        f"{HEADING_STABILITY_SETTLE_WINDOW:.0f}s收敛波动="
+                        f"{settle_range:.2f}°"
                     )
             self._last_heading_stable = is_stable
 
@@ -2305,9 +2353,20 @@ class RTKNavControlNode(Node):
         if not self.rtk_data_timed_out and not self.heading_timed_out:
             self.clear_rtk_error_bits(ERROR_RTK_TIMEOUT)
 
+        quality_loss_debouncing = (
+            active_nav
+            and not quality_loss_exceeded
+            and not self._auto_heading_gate_pending
+        )
         if not self.rtk_solution_ready:
             self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
-            if hasattr(self, 'nav_context') and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.PAUSE, NavState.COMPLETED]:
+            if (
+                not quality_loss_debouncing
+                and hasattr(self, 'nav_context')
+                and self.nav_context["nav_state"] not in [
+                    NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
+                ]
+            ):
                 self.nav_context["pre_pause_state"] = self.nav_context["nav_state"]
                 self.nav_context["pause_reason"] = "rtk_not_fixed"
                 self.nav_context["brush_active"] = self.brush_active
@@ -2323,6 +2382,8 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.PAUSE)
                 self.publish_stop_speed()
             elif (
+                not quality_loss_debouncing
+                and
                 hasattr(self, 'nav_context')
                 and self.nav_context["nav_state"] == NavState.PAUSE
                 and self.nav_context.get("pause_reason") == "rtk_timeout"
@@ -2723,8 +2784,7 @@ class RTKNavControlNode(Node):
                                  path_direction: float,
                                  velocity: float,
                                  distance_to_target: float = float('inf'),
-                                 bearing_only: bool = False,
-                                 speed_scale: float = 1.0) -> Tuple[float, float]:
+                                 bearing_only: bool = False) -> Tuple[float, float]:
         """
         Stanley控制器计算左右轮速度
         使用自适应K值和横向误差限幅
@@ -2753,24 +2813,34 @@ class RTKNavControlNode(Node):
             combine_stanley_and_visual_correction(
                 total_steering,
                 visual_correction_raw,
-                speed_scale,
-                STRAIGHT_MAX_CORRECTION,
+                self.rtk_max_correction,
+                self.visual_max_correction,
+                self.rtk_correction_ratio,
+                self.visual_correction_ratio,
             )
         )
-        if not hasattr(self, '_stanley_log_counter'):
-            self._stanley_log_counter = 0
-        self._stanley_log_counter += 1
-        if self._stanley_log_counter % 5 == 0:
-            self.get_logger().debug(
-                f"[Stanley-DBG] base={velocity:.2f}, scale={speed_scale:.2f}, "
-                f"stanley_corr={stanley_speed_diff:.2f}, "
-                f"visual_raw={visual_correction_raw:.2f}, "
-                f"visual_corr={visual_speed_diff:.2f}, total_corr={speed_diff:.2f}"
-            )
         left_speed = -velocity + speed_diff
         right_speed = velocity + speed_diff
-        left_speed = max(min(left_speed, SPEED_LIMIT), -SPEED_LIMIT)
-        right_speed = max(min(right_speed, SPEED_LIMIT), -SPEED_LIMIT)
+        left_speed = max(
+            min(left_speed, RTK_OUTPUT_SPEED_LIMIT), -RTK_OUTPUT_SPEED_LIMIT
+        )
+        right_speed = max(
+            min(right_speed, RTK_OUTPUT_SPEED_LIMIT), -RTK_OUTPUT_SPEED_LIMIT
+        )
+        now = time.monotonic()
+        if now - self._last_stanley_log_time >= 1.0:
+            self.get_logger().info(
+                f"stanley_correction={stanley_speed_diff:+.3f}, "
+                f"visual_angle_error_deg={self.visual_sample_heading_error_deg:+.3f}, "
+                f"visual_heading_correction={self._last_visual_heading_correction:+.3f}, "
+                f"visual_lateral_correction={self._last_visual_lateral_correction:+.3f}, "
+                f"visual_correction_raw={visual_correction_raw:+.3f}, "
+                f"visual_speed_correction={visual_speed_diff:+.3f}, "
+                f"correction={speed_diff:+.3f}, "
+                f"left_speed={left_speed:+.3f}, "
+                f"right_speed={right_speed:+.3f}"
+            )
+            self._last_stanley_log_time = now
         return (left_speed, right_speed)
 
     def straight_get_speed_correction(self, target_heading: float) -> float:
@@ -2823,7 +2893,9 @@ class RTKNavControlNode(Node):
         correction = (kp * yaw_error) - d_term + i_term
 
         # 8. 最大修正量限制
-        correction_clamped = -max(min(correction, STRAIGHT_MAX_CORRECTION), -STRAIGHT_MAX_CORRECTION)
+        correction_clamped = -max(
+            min(correction, self.rtk_max_correction), -self.rtk_max_correction
+        )
 
         # 日志输出
         # if abs(yaw_error - self.last_yaw_error) > 0.1:
@@ -3150,6 +3222,7 @@ class RTKNavControlNode(Node):
                 speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
                 current_base_speed = LINEAR_SPEED_BASE * speed_scale
             else:
+                speed_scale = 1.0
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
@@ -3219,7 +3292,6 @@ class RTKNavControlNode(Node):
                 velocity=current_base_speed,
                 distance_to_target=distance,
                 bearing_only=self.nav_context.get("force_bearing_mode", False),
-                speed_scale=speed_scale,
             )
 
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
@@ -3608,7 +3680,7 @@ class RTKNavControlNode(Node):
                         self.heading_abnormal_start_time = None
                         self.heading_timed_out = False
         else:
-            # AUTO 航向门控已在创建生成器前完成 5s 短窗和 30s 收敛窗校验。
+            # AUTO 航向门控已在创建生成器前完成短窗和收敛窗校验。
             # 这里仅在 IDLE 时初始化初始移动，避免再次读取不会继续更新的
             # _last_heading_stable 标志造成重复等待或生成器死循环。
             if self.nav_context["nav_state"] == NavState.IDLE:
@@ -4116,6 +4188,7 @@ class RTKNavControlNode(Node):
                     speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
                     current_base_speed = LINEAR_SPEED_BASE * speed_scale
                 else:
+                    speed_scale = 1.0
                     current_base_speed = LINEAR_SPEED_BASE
 
                 path_end = (target_lon, target_lat)
@@ -4252,8 +4325,7 @@ class RTKNavControlNode(Node):
                     velocity=current_base_speed,
                     distance_to_target=distance,
                     bearing_only=in_bearing_mode,
-                    speed_scale=speed_scale,
-                )
+            )
 
                 # 正常行驶时原始 IO 首帧立即零速，等待确认后再进入边界矫正/P1。
                 # 配置的超声波屏蔽区域是明确的例外：IO 仍保留用于遥测，
@@ -4525,11 +4597,9 @@ class RTKNavControlNode(Node):
         self.last_visual_sample_time = time.monotonic()
 
     def get_visual_steering_correction(self) -> float:
-        """返回满足安全门控时的原始视觉速度纠偏量。
-
-        返回值单位与室内摄像头控制器一致，调用方再根据当前距离的
-        ``speed_scale`` 缩放，并与 Stanley 纠偏统一限幅。
-        """
+        """返回满足安全门控时的原始视觉纠偏量，单位为电机速度指令值。"""
+        self._last_visual_heading_correction = 0.0
+        self._last_visual_lateral_correction = 0.0
         if not self.enable_visual_correction:
             return 0.0
         if not self.rtk_solution_ready:
@@ -4582,17 +4652,21 @@ class RTKNavControlNode(Node):
             return 0.0
         correction = 0.0
         if heading_fresh:  # 视觉航向误差的符号很可能反了,已修改待验证
-            correction += (
+            self._last_visual_heading_correction = (
                 self.visual_heading_gain * self.visual_sample_heading_error_deg
             )
         if lateral_fresh:
-            correction += (
+            self._last_visual_lateral_correction = (
                 self.visual_lateral_gain * self.visual_sample_lateral_error_m
             )
+        correction = (
+            self._last_visual_heading_correction
+            + self._last_visual_lateral_correction
+        )
         max_correction = getattr(
             self,
             "visual_max_correction",
-            getattr(self, "visual_max_steering_deg", 0.0),
+            0.0,
         )
         if not math.isfinite(max_correction) or max_correction < 0.0:
             return 0.0
@@ -4615,7 +4689,7 @@ class RTKNavControlNode(Node):
     def _prepare_auto_cleaning_heading_gate(
         self, source: str, force: bool = False, preserve_heading_history: bool = False
     ):
-        """准备航向门控；仅在不超过3秒的Float间隔内保留收敛样本。"""
+        """准备航向门控；短时Float间隔内保留已有收敛样本。"""
         if self._auto_heading_gate_prepared and not force:
             return
 
@@ -5231,10 +5305,22 @@ class RTKNavControlNode(Node):
             # 自动导航仅在GGA定位固定、WTRTK定向固定且数据有效时启动/继续。
             if not self.rtk_solution_ready:
                 self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
-                self.multi_waypoint_generator = None
-                self.nav_running = False
-                self.publish_stop_speed()
-                return
+                quality_loss_debouncing = (
+                    self.nav_context.get("nav_state") not in (
+                        NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
+                    )
+                    and not self._auto_heading_gate_pending
+                    and not has_rtk_quality_loss_exceeded(
+                        time.monotonic(), self._rtk_quality_loss_since
+                    )
+                )
+                if not quality_loss_debouncing:
+                    self.multi_waypoint_generator = None
+                    self.nav_running = False
+                    self.publish_stop_speed()
+                    return
+                # 短时Float只记录质量故障，继续当前导航，等待RTK恢复或去抖超时。
+                self.get_logger().debug("[RTK质量去抖] 短时Float，继续当前导航")
 
             # 新增：启动/恢复导航前，强制校验航点有效性
             if not self.waypoints:
@@ -5246,7 +5332,7 @@ class RTKNavControlNode(Node):
                 return
 
             # 首次进入 AUTO_CLEANING 必须采集新的稳定窗口；运行中短时 Float
-            # （不超过3秒）可桥接旧窗口，超时则自动重新采集30秒。
+            # （不超过质量桥接窗口）可桥接旧窗口，超时则自动重新采集。
             # 门控覆盖首次启动及WAYPOINT_MOVE/WAYPOINT_CALIB等恢复路径。
             if self._auto_heading_gate_pending:
                 now = time.monotonic()
@@ -5255,7 +5341,7 @@ class RTKNavControlNode(Node):
                     and now - self._auto_heading_gate_fixed_since
                     < HEADING_FIXED_CONFIRM_WINDOW
                 ):
-                    # 3秒内短时Float恢复时，先确认连续双Fixed，避免单帧抖动放行。
+                    # 短时Float恢复时，先确认连续双Fixed，避免质量抖动放行。
                     self.publish_stop_speed()
                     return
                 if not self._last_heading_stable:
@@ -5356,9 +5442,17 @@ class RTKNavControlNode(Node):
                 if self.multi_waypoint_generator and self.nav_running:
                     left_speed, right_speed = next(self.multi_waypoint_generator)
                     # 构造速度消息并发布
+                    left_speed = max(
+                        min(float(left_speed), RTK_OUTPUT_SPEED_LIMIT),
+                        -RTK_OUTPUT_SPEED_LIMIT,
+                    )
+                    right_speed = max(
+                        min(float(right_speed), RTK_OUTPUT_SPEED_LIMIT),
+                        -RTK_OUTPUT_SPEED_LIMIT,
+                    )
                     speed_msg = Vector3()
-                    speed_msg.x = float(left_speed)
-                    speed_msg.y = float(right_speed)
+                    speed_msg.x = left_speed
+                    speed_msg.y = right_speed
                     # 缓存最近发布的电机速度（供边界方向判断用）
                     self._last_motor_left = float(left_speed)
                     self._last_motor_right = float(right_speed)
