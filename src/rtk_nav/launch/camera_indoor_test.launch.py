@@ -75,14 +75,14 @@ def generate_launch_description():
     )
     declare_always_show_axis_debug_arg = DeclareLaunchArgument(
         'always_show_axis_debug',
-        default_value=TextSubstitution(text='false'),
+        default_value=TextSubstitution(text='true'),
         description=(
             'Show full axis, line-count, and RTK diagnostics in the debug image'
         ),
     )
     declare_angle_line_gap_fill_arg = DeclareLaunchArgument(
         'angle_line_gap_fill_px',
-        default_value=TextSubstitution(text='6.0'),
+        default_value=TextSubstitution(text='25.0'),
         description=(
             'Maximum gap to bridge between collinear grid-line segments'
         ),
@@ -100,6 +100,86 @@ def generate_launch_description():
         description=(
             'Maximum fine-grid angle difference from the camera reference axis'
         ),
+    )
+    declare_angle_line_hough_gap_arg = DeclareLaunchArgument(
+        'angle_line_hough_gap_px',
+        default_value=TextSubstitution(text='2.0'),
+        description='Maximum small gap for fine-line Hough detection in pixels',
+    )
+    declare_coarse_line_min_length_arg = DeclareLaunchArgument(
+        'coarse_line_min_length_px',
+        default_value=TextSubstitution(text='30.0'),
+        description='Minimum coarse tracking-line Hough segment length in pixels',
+    )
+    declare_coarse_line_min_width_arg = DeclareLaunchArgument(
+        'coarse_line_min_width_px',
+        default_value=TextSubstitution(text='4.0'),
+        description='Minimum coarse tracking-line width metric in pixels',
+    )
+    declare_coarse_line_min_support_arg = DeclareLaunchArgument(
+        'coarse_line_min_support',
+        default_value=TextSubstitution(text='0.3'),
+        description='Minimum white-mask support for a coarse tracking line',
+    )
+    declare_coarse_line_merge_gap_arg = DeclareLaunchArgument(
+        'coarse_line_merge_gap_px',
+        default_value=TextSubstitution(text='30.0'),
+        description='Maximum normal gap for merging coarse line edges',
+    )
+    declare_coarse_line_gap_fill_arg = DeclareLaunchArgument(
+        'coarse_line_gap_fill_px',
+        default_value=TextSubstitution(text='30.0'),
+        description='Maximum along-line reflection gap to bridge for coarse tracking',
+    )
+    declare_coarse_line_bridge_normal_gap_arg = DeclareLaunchArgument(
+        'coarse_line_bridge_normal_gap_px',
+        default_value=TextSubstitution(text='10.0'),
+        description='Maximum normal gap between coarse line segments to bridge',
+    )
+    declare_coarse_line_bridge_angle_arg = DeclareLaunchArgument(
+        'coarse_line_bridge_angle_tolerance_deg',
+        default_value=TextSubstitution(text='3.0'),
+        description='Maximum direction difference for coarse line bridging',
+    )
+    declare_white_line_value_threshold_arg = DeclareLaunchArgument(
+        'white_line_value_threshold',
+        default_value=TextSubstitution(text='170.0'),
+        description='Minimum HSV value for a white grid line',
+    )
+    declare_white_line_saturation_max_arg = DeclareLaunchArgument(
+        'white_line_saturation_max',
+        default_value=TextSubstitution(text='100.0'),
+        description='Maximum HSV saturation for a white grid line',
+    )
+    declare_angle_average_center_band_ratio_arg = DeclareLaunchArgument(
+        'angle_average_center_band_ratio',
+        default_value=TextSubstitution(text='0.8'),
+        description='Image center-band ratio used for fine-line angle averaging',
+    )
+    declare_angle_line_min_length_arg = DeclareLaunchArgument(
+        'angle_line_min_length_px',
+        default_value=TextSubstitution(text='12.0'),
+        description='Minimum fine-line Hough segment length in pixels',
+    )
+    declare_angle_line_min_width_arg = DeclareLaunchArgument(
+        'angle_line_min_width_px',
+        default_value=TextSubstitution(text='1.0'),
+        description='Minimum estimated fine-line width in pixels',
+    )
+    declare_angle_line_min_support_arg = DeclareLaunchArgument(
+        'angle_line_min_support',
+        default_value=TextSubstitution(text='0.20'),
+        description='Minimum white-mask support ratio for a fine-line segment',
+    )
+    declare_angle_line_hough_threshold_arg = DeclareLaunchArgument(
+        'angle_line_hough_threshold',
+        default_value=TextSubstitution(text='8'),
+        description='Hough accumulator threshold for fine-line detection',
+    )
+    declare_angle_line_min_merged_length_arg = DeclareLaunchArgument(
+        'angle_line_min_merged_length_px',
+        default_value=TextSubstitution(text='60.0'),
+        description='Minimum bridged fine-line length used for angle statistics',
     )
     declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
         'enable_grid_line_stream',
@@ -230,6 +310,70 @@ def generate_launch_description():
                     LaunchConfiguration('angle_line_axis_tolerance_deg'),
                     value_type=float,
                 ),
+                'coarse_line_min_length_px': ParameterValue(
+                    LaunchConfiguration('coarse_line_min_length_px'),
+                    value_type=float,
+                ),
+                'coarse_line_min_width_px': ParameterValue(
+                    LaunchConfiguration('coarse_line_min_width_px'),
+                    value_type=float,
+                ),
+                'coarse_line_min_support': ParameterValue(
+                    LaunchConfiguration('coarse_line_min_support'),
+                    value_type=float,
+                ),
+                'coarse_line_merge_gap_px': ParameterValue(
+                    LaunchConfiguration('coarse_line_merge_gap_px'),
+                    value_type=float,
+                ),
+                'coarse_line_gap_fill_px': ParameterValue(
+                    LaunchConfiguration('coarse_line_gap_fill_px'),
+                    value_type=float,
+                ),
+                'coarse_line_bridge_normal_gap_px': ParameterValue(
+                    LaunchConfiguration('coarse_line_bridge_normal_gap_px'),
+                    value_type=float,
+                ),
+                'coarse_line_bridge_angle_tolerance_deg': ParameterValue(
+                    LaunchConfiguration('coarse_line_bridge_angle_tolerance_deg'),
+                    value_type=float,
+                ),
+                'white_line_value_threshold': ParameterValue(
+                    LaunchConfiguration('white_line_value_threshold'),
+                    value_type=float,
+                ),
+                'white_line_saturation_max': ParameterValue(
+                    LaunchConfiguration('white_line_saturation_max'),
+                    value_type=float,
+                ),
+                'angle_average_center_band_ratio': ParameterValue(
+                    LaunchConfiguration('angle_average_center_band_ratio'),
+                    value_type=float,
+                ),
+                'angle_line_min_length_px': ParameterValue(
+                    LaunchConfiguration('angle_line_min_length_px'),
+                    value_type=float,
+                ),
+                'angle_line_min_width_px': ParameterValue(
+                    LaunchConfiguration('angle_line_min_width_px'),
+                    value_type=float,
+                ),
+                'angle_line_min_support': ParameterValue(
+                    LaunchConfiguration('angle_line_min_support'),
+                    value_type=float,
+                ),
+                'angle_line_hough_threshold': ParameterValue(
+                    LaunchConfiguration('angle_line_hough_threshold'),
+                    value_type=int,
+                ),
+                'angle_line_hough_gap_px': ParameterValue(
+                    LaunchConfiguration('angle_line_hough_gap_px'),
+                    value_type=float,
+                ),
+                'angle_line_min_merged_length_px': ParameterValue(
+                    LaunchConfiguration('angle_line_min_merged_length_px'),
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -328,6 +472,22 @@ def generate_launch_description():
             declare_angle_line_gap_fill_arg,
             declare_angle_line_bridge_angle_arg,
             declare_angle_line_axis_tolerance_arg,
+            declare_angle_line_hough_gap_arg,
+            declare_coarse_line_min_length_arg,
+            declare_coarse_line_min_width_arg,
+            declare_coarse_line_min_support_arg,
+            declare_coarse_line_merge_gap_arg,
+            declare_coarse_line_gap_fill_arg,
+            declare_coarse_line_bridge_normal_gap_arg,
+            declare_coarse_line_bridge_angle_arg,
+            declare_white_line_value_threshold_arg,
+            declare_white_line_saturation_max_arg,
+            declare_angle_average_center_band_ratio_arg,
+            declare_angle_line_min_length_arg,
+            declare_angle_line_min_width_arg,
+            declare_angle_line_min_support_arg,
+            declare_angle_line_hough_threshold_arg,
+            declare_angle_line_min_merged_length_arg,
             declare_enable_grid_line_stream_arg,
             declare_grid_line_stream_rtsp_url_arg,
             declare_grid_line_stream_fps_arg,

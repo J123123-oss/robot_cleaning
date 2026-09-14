@@ -524,9 +524,9 @@ class MultiAreaCleaningPathPlanner(Node):
         }
         
         # 声明配置文件路径参数和 headless 参数
-        self.declare_parameter('config_file', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/config/002-E9-E11.yaml')
+        self.declare_parameter('config_file', '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/002-E9-E11.yaml')
         self.declare_parameter('headless', True)
-        self.declare_parameter('output_dir', '/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/')
+        self.declare_parameter('output_dir', '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/')
         self.declare_parameter('output_name', '')
         
         # 尝试从 YAML 配置文件加载

@@ -32,6 +32,18 @@ def validate_rtsp_url(rtsp_url):
     return value
 
 
+def prepare_ffmpeg_frame(frame):
+    """Validate a BGR frame and return contiguous RGB bytes for FFmpeg."""
+    frame = np.asarray(frame)
+    if (
+        frame.ndim != 3
+        or frame.shape[2] != 3
+        or frame.dtype != np.uint8
+    ):
+        raise ValueError('converted image is not an 8-bit BGR frame')
+    return np.ascontiguousarray(frame[:, :, ::-1])
+
+
 def build_ffmpeg_command(
     width,
     height,
@@ -41,7 +53,7 @@ def build_ffmpeg_command(
     rtsp_url,
     ffmpeg_binary='ffmpeg',
 ):
-    """构造无 shell 的 FFmpeg 原始 BGR 到 RTSP 命令。"""
+    """构造无 shell 的 FFmpeg 原始 RGB 到 RTSP 命令。"""
     width = int(width)
     height = int(height)
     fps = float(fps)
@@ -64,16 +76,24 @@ def build_ffmpeg_command(
         '-hide_banner',
         '-loglevel',
         'warning',
+        '-fflags',
+        'nobuffer',
+        '-avioflags',
+        'direct',
         '-f',
         'rawvideo',
         '-pix_fmt',
-        'bgr24',
+        'rgb24',
         '-s',
         f'{width}x{height}',
         '-r',
         f'{fps:g}',
         '-i',
         'pipe:0',
+        # The worker writes at the configured cadence; force the encoded
+        # stream to use the same constant frame rate and sequential PTS.
+        '-r',
+        f'{fps:g}',
         '-an',
         '-c:v',
         'libx264',
@@ -81,10 +101,40 @@ def build_ffmpeg_command(
         preset,
         '-tune',
         'zerolatency',
+        '-bf',
+        '0',
+        '-g',
+        f'{max(1, round(fps))}',
+        '-keyint_min',
+        f'{max(1, round(fps))}',
+        '-fps_mode',
+        'cfr',
+        # The source is full-range RGB. Fix the SD color matrix and range so
+        # RTSP clients do not make incompatible default-color assumptions.
+        '-vf',
+        'scale=in_range=full:out_range=tv:'
+        'in_color_matrix=bt601:out_color_matrix=bt601,format=yuv420p',
         '-pix_fmt',
         'yuv420p',
+        '-color_range',
+        'tv',
+        '-colorspace',
+        'smpte170m',
+        '-color_primaries',
+        'smpte170m',
+        '-color_trc',
+        'smpte170m',
+        '-x264-params',
+        'colorprim=smpte170m:transfer=smpte170m:'
+        'colormatrix=smpte170m:fullrange=off',
         '-b:v',
         bitrate,
+        '-flush_packets',
+        '1',
+        '-muxdelay',
+        '0',
+        '-muxpreload',
+        '0',
         '-f',
         'rtsp',
         '-rtsp_transport',
@@ -180,14 +230,7 @@ class GridLineStreamer(Node):
                     frame = self.bridge.imgmsg_to_cv2(
                         message, desired_encoding='bgr8'
                     )
-                    frame = np.asarray(frame)
-                    if (
-                        frame.ndim != 3
-                        or frame.shape[2] != 3
-                        or frame.dtype != np.uint8
-                    ):
-                        raise ValueError('converted image is not an 8-bit BGR frame')
-                    last_frame = np.ascontiguousarray(frame)
+                    last_frame = prepare_ffmpeg_frame(frame)
                     new_frame_size = (last_frame.shape[1], last_frame.shape[0])
                     if frame_size != new_frame_size:
                         self.stop_process()

@@ -1,0 +1,49 @@
+ 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[openmv_serial_publisher_node-2] [INFO] [1789096747.958943629] [indoor_camera_publisher]: 已连接 OpenMV 串口: /dev/OpenMV_Cam_H7_Plus @ 115200
+[openmv_serial_publisher_node-2] [INFO] [1789096747.960738751] [indoor_camera_publisher]: 已发送 OpenMV 补光灯亮度: 25%
+[openmv_serial_publisher_node-2] [INFO] [1789096747.963316708] [indoor_camera_publisher]: 已发送 OpenMV 补光灯开启命令
+[openmv_serial_publisher_node-2] [INFO] [1789096747.964632735] [indoor_camera_publisher]: OpenMV 补光灯状态: OFF
+[openmv_serial_publisher_node-2] [INFO] [1789096748.015566742] [indoor_camera_publisher]: OpenMV 已确认补光灯开启
+[grid_line_streamer-4] [INFO] [1789096748.197101217] [indoor_grid_line_streamer]: 栅格线检测 RTSP 推流已启动: 320x240 @ 10 FPS
+[openmv_serial_publisher_node-2] [INFO] [1789096748.372538187] [indoor_camera_publisher]: 已发送 OpenMV 补光灯首个心跳
+[camera_indoor_test_controller-5] [INFO] [1789096748.440187624] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.118, lateral_correction=+0.000, correction=+0.118, left_speed=-4.882, right_speed=+5.118
+[camera_indoor_test_controller-5] [INFO] [1789096749.440107084] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.153, lateral_correction=+0.000, correction=+0.153, left_speed=-4.847, right_speed=+5.153
+[motor_driver-1] [INFO] [1789096749.637700711] [indoor_can_motor_driver]: Initializing legacy motor (ID=1)...
+[motor_driver-1] [INFO] [1789096749.700075584] [indoor_can_motor_driver]: Initializing legacy motor (ID=2)...
+[motor_driver-1] [INFO] [1789096749.764136563] [indoor_can_motor_driver]: Initializing legacy motor (ID=3)...
+[motor_driver-1] [INFO] [1789096749.849265517] [indoor_can_motor_driver]: Initializing legacy motor (ID=4)...
+[motor_driver-1] [INFO] [1789096749.994983770] [indoor_can_motor_driver]: Starting CAN frame receiving thread...
+[motor_driver-1] [INFO] [1789096749.999504924] [indoor_can_motor_driver]: Legacy motor driver started
+[camera_indoor_test_controller-5] [INFO] [1789096750.443815177] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.129, lateral_correction=+0.000, correction=+0.129, left_speed=-4.871, right_speed=+5.129
+[camera_indoor_test_controller-5] [INFO] [1789096751.489282575] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.241, lateral_correction=-0.107, correction=+0.134, left_speed=-4.866, right_speed=+5.134
+[line_detector_node-3] [INFO] [1789096751.758413148] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=2
+[camera_indoor_test_controller-5] [INFO] [1789096752.490443389] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.172, lateral_correction=-0.561, correction=-0.388, left_speed=-5.388, right_speed=+4.612
+[camera_indoor_test_controller-5] [INFO] [1789096753.557213282] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.181, lateral_correction=-0.212, correction=-0.032, left_speed=-5.032, right_speed=+4.968
+[camera_indoor_test_controller-5] [INFO] [1789096754.589007020] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.048, lateral_correction=+0.000, correction=+0.048, left_speed=-4.952, right_speed=+5.048
+[camera_indoor_test_controller-5] [INFO] [1789096755.639118282] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.128, lateral_correction=+0.000, correction=+0.128, left_speed=-4.872, right_speed=+5.128
+[camera_indoor_test_controller-5] [INFO] [1789096756.689131212] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.136, lateral_correction=-0.137, correction=-0.001, left_speed=-5.001, right_speed=+4.999
+[openmv_serial_publisher_node-2] [WARN] [1789096757.079465506] [indoor_camera_publisher]: 收到的 OpenMV 帧不是完整 JPEG，已丢弃
+[camera_indoor_test_controller-5] [INFO] [1789096757.739089021] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.167, lateral_correction=-0.222, correction=-0.055, left_speed=-5.055, right_speed=+4.945
+[camera_indoor_test_controller-5] [INFO] [1789096758.739223602] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.128, lateral_correction=-0.218, correction=-0.090, left_speed=-5.090, right_speed=+4.910
+[camera_indoor_test_controller-5] [INFO] [1789096759.804386884] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.140, lateral_correction=-0.119, correction=+0.021, left_speed=-4.979, right_speed=+5.021
+[camera_indoor_test_controller-5] [INFO] [1789096760.839977924] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.130, lateral_correction=-0.164, correction=-0.034, left_speed=-5.034, right_speed=+4.966
+[line_detector_node-3] [INFO] [1789096760.887969729] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=1
+[camera_indoor_test_controller-5] [INFO] [1789096761.843035936] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.050, lateral_correction=+0.000, correction=+0.050, left_speed=-4.950, right_speed=+5.050
+[camera_indoor_test_controller-5] [INFO] [1789096762.889033486] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.050, lateral_correction=+0.114, correction=+0.163, left_speed=-4.837, right_speed=+5.163
+[camera_indoor_test_controller-5] [INFO] [1789096763.891781501] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.115, lateral_correction=+0.000, correction=+0.115, left_speed=-4.885, right_speed=+5.115
+[camera_indoor_test_controller-5] [INFO] [1789096764.939057240] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.141, lateral_correction=-0.412, correction=-0.271, left_speed=-5.271, right_speed=+4.729
+[camera_indoor_test_controller-5] [INFO] [1789096765.987368550] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.050, lateral_correction=-0.356, correction=-0.306, left_speed=-5.306, right_speed=+4.694
+[line_detector_node-3] [INFO] [1789096766.126228972] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=2
+[camera_indoor_test_controller-5] [INFO] [1789096766.988947665] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[line_detector_node-3] [INFO] [1789096767.395462838] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=1
+[camera_indoor_test_controller-5] [INFO] [1789096767.990951439] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=-5.000, right_speed=+5.000
+[line_detector_node-3] [INFO] [1789096768.416525265] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=2
+[camera_indoor_test_controller-5] [INFO] [1789096769.041238101] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=-5.000, right_speed=+5.000
+[camera_indoor_test_controller-5] [INFO] [1789096770.089086166] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[camera_indoor_test_controller-5] [INFO] [1789096771.092859482] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[line_detector_node-3] [INFO] [1789096771.316145104] [indoor_grid_line_detector]: line tracking recovery=hold status=lost missed=1
+[camera_indoor_test_controller-5] [INFO] [1789096772.139512169] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[camera_indoor_test_controller-5] [INFO] [1789096773.199248311] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[camera_indoor_test_controller-5] [INFO] [1789096774.246786082] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[camera_indoor_test_controller-5] [INFO] [1789096775.287696301] [camera_indoor_test_controller]: 室内直线控制: base_speed=5.000, heading_correction=+0.000, lateral_correction=+0.000, correction=+0.000, left_speed=+0.000, right_speed=+0.000
+[camera_indoor_test_controller-5] [INFO] [1789096776.292135492] [camera_indoor_

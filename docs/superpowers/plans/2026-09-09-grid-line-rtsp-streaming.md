@@ -4,7 +4,7 @@
 
 **Goal:** Stream `/grid_line/detected_image` as a low-latency H.264 RTSP feed to a configured media server so the backend can pull its HTTP-FLV playback URL.
 
-**Architecture:** Add a ROS 2 node that subscribes to the annotated image and delegates frame pacing, FFmpeg command construction, latest-frame replacement, and child-process recovery to a small standard-library core. The node writes BGR frames to an FFmpeg subprocess; FFmpeg publishes RTSP over TCP. Launch integration is opt-in and does not change the detector or motor-control path.
+**Architecture:** Add a ROS 2 node that subscribes to the annotated image and delegates frame pacing, FFmpeg command construction, latest-frame replacement, and child-process recovery to a small standard-library core. The node converts BGR frames to RGB before writing them to an FFmpeg subprocess; FFmpeg publishes RTSP over TCP. Launch integration is opt-in and does not change the detector or motor-control path.
 
 **Tech Stack:** Python 3, ROS 2 Humble `rclpy`, `sensor_msgs/msg/Image`, `cv_bridge`, FFmpeg, standard-library threading/subprocess/urllib, pytest/unittest contract tests.
 
@@ -55,7 +55,7 @@ def build_ffmpeg_command(
     preset: str,
     rtsp_url: str,
 ) -> list[str]:
-    """Build an argv list for raw BGR input and RTSP output."""
+    """Build an argv list for raw RGB input and RTSP output."""
 
 class LatestFrameBuffer:
     def put(self, frame) -> None: ...
@@ -79,7 +79,7 @@ class FfmpegStreamWorker:
   )
   assert command[:4] == ["ffmpeg", "-hide_banner", "-loglevel", "warning"]
   assert command[command.index("-f") + 1] == "rawvideo"
-  assert command[command.index("-pix_fmt") + 1] == "bgr24"
+  assert command[command.index("-pix_fmt") + 1] == "rgb24"
   assert "-s" in command and command[command.index("-s") + 1] == "640x360"
   assert "-r" in command and command[command.index("-r") + 1] == "10"
   assert "-c:v" in command and command[command.index("-c:v") + 1] == "libx264"
@@ -129,7 +129,7 @@ class FfmpegStreamWorker:
 
   ```text
   ffmpeg -hide_banner -loglevel warning
-    -f rawvideo -pix_fmt bgr24 -s WIDTHxHEIGHT -r FPS -i pipe:0
+    -f rawvideo -pix_fmt rgb24 -s WIDTHxHEIGHT -r FPS -i pipe:0
     -an -c:v libx264 -preset PRESET -tune zerolatency
     -pix_fmt yuv420p -b:v BITRATE -f rtsp -rtsp_transport tcp RTSP_URL
   ```

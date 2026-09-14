@@ -95,7 +95,7 @@ class MotorControlNode(Node):
         super().__init__(node_name)
 
         # 声明RTK路径参数，用于获取route_id
-        self.declare_parameter("rtk_path_file", "/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
+        self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
         rtk_path_file = self.get_parameter("rtk_path_file").value
         self.get_logger().info(f"[ROSNode] 获取到rtk_path_file参数: {rtk_path_file}")
         # 从路径中提取文件名作为route_id
@@ -893,7 +893,7 @@ class MotorControlNode(Node):
 
     def handle_route_change(self, route_id: str):
         """处理路径切换指令"""
-        route_file = f"/home/ztl/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/{route_id}.txt"
+        route_file = f"/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/{route_id}.txt"
         
         if not os.path.exists(route_file):
             self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_file}")

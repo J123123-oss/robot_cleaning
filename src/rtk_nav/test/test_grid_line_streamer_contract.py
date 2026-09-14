@@ -144,17 +144,43 @@ class GridLineStreamerContractTest(unittest.TestCase):
             ['/usr/bin/ffmpeg', '-hide_banner', '-loglevel', 'warning'],
         )
         self.assertEqual(command[command.index('-f') + 1], 'rawvideo')
-        self.assertEqual(command[command.index('-pix_fmt') + 1], 'bgr24')
+        self.assertEqual(command[command.index('-pix_fmt') + 1], 'rgb24')
         self.assertEqual(command[command.index('-s') + 1], '640x360')
         self.assertEqual(command[command.index('-r') + 1], '10')
+        self.assertEqual(command.count('-r'), 2)
+        output_rate_index = command.index('-r', command.index('-i'))
+        self.assertEqual(command[output_rate_index + 1], '10')
         self.assertEqual(command[command.index('-c:v') + 1], 'libx264')
         self.assertEqual(command[command.index('-tune') + 1], 'zerolatency')
+        self.assertEqual(command[command.index('-fflags') + 1], 'nobuffer')
+        self.assertEqual(command[command.index('-avioflags') + 1], 'direct')
+        self.assertEqual(command[command.index('-bf') + 1], '0')
+        self.assertEqual(command[command.index('-g') + 1], '10')
+        self.assertEqual(command[command.index('-fps_mode') + 1], 'cfr')
+        self.assertEqual(command[command.index('-flush_packets') + 1], '1')
+        self.assertEqual(command[command.index('-muxdelay') + 1], '0')
+        self.assertEqual(command[command.index('-muxpreload') + 1], '0')
+        self.assertEqual(command[command.index('-color_range') + 1], 'tv')
+        self.assertEqual(command[command.index('-colorspace') + 1], 'smpte170m')
+        self.assertIn('colormatrix=smpte170m', command[command.index('-x264-params') + 1])
         self.assertEqual(
             command[-5:],
             ['-f', 'rtsp', '-rtsp_transport', 'tcp',
              'rtsp://server:8554/live/grid_line'],
         )
         self.assertNotIn('shell=True', inspect.getsource(module))
+
+    def test_bgr_frames_are_converted_to_rgb_before_ffmpeg(self):
+        module = _load_streamer_module()
+        bgr = np.array(
+            [[[0, 165, 255], [10, 20, 30]]],
+            dtype=np.uint8,
+        )
+
+        prepared = module.prepare_ffmpeg_frame(bgr)
+
+        self.assertEqual(prepared.tolist(), [[[255, 165, 0], [30, 20, 10]]])
+        self.assertTrue(prepared.flags['C_CONTIGUOUS'])
 
     def test_latest_frame_callback_replaces_old_pending_frame(self):
         module = _load_streamer_module()
@@ -311,11 +337,17 @@ class GridLineStreamerContractTest(unittest.TestCase):
         for required in (
             'ros2 run rtk_nav grid_line_streamer',
             'rtsp://media-server:8554/live/grid_line',
+            'rtsp://192.168.0.6:8554/live/grid_line',
             'http://media-server:8080/live/grid_line.live.flv',
             'publish_debug_images:=true',
             'sudo apt install ffmpeg',
             'HTTP-FLV',
+            'avcodec-hw=none',
+            'network-caching=100',
             'reconnect',
+            'enableStashBuffer: false',
+            'autoCleanupSourceBuffer: true',
+            'lazyLoad: false',
         ):
             self.assertIn(required, readme_source)
 

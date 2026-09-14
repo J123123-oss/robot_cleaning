@@ -193,6 +193,103 @@ def weighted_line_angle(lines):
     return undirected_angle(math.degrees(0.5 * math.atan2(sin_sum, cos_sum)))
 
 
+def select_minimum_length_lines(lines, min_length_px):
+    """保留连接完成后长度足够的有效线段。"""
+    try:
+        min_length_px = float(min_length_px)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not math.isfinite(min_length_px) or min_length_px <= 0.0:
+        return []
+
+    selected = []
+    for line in lines:
+        try:
+            length = float(line[4])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if math.isfinite(length) and length >= min_length_px:
+            selected.append(line)
+    return selected
+
+
+def wrap_text_to_pixel_width(text, max_width_px, measure_width):
+    """按像素宽度分行，并在超长单词时按字符拆分。"""
+    try:
+        max_width_px = float(max_width_px)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not math.isfinite(max_width_px) or max_width_px <= 0.0:
+        return []
+
+    words = str(text).split()
+    if not words:
+        return []
+    lines = []
+    current = ''
+    for word in words:
+        candidate = word if not current else f'{current} {word}'
+        if measure_width(candidate) <= max_width_px:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = ''
+        if measure_width(word) <= max_width_px:
+            current = word
+            continue
+        for character in word:
+            candidate = f'{current}{character}'
+            if current and measure_width(candidate) > max_width_px:
+                lines.append(current)
+                current = character
+            else:
+                current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def draw_wrapped_text(
+    image,
+    text,
+    x,
+    top_y,
+    font_face,
+    font_scale,
+    color,
+    thickness,
+    line_spacing_px=4,
+):
+    """绘制不越过图像右边界和下边界的诊断文字。"""
+    image_height, image_width = image.shape[:2]
+    available_width = max(1, int(image_width) - int(x) - 8)
+
+    def measure_width(value):
+        return cv2.getTextSize(value, font_face, font_scale, thickness)[0][0]
+
+    cursor_y = int(top_y)
+    for line in wrap_text_to_pixel_width(text, available_width, measure_width):
+        (text_width, text_height), baseline = cv2.getTextSize(
+            line, font_face, font_scale, thickness
+        )
+        del text_width
+        baseline_y = cursor_y + text_height
+        if baseline_y + baseline > image_height:
+            return image_height
+        cv2.putText(
+            image,
+            line,
+            (int(x), baseline_y),
+            font_face,
+            font_scale,
+            color,
+            thickness,
+        )
+        cursor_y = baseline_y + baseline + int(line_spacing_px)
+    return cursor_y
+
+
 def bridge_collinear_line_records(
     lines,
     axis_angle_deg,
@@ -382,6 +479,15 @@ def select_most_salient_line(lines):
             best_line = line
             best_key = key
     return best_line
+
+
+def select_tracking_candidates(coarse_lines, fine_lines):
+    """优先使用粗线跟踪，粗线缺失时回退到中心细栅格线。"""
+    if coarse_lines:
+        return list(coarse_lines), 'coarse'
+    if fine_lines:
+        return list(fine_lines), 'fine'
+    return [], 'none'
 
 
 def select_coarse_white_lines(
@@ -1011,7 +1117,7 @@ class GridLineDetector(Node):
         # 图像坐标约定为 0 度向右、90 度向下。
         self.declare_parameter('fallback_path_axis_image_deg', -5.0)
         # 细栅格角度相对的相机参考轴，默认使用图像竖直方向，单位为度。
-        self.declare_parameter('angle_reference_axis_image_deg', -90.0)
+        self.declare_parameter('angle_reference_axis_image_deg', 0.0)
         # OpenMV 发布前的图像旋转角度；180 度时需要反转横向误差符号。
         self.declare_parameter('image_rotation_deg', 180)
         # 已停用的旧参数声明，仅保留以兼容历史配置文件。
@@ -1041,34 +1147,44 @@ class GridLineDetector(Node):
         # HSV 中白色线条的最大饱和度阈值，取值范围为 0 到 255。
         self.declare_parameter('white_line_saturation_max', 100.0)
         # 粗白线候选的最小线段长度，单位为像素。
-        self.declare_parameter('coarse_line_min_length_px', 50.0)
+        self.declare_parameter('coarse_line_min_length_px', 30.0)
         # 粗白线候选的最小估计宽度，单位为像素。
         self.declare_parameter('coarse_line_min_width_px', 4.0)
         # 粗白线候选沿线被白色掩膜支持的最小比例，范围为 0 到 1。
         self.declare_parameter('coarse_line_min_support', 0.3)
         # 同一粗白线边缘合并时允许的法向间隙，单位为像素。
         self.declare_parameter('coarse_line_merge_gap_px', 30.0)
+        # 粗线反光断点的沿线连接距离，单位为像素；同时用于粗线 Hough。
+        self.declare_parameter('coarse_line_gap_fill_px', 30.0)
+        # 粗线两侧边缘允许作为同一条线连接的法向距离，单位为像素。
+        self.declare_parameter('coarse_line_bridge_normal_gap_px', 10.0)
+        # 粗线断点连接允许的方向差，单位为度。
+        self.declare_parameter('coarse_line_bridge_angle_tolerance_deg', 3.0)
         # 沿候选线法向扫描白色带宽度时的半窗口宽度，单位为像素。
         self.declare_parameter('white_line_scan_half_width_px', 14.0)
         # 用于计算角度平均的图像中心带比例，范围为 (0, 1]；中心带外
         # 的线条通常受镜头边缘畸变影响更大，不参与多线角度统计。
         self.declare_parameter('angle_average_center_band_ratio', 0.8)
         # 角度统计保留更细栅格线的最小线段长度，单位为像素。
-        self.declare_parameter('angle_line_min_length_px', 30.0)
+        self.declare_parameter('angle_line_min_length_px', 12.0)
         # 角度统计保留更细栅格线的最小估计宽度，单位为像素。
         self.declare_parameter('angle_line_min_width_px', 1.0)
         # 角度统计细线沿线被白色掩膜支持的最小比例。
-        self.declare_parameter('angle_line_min_support', 0.15)
+        self.declare_parameter('angle_line_min_support', 0.20)
         # 角度统计细线的 Hough 累加阈值，低于粗线阈值以保留弱细线。
-        self.declare_parameter('angle_line_hough_threshold', 20)
+        self.declare_parameter('angle_line_hough_threshold', 8)
+        # 细线 Hough 阶段允许跨越的像素缺口，单位为像素。
+        self.declare_parameter('angle_line_hough_gap_px', 2.0)
         # 细线相对相机参考轴的最大夹角，单位为度；不改变实际平均方向。
         self.declare_parameter('angle_line_axis_tolerance_deg', 25.0)
         # 角度统计在线段几何层连接的最大断点，单位为像素。
-        self.declare_parameter('angle_line_gap_fill_px', 6.0)
+        self.declare_parameter('angle_line_gap_fill_px', 25.0)
         # 允许连接的两段细线最大方向差，单位为度。
         self.declare_parameter('angle_line_bridge_angle_tolerance_deg', 3.0)
         # 仅合并同一细线的两侧边缘，避免相邻栅格线被合并。
         self.declare_parameter('angle_line_merge_gap_px', 5.0)
+        # 断点连接后参与角度平均和细线回退跟踪的最小总长度，单位为像素。
+        self.declare_parameter('angle_line_min_merged_length_px', 60.0)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
@@ -1161,6 +1277,17 @@ class GridLineDetector(Node):
         self.coarse_line_merge_gap_px = float(
             self.get_parameter('coarse_line_merge_gap_px').value
         )
+        self.coarse_line_gap_fill_px = float(
+            self.get_parameter('coarse_line_gap_fill_px').value
+        )
+        self.coarse_line_bridge_normal_gap_px = float(
+            self.get_parameter('coarse_line_bridge_normal_gap_px').value
+        )
+        self.coarse_line_bridge_angle_tolerance_deg = float(
+            self.get_parameter(
+                'coarse_line_bridge_angle_tolerance_deg'
+            ).value
+        )
         self.white_line_scan_half_width_px = float(
             self.get_parameter('white_line_scan_half_width_px').value
         )
@@ -1179,6 +1306,9 @@ class GridLineDetector(Node):
         self.angle_line_hough_threshold = int(
             self.get_parameter('angle_line_hough_threshold').value
         )
+        self.angle_line_hough_gap_px = float(
+            self.get_parameter('angle_line_hough_gap_px').value
+        )
         self.angle_line_axis_tolerance_deg = float(
             self.get_parameter('angle_line_axis_tolerance_deg').value
         )
@@ -1192,6 +1322,9 @@ class GridLineDetector(Node):
         )
         self.angle_line_merge_gap_px = float(
             self.get_parameter('angle_line_merge_gap_px').value
+        )
+        self.angle_line_min_merged_length_px = float(
+            self.get_parameter('angle_line_min_merged_length_px').value
         )
         self.detection_fps = float(self.get_parameter('detection_fps').value)
         self.publish_debug_images_enabled = bool(
@@ -1272,6 +1405,27 @@ class GridLineDetector(Node):
         ):
             raise ValueError('coarse_line_merge_gap_px must be finite and >= 0')
         if (
+            not math.isfinite(self.coarse_line_gap_fill_px)
+            or self.coarse_line_gap_fill_px < 0.0
+        ):
+            raise ValueError(
+                'coarse_line_gap_fill_px must be finite and >= 0'
+            )
+        if (
+            not math.isfinite(self.coarse_line_bridge_normal_gap_px)
+            or self.coarse_line_bridge_normal_gap_px < 0.0
+        ):
+            raise ValueError(
+                'coarse_line_bridge_normal_gap_px must be finite and >= 0'
+            )
+        if (
+            not math.isfinite(self.coarse_line_bridge_angle_tolerance_deg)
+            or self.coarse_line_bridge_angle_tolerance_deg < 0.0
+        ):
+            raise ValueError(
+                'coarse_line_bridge_angle_tolerance_deg must be finite and >= 0'
+            )
+        if (
             not math.isfinite(self.white_line_scan_half_width_px)
             or self.white_line_scan_half_width_px <= 0.0
         ):
@@ -1303,6 +1457,13 @@ class GridLineDetector(Node):
         if self.angle_line_hough_threshold <= 0:
             raise ValueError('angle_line_hough_threshold must be > 0')
         if (
+            not math.isfinite(self.angle_line_hough_gap_px)
+            or self.angle_line_hough_gap_px < 0.0
+        ):
+            raise ValueError(
+                'angle_line_hough_gap_px must be finite and >= 0'
+            )
+        if (
             not math.isfinite(self.angle_line_axis_tolerance_deg)
             or self.angle_line_axis_tolerance_deg < 0.0
             or self.angle_line_axis_tolerance_deg > 90.0
@@ -1330,6 +1491,13 @@ class GridLineDetector(Node):
         ):
             raise ValueError(
                 'angle_line_merge_gap_px must be finite and >= 0'
+            )
+        if (
+            not math.isfinite(self.angle_line_min_merged_length_px)
+            or self.angle_line_min_merged_length_px <= 0.0
+        ):
+            raise ValueError(
+                'angle_line_min_merged_length_px must be finite and > 0'
             )
         if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
             raise ValueError('detection_fps must be finite and > 0')
@@ -1596,9 +1764,9 @@ class GridLineDetector(Node):
             return
 
         self._last_line_status_log = status
-        self.get_logger().info(
-            f'line={status[0]} track={status[1]} geometry={status[2]}'
-        )
+        # self.get_logger().info(
+        #     f'line={status[0]} track={status[1]} geometry={status[2]}'
+        # )
 
     def update_tracking_axis(self, directed_path_axis_image, source):
         """检测运行方向来源或角度突变，并在变化时清除旧线锚点。"""
@@ -1922,7 +2090,7 @@ class GridLineDetector(Node):
             theta=np.pi / 180,
             threshold=40,
             minLineLength=max(1, int(self.coarse_line_min_length_px)),
-            maxLineGap=15,
+            maxLineGap=max(1, int(self.coarse_line_gap_fill_px)),
         )
         display = image.copy() if debug_due else None
 
@@ -1988,7 +2156,7 @@ class GridLineDetector(Node):
             theta=np.pi / 180,
             threshold=self.angle_line_hough_threshold,
             minLineLength=max(1, int(self.angle_line_min_length_px)),
-            maxLineGap=1,
+            maxLineGap=max(1, int(self.angle_line_hough_gap_px)),
         )
         if display is not None:
             if self.always_show_axis_debug:
@@ -2001,38 +2169,6 @@ class GridLineDetector(Node):
                 )
                 cv2.arrowedLine(
                     display, center, endpoint, (0, 165, 255), 4, tipLength=0.2
-                )
-                cv2.putText(
-                    display,
-                    f'Image axis: {directed_path_axis_image:.1f} deg '
-                    f'[{path_axis_source}]',
-                    (10, 100),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 165, 255),
-                    2,
-                )
-                relative_heading = wrap180(
-                    self.path_direction_deg - self.vehicle_heading_deg
-                )
-                cv2.putText(
-                    display,
-                    f'RTK path: {self.path_direction_deg:.1f} deg',
-                    (10, 125),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 165, 255),
-                    2,
-                )
-                cv2.putText(
-                    display,
-                    f'Vehicle: {self.vehicle_heading_deg:.1f}, '
-                    f'Relative: {relative_heading:.1f}',
-                    (10, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 165, 255),
-                    2,
                 )
 
         def estimate_line_metrics(x1, y1, x2, y2, scan_mask):
@@ -2166,6 +2302,13 @@ class GridLineDetector(Node):
             elif perpendicular_error <= self.line_angle_tolerance_deg:
                 perpendicular_group.append(record)
 
+        parallel_group = bridge_collinear_line_records(
+            parallel_group,
+            path_axis_image,
+            self.coarse_line_gap_fill_px,
+            self.coarse_line_bridge_normal_gap_px,
+            self.coarse_line_bridge_angle_tolerance_deg,
+        )
         parallel_group = merge_nearby_line_records(
             parallel_group,
             path_axis_image,
@@ -2177,14 +2320,6 @@ class GridLineDetector(Node):
             self.coarse_line_merge_gap_px,
         )
 
-        selected_parallel_line, selected_line_offset, tracking_status = (
-            self.choose_parallel_line(
-                parallel_group,
-                directed_path_axis_image,
-                width,
-                height,
-            )
-        )
         # Fine-line heading is camera-referenced. RTK remains the lateral
         # tracking coordinate system, but must not discard a grid family that
         # is visibly slanted relative to the RTK-derived image axis.
@@ -2203,6 +2338,11 @@ class GridLineDetector(Node):
             self.angle_line_merge_gap_px,
             self.angle_line_bridge_angle_tolerance_deg,
         )
+        # 短段可参与跨反光断点连接；仅连接后的长线用于最终角度统计。
+        angle_parallel_group = select_minimum_length_lines(
+            angle_parallel_group,
+            self.angle_line_min_merged_length_px,
+        )
         # Heading uses more fine center-band lines to reduce lens distortion;
         # lateral position intentionally keeps the separately tracked line.
         angle_lines = select_center_line_candidates(
@@ -2214,8 +2354,33 @@ class GridLineDetector(Node):
         )
         parallel_angle = weighted_line_angle(angle_lines)
 
+        # Keep coarse tracking as the primary lateral reference. If reflection
+        # removes every coarse candidate, use a center-band fine line so the
+        # tracked lateral reference can bridge the same visual interruption as
+        # the heading estimator.
+        tracking_candidates, tracking_source = select_tracking_candidates(
+            parallel_group, angle_lines
+        )
+        selected_parallel_line, selected_line_offset, tracking_status = (
+            self.choose_parallel_line(
+                tracking_candidates,
+                directed_path_axis_image,
+                width,
+                height,
+            )
+        )
+
         if display is not None:
             for line in angle_lines:
+                # A dark outline keeps the fine-line overlay visible after
+                # RGB conversion and H.264 compression in the RTSP stream.
+                cv2.line(
+                    display,
+                    (line[0], line[1]),
+                    (line[2], line[3]),
+                    (0, 0, 0),
+                    5,
+                )
                 cv2.line(
                     display,
                     (line[0], line[1]),
@@ -2392,19 +2557,45 @@ class GridLineDetector(Node):
                 2,
             )
             if self.always_show_axis_debug:
-                cv2.putText(
-                    display,
+                relative_heading = wrap180(
+                    self.path_direction_deg - self.vehicle_heading_deg
+                )
+                debug_text_top = 82
+                for text in (
+                    f'Image axis: {directed_path_axis_image:.1f} deg '
+                    f'[{path_axis_source}]',
+                    f'RTK path: {self.path_direction_deg:.1f} deg',
+                    f'Vehicle: {self.vehicle_heading_deg:.1f}, '
+                    f'Relative: {relative_heading:.1f}',
                     f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
                     f'A:{len(angle_parallel_group)} '
-                    f'angle_lines={len(angle_lines)} '
+                    f'angle_lines={len(angle_lines)}',
+                ):
+                    debug_text_top = draw_wrapped_text(
+                        display,
+                        text,
+                        10,
+                        debug_text_top,
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (0, 255, 0),
+                        1,
+                    )
+                text2 = (
                     f'line={selected_parallel_line is not None} '
-                    f'track={tracking_status}',
-                    (10, 185),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 255, 0),
-                    2,
+                    f'track={tracking_source}:{tracking_status}'
                 )
+                draw_wrapped_text(
+                    display,
+                    text2,
+                    10,
+                    debug_text_top,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (0, 255, 0),
+                    1,
+                )
+
         recovery_result = None
         if not detected:
             recovery_result = self.get_line_tracking_recovery_output(

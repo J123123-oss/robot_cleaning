@@ -21,11 +21,14 @@ def _helpers():
         "undirected_angle_distance",
         "weighted_line_angle",
         "bridge_collinear_line_records",
+        "select_minimum_length_lines",
+        "wrap_text_to_pixel_width",
         "select_angle_line_candidates",
         "center_band_half_extent_px",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
         "select_most_salient_line",
+        "select_tracking_candidates",
         "select_center_line_candidates",
         "line_normal_offset_at_reference",
         "select_line_for_tracking",
@@ -152,6 +155,24 @@ def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
     assert selected[0] == edge
 
 
+def test_tracking_prefers_coarse_lines_and_falls_back_to_fine_lines():
+    helpers = _helpers()
+    coarse = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 8.0, 0.9)
+    fine = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0, 2.0, 0.8)
+
+    selected, source = helpers["select_tracking_candidates"]([coarse], [fine])
+    assert selected == [coarse]
+    assert source == "coarse"
+
+    selected, source = helpers["select_tracking_candidates"]([], [fine])
+    assert selected == [fine]
+    assert source == "fine"
+
+    selected, source = helpers["select_tracking_candidates"]([], [])
+    assert selected == []
+    assert source == "none"
+
+
 def test_center_band_default_is_eighty_percent_without_debug_boundary_overlay():
     source = SOURCE_PATH.read_text(encoding="utf-8")
     assert (
@@ -201,12 +222,37 @@ def test_collinear_gap_bridge_uses_segment_geometry_and_angle_gate():
     assert len(rejected) == 2
 
 
+def test_angle_lines_are_filtered_by_length_after_gap_bridging():
+    helpers = _helpers()
+    connected = (40, 0, 40, 120, 70.0, 90.0, 40.0, 60.0, 2.0, 0.9)
+    fragment = (80, 0, 80, 30, 30.0, 88.0, 80.0, 15.0, 2.0, 0.9)
+
+    selected = helpers["select_minimum_length_lines"](
+        [connected, fragment], 60.0
+    )
+
+    assert selected == [connected]
+
+
+def test_debug_text_wraps_to_the_requested_pixel_width():
+    helpers = _helpers()
+
+    lines = helpers["wrap_text_to_pixel_width"](
+        "Image axis: -5.0 deg [fallback]",
+        12,
+        lambda text: len(text),
+    )
+
+    assert lines == ["Image axis:", "-5.0 deg", "[fallback]"]
+    assert all(len(line) <= 12 for line in lines)
+
+
 def test_gap_bridge_is_not_mask_morphology_fill():
     source = SOURCE_PATH.read_text(encoding="utf-8")
     assert "def bridge_collinear_line_records" in source
     assert "bridge_collinear_line_records" in source
     assert "angle_line_gap_fill_px" in source
-    assert "maxLineGap=1" in source
+    assert "angle_line_hough_gap_px" in source
 
 
 def test_weighted_line_angle_handles_unequal_line_lengths():

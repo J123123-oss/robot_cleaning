@@ -176,11 +176,18 @@ HEADING_STABILITY_SETTLE_WINDOW = 15.0  # 慢漂移收敛窗口（秒）原先30
 HEADING_STABILITY_SETTLE_RANGE = 1.5    # 收敛窗口内最大允许变化（度）原先1.0
 # 保留少量边界余量，避免滚动队列在窗口边界时先删掉首帧，导致窗口永远无法 ready。
 HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
-# 短时定向失锁可保留航向稳定资格；Float 持续超过质量去抖时间才进入暂停。
-HEADING_QUALITY_GAP_MAX = 10.0        # 可桥接的最长非 Fixed 间隔（秒）3.0
+# 短时定向失锁可保留航向稳定资格；稳定的定位Fixed/定向Float可降速运行，
+# 未满足降级条件的质量丢失持续超过去抖时间后才进入暂停。
+HEADING_QUALITY_GAP_MAX = 15.0        # 可桥接的最长非 Fixed 间隔（秒）3.0
 HEADING_FIXED_CONFIRM_WINDOW = 8.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）1.0
-RTK_QUALITY_LOSS_DEBOUNCE = 5.0       # RTK非Fixed持续此时长后才暂停导航（秒）
+RTK_QUALITY_LOSS_DEBOUNCE = 8.0       # RTK非Fixed持续此时长后才暂停导航（秒）5.0
 AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
+# 定位 Fixed、定向 Float 时，仅在直线行驶中允许基于稳定 IMU 航向降级运行。
+# 这些阈值只决定是否允许继续低速运动，不会把状态伪装成双 Fixed。
+ORIENTATION_FLOAT_MAX_DEVIATION = 10.0  # 相对最近双Fixed航向的最大偏差（度）
+ORIENTATION_FLOAT_STABILITY_WINDOW = 5.0  # 评估Float航向所需的连续窗口（秒）
+ORIENTATION_FLOAT_STABILITY_RANGE = 3.0  # 窗口内相对当前航向的最大变化（度）
+ORIENTATION_FLOAT_SPEED_SCALE = 0.5  # 定向Float降级运行时的整体速度比例
 
 # 仅在直线航段运行中监视姿态角突变。触发后复用AUTO入口的航向稳定门控。
 WAYPOINT_ATTITUDE_WINDOW = 1.0
@@ -191,6 +198,48 @@ WAYPOINT_ATTITUDE_CONFIRM_FRAMES = 3
 def has_rtk_quality_loss_exceeded(now: float, loss_since: Optional[float]) -> bool:
     """Return whether a continuous RTK quality loss has exceeded the debounce window."""
     return loss_since is not None and now - loss_since >= RTK_QUALITY_LOSS_DEBOUNCE
+
+
+def is_orientation_float_heading_safe(
+    now: float,
+    heading: float,
+    last_dual_fixed_heading: Optional[float],
+    float_since: Optional[float],
+    heading_history: List[Tuple[float, float]],
+) -> bool:
+    """判断定位Fixed/定向Float期间的IMU航向是否足够稳定以低速运行。
+
+    该判定同时要求Float持续完成观察窗口、航向相对最近双Fixed基准未大幅跳变，
+    且观察窗口内没有明显漂移。它只用于降级运动许可，不能替代双Fixed质量状态。
+    """
+    values = (now, heading, last_dual_fixed_heading, float_since)
+    if any(value is None or not math.isfinite(float(value)) for value in values):
+        return False
+    if now - float_since < ORIENTATION_FLOAT_STABILITY_WINDOW:
+        return False
+
+    heading_deviation = abs(
+        ((heading - last_dual_fixed_heading + 180.0) % 360.0) - 180.0
+    )
+    if heading_deviation > ORIENTATION_FLOAT_MAX_DEVIATION:
+        return False
+
+    recent_history = [
+        (timestamp, sample_heading)
+        for timestamp, sample_heading in heading_history
+        if now - timestamp <= ORIENTATION_FLOAT_STABILITY_WINDOW
+        and math.isfinite(float(timestamp))
+        and math.isfinite(float(sample_heading))
+    ]
+    if not recent_history:
+        return False
+    if now - recent_history[0][0] < ORIENTATION_FLOAT_STABILITY_WINDOW:
+        return False
+
+    return max(
+        abs(((sample_heading - heading + 180.0) % 360.0) - 180.0)
+        for _, sample_heading in recent_history
+    ) <= ORIENTATION_FLOAT_STABILITY_RANGE
 
 # 控制模式（与电机节点保持一致）
 class ControlMode:
@@ -478,6 +527,11 @@ class RTKNavControlNode(Node):
         self.position_data_valid = False
         self.rtk_solution_ready = False
         self._rtk_quality_loss_since = None
+        self._last_dual_fixed_heading_deg = None
+        self._orientation_float_since = None
+        self._orientation_float_heading_history = deque()
+        self.rtk_orientation_degraded = False
+        self._last_orientation_float_log_time = 0.0
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
         self.last_heading_check_log_time = 0.0
@@ -2159,6 +2213,63 @@ class RTKNavControlNode(Node):
                 NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
             )
         )
+        orientation_float_sample = (
+            active_nav
+            and active_nav_state == NavState.WAYPOINT_MOVE
+            and position_data_valid
+            and position_status == 4
+            and orientation_status == 5
+            and math.isfinite(self.imu_yaw)
+            and not self.boundary_correct_locked
+            and not self.nav_context.get("calibration_active")
+            and not self.nav_context.get("retreat_active")
+            and not self.nav_context.get("force_bearing_mode")
+        )
+        if current_sample_fixed:
+            self._last_dual_fixed_heading_deg = self.imu_yaw
+            self._orientation_float_since = None
+            self._orientation_float_heading_history.clear()
+            if self.rtk_orientation_degraded:
+                self.get_logger().info(
+                    "[RTK定向降级] Ori 4恢复，退出低速降级运行"
+                )
+            self.rtk_orientation_degraded = False
+        elif orientation_float_sample:
+            if self._orientation_float_since is None:
+                self._orientation_float_since = now
+            self._orientation_float_heading_history.append((now, self.imu_yaw))
+            while (
+                self._orientation_float_heading_history
+                and now - self._orientation_float_heading_history[0][0]
+                > ORIENTATION_FLOAT_STABILITY_WINDOW
+            ):
+                self._orientation_float_heading_history.popleft()
+            self.rtk_orientation_degraded = is_orientation_float_heading_safe(
+                now,
+                self.imu_yaw,
+                self._last_dual_fixed_heading_deg,
+                self._orientation_float_since,
+                list(self._orientation_float_heading_history),
+            )
+            if (
+                self.rtk_orientation_degraded
+                and now - self._last_orientation_float_log_time >= 5.0
+            ):
+                heading_deviation = abs(
+                    self.normalize_angle(
+                        self.imu_yaw - self._last_dual_fixed_heading_deg
+                    )
+                )
+                self.get_logger().warn(
+                    f"[RTK定向降级] 定位Fixed/定向Float，IMU航向稳定"
+                    f"（相对双Fixed基准偏差={heading_deviation:.1f}°），"
+                    f"允许以{ORIENTATION_FLOAT_SPEED_SCALE:.0%}速度继续WAYPOINT_MOVE"
+                )
+                self._last_orientation_float_log_time = now
+        else:
+            self._orientation_float_since = None
+            self._orientation_float_heading_history.clear()
+            self.rtk_orientation_degraded = False
         quality_loss_elapsed = 0.0
         if current_sample_fixed:
             if self._rtk_quality_loss_since is not None:
@@ -2180,7 +2291,12 @@ class RTKNavControlNode(Node):
         quality_loss_exceeded = has_rtk_quality_loss_exceeded(
             now, self._rtk_quality_loss_since
         )
-        if quality_loss_exceeded and active_nav and not self._auto_heading_gate_pending:
+        if (
+            quality_loss_exceeded
+            and active_nav
+            and not self._auto_heading_gate_pending
+            and not self.rtk_orientation_degraded
+        ):
             self._prepare_auto_cleaning_heading_gate(
                 "RTK质量丢失", force=True, preserve_heading_history=True
             )
@@ -2355,8 +2471,8 @@ class RTKNavControlNode(Node):
 
         quality_loss_debouncing = (
             active_nav
-            and not quality_loss_exceeded
             and not self._auto_heading_gate_pending
+            and (not quality_loss_exceeded or self.rtk_orientation_degraded)
         )
         if not self.rtk_solution_ready:
             self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
@@ -4475,6 +4591,8 @@ class RTKNavControlNode(Node):
             "orientation_status": self.last_orientation_status,
             "position_data_valid": self.position_data_valid,
             "rtk_solution_ready": self.rtk_solution_ready,
+            "rtk_orientation_degraded": self.rtk_orientation_degraded,
+            "last_dual_fixed_heading_deg": self._last_dual_fixed_heading_deg,
             "control_mode": self.current_control_mode,
             "heading_stable": self._last_heading_stable,
             "auto_heading_gate_pending": self._auto_heading_gate_pending,
@@ -5310,8 +5428,11 @@ class RTKNavControlNode(Node):
                         NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
                     )
                     and not self._auto_heading_gate_pending
-                    and not has_rtk_quality_loss_exceeded(
-                        time.monotonic(), self._rtk_quality_loss_since
+                    and (
+                        self.rtk_orientation_degraded
+                        or not has_rtk_quality_loss_exceeded(
+                            time.monotonic(), self._rtk_quality_loss_since
+                        )
                     )
                 )
                 if not quality_loss_debouncing:
@@ -5319,8 +5440,14 @@ class RTKNavControlNode(Node):
                     self.nav_running = False
                     self.publish_stop_speed()
                     return
-                # 短时Float只记录质量故障，继续当前导航，等待RTK恢复或去抖超时。
-                self.get_logger().debug("[RTK质量去抖] 短时Float，继续当前导航")
+                if self.rtk_orientation_degraded:
+                    # 定向Float但航向稳定时，持续低速运行，不启动反复航向门控。
+                    self.get_logger().debug(
+                        "[RTK定向降级] 航向稳定，继续当前WAYPOINT_MOVE"
+                    )
+                else:
+                    # 短时Float只记录质量故障，继续当前导航，等待RTK恢复或去抖超时。
+                    self.get_logger().debug("[RTK质量去抖] 短时Float，继续当前导航")
 
             # 新增：启动/恢复导航前，强制校验航点有效性
             if not self.waypoints:
@@ -5450,6 +5577,9 @@ class RTKNavControlNode(Node):
                         min(float(right_speed), RTK_OUTPUT_SPEED_LIMIT),
                         -RTK_OUTPUT_SPEED_LIMIT,
                     )
+                    if self.rtk_orientation_degraded:
+                        left_speed *= ORIENTATION_FLOAT_SPEED_SCALE
+                        right_speed *= ORIENTATION_FLOAT_SPEED_SCALE
                     speed_msg = Vector3()
                     speed_msg.x = left_speed
                     speed_msg.y = right_speed

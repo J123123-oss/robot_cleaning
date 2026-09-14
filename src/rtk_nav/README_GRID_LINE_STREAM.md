@@ -6,12 +6,15 @@
 /grid_line/detected_image
         -> FFmpeg H.264
         -> RTSP media server
-        -> HTTP-FLV playback URL
+        -> RTSP playback URL (VLC or RTSP client)
 ```
 
+检测节点发布的是 OpenCV `bgr8` 图像。推流节点保持 OpenCV 的 BGR 通道顺序，
+并以 FFmpeg 的 `bgr24` 原始格式输入，避免在主机端额外交换通道。
+
 摄像头固件不需要修改。主机需要安装 FFmpeg，并且 RTSP 地址必须指向一个
-支持 RTSP 发布、同时能提供 HTTP-FLV 播放地址的媒体服务器，例如 SRS、
-ZLMediaKit 或现有后台媒体服务。
+支持 RTSP 发布和 RTSP 拉流的媒体服务器，例如 ZLMediaKit 或现有后台媒体服务。
+HTTP-FLV 仍可作为浏览器播放的可选协议。
 
 ## 安装条件
 
@@ -21,7 +24,7 @@ ZLMediaKit 或现有后台媒体服务。
 - `uname -m` 输出 `aarch64`，`dpkg --print-architecture` 输出 `arm64`；
 - Ubuntu 22.04/24.04，能够访问 GitHub 或配置好的 Git 镜像；
 - 建议至少有 2 GB 可用内存和 1 GB 可用磁盘空间；内存较小时编译使用 `-j1`；
-- 主机有稳定的局域网或 VPN 地址，后台能够访问 TCP `8080`；
+- 主机有稳定的局域网或 VPN 地址，VLC 或后台能够访问 TCP `8554`；
 - 主机没有其他程序占用 RTSP `8554` 和 HTTP `8080` 端口；
 - 能够使用 `sudo` 安装依赖和启动服务。
 
@@ -107,13 +110,18 @@ port=8554
 
 | 端口 | 协议 | 用途 |
 | --- | --- | --- |
-| `8554/tcp` | RTSP | `grid_line_streamer` 发布视频 |
-| `8080/tcp` | HTTP | 后台播放 HTTP-FLV，也用于 ZLMediaKit API |
+| `8554/tcp` | RTSP | 推流和 VLC/RTSP 客户端播放 |
+| `8080/tcp` | HTTP | 可选 HTTP-FLV 播放和 ZLMediaKit API |
 | `10000/udp` | RTP | 仅在使用 RTSP UDP 传输时需要 |
 
 当前 `grid_line_streamer` 已使用 `-rtsp_transport tcp`，所以本地链路不依赖
 `10000/udp`。不要将 API 的 `secret` 提交到代码或日志中；查询媒体列表时再
 按配置文件中的实际密钥临时传入。
+
+为避免延迟随运行时间增长，推流器按配置帧率写入原始图像，并让 FFmpeg 使用
+恒定输出帧率（CFR）、连续时间戳、`zerolatency`、无 B 帧、无缓冲复用和 TCP
+RTSP。推流帧率必须与实际写入节奏一致；默认值为 `10.0`，不要只修改 FFmpeg
+命令中的帧率而不修改推流参数。
 
 ## 启动原生媒体服务
 
@@ -216,11 +224,11 @@ ros2 launch rtk_nav run.launch.py \
 rtsp://127.0.0.1:8554/live/grid_line
 ```
 
-后台播放器不能使用 `127.0.0.1`，应使用机器人主机的局域网或 VPN 地址。
-例如主机 IP 为 `192.168.0.6` 时：
+Windows VLC 或其他 RTSP 播放器不能使用 `127.0.0.1`，应使用机器人主机的局域网
+或 VPN 地址。主机 IP 为 `192.168.0.6` 时，直接播放地址为：
 
 ```text
-http://192.168.0.6:8080/live/grid_line.live.flv
+rtsp://192.168.0.6:8554/live/grid_line
 ```
 
 如果媒体服务器与 ROS2 不在同一台主机，推流地址应改为媒体服务器可达的主机名
@@ -236,31 +244,93 @@ rtsp://media-server:8554/live/grid_line
 http://media-server:8080/live/grid_line.live.flv
 ```
 
-不同媒体服务器的 HTTP-FLV 后缀可能不同，RTSP 发布地址和 HTTP-FLV 播放地址的路径需要由媒体服务器配置保持对应。
+不同媒体服务器的 HTTP-FLV 后缀可能不同；直接 RTSP 播放时使用 RTSP 发布地址即可。
 不要把带账号密码的地址写入代码或提交到 Git。
+
+## Windows VLC 直接播放
+
+在 VLC 中选择 `媒体` -> `打开网络串流`，输入：
+
+```text
+rtsp://192.168.0.6:8554/live/grid_line
+```
+
+如果 VLC 中出现红色变蓝色、绿色变红色或橙色变紫色，先确认推流链路本身的颜色：
+在主机上用 FFmpeg 软件解码 RTSP 抓一帧。如果 FFmpeg 抓出的图像也错色，应先检查
+推流节点的 `bgr8`/`bgr24` 格式，不要修改检测节点的文字颜色。只有 FFmpeg 图像
+正常而 VLC 仍错色时，才排查 VLC 输出模块。打开
+`工具` -> `偏好设置` -> `输入/编解码器`，将 `硬件加速解码` 设置为
+`禁用`，点击保存后完全退出并重新打开 VLC。不要通过修改检测节点的文字颜色
+来适配 VLC；`rqt_image_view` 显示的是 ROS 源图，应该作为颜色基准。
+
+同时需要降低 VLC 缓存时，将 `网络缓存 (毫秒)` 设置为 `100`。如果出现卡顿，
+再增加到 `200` 或 `300`。
+
+也可以从 Windows 命令行启动：
+
+```cmd
+vlc.exe --avcodec-hw=none --network-caching=100 --rtsp-tcp rtsp://192.168.0.6:8554/live/grid_line
+```
+
+其中 `--avcodec-hw=none` 只用于排除硬件解码因素，不改变 RTSP 码流；如果
+FFmpeg 软件解码和 VLC 仍然同时错色，问题不在 VLC 硬件解码设置。
+
+## 浏览器播放的 HTTP-FLV 可选配置
+
+如果后台只能使用浏览器 HTTP-FLV，播放器需要按直播模式创建，不能使用默认点播缓存。以 `flv.js` 为例，
+`enableStashBuffer` 必须关闭，并开启 SourceBuffer 自动清理：
+
+```javascript
+const player = flvjs.createPlayer(
+  {
+    type: 'flv',
+    url: 'http://192.168.0.6:8080/live/grid_line.live.flv',
+    isLive: true,
+    hasAudio: false,
+    hasVideo: true,
+  },
+  {
+    isLive: true,
+    enableStashBuffer: false,
+    lazyLoad: false,
+    autoCleanupSourceBuffer: true,
+    autoCleanupMaxBackwardDuration: 2,
+    autoCleanupMinBackwardDuration: 1,
+  },
+);
+player.attachMediaElement(videoElement);
+player.load();
+player.play();
+```
+
+如果后台不是 `flv.js`，使用其等价配置：直播模式、关闭播放器缓存、关闭懒加载、
+自动清理旧 buffer。浏览器原生 `<video>` 不能直接播放 HTTP-FLV，需要由播放器库
+解析 FLV。播放器地址为 `http://192.168.0.6:8080/live/grid_line.live.flv`，但
+Windows VLC 应使用上面的 RTSP 地址。
 
 ## 地址配置位置
 
 两类地址用途不同：
 
 - `rtsp://127.0.0.1:8554/live/grid_line` 是主机推给 ZLMediaKit 的发布地址，默认配置在两个 launch 文件的 `grid_line_stream_rtsp_url` 参数中，也可以由 `motor_start.sh` 的 `grid_line_stream_rtsp_url:=...` 覆盖。
-- `http://192.168.0.6:8080/live/grid_line.live.flv` 是后台播放器的拉流地址，配置在后台播放器的 `src`、`url` 或等价播放源字段中，不配置在摄像头或 ROS2 图像话题中。
+- `rtsp://192.168.0.6:8554/live/grid_line` 是 VLC/RTSP 后台播放器的拉流地址，配置在播放器的网络串流 URL、`src`、`url` 或等价播放源字段中。
+- `http://192.168.0.6:8080/live/grid_line.live.flv` 仅是浏览器 HTTP-FLV 播放地址，不是机器人推流地址。
 
 ZLMediaKit 的端口配置在 `~/ZLMediaKit/release/linux/Release/config.ini`；本机当前使用 RTSP `8554` 和 HTTP `8080`。`live` 是应用名，`grid_line` 是流名，来自 RTSP 发布地址的路径。
 
 如果后台不在同一局域网，`192.168.0.6` 这类私有地址不能直接从公网访问，
 需要先建立 VPN，或在网关做端口转发并配置访问控制。推荐只允许后台服务器
-访问 `8080/tcp`：
+访问 `8554/tcp`：
 
 ```bash
 sudo ufw status
-sudo ufw allow from BACKEND_IP to any port 8080 proto tcp
+sudo ufw allow from BACKEND_IP to any port 8554 proto tcp
 ```
 
 这里的 `BACKEND_IP` 仅表示后台服务器的实际 IP，不要原样执行。若 UFW 未启用，
-还需要检查上级路由器或云防火墙是否放行 `8080/tcp`。本机推流使用
-`127.0.0.1:8554` 时，不需要对外开放 `8554/tcp`；只有外部客户端直接拉 RTSP
-时才需要开放该端口。
+还需要检查上级路由器或云防火墙是否放行 `8554/tcp`。本机推流使用
+`127.0.0.1:8554` 时，ROS2 到 ZLMediaKit 不需要对外开放该端口；外部 VLC 或
+后台直接拉 RTSP 时才需要开放该端口。
 
 ## 独立运行
 
@@ -305,9 +375,8 @@ ros2 node list | grep grid_line_streamer
 ```bash
 command -v ffmpeg
 ros2 topic hz /grid_line/detected_image
-curl -I http://192.168.0.6:8080/live/grid_line.live.flv
 ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate \
-  http://192.168.0.6:8080/live/grid_line.live.flv
+  rtsp://192.168.0.6:8554/live/grid_line
 ```
 
 如果没有图像，确认识别节点使用了：
@@ -322,8 +391,8 @@ publish_debug_images:=true
 
 - `FFmpeg 推流进程已退出`：检查 `command -v ffmpeg`、RTSP 地址和
   `~/ZLMediaKit/release/linux/Release/mediaserver-start.log`。
-- HTTP-FLV 返回 `404`：确认 ZLMediaKit 已注册 `app=live`、`stream=grid_line`，并使用
-  `/live/grid_line.live.flv`，不要使用 `/live/grid_line.flv`。
+- VLC 无法打开：确认 Windows 到主机的 `8554/tcp` 可达，并使用
+  `rtsp://192.168.0.6:8554/live/grid_line`。
 - 没有 `/grid_line/detected_image`：确认视觉检测节点已启动，并将
   `publish_debug_images` 设为 `true`。
 - ZLMediaKit 出现 `Not rtp packet`：该日志通常来自 UDP/RTP 或 GB28181 入口；本推流器使用
@@ -338,18 +407,20 @@ ffmpeg -hide_banner -loglevel info \
   -t 10 -an -f null -
 ```
 
-成功时应看到 `Video: h264` 和持续增长的 `frame=`。再验证后台使用的 HTTP-FLV：
+成功时应看到 `Video: h264` 和持续增长的 `frame=`。直接播放使用：
 
 ```bash
-ffmpeg -hide_banner -loglevel info \
-  -i http://127.0.0.1:8080/live/grid_line.live.flv \
-  -t 10 -an -f null -
+ffplay -rtsp_transport tcp \
+  -fflags nobuffer \
+  -flags low_delay \
+  -framedrop \
+  rtsp://192.168.0.6:8554/live/grid_line
 ```
 
-后台播放器使用机器人主机的局域网或 VPN 地址，例如：
+Windows VLC 或 RTSP 后台播放器使用：
 
 ```text
-http://192.168.0.6:8080/live/grid_line.live.flv
+rtsp://192.168.0.6:8554/live/grid_line
 ```
 
 确认监听状态：

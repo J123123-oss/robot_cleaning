@@ -9,9 +9,9 @@ ConditionPathExists=/sys/class/net/
 [Service]
 ExecStartPre=/bin/sleep 15
 
-User=ztl
+User=forlinx
 # 脚本绝对路径，务必和你的实际路径一致
-ExecStart=/home/ztl/robot_cleaning/motor_start.sh
+ExecStart=/home/forlinx/robot_cleaning/motor_start.sh
 # 异常时重启，保留你的原有需求
 #Restart=on-failure
 

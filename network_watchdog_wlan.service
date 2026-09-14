@@ -6,7 +6,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/home/ztl/robot_cleaning/network_watchdog_wlan.sh
+ExecStart=/home/forlinx/robot_cleaning/network_watchdog_wlan.sh
 Restart=always
 RestartSec=10
 

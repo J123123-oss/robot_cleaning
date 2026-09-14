@@ -14,7 +14,7 @@ RemainAfterExit=yes
 # 保持root权限（因为必须，无替代方案）
 User=root
 # 脚本绝对路径，务必和你的实际路径一致
-ExecStart=/home/ztl/robot_cleaning/can_ch340_init.sh
+ExecStart=/home/forlinx/robot_cleaning/can_ch340_init.sh
 # 异常时重启，保留你的原有需求
 #Restart=on-failure
 

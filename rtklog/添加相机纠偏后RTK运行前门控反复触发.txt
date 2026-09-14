@@ -1,0 +1,939 @@
+
+[line_detector_node-5] [INFO] [1788935663.213881623] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788935663.343763936] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=-58.2°，要求5s波动≤1.0°且30s收敛≤1.0°，已等待25/600s，样本=232，短窗=就绪(0.12°)，收敛窗=未就绪(inf°)，质量=pos4/ori4/GGA=有效，失锁=0.0s，保持停车
+[line_detector_node-5] [INFO] [1788935663.343922072] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935663.415696737] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788935663.509924330] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -58.220001220703125, "rtk_status": "4 / Ori 4", "current_lon": 120.07061045822249, "current_lat": 30.321007827888554, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -1.19, "y": 0.25, "z": -58.220001220703125}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:23"}
+[line_detector_node-5] [INFO] [1788935663.537492184] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935663.548884448] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935663.613727441] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935663.744201302] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935663.813699099] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935663.847238355] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935663.911091832] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.045408236] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.078108400] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.146889459] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.212237486] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.345733994] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.411166165] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.547310668] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.601947236] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935664.612884720] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.648274833] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.712356623] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935664.846696592] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935664.911098279] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935665.045072714] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935665.111296892] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935665.246076311] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935665.311860717] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935665.345791309] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935665.447611675] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788935665.508794488] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -58.2400016784668, "rtk_status": "4 / Ori 4", "current_lon": 120.07061048830997, "current_lat": 30.321007823568877, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -1.18, "y": 0.26, "z": -58.2400016784668}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:25"}
+[line_detector_node-5] [INFO] [1788935665.603759393] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935665.614472924] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935665.680858143] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935665.747093924] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935665.814270642] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935665.951597630] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935666.009359039] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935666.145473321] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935666.210537650] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935666.349857183] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935666.411135150] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935666.547375676] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935666.612850544] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935666.668823057] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935666.745293475] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935666.815144867] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935666.948448539] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.013270815] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935667.048704745] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.113657111] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935667.250725035] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.313008848] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935667.412908433] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.479261961] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788935667.514333653] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -58.2400016784668, "rtk_status": "4 / Ori 4", "current_lon": 120.07061045130996, "current_lat": 30.32100782973555, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -1.19, "y": 0.26, "z": -58.2400016784668}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:27"}
+[line_detector_node-5] [INFO] [1788935667.547992091] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.611167134] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935667.733088114] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935667.741640326] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.812470279] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935667.946817992] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935667.975713844] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935668.047121410] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935668.113982044] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935668.248169541] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935668.317602423] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935668.446470235] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935668.513680744] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935668.645469089] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935668.716410865] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935668.767978501] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935668.845175978] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935668.912705510] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.051459562] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935669.113542410] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.245286485] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935669.309745304] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.446423797] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788935669.510322800] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -58.2400016784668, "rtk_status": "4 / Ori 4", "current_lon": 120.07061047597665, "current_lat": 30.321007842735547, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -1.19, "y": 0.25, "z": -58.2400016784668}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:29"}
+[line_detector_node-5] [INFO] [1788935669.515458067] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.645073299] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935669.715519556] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.747231940] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935669.801861690] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935669.811752466] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935669.949872104] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.014746165] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.115886101] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.177517235] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.244219275] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.311286803] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.450565942] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.514572039] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.650309756] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.681233691] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.746706118] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935670.814625806] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935670.868707311] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935670.949060368] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935671.019850364] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935671.146130886] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935671.212814156] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935671.346606027] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788935671.378904206] [rtk_nav]: [航向稳定] 5s波动=0.06°，30s收敛波动=1.00°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788935671.413794051] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788935671.445213145] [rtk_nav]: [AUTO航向门控] 航向恢复稳定：IMU=-58.2°，自动恢复到INITIAL_MOVE
+[rtk_nav-3] [INFO] [1788935671.454731972] [rtk_nav]: [ROSNode] 启动/恢复RTK多点导航
+[rtk_nav-3] [INFO] [1788935671.463791002] [rtk_nav]: 从状态INITIAL_MOVE恢复导航
+[rtk_nav-3] [INFO] [1788935671.470884017] [rtk_nav]: [ROSNode] 进入初始移动阶段：初始点→第一个航点
+[rtk_nav-3] [INFO] [1788935671.473989792] [rtk_nav]: 开始准备移动到第一个航点：(120.07064954, 30.32103422)
+[rtk_nav-3] [INFO] [1788935671.477233701] [rtk_nav]: GPS初始位置获取成功：(120.070610, 30.321008)
+[rtk_nav-3] [INFO] [1788935671.479732099] [rtk_nav]: IMU初始化完成，当前航向：-58.19°
+[rtk_nav-3] [INFO] [1788935671.481751052] [rtk_nav]: 初始点→第一个航点 初始朝向角：51.98°
+[rtk_nav-3] [INFO] [1788935671.484246877] [rtk_nav]: 开始初始航向对准：目标航向51.98°
+[motor_control-2] [INFO] [1788935671.527087619] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "INITIAL_MOVE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -58.189998626708984, "rtk_status": "4 / Ori 4", "current_lon": 120.07061048159096, "current_lat": 30.321007880202, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -1.2, "y": 0.26, "z": -58.189998626708984}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:31"}
+[line_detector_node-5] [INFO] [1788935671.547597196] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935671.610099450] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935671.751590344] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935671.810128919] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935671.844852114] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935671.901774593] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935671.910780094] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935672.048761072] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935672.109288389] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788935672.189777374] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935672.249737699] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788935672.279439079] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和30s收敛窗
+[rtk_nav-3] [WARN] [1788935672.287239664] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788935672.320658349] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [WARN] [1788935672.325782944] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[line_detector_node-5] [INFO] [1788935672.450314088] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788935672.467574538] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788935672.518858644] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935672.656137955] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935672.715280800] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935672.753968199] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935672.814687698] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935672.936889011] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935672.955801656] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935673.022413392] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935673.167833863] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935673.222375905] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935673.356283247] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788935673.368023499] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.8s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788935673.423727465] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788935673.504034805] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -31.200000762939453, "rtk_status": "4 / Ori 4", "current_lon": 120.0706106351469, "current_lat": 30.32100780805131, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.3, "y": -0.5, "z": -31.200000762939453}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:33"}
+[line_detector_node-5] [INFO] [1788935673.524008810] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935673.583192670] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935673.652050200] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935673.721459583] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935673.851784278] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935673.919705392] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935673.970170618] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935674.053264423] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935674.117134316] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935674.156894882] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935674.222719244] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935674.354934052] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788935674.443919847] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=-31.3°，要求5s波动≤1.0°且30s收  ≤1.0°，已等待2/600s，样本=286，短窗=就绪(27.06°)，收敛窗=就绪(27.07°)，质量=pos4/ori4/GGA=有效，  锁=0.0s，保持停车
+[line_detector_node-5] [INFO] [1788935674.460590147] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935674.653200705] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935674.721340482] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935674.855056044] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935674.919892462] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935674.972001116] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788935675.057978284] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935675.119154860] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935675.254711328] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935675.322107803] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935675.455127746] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788935675.508631881] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": -31.3799991607666, "rtk_status": "4 / Ori 4", "current_lon": 120.07061064351129, "current_lat": 30.321007742841022, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.3, "y": -0.49, "z": -31.3799991607666}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:34:35"}
+[line_detector_node-5] [INFO] [1788935675.520952613] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935675.652198074] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935675.720097920] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788935675.854864753] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788935675.919943562] [grid_line_detector]: line=True track=acquired geometry=True
+
+
+
+
+
+
+
+[line_detector_node-5] [INFO] [1788936239.212637218] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936239.267671805] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936239.297014377] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936239.370972966] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936239.433881103] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936239.492373075] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[motor_control-2] [INFO] [1788936239.492554748] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "INITIAL_MOVE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 47.66999816894531, "rtk_status": "4 / Ori 4", "current_lon": 120.07061090543827, "current_lat": 30.321006996876438, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.5, "y": 0.59, "z": 47.66999816894531}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:43:59"}
+[line_detector_node-5] [INFO] [1788936239.508969732] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936239.566714946] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936239.640945467] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936239.673971453] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936239.740288534] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936239.800184038] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936239.868856172] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936239.973533431] [rtk_nav]: 航向校准完成！误差：0.93°
+[rtk_nav-3] [INFO] [1788936239.983289496] [rtk_nav]: 初始航向对准完成, 开始实时纠偏直线行驶
+[rtk_nav-3] [INFO] [1788936239.992885584] [rtk_nav]: 记录初始旋转完成航向角：51.69°
+[rtk_nav-3] [INFO] [1788936239.997917031] [rtk_nav]: [Stanley] 初始路径：(120.070611, 30.321008) → (120.070650, 30.321034), 方向=53.3°
+[rtk_nav-3] [INFO] [1788936240.003368256] [rtk_nav]: 到第一个航点距离：4.79 m
+[rtk_nav-3] [INFO] [1788936240.012833878] [rtk_nav]: [Stanley] 初始移动：left=-9.88, right=10.12, lat_err=0.085m, hdg_err=2.6°, path_dir=53.3°, t=-0.003
+[line_detector_node-5] [INFO] [1788936240.073287860] [grid_line_detector]: line=False track=rejected geometry=False
+[rtk_nav-3] [INFO] [1788936240.074584092] [rtk_nav]: [Stanley] 初始移动：left=-9.88, right=10.12, lat_err=0.076m, hdg_err=2.0°, path_dir=53.3°, t=-0.004
+[line_detector_node-5] [INFO] [1788936240.103717971] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936240.173190721] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.173518955] [rtk_nav]: [Stanley] 初始移动：left=-9.83, right=10.17, lat_err=0.083m, hdg_err=1.2°, path_dir=53.3°, t=-0.006
+[line_detector_node-5] [INFO] [1788936240.239679937] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936240.275448722] [rtk_nav]: [Stanley] 初始移动：left=-9.83, right=10.17, lat_err=0.075m, hdg_err=0.6°, path_dir=53.3°, t=-0.004
+[line_detector_node-5] [INFO] [1788936240.369475157] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.372740647] [rtk_nav]: [Stanley] 初始移动：left=-9.78, right=10.22, lat_err=0.087m, hdg_err=-0.2°, path_dir=53.3°, t=-0.001
+[line_detector_node-5] [INFO] [1788936240.440712538] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936240.474131404] [rtk_nav]: [Stanley] 初始移动：left=-9.75, right=10.25, lat_err=0.087m, hdg_err=-1.0°, path_dir=53.3°, t=0.001
+[line_detector_node-5] [INFO] [1788936240.494159831] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936240.573294343] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.575015154] [rtk_nav]: [Stanley] 初始移动：left=-9.72, right=10.28, lat_err=0.089m, hdg_err=-1.8°, path_dir=53.3°, t=0.004
+[line_detector_node-5] [INFO] [1788936240.605992522] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936240.671378147] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.673693007] [rtk_nav]: [Stanley] 初始移动：left=-9.71, right=10.29, lat_err=0.087m, hdg_err=-2.1°, path_dir=53.3°, t=0.004
+[line_detector_node-5] [INFO] [1788936240.740781556] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936240.774316098] [rtk_nav]: [Stanley] 初始移动：left=-9.68, right=10.32, lat_err=0.091m, hdg_err=-2.7°, path_dir=53.3°, t=0.010
+[line_detector_node-5] [INFO] [1788936240.872320300] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.874396309] [rtk_nav]: [Stanley] 初始移动：left=-9.65, right=10.35, lat_err=0.104m, hdg_err=-2.9°, path_dir=53.3°, t=0.017
+[line_detector_node-5] [INFO] [1788936240.936696257] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936240.966291102] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936240.975700658] [rtk_nav]: 到第一个航点距离：4.66 m
+[rtk_nav-3] [INFO] [1788936240.985208519] [rtk_nav]: [Stanley] 初始移动：left=-9.65, right=10.35, lat_err=0.104m, hdg_err=-2.7°, path_dir=53.3°, t=0.024
+[line_detector_node-5] [INFO] [1788936241.030135624] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936241.074953043] [rtk_nav]: [Stanley] 初始移动：left=-9.67, right=10.33, lat_err=0.101m, hdg_err=-2.5°, path_dir=53.3°, t=0.032
+[line_detector_node-5] [INFO] [1788936241.163512937] [grid_line_detector]: line=False track=lost geometry=False
+[rtk_nav-3] [INFO] [1788936241.175424283] [rtk_nav]: [Stanley] 初始移动：left=-9.68, right=10.32, lat_err=0.099m, hdg_err=-2.2°, path_dir=53.3°, t=0.041
+[line_detector_node-5] [INFO] [1788936241.202054487] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936241.272298260] [rtk_nav]: 到第一个航点距离：4.55 m
+[rtk_nav-3] [INFO] [1788936241.276318488] [rtk_nav]: [Stanley] 初始移动：left=-9.67, right=10.33, lat_err=0.108m, hdg_err=-1.9°, path_dir=53.3°, t=0.048
+[rtk_nav-3] [INFO] [1788936241.310811692] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和15s收敛窗
+[rtk_nav-3] [WARN] [1788936241.314613571] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[motor_control-2] [WARN] [1788936241.360222285] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[rtk_nav-3] [INFO] [1788936241.410008230] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936241.473143784] [grid_line_detector]: line=False track=lost geometry=False
+[motor_control-2] [INFO] [1788936241.514222208] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 54.40999984741211, "rtk_status": "4 / Ori 4", "current_lon": 120.0706141143439, "current_lat": 30.32100858756951, "route_id": "test", "areas": "", "error": 6, "angular_velocity": {"x": 2.95, "y": 1.39, "z": 54.40999984741211}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:01"}
+[line_detector_node-5] [INFO] [1788936241.527842972] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936241.545035271] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936241.608721301] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936241.768686565] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936242.072596822] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936242.136050951] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936242.200298155] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936242.266550530] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936242.300256611] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936242.369029716] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788936242.477210405] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=52.2°，要求5s波动≤1.0°且15s收敛≤1.5°，已等待1/600s，样本=110，短窗=未就绪(inf°)，收敛窗=就绪(85.73°)，质量=pos4/ori4/GGA=有效，失锁=0.0s，保持停车
+[line_detector_node-5] [INFO] [1788936242.532802687] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936242.591765101] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936242.602956039] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936242.667034154] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936242.736936014] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936242.869668923] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936242.901298666] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936242.916669531] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.3s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936242.970860013] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936243.037012338] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936243.110940899] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936243.165788356] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936243.235407455] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936243.306262962] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936243.312010151] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936243.371088864] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936243.403908683] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936243.467476710] [grid_line_detector]: line=False track=lost geometry=False
+[motor_control-2] [INFO] [1788936243.503668902] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.20000076293945, "rtk_status": "4 / Ori 4", "current_lon": 120.07061508471931, "current_lat": 30.32100926051281, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.93, "y": 1.04, "z": 52.20000076293945}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:03"}
+[line_detector_node-5] [INFO] [1788936243.536554347] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936243.602658922] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936243.658285167] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936243.802359392] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936243.837010532] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936243.937178743] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936243.966970943] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936244.070044942] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.106876530] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.202294804] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.273212351] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.305660439] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.442577424] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.505233200] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.634503240] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.691335723] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936244.703451088] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.769998245] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.839357282] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936244.903241279] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936244.996489379] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936245.141614026] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936245.206977835] [grid_line_detector]: line=False track=unlocked geometry=False
+[rtk_nav-3] [INFO] [1788936245.319376168] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936245.373488938] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936245.469087420] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936245.519325995] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.08000183105469, "rtk_status": "4 / Ori 4", "current_lon": 120.07061485587582, "current_lat": 30.321009185174606, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.92, "y": 0.97, "z": 52.08000183105469}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:05"}
+[line_detector_node-5] [INFO] [1788936245.538764983] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936245.602229788] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936245.667180199] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936245.725412213] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936245.805106699] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936245.869598974] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936245.968006208] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936246.039842340] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936246.105635747] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936246.167382783] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936246.236904270] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936246.725781192] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936246.805179169] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936246.870974327] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936246.939083837] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936247.003344633] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936247.268007666] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936247.433230015] [grid_line_detector]: line=False track=lost geometry=False
+[motor_control-2] [INFO] [1788936247.513689814] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.099998474121094, "rtk_status": "4 / Ori 4", "current_lon": 120.0706149448765, "current_lat": 30.321009189842087, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.9, "y": 0.92, "z": 52.099998474121094}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:07"}
+[line_detector_node-5] [INFO] [1788936247.537572962] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936247.604740440] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936247.670649428] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936247.738610618] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936247.789917807] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936248.001157686] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936248.072441433] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936248.142729754] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936248.202745952] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936248.303390163] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936248.371221981] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936248.436296298] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936248.572429802] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936248.676039180] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936248.769671873] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936248.823863549] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936248.837699943] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936248.967498278] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936249.001427394] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936249.266770198] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936249.338261806] [grid_line_detector]: line=False track=unlocked geometry=False
+[motor_control-2] [INFO] [1788936249.507701650] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.099998474121094, "rtk_status": "4 / Ori 4", "current_lon": 120.07061494737653, "current_lat": 30.321009217508756, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.87, "y": 0.92, "z": 52.099998474121094}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:09"}
+[line_detector_node-5] [INFO] [1788936249.636629585] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936249.703673728] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936249.826083810] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936249.836177453] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936249.970750367] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936250.038215210] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936250.068433222] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936250.129443917] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936250.204540921] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936250.338660267] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936250.469776769] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936250.540634120] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936250.671388503] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936250.859066322] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936250.871224136] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936250.939067358] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936251.071787415] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936251.203029783] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936251.507228772] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936251.508254073] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.13999938964844, "rtk_status": "4 / Ori 4", "current_lon": 120.07061506754575, "current_lat": 30.32100927067704, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.86, "y": 0.92, "z": 52.13999938964844}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:11"}
+[line_detector_node-5] [INFO] [1788936251.568386597] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936251.635859665] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936251.700552878] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936251.772285332] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936251.867673446] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936251.923967004] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936251.935386960] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936252.000767704] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.071758226] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936252.102767036] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.166787944] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936252.231623156] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.296234467] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936252.368792241] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.569812208] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936252.579005234] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=52.1°，要求5s波动≤1.0°且15s收敛≤1.5°，已等待11/600s，样本=105，短窗=就绪(0.07°)，收敛窗=未就绪(inf°)，质量=pos4/ori4/GGA=有效，失锁=0.0s，保持停车
+[line_detector_node-5] [INFO] [1788936252.602511503] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.768462013] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936252.838677449] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936252.926164643] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936252.938136210] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936253.036089760] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936253.167659928] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936253.206080255] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936253.262920439] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936253.406786342] [grid_line_detector]: line=False track=unlocked geometry=False
+[motor_control-2] [INFO] [1788936253.505038969] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.150001525878906, "rtk_status": "4 / Ori 4", "current_lon": 120.07061502487997, "current_lat": 30.321009201677448, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.82, "y": 1.0, "z": 52.150001525878906}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:13"}
+[line_detector_node-5] [INFO] [1788936253.534559486] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936253.600908983] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936253.670021728] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936253.714639545] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936253.803072466] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936253.942719030] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936253.990445939] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936254.065426362] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936254.140213507] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.207460346] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936254.269074466] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.331247733] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936254.436532454] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.570653034] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936254.635739241] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936254.669450922] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.737675734] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936254.808810391] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.869084033] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936254.937379893] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936254.967140668] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936255.025575474] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936255.034516356] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936255.109501262] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936255.171876401] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936255.236878935] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936255.366528181] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936255.407868307] [grid_line_detector]: line=False track=unlocked geometry=False
+[motor_control-2] [INFO] [1788936255.520210973] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 52.20000076293945, "rtk_status": "4 / Ori 4", "current_lon": 120.07061495955266, "current_lat": 30.32100923201281, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.79, "y": 1.05, "z": 52.20000076293945}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:15"}
+[line_detector_node-5] [INFO] [1788936255.539027789] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936255.667908097] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936255.739710435] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936255.799485950] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936255.871621463] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936255.934588870] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936255.975522908] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936256.055943376] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936256.135867212] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936256.171256763] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936256.232666385] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936256.572224788] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936256.617207587] [rtk_nav]: [航向稳定] 5s波动=0.15°，30s收敛波动=1.43°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936256.632532357] [grid_line_detector]: line=False track=unlocked geometry=False
+[rtk_nav-3] [INFO] [1788936256.672591542] [rtk_nav]: [AUTO航向门控] 航向恢复稳定：IMU=52.2°，自动恢复到INITIAL_MOVE
+[rtk_nav-3] [INFO] [1788936256.676261258] [rtk_nav]: [ROSNode] 启动/恢复RTK多点导航
+[rtk_nav-3] [INFO] [1788936256.678606738] [rtk_nav]: 从状态INITIAL_MOVE恢复导航
+[rtk_nav-3] [INFO] [1788936256.682606322] [rtk_nav]: [ROSNode] 进入初始移动阶段：初始点→第一个航点
+[rtk_nav-3] [INFO] [1788936256.684457185] [rtk_nav]: 开始准备移动到第一个航点：(120.07064954, 30.32103422)
+[rtk_nav-3] [INFO] [1788936256.686453373] [rtk_nav]: GPS初始位置获取成功：(120.070615, 30.321009)
+[rtk_nav-3] [INFO] [1788936256.688755008] [rtk_nav]: IMU初始化完成，当前航向：52.25°
+[rtk_nav-3] [INFO] [1788936256.690682005] [rtk_nav]: 初始点→第一个航点 初始朝向角：49.99°
+[rtk_nav-3] [INFO] [1788936256.692643315] [rtk_nav]: 开始初始航向对准：目标航向49.99°
+[line_detector_node-5] [INFO] [1788936256.706639474] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936256.767183032] [grid_line_detector]: line=False track=lost geometry=False
+[line_detector_node-5] [INFO] [1788936256.833586046] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936257.060638379] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936257.170253047] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936257.236629478] [grid_line_detector]: line=False track=unlocked geometry=False
+[rtk_nav-3] [INFO] [1788936257.275429706] [rtk_nav]: 航向校准完成！误差：0.98°
+[line_detector_node-5] [INFO] [1788936257.277354009] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936257.280236672] [rtk_nav]: 初始航向对准完成, 开始实时纠偏直线行驶
+[rtk_nav-3] [INFO] [1788936257.285240136] [rtk_nav]: 记录初始旋转完成航向角：49.99°
+[rtk_nav-3] [INFO] [1788936257.290857233] [rtk_nav]: [Stanley] 初始路径：(120.070615, 30.321009) → (120.070650, 30.321034), 方向=51.6°
+[rtk_nav-3] [INFO] [1788936257.296322423] [rtk_nav]: 到第一个航点距离：4.33 m
+[rtk_nav-3] [INFO] [1788936257.303808779] [rtk_nav]: [Stanley] 初始移动：left=-10.01, right=9.99, lat_err=0.003m, hdg_err=0.6°, path_dir=51.6°, t=0.000
+[rtk_nav-3] [INFO] [1788936257.373884192] [rtk_nav]: [Stanley] 初始移动：left=-10.03, right=9.97, lat_err=0.001m, hdg_err=1.1°, path_dir=51.6°, t=0.000
+[line_detector_node-5] [INFO] [1788936257.402134740] [grid_line_detector]: line=False track=unlocked geometry=False
+[rtk_nav-3] [INFO] [1788936257.474107234] [rtk_nav]: [Stanley] 初始移动：left=-10.05, right=9.95, lat_err=-0.000m, hdg_err=1.6°, path_dir=51.6°, t=-0.000
+[motor_control-2] [INFO] [1788936257.498971441] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "INITIAL_MOVE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 50.029998779296875, "rtk_status": "4 / Ori 4", "current_lon": 120.07061503711958, "current_lat": 30.321009227279113, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.79, "y": 0.97, "z": 50.029998779296875}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:17"}
+[rtk_nav-3] [INFO] [1788936257.573480027] [rtk_nav]: [Stanley] 初始移动：left=-10.08, right=9.92, lat_err=-0.005m, hdg_err=2.1°, path_dir=51.6°, t=-0.001
+[line_detector_node-5] [INFO] [1788936257.606781763] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936257.611271173] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和15s收敛窗
+[rtk_nav-3] [WARN] [1788936257.614565713] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[motor_control-2] [WARN] [1788936257.658694985] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[line_detector_node-5] [INFO] [1788936257.768063249] [grid_line_detector]: line=False track=lost geometry=False
+[rtk_nav-3] [INFO] [1788936257.814438150] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936257.872399312] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936257.905061370] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936257.970537975] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936258.013680162] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936258.042438121] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936258.092599534] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936258.170367887] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936258.208040430] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936258.273381315] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936258.337331785] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936258.414502066] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936258.474735977] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936258.544774152] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936258.677660936] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936258.738131360] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936258.772405186] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936258.839432445] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936258.974864354] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936259.038661763] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936259.093375567] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936259.181871138] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936259.241242763] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936259.372711456] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936259.445194142] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788936259.477208972] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=46.6°，要求5s波动≤1.0°且15s收敛≤1.5°，已等待2/600s，样本=145，短窗=就绪(5.69°)，收敛窗=就绪(5.69°)，质量=pos4/ori4/GGA=有效，失锁=0.0s，保持停车
+[motor_control-2] [INFO] [1788936259.504185745] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 46.560001373291016, "rtk_status": "4 / Ori 4", "current_lon": 120.07061546764758, "current_lat": 30.32100962553866, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": 2.66, "y": 0.94, "z": 46.560001373291016}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:44:19"}
+[line_detector_node-5] [INFO] [1788936259.569392169] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936259.645479179] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936259.776568659] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936259.813741695] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936259.839515534] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936259.971430418] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936260.035896632] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936260.118552110] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936260.159872547] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936260.177750320] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936260.243238742] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936260.309115459] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936260.373038970] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936260.471242416] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936260.509307512] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936260.639775145] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936260.706792773] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936260.772319836] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936260.841699283] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936260.911692459] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936260.969980634] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936261.072824107] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936261.134949997] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936261.168231990] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936261.257803424] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg sourc
+
+
+
+
+[motor_control-2] [INFO] [1788936417.500421107] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.8300018310547, "rtk_status": "4 / Ori 4", "current_lon": 120.07060673812124, "current_lat": 30.32102836527452, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.24, "y": 4.01, "z": 173.8300018310547}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:46:57"}
+[line_detector_node-5] [INFO] [1788936417.528112728] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936417.548268443] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936417.676554763] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936417.739828564] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936417.873235873] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936417.949347468] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.072571824] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936418.144448424] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.277248654] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936418.338628284] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.378886787] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936418.415193657] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936418.450109739] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.561855263] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936418.580839732] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936418.641865141] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.777147294] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936418.813839735] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936418.844587314] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936418.978112159] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936419.047581029] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.182850313] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936419.243227991] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.349143391] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936419.413465039] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.484001596] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936419.501695356] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.69000244140625, "rtk_status": "4 / Ori 4", "current_lon": 120.07060675338313, "current_lat": 30.321028436289506, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.23, "y": 4.01, "z": 173.69000244140625}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:46:59"}
+[line_detector_node-5] [INFO] [1788936419.549665988] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.593587119] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936419.678506562] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936419.717828389] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936419.745423264] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.845638962] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936419.906375026] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936419.980976573] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936420.040830164] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936420.173550944] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936420.247520194] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936420.310786402] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936420.373743769] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936420.413731713] [rtk_nav]: [航向稳定] 5s波动=0.43°，30s收敛波动=1.49°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936420.445434707] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936420.577581507] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936420.627683485] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936420.642224354] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936420.778569859] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936420.842086964] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936420.977378101] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936421.049274550] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936421.180206451] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936421.216767386] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936421.248952453] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936421.313383387] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936421.320144941] [rtk_nav]: [航向稳定] 5s波动=0.36°，30s收敛波动=1.36°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936421.386478372] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936421.444560468] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936421.502729931] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.61000061035156, "rtk_status": "4 / Ori 4", "current_lon": 120.07060672659952, "current_lat": 30.32102841538676, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.25, "y": 4.02, "z": 173.61000061035156}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:01"}
+[line_detector_node-5] [INFO] [1788936421.547230038] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936421.613659579] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936421.617898140] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936421.660707722] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936421.681300043] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936421.710187076] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936421.713851910] [rtk_nav]: [航向稳定] 5s波动=0.36°，30s收敛波动=1.32°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936421.746109873] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936421.839818809] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936421.910781332] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936421.943379963] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936422.009473841] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936422.013022428] [rtk_nav]: [航向稳定] 5s波动=0.35°，30s收敛波动=1.25°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936422.072039812] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936422.138753521] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936422.178620062] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936422.278935306] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936422.476499275] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936422.547735378] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936422.661238425] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936422.673646860] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936422.713819994] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936422.781177612] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936422.849457348] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936422.981690190] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936423.045041032] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936423.077968401] [rtk_nav]: [AUTO航向门控] 航向恢复稳定：IMU=173.6°，自动恢复到WAYPOINT_CALIB
+[rtk_nav-3] [INFO] [1788936423.089710523] [rtk_nav]: [ROSNode] 启动/恢复RTK多点导航
+[rtk_nav-3] [INFO] [1788936423.095039213] [rtk_nav]: 从状态WAYPOINT_CALIB恢复导航
+[rtk_nav-3] [INFO] [1788936423.099296291] [rtk_nav]: 重新初始化航向校准：目标171.83°, 当前173.55°
+[rtk_nav-3] [INFO] [1788936423.110388863] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和15s收敛窗
+[rtk_nav-3] [WARN] [1788936423.113325157] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[motor_control-2] [WARN] [1788936423.184615411] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[rtk_nav-3] [INFO] [1788936423.210822819] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936423.214362639] [rtk_nav]: [航向稳定] 5s波动=0.23°，30s收敛波动=1.02°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936423.378090846] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936423.442365630] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936423.512274093] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.61000061035156, "rtk_status": "4 / Ori 4", "current_lon": 120.07060672459954, "current_lat": 30.32102840388676, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.25, "y": 4.02, "z": 173.61000061035156}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:03"}
+[line_detector_node-5] [INFO] [1788936423.575916365] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936423.648102090] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936423.693711370] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[rtk_nav-3] [WARN] [1788936423.719665554] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936423.781189569] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936423.845306589] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936423.978250007] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.043696630] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936424.115364655] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.4s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936424.123140601] [rtk_nav]: [航向稳定] 5s波动=0.19°，30s收敛波动=0.97°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936424.179401414] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.244409321] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788936424.309529149] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936424.342910164] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.412804206] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936424.416089802] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936424.423447988] [rtk_nav]: [航向稳定] 5s波动=0.23°，30s收敛波动=0.97°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936424.478696027] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.551273726] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788936424.611622015] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936424.685984137] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.727510465] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936424.745844825] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936424.881219907] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936424.945425871] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936425.082855584] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936425.143171785] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936425.292670153] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936425.314662826] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.7s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936425.323738935] [rtk_nav]: [航向稳定] 5s波动=0.40°，30s收敛波动=0.97°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936425.354453708] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936425.477488894] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936425.502066498] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.94000244140625, "rtk_status": "4 / Ori 4", "current_lon": 120.07060677003912, "current_lat": 30.32102841337159, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.25, "y": 4.03, "z": 173.94000244140625}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:05"}
+[rtk_nav-3] [WARN] [1788936425.512879015] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936425.548469031] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936425.612218614] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936425.615908082] [rtk_nav]: [航向稳定] 5s波动=0.40°，30s收敛波动=0.97°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936425.641194819] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936425.715821368] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936425.759598270] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936425.778677949] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936425.811393391] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[line_detector_node-5] [INFO] [1788936425.846258153] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936425.974788115] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936426.009844023] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[rtk_nav-3] [INFO] [1788936426.012652004] [rtk_nav]: [航向稳定] 5s波动=0.43°，30s收敛波动=0.97°，通过AUTO门控
+[line_detector_node-5] [INFO] [1788936426.046901246] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936426.183561210] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936426.242640460] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936426.374479360] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936426.478490709] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936426.675356823] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936426.741867259] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936426.793717328] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936426.873086689] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936426.906474632] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936426.976360547] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936427.040189144] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936427.072046587] [rtk_nav]: [AUTO航向门控] 航向恢复稳定：IMU=173.9°，自动恢复到WAYPOINT_CALIB
+[rtk_nav-3] [INFO] [1788936427.075724587] [rtk_nav]: [ROSNode] 启动/恢复RTK多点导航
+[rtk_nav-3] [INFO] [1788936427.077631634] [rtk_nav]: 从状态WAYPOINT_CALIB恢复导航
+[rtk_nav-3] [INFO] [1788936427.080030395] [rtk_nav]: 重新初始化航向校准：目标171.83°, 当前173.88°
+[line_detector_node-5] [INFO] [1788936427.171980541] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936427.240995936] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936427.273707472] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936427.340039530] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936427.478760797] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936427.496390854] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "WAYPOINT_CALIB", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.25, "rtk_status": "4 / Ori 4", "current_lon": 120.07060674811481, "current_lat": 30.32102838493209, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.24, "y": 4.03, "z": 173.25}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:07"}
+[line_detector_node-5] [INFO] [1788936427.542858577] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936427.674217328] [rtk_nav]: 航向校准完成！误差：0.69°
+[line_detector_node-5] [INFO] [1788936427.679357485] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936427.690756712] [rtk_nav]: [ROSNode] 航点1航向校准完成, 结果：True
+[rtk_nav-3] [INFO] [1788936427.703729116] [rtk_nav]: [ROSNode] 切换到新航点2, 准备进入移动阶段
+[line_detector_node-5] [INFO] [1788936427.744259088] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936427.774998669] [rtk_nav]: [Stanley] 航点2路径：(120.070607, 30.321029) → (120.070608, 30.321020), 方向=173.2°
+[rtk_nav-3] [INFO] [1788936427.781173414] [rtk_nav]: [Stanley] 航点2：距离0.94m, left=-4.49, right=4.30, lat_err=-0.010m, hdg_err=1.2°, path_dir=173.2°, imu=172.0°, t=0.060
+[line_detector_node-5] [INFO] [1788936427.794727286] [grid_line_detector]: 运行方向: axis=horizontal image_axis=-1.3deg path_heading=-96.7deg vehicle_heading=172.0deg relative_heading=91.3deg source=rtk
+[rtk_nav-3] [INFO] [1788936427.872751693] [rtk_nav]: [航点切换] 进入路段1→2
+[line_detector_node-5] [INFO] [1788936427.872748302] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936427.876088297] [rtk_nav]: [航点切换] 缓存当前文件上一个航点1：(120.07060654, 30.32102884, 171.83)
+[rtk_nav-3] [INFO] [1788936427.880987808] [rtk_nav]: [Stanley] 航点2路径：(120.070607, 30.321029) → (120.070608, 30.321020), 方向=173.2°
+[line_detector_node-5] [INFO] [1788936427.915139140] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936428.861099011] [grid_line_detector]: 运行方向: axis=vertical image_axis=87.8deg path_heading=173.2deg vehicle_heading=171.0deg relative_heading=2.2deg source=rtk
+[rtk_nav-3] [INFO] [1788936429.018305921] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和15s收敛窗
+[rtk_nav-3] [WARN] [1788936429.025193319] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[motor_control-2] [WARN] [1788936429.064427285] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[rtk_nav-3] [INFO] [1788936429.116465659] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936429.142908817] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936429.280014987] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936429.345398502] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936429.411162543] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936429.485389649] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936429.500721720] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.5500030517578, "rtk_status": "4 / Ori 4", "current_lon": 120.070606898735, "current_lat": 30.32102678340593, "route_id": "test", "areas": "", "error": 6, "angular_velocity": {"x": -0.01, "y": 4.01, "z": 171.5500030517578}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:09"}
+[line_detector_node-5] [INFO] [1788936429.551889890] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936429.687327533] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936429.750160920] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936429.863912774] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936429.893564856] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936429.945664479] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936430.087787550] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936430.116440624] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936430.150543349] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936430.283594916] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936430.353826665] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936430.473466383] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936430.549645446] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936430.682835787] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936430.749637462] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936430.812397992] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936430.882556203] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936430.929087241] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936430.947391812] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936431.083512706] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936431.145912750] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936431.280930097] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936431.348356684] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936431.478985499] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936431.502946012] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.5, "rtk_status": "4 / Ori 4", "current_lon": 120.07060686971144, "current_lat": 30.32102676647013, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.02, "y": 4.05, "z": 171.5}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:11"}
+[line_detector_node-5] [INFO] [1788936431.555667796] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936431.649622469] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936431.717884096] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936431.786166399] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936431.853343814] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936431.909395362] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936431.962335650] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936431.982415504] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936432.045436691] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936432.109645744] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936432.180653427] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936432.246107763] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936432.378913090] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936432.417273571] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936432.448847852] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936432.576805681] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936432.645382926] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936432.777711396] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936432.851236750] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936432.975782940] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.029352173] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936433.046383678] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936433.177578156] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.246559997] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936433.378066287] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.449475575] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [WARN] [1788936433.475822137] [rtk_nav]: [AUTO航向门控] 等待航向稳定：IMU=171.4°，要求5s波动≤1.0°且15s收敛≤1.5°，已等待4/600s，样本=109，短窗=未就绪(inf°)，收敛窗=就绪(2.59°)，质量=pos4/ori4/GGA=有效，失锁=0.0s，保持停车
+[motor_control-2] [INFO] [1788936433.516399429] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.4499969482422, "rtk_status": "4 / Ori 4", "current_lon": 120.07060689002003, "current_lat": 30.32102677303242, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.04, "y": 4.06, "z": 171.4499969482422}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:13"}
+[line_detector_node-5] [INFO] [1788936433.548354192] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.620750229] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936433.678540056] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.750802419] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936433.850661730] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936433.913072435] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936433.985481047] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.053738691] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936434.094561188] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936434.197209090] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.250949457] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936434.382469665] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.454313026] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936434.551680825] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.618939674] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936434.678257963] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.754503669] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936434.883637160] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936434.948281465] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936435.076828528] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936435.127209997] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936435.145670993] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936435.375769261] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936435.451823608] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936435.505008678] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.4600067138672, "rtk_status": "4 / Ori 4", "current_lon": 120.07060683069176, "current_lat": 30.321026870620116, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.1, "y": 4.1, "z": 171.4600067138672}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:15"}
+[line_detector_node-5] [INFO] [1788936435.585058372] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936435.647078824] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936435.778467477] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936435.843142803] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936435.978963575] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936436.046540832] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936436.162335910] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936436.178643689] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936436.253435840] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936436.382678641] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936436.448307191] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936436.580487949] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936436.644080546] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936436.778109561] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936436.839362711] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936436.979631926] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936437.061245017] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936437.184273671] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936437.226659745] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936437.247873085] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936437.377441302] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936437.450390425] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936437.505963503] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.47000122070312, "rtk_status": "4 / Ori 4", "current_lon": 120.07060676669677, "current_lat": 30.3210268323744, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.11, "y": 4.12, "z": 171.47000122070312}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:17"}
+[line_detector_node-5] [INFO] [1788936437.575706085] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936437.616465659] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936437.648286738] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936437.780119628] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936437.844423770] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936437.981286702] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936438.044476563] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936438.177655239] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936438.229061774] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936438.248114620] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936438.376594901] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936438.442336963] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936438.576169989] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936438.649002601] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936438.780678259] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936438.848348215] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936438.979210334] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936439.051118792] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.189528530] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936439.231973492] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936439.251066458] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.344987852] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936439.412298965] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.477746556] [grid_line_detector]: line=True track=locked geometry=True
+[motor_control-2] [INFO] [1788936439.494125577] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.41000366210938, "rtk_status": "4 / Ori 4", "current_lon": 120.07060683383263, "current_lat": 30.321026795180888, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.11, "y": 4.13, "z": 171.41000366210938}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:19"}
+[line_detector_node-5] [INFO] [1788936439.552397160] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.679353770] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936439.751419979] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.874466693] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936439.913042918] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936439.918639117] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936439.983485187] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936440.050410425] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936440.181927053] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936440.249157806] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936440.297969034] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936440.377288947] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936440.440145812] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936440.580657790] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936440.647990148] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936440.788097940] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936440.848801392] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936440.982147434] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936441.049605724] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936441.179143131] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936441.248414147] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936441.363778503] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936441.380946822] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936441.445582172] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936441.503281928] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 171.33999633789062, "rtk_status": "4 / Ori 4", "current_lon": 120.07060682862783, "current_lat": 30.3210267553961, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.11, "y": 4.13, "z": 171.33999633789062}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:21"}
+[line_detector_node-5] [INFO] [1788936441.679708675] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936441.742525627] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936441.878894269] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936441.944542941] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936442.014842138] [rtk_nav]: [航向稳定] 5s波动=0.15°，30s收敛波动=0.24°，通过AUTO门控
+[rtk_nav-3] [INFO] [1788936442.076571721] [rtk_nav]: [AUTO航向门控] 航向恢复稳定：IMU=171.3°，自动恢复到WAYPOINT_MOVE
+[line_detector_node-5] [INFO] [1788936442.078275365] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [WARN] [1788936442.079771427] [rtk_nav]: [Stanley] AUTO航向门控放行后先对齐路径：hdg_err=1.9°，阈值=15.0°，重新校准到路径方向173.2°
+[rtk_nav-3] [INFO] [1788936442.084067685] [rtk_nav]: [AUTO航向门控] 收敛后先原地对齐路径：目标=173.2°，当前=171.3°，误差=1.9°
+[rtk_nav-3] [INFO] [1788936442.093721504] [rtk_nav]: [ROSNode] 启动/恢复RTK多点导航
+[rtk_nav-3] [INFO] [1788936442.098568976] [rtk_nav]: 从状态WAYPOINT_CALIB恢复导航
+[rtk_nav-3] [INFO] [1788936442.102735315] [rtk_nav]: 重新初始化航向校准：目标173.24°, 当前171.32°
+[line_detector_node-5] [INFO] [1788936442.148027777] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936442.281262490] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936442.348228482] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936442.394611670] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936442.480063552] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936442.547598710] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936442.672055717] [rtk_nav]: 航向校准完成！误差：0.78°
+[line_detector_node-5] [INFO] [1788936442.677134615] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936442.679449959] [rtk_nav]: [ROSNode] 角度异常重新校准完成，继续前往航点2
+[line_detector_node-5] [INFO] [1788936442.750653732] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936442.774393948] [rtk_nav]: [Stanley] 航点2路径：(120.070607, 30.321029) → (120.070608, 30.321020), 方向=173.2°
+[rtk_nav-3] [INFO] [1788936442.780657447] [rtk_nav]: [Stanley] 航点2：距离0.77m, left=-3.58, right=3.64, lat_err=0.008m, hdg_err=0.4°, path_dir=173.2°, imu=172.9°, t=0.227
+[line_detector_node-5] [INFO] [1788936442.810917648] [grid_line_detector]: line=False track=unlocked geometry=False
+[line_detector_node-5] [INFO] [1788936443.457642951] [grid_line_detector]: 运行方向: axis=vertical image_axis=91.0deg path_heading=173.2deg vehicle_heading=174.3deg relative_heading=-1.0deg source=rtk
+[motor_control-2] [INFO] [1788936443.491778341] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "WAYPOINT_MOVE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 174.2899932861328, "rtk_status": "4 / Ori 4", "current_lon": 120.07060685156802, "current_lat": 30.321026345075328, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.23, "y": 4.22, "z": 174.2899932861328}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:23"}
+[rtk_nav-3] [INFO] [1788936444.309989149] [rtk_nav]: [AUTO航向门控] RTK质量丢失触发AUTO_CLEANING，保留短时Float前航向样本，重新采集5s短窗和15s收敛窗
+[rtk_nav-3] [WARN] [1788936444.313717081] [rtk_nav]: [航向不稳定] 5s波动=inf°，30s收敛波动=inf°
+[motor_control-2] [WARN] [1788936444.356649743] [motor_control_node]: [RTKNavStatus] 自动恢复暂停: auto_heading_gate，保持AUTO_CLEANING并输出零速度
+[line_detector_node-5] [INFO] [1788936444.411771641] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936444.414949867] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936444.458039686] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936444.471234307] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936444.536666066] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936444.572291533] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936444.635728911] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936444.776725962] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936444.838311654] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936444.972012775] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.040259060] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.173015308] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.244723229] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.372884570] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.438111308] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.489966388] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[motor_control-2] [INFO] [1788936445.505694537] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.47000122070312, "rtk_status": "4 / Ori 5", "current_lon": 120.07060688501168, "current_lat": 30.321025162212173, "route_id": "test", "areas": "", "error": 2, "angular_velocity": {"x": -0.2, "y": 3.92, "z": 173.47000122070312}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:25"}
+[line_detector_node-5] [INFO] [1788936445.571925386] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.641124260] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.669853764] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.740747544] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.873448095] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936445.937542941] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936445.970880801] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.033396685] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936446.175178838] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.246819943] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936446.370897974] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.402576402] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936446.472529606] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.524889414] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936446.537757820] [grid_line_detector]: line=True track=acquired geometry=True
+[rtk_nav-3] [INFO] [1788936446.615253853] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留1.2s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936446.675969158] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.738355333] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936446.872174103] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936446.906306683] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936446.971602932] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936447.040094555] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936447.174632112] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936447.215034730] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.3s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936447.234645015] [grid_line_detector]: line=True track=acquired geometry=True
+[line_detector_node-5] [INFO] [1788936447.374132158] [grid_line_detector]: line=True track=locked geometry=True
+[rtk_nav-3] [INFO] [1788936447.415807102] [rtk_nav]: [AUTO航向门控] 定位与定向均为Fixed，保留0.1s短时Float前的航向窗口，确认1.0s后复核
+[line_detector_node-5] [INFO] [1788936447.443942298] [grid_line_detector]: line=True track=acquired geometry=True
+[motor_control-2] [INFO] [1788936447.515660864] [motor_control_node]: [ROSNode] 成功发布状态: {"status": "AUTO_CLEANING", "nav_status": "PAUSE", "battery": null, "battery_total_voltage": null, "battery_current": null, "battery_temperatures": [], "imu_yaw": 173.41000366210938, "rtk_status": "4 / Ori 4", "current_lon": 120.07060676554231, "current_lat": 30.321025167775733, "route_id": "test", "areas": "", "error": 6, "angular_velocity": {"x": -0.23, "y": 3.93, "z": 173.41000366210938}, "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0}, "sensors_status": 0, "velocity": 0.0, "laser_left": 0, "laser_right": 0, "complete_state": false, "charging_v": 0.0, "charging_i": 0.0, "charging_fault": 0, "motor_fault": [0, 0, 0], "dock_sensors": 0, "resume_charge": 0, "timestamp": "2026-09-09 14:47:27"}
+[line_detector_node-5] [INFO] [1788936447.558962998] [grid_line_detector]: 运行方向: axis=horizontal image_axis=0.0deg source=fallback
+[line_detector_node-5] [INFO] [1788936447.574900533] [grid_line_detector]: line=True track=locked geometry=True
+[line_detector_node-5] [INFO] [1788936447.642161239] [grid_line_detector]: line=True track=acquired geometry=True

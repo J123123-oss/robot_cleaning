@@ -106,8 +106,11 @@ def test_launch_forwards_always_show_axis_debug_to_both_detectors():
         assert '"always_show_axis_debug"' in source or (
             "'always_show_axis_debug'" in source
         )
-        assert 'default_value=TextSubstitution(text="false")' in source or (
-            "default_value=TextSubstitution(text='false')" in source
+        assert (
+            'default_value=TextSubstitution(text="false")' in source
+            or "default_value=TextSubstitution(text='false')" in source
+            or 'default_value=TextSubstitution(text="true")' in source
+            or "default_value=TextSubstitution(text='true')" in source
         )
         assert "'always_show_axis_debug': ParameterValue(" in source
         assert (
@@ -140,9 +143,14 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
 
     for parameter in (
+        "coarse_line_gap_fill_px",
+        "coarse_line_bridge_normal_gap_px",
+        "coarse_line_bridge_angle_tolerance_deg",
         "angle_line_min_width_px",
         "angle_line_min_support",
         "angle_line_hough_threshold",
+        "angle_line_hough_gap_px",
+        "angle_line_min_merged_length_px",
         "angle_line_gap_fill_px",
         "angle_line_bridge_angle_tolerance_deg",
         "angle_line_axis_tolerance_deg",
@@ -153,6 +161,8 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
     assert "bridge_collinear_line_records" in detector
     assert "close_directional_line_gaps" not in detector
     assert "angle_hough_lines" in detector
+    assert "select_tracking_candidates" in detector
+    assert "tracking_source" in detector
     assert "select_angle_line_candidates" in detector
     assert "angle_reference_axis_image" in detector
     assert "angle_parallel_group" in detector
@@ -202,7 +212,7 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         assert f"'{name}': ParameterValue(" in source
         assert f'LaunchConfiguration("{name}")' in source
     assert "'angle_line_gap_fill_px': ParameterValue(" in source
-    assert 'default_value=TextSubstitution(text="6.0")' in source
+    assert 'default_value=TextSubstitution(text="25.0")' in source
     assert "LaunchConfiguration('angle_line_gap_fill_px')" in source
     assert "'angle_line_bridge_angle_tolerance_deg': ParameterValue(" in source
     assert 'default_value=TextSubstitution(text="3.0")' in source
@@ -223,6 +233,62 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
             f'LaunchConfiguration("{name}")' in source
         )
         assert f"value_type={value_type}" in source
+
+
+def test_launch_exposes_fine_line_detection_tuning_to_both_detectors():
+    expected = (
+        ('white_line_value_threshold', '170.0', 'float'),
+        ('white_line_saturation_max', '100.0', 'float'),
+        ('angle_average_center_band_ratio', '0.8', 'float'),
+        ('angle_line_min_length_px', '12.0', 'float'),
+        ('angle_line_min_width_px', '1.0', 'float'),
+        ('angle_line_min_support', '0.20', 'float'),
+        ('angle_line_hough_threshold', '8', 'int'),
+        ('angle_line_hough_gap_px', '2.0', 'float'),
+        ('angle_line_gap_fill_px', '25.0', 'float'),
+        ('angle_line_min_merged_length_px', '60.0', 'float'),
+    )
+    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
+        source = launch_path.read_text(encoding="utf-8")
+        for name, default, value_type in expected:
+            assert (
+                f'"{name}"' in source or f"'{name}'" in source
+            )
+            assert (
+                f'default_value=TextSubstitution(text="{default}")' in source
+                or f"default_value=TextSubstitution(text='{default}')" in source
+            )
+            assert f"'{name}': ParameterValue(" in source
+            assert (
+                f"LaunchConfiguration('{name}')" in source
+                or f'LaunchConfiguration("{name}")' in source
+            )
+            assert f'value_type={value_type}' in source
+
+
+def test_launch_exposes_coarse_tracking_tuning_to_both_detectors():
+    expected = (
+        ('coarse_line_min_length_px', '30.0'),
+        ('coarse_line_min_width_px', '4.0'),
+        ('coarse_line_min_support', '0.3'),
+        ('coarse_line_merge_gap_px', '30.0'),
+        ('coarse_line_gap_fill_px', '30.0'),
+        ('coarse_line_bridge_normal_gap_px', '10.0'),
+        ('coarse_line_bridge_angle_tolerance_deg', '3.0'),
+    )
+    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
+        source = launch_path.read_text(encoding="utf-8")
+        for name, default in expected:
+            assert f'"{name}"' in source or f"'{name}'" in source
+            assert (
+                f'default_value=TextSubstitution(text="{default}")' in source
+                or f"default_value=TextSubstitution(text='{default}')" in source
+            )
+            assert f"'{name}': ParameterValue(" in source
+            assert (
+                f"LaunchConfiguration('{name}')" in source
+                or f'LaunchConfiguration("{name}")' in source
+            )
 
 
 def test_line_detector_uses_horizontal_fallback_without_rtk_and_rtk_when_fresh():
@@ -653,7 +719,7 @@ def test_line_detector_uses_single_rendered_argument_for_logger_calls():
     assert invalid_calls == []
 
 
-def test_line_detector_logs_line_tracking_status():
+def test_line_detector_tracks_line_status_without_per_frame_logs():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
@@ -662,12 +728,13 @@ def test_line_detector_logs_line_tracking_status():
     )
 
     assert "_log_line_status_if_changed" in detector
-    assert "f'line={status[0]} track={status[1]} geometry={status[2]}'" in status_logger
+    assert "status = (bool(line_detected), str(tracking_status), bool(geometry_valid))" in status_logger
+    assert "self.get_logger().info" not in status_logger
     assert "P:" not in status_logger
     assert "C:" not in status_logger
 
 
-def test_line_detector_logs_geometry_gate_state_for_offset_diagnostics():
+def test_line_detector_keeps_geometry_gate_state_for_offset_diagnostics():
     source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     detector = ast.unparse(_function(tree, "detect_and_draw_grid_lines"))
@@ -676,8 +743,8 @@ def test_line_detector_logs_geometry_gate_state_for_offset_diagnostics():
     )
 
     assert "selected_parallel_line is not None" in detector
-    assert "line={status[0]}" in status_logger
-    assert "geometry={status[2]}" in status_logger
+    assert "bool(line_detected)" in status_logger
+    assert "bool(geometry_valid)" in status_logger
     assert "streak=" not in detector
 
 
