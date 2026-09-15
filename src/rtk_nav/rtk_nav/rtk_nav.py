@@ -4769,13 +4769,16 @@ class RTKNavControlNode(Node):
         ):
             return 0.0
         correction = 0.0
-        if heading_fresh:  # 视觉航向误差的符号很可能反了,已修改待验证
+        # 与相机 0 度安装方向下的室内控制器保持同一视觉误差约定：
+        # 正视觉误差对应负轮速纠偏量。RTK 原生 Stanley 横向项在外层
+        # 单独计算，不能在这里一起取反。
+        if heading_fresh:
             self._last_visual_heading_correction = (
-                self.visual_heading_gain * self.visual_sample_heading_error_deg
+                -self.visual_heading_gain * self.visual_sample_heading_error_deg
             )
         if lateral_fresh:
             self._last_visual_lateral_correction = (
-                self.visual_lateral_gain * self.visual_sample_lateral_error_m
+                -self.visual_lateral_gain * self.visual_sample_lateral_error_m
             )
         correction = (
             self._last_visual_heading_correction

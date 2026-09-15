@@ -30,6 +30,7 @@ def _helpers():
         "select_most_salient_line",
         "select_tracking_candidates",
         "select_center_line_candidates",
+        "select_coarse_white_lines",
         "line_normal_offset_at_reference",
         "select_line_for_tracking",
         "update_line_tracking_state",
@@ -98,6 +99,23 @@ def test_center_line_candidates_reject_lines_near_image_edges():
     assert selected == [center]
 
 
+def test_center_line_candidates_reject_lines_near_top_and_bottom_edges():
+    helpers = _helpers()
+    center = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 8.0, 0.90)
+    top_edge = (320, 0, 320, 60, 60.0, 90.0, 320.0, 30.0, 8.0, 0.90)
+    bottom_edge = (320, 420, 320, 480, 60.0, 90.0, 320.0, 450.0, 8.0, 0.90)
+
+    selected = helpers["select_center_line_candidates"](
+        [center, top_edge, bottom_edge],
+        90.0,
+        640,
+        480,
+        center_band_ratio=0.8,
+    )
+
+    assert selected == [center]
+
+
 def test_center_line_candidates_keep_multiple_lines_for_angle_average():
     helpers = _helpers()
     first = (285, 0, 300, 480, 480.0, 80.0, 292.5, 240.0, 8.0, 0.90)
@@ -139,6 +157,46 @@ def test_angle_candidates_follow_slanted_grid_not_rtk_axis():
     )
 
 
+def test_angle_candidates_follow_axis_perpendicular_to_running_direction():
+    helpers = _helpers()
+    running_axis = 90.0
+    perpendicular_line = (
+        0,
+        240,
+        640,
+        240,
+        640.0,
+        0.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+    running_direction_line = (
+        320,
+        0,
+        320,
+        480,
+        480.0,
+        90.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+
+    selected = helpers["select_angle_line_candidates"](
+        [perpendicular_line, running_direction_line],
+        helpers["undirected_angle"](running_axis + 90.0),
+        640,
+        480,
+        center_band_ratio=0.8,
+        max_angle_delta_deg=25.0,
+    )
+
+    assert selected == [perpendicular_line]
+
+
 def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
     helpers = _helpers()
     edge = (20, 0, 20, 480, 480.0, 90.0, 20.0, 240.0, 8.0, 0.90)
@@ -155,7 +213,7 @@ def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
     assert selected[0] == edge
 
 
-def test_tracking_prefers_coarse_lines_and_falls_back_to_fine_lines():
+def test_lateral_tracking_uses_only_path_parallel_coarse_lines():
     helpers = _helpers()
     coarse = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 8.0, 0.9)
     fine = (300, 0, 300, 480, 480.0, 90.0, 300.0, 240.0, 2.0, 0.8)
@@ -165,8 +223,8 @@ def test_tracking_prefers_coarse_lines_and_falls_back_to_fine_lines():
     assert source == "coarse"
 
     selected, source = helpers["select_tracking_candidates"]([], [fine])
-    assert selected == [fine]
-    assert source == "fine"
+    assert selected == []
+    assert source == "none"
 
     selected, source = helpers["select_tracking_candidates"]([], [])
     assert selected == []
@@ -232,6 +290,29 @@ def test_angle_lines_are_filtered_by_length_after_gap_bridging():
     )
 
     assert selected == [connected]
+
+
+def test_angle_lines_reject_wide_reflection_candidates():
+    helpers = _helpers()
+    thin_grid = (40, 0, 40, 120, 120.0, 90.0, 40.0, 60.0, 2.5, 0.9)
+    wide_reflection = (
+        80,
+        0,
+        80,
+        120,
+        120.0,
+        90.0,
+        80.0,
+        60.0,
+        14.0,
+        0.95,
+    )
+
+    selected = helpers["select_coarse_white_lines"](
+        [thin_grid, wide_reflection], 12.0, 1.0, 0.20, 6.0
+    )
+
+    assert selected == [thin_grid]
 
 
 def test_debug_text_wraps_to_the_requested_pixel_width():
@@ -347,6 +428,41 @@ def test_tracking_rejects_candidates_that_jump_beyond_gate():
         )
         is None
     )
+
+
+def test_tracking_rejects_the_indoor_adjacent_grid_line_jump():
+    helpers = _helpers()
+    locked = (320, 0, 320, 480, 480.0, 90.0, 320.0, 240.0, 8.0, 0.90)
+    adjacent_grid = (398, 0, 398, 480, 480.0, 90.0, 398.0, 240.0, 30.0, 1.00)
+
+    selected, anchor, missed, status = helpers["update_line_tracking_state"](
+        [locked],
+        90.0,
+        640,
+        480,
+        max_jump_px=30.0,
+        max_missed_frames=2,
+    )
+    assert selected == locked
+    assert math.isclose(anchor, 0.0, abs_tol=1e-9)
+    assert missed == 0
+    assert status == "acquired"
+
+    selected, next_anchor, missed, status = helpers[
+        "update_line_tracking_state"
+    ](
+        [adjacent_grid],
+        90.0,
+        640,
+        480,
+        previous_offset_px=anchor,
+        max_jump_px=30.0,
+        max_missed_frames=2,
+    )
+    assert selected is None
+    assert math.isclose(next_anchor, 0.0, abs_tol=1e-9)
+    assert missed == 1
+    assert status == "rejected"
 
 
 def test_tracking_reacquires_only_near_the_last_valid_anchor():

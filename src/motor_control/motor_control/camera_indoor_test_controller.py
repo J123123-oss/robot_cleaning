@@ -80,17 +80,17 @@ def compute_indoor_control(
         or heading_deadband_deg < 0.0
         or lateral_deadband_m < 0.0
         or not detected
-        or not heading_valid
+        or (not heading_valid and not lateral_valid)
         or confidence < min_confidence
     ):
         return 0.0, 0.0, 0.0, 0.0, 0.0
 
     heading_correction = 0.0
-    if abs(angle_deg) > heading_deadband_deg:
-        heading_correction = heading_gain * angle_deg
+    if heading_valid and abs(angle_deg) > heading_deadband_deg:
+        heading_correction = -heading_gain * angle_deg
     lateral_correction = 0.0
     if lateral_valid and abs(lateral_m) > lateral_deadband_m:
-        lateral_correction = lateral_gain * lateral_m
+        lateral_correction = -lateral_gain * lateral_m
     correction = heading_correction + lateral_correction
     correction = clamp(correction, -max_correction, max_correction)
     # 不允许纠偏把前进中的一侧轮反向，避免室内测试变成原地旋转。
@@ -150,7 +150,7 @@ class CameraIndoorTestController(Node):
         self.declare_parameter('max_correction', 0.8)
         self.declare_parameter('min_confidence', 0.5)
         self.declare_parameter('visual_timeout_sec', 0.5)
-        self.declare_parameter('heading_deadband_deg', 0.5)
+        self.declare_parameter('heading_deadband_deg', 1.0)
         self.declare_parameter('lateral_deadband_m', 0.03)
         self.declare_parameter('control_frequency', 20.0)
         self.declare_parameter('brush_motor_count', 2)

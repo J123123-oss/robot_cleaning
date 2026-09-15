@@ -151,6 +151,10 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
         "angle_line_hough_threshold",
         "angle_line_hough_gap_px",
         "angle_line_min_merged_length_px",
+        "angle_line_max_width_px",
+        "angle_line_overlay_thickness_px",
+        "angle_line_overlay_outline_thickness_px",
+        "tracked_line_overlay_thickness_px",
         "angle_line_gap_fill_px",
         "angle_line_bridge_angle_tolerance_deg",
         "angle_line_axis_tolerance_deg",
@@ -164,12 +168,16 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
     assert "select_tracking_candidates" in detector
     assert "tracking_source" in detector
     assert "select_angle_line_candidates" in detector
-    assert "angle_reference_axis_image" in detector
+    assert "cross_axis_image" in detector
+    assert "fine_line_axis_image = cross_axis_image" in detector
     assert "angle_parallel_group" in detector
     assert "angle_lines = select_center_line_candidates" in detector
     assert "angle_parallel_group" in detector.split(
         "angle_lines = select_center_line_candidates", 1
     )[1]
+    assert "select_tracking_candidates(parallel_group)" in detector
+    assert "select_tracking_candidates(parallel_group, angle_lines)" not in detector
+    assert "parallel_angle - fine_line_axis_image" in detector
     assert any(
         isinstance(node, ast.If)
         and isinstance(node.test, ast.BoolOp)
@@ -235,6 +243,21 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         assert f"value_type={value_type}" in source
 
 
+def test_indoor_launch_forwards_constrained_line_tracking_parameters():
+    source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    for name, default, value_type in (
+        ("line_tracking_enabled", "true", "bool"),
+        ("max_line_tracking_jump_px", "30.0", "float"),
+        ("max_line_tracking_missed_frames", "2", "int"),
+    ):
+        assert f"'{name}'" in source
+        assert f"default_value=TextSubstitution(text='{default}')" in source
+        assert f"'{name}': ParameterValue(" in source
+        assert f"LaunchConfiguration('{name}')" in source
+        assert f"value_type={value_type}" in source
+
+
 def test_launch_exposes_fine_line_detection_tuning_to_both_detectors():
     expected = (
         ('white_line_value_threshold', '170.0', 'float'),
@@ -242,11 +265,15 @@ def test_launch_exposes_fine_line_detection_tuning_to_both_detectors():
         ('angle_average_center_band_ratio', '0.8', 'float'),
         ('angle_line_min_length_px', '12.0', 'float'),
         ('angle_line_min_width_px', '1.0', 'float'),
+        ('angle_line_max_width_px', '6.0', 'float'),
         ('angle_line_min_support', '0.20', 'float'),
         ('angle_line_hough_threshold', '8', 'int'),
         ('angle_line_hough_gap_px', '2.0', 'float'),
         ('angle_line_gap_fill_px', '25.0', 'float'),
         ('angle_line_min_merged_length_px', '60.0', 'float'),
+        ('angle_line_overlay_thickness_px', '1', 'int'),
+        ('angle_line_overlay_outline_thickness_px', '2', 'int'),
+        ('tracked_line_overlay_thickness_px', '2', 'int'),
     )
     for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
         source = launch_path.read_text(encoding="utf-8")
@@ -484,7 +511,7 @@ def test_line_detector_invalidates_all_visual_outputs_outside_waypoint_move():
         "lateral_state_valid and self.lateral_valid_streak >= self.reacquire_frames"
         in detector
     )
-    assert "detected = heading_valid" in detector
+    assert "detected = heading_valid or lateral_valid" in detector
 
 
 def test_openmv_publisher_is_the_only_runtime_camera_source():
@@ -871,6 +898,28 @@ def test_line_detector_applies_image_rotation_sign_before_reference_zero():
     assert "lateral_m *= self.lateral_error_sign" in detector
 
 
+def test_zero_degree_camera_rotation_defaults_use_tested_visual_sign_convention():
+    detector_source = LINE_DETECTOR_SOURCE_PATH.read_text(encoding="utf-8")
+    publisher_source = (
+        Path(__file__).parents[1] / "rtk_nav" / "openmv_serial_publisher_node.py"
+    ).read_text(encoding="utf-8")
+    outdoor_source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+    indoor_source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    assert "declare_parameter('image_rotation_deg', 0)" in detector_source
+    assert 'self.declare_parameter("image_rotation_deg", 0)' in publisher_source
+    assert 'default_value=TextSubstitution(text="0")' in outdoor_source
+    assert "default_value=TextSubstitution(text='0')" in indoor_source
+    assert "lateral_error_sign_for_image_rotation" in detector_source
+    assert "lateral_m *= self.lateral_error_sign" in detector_source
+    assert "-self.visual_heading_gain * self.visual_sample_heading_error_deg" in (
+        RTK_SOURCE_PATH.read_text(encoding="utf-8")
+    )
+    assert "-self.visual_lateral_gain * self.visual_sample_lateral_error_m" in (
+        RTK_SOURCE_PATH.read_text(encoding="utf-8")
+    )
+
+
 def test_rtk_consumes_independent_visual_components_with_separate_gates():
     source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -941,7 +990,7 @@ def test_visual_correction_uses_one_atomic_sample_timestamp():
 
     state = VisualState()
     assert math.isclose(
-        namespace["get_visual_steering_correction"](state), 2.0, abs_tol=1e-9
+        namespace["get_visual_steering_correction"](state), -2.0, abs_tol=1e-9
     )
 
     state.last_visual_sample_time = time.monotonic() - 1.0
@@ -1104,7 +1153,7 @@ def test_visual_steering_correction_requires_fresh_confident_motion_sample():
 
     state = VisualState()
     correction = namespace["get_visual_steering_correction"](state)
-    assert math.isclose(correction, 1.0, abs_tol=1e-9)
+    assert math.isclose(correction, -1.0, abs_tol=1e-9)
 
     state.visual_sample_heading_confidence = 0.1
     assert namespace["get_visual_steering_correction"](state) == 0.0
@@ -1159,7 +1208,7 @@ def test_visual_steering_correction_uses_only_independently_valid_components():
 
     state = VisualState()
     assert math.isclose(
-        namespace["get_visual_steering_correction"](state), 2.0, abs_tol=1e-9
+        namespace["get_visual_steering_correction"](state), -2.0, abs_tol=1e-9
     )
 
     state.visual_sample_heading_valid = False
@@ -1168,5 +1217,5 @@ def test_visual_steering_correction_uses_only_independently_valid_components():
     state.visual_sample_lateral_confidence = 0.8
     state.last_visual_sample_time = time.monotonic()
     assert math.isclose(
-        namespace["get_visual_steering_correction"](state), 20.0, abs_tol=1e-9
+        namespace["get_visual_steering_correction"](state), -20.0, abs_tol=1e-9
     )

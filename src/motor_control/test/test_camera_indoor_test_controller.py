@@ -73,8 +73,8 @@ def test_opposite_error_signs_produce_opposite_differential_corrections():
     """Positive and negative visual errors must turn in opposite directions."""
     positive = _speeds(angle_deg=10.0)
     negative = _speeds(angle_deg=-10.0)
-    assert positive[0] > negative[0]
-    assert positive[1] > negative[1]
+    assert positive[0] < negative[0]
+    assert positive[1] < negative[1]
     assert positive != negative
 
 
@@ -89,8 +89,50 @@ def test_lateral_error_is_used_only_when_lateral_geometry_is_valid():
 def test_invalid_detection_or_confidence_stops_all_wheel_motion():
     """The controller must fail safe when visual data cannot be trusted."""
     assert _speeds(detected=False) == (0.0, 0.0)
-    assert _speeds(heading_valid=False) == (0.0, 0.0)
+    assert _speeds(heading_valid=False, lateral_valid=False) == (0.0, 0.0)
     assert _speeds(confidence=0.49) == (0.0, 0.0)
+
+
+def test_lateral_only_geometry_keeps_forward_motion_when_heading_is_missing():
+    """A locked coarse line may control lateral error without fine angle data."""
+    result = _control()(
+        angle_deg=12.0,
+        lateral_m=0.1,
+        detected=True,
+        confidence=0.9,
+        heading_valid=False,
+        lateral_valid=True,
+        base_speed=1.0,
+        heading_gain=0.05,
+        lateral_gain=5.0,
+        max_correction=0.8,
+        min_confidence=0.5,
+        heading_deadband_deg=0.5,
+        lateral_deadband_m=0.01,
+    )
+
+    assert result == (-1.5, 0.5, 0.0, -0.5, -0.5)
+
+
+def test_heading_only_geometry_keeps_forward_motion_when_lateral_is_missing():
+    """Fine angle data may control heading without a current lateral line."""
+    result = _control()(
+        angle_deg=10.0,
+        lateral_m=1.0,
+        detected=True,
+        confidence=0.9,
+        heading_valid=True,
+        lateral_valid=False,
+        base_speed=1.0,
+        heading_gain=0.05,
+        lateral_gain=5.0,
+        max_correction=0.8,
+        min_confidence=0.5,
+        heading_deadband_deg=0.5,
+        lateral_deadband_m=0.01,
+    )
+
+    assert result == (-1.5, 0.5, -0.5, 0.0, -0.5)
 
 
 def test_correction_does_not_reverse_a_wheel():
@@ -117,7 +159,7 @@ def test_control_result_exposes_corrections_used_by_debug_log():
         heading_deadband_deg=0.5,
         lateral_deadband_m=0.01,
     )
-    expected = (-0.2, 1.8, 0.5, 0.5, 0.8)
+    expected = (-1.8, 0.2, -0.5, -0.5, -0.8)
     assert all(
         math.isclose(actual, target, rel_tol=0.0, abs_tol=1e-9)
         for actual, target in zip(result, expected)

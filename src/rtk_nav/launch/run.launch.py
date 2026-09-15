@@ -135,7 +135,7 @@ def generate_launch_description():
     )
     declare_camera_image_rotation_arg = DeclareLaunchArgument(
         "camera_image_rotation_deg",
-        default_value=TextSubstitution(text="180"),
+        default_value=TextSubstitution(text="0"),
         description="Rotate OpenMV image before publishing: 0, 90, 180, or 270 degrees",
     )
     declare_detection_fps_arg = DeclareLaunchArgument(
@@ -256,6 +256,13 @@ def generate_launch_description():
         default_value=TextSubstitution(text="1.0"),
         description="Minimum estimated fine-line width in pixels",
     )
+    declare_angle_line_max_width_arg = DeclareLaunchArgument(
+        "angle_line_max_width_px",
+        default_value=TextSubstitution(text="6.0"),
+        description=(
+            "Maximum estimated fine-line width; reject broad reflection bands"
+        ),
+    )
     declare_angle_line_min_support_arg = DeclareLaunchArgument(
         "angle_line_min_support",
         default_value=TextSubstitution(text="0.20"),
@@ -270,6 +277,21 @@ def generate_launch_description():
         "angle_line_min_merged_length_px",
         default_value=TextSubstitution(text="60.0"),
         description="Minimum bridged fine-line length used for angle statistics",
+    )
+    declare_angle_line_overlay_thickness_arg = DeclareLaunchArgument(
+        "angle_line_overlay_thickness_px",
+        default_value=TextSubstitution(text="1"),
+        description="Fine-line debug overlay thickness in pixels",
+    )
+    declare_angle_line_overlay_outline_thickness_arg = DeclareLaunchArgument(
+        "angle_line_overlay_outline_thickness_px",
+        default_value=TextSubstitution(text="2"),
+        description="Fine-line debug overlay outline thickness in pixels",
+    )
+    declare_tracked_line_overlay_thickness_arg = DeclareLaunchArgument(
+        "tracked_line_overlay_thickness_px",
+        default_value=TextSubstitution(text="2"),
+        description="Tracked reference-line debug overlay thickness in pixels",
     )
     declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
         "enable_grid_line_stream",
@@ -548,6 +570,10 @@ def generate_launch_description():
                     LaunchConfiguration('angle_line_min_width_px'),
                     value_type=float,
                 ),
+                'angle_line_max_width_px': ParameterValue(
+                    LaunchConfiguration('angle_line_max_width_px'),
+                    value_type=float,
+                ),
                 'angle_line_min_support': ParameterValue(
                     LaunchConfiguration('angle_line_min_support'),
                     value_type=float,
@@ -563,6 +589,18 @@ def generate_launch_description():
                 'angle_line_min_merged_length_px': ParameterValue(
                     LaunchConfiguration('angle_line_min_merged_length_px'),
                     value_type=float,
+                ),
+                'angle_line_overlay_thickness_px': ParameterValue(
+                    LaunchConfiguration('angle_line_overlay_thickness_px'),
+                    value_type=int,
+                ),
+                'angle_line_overlay_outline_thickness_px': ParameterValue(
+                    LaunchConfiguration('angle_line_overlay_outline_thickness_px'),
+                    value_type=int,
+                ),
+                'tracked_line_overlay_thickness_px': ParameterValue(
+                    LaunchConfiguration('tracked_line_overlay_thickness_px'),
+                    value_type=int,
                 ),
                 'bypass_path_context_gate': ParameterValue(
                     LaunchConfiguration("bypass_path_context_gate"),
@@ -731,9 +769,13 @@ def generate_launch_description():
     ld.add_action(declare_angle_average_center_band_ratio_arg)
     ld.add_action(declare_angle_line_min_length_arg)
     ld.add_action(declare_angle_line_min_width_arg)
+    ld.add_action(declare_angle_line_max_width_arg)
     ld.add_action(declare_angle_line_min_support_arg)
     ld.add_action(declare_angle_line_hough_threshold_arg)
     ld.add_action(declare_angle_line_min_merged_length_arg)
+    ld.add_action(declare_angle_line_overlay_thickness_arg)
+    ld.add_action(declare_angle_line_overlay_outline_thickness_arg)
+    ld.add_action(declare_tracked_line_overlay_thickness_arg)
     ld.add_action(declare_enable_grid_line_stream_arg)
     ld.add_action(declare_grid_line_stream_rtsp_url_arg)
     ld.add_action(declare_grid_line_stream_fps_arg)

@@ -481,19 +481,34 @@ def select_most_salient_line(lines):
     return best_line
 
 
-def select_tracking_candidates(coarse_lines, fine_lines):
-    """优先使用粗线跟踪，粗线缺失时回退到中心细栅格线。"""
+def select_tracking_candidates(coarse_lines, _fine_lines=None):
+    """只选择与运行方向平行的粗线作为横向跟踪参考。"""
     if coarse_lines:
         return list(coarse_lines), 'coarse'
-    if fine_lines:
-        return list(fine_lines), 'fine'
     return [], 'none'
 
 
 def select_coarse_white_lines(
-    lines, min_length_px, min_width_px, min_white_support
+    lines,
+    min_length_px,
+    min_width_px,
+    min_white_support,
+    max_width_px=None,
 ):
-    """保留长度、白色带宽度和白色支持度都足够的线段。"""
+    """保留长度、白色带宽度和白色支持度都足够的线段。
+
+    ``max_width_px`` 仅用于细栅格角度候选：宽的高亮区域更可能是反光，
+    不应作为一条细栅格线参与角度统计。
+    """
+    if max_width_px is None:
+        max_width = float('inf')
+    else:
+        try:
+            max_width = float(max_width_px)
+        except (TypeError, ValueError, OverflowError):
+            return []
+        if not math.isfinite(max_width) or max_width <= 0.0:
+            return []
     selected = []
     for line in lines:
         if len(line) < 10:
@@ -509,6 +524,7 @@ def select_coarse_white_lines(
         if (
             length >= float(min_length_px)
             and width >= float(min_width_px)
+            and width <= max_width
             and support >= float(min_white_support)
         ):
             selected.append(line)
@@ -741,11 +757,12 @@ def center_band_half_extent_px(width, height, axis_angle_deg, center_band_ratio)
 def select_center_line_candidates(
     lines, axis_angle_deg, width, height, center_band_ratio
 ):
-    """选择图像中心带内的平行线，降低镜头边缘畸变对角度的影响。
+    """选择图像中心矩形内的平行线，降低镜头边缘畸变对角度的影响。
 
     ``center_band_ratio`` 表示中心带相对图像法向可视范围的比例，取值
-    为 ``(0, 1]``。候选线的位置使用运行轴法向投影判断，而不是使用
-    线段端点，因此对线段截取范围和运行轴方向都保持稳定。
+    为 ``(0, 1]``。候选线的位置同时使用运行轴法向投影和线段中心点的
+    图像坐标判断：前者保持对运行轴方向的兼容，后者额外排除图像上下
+    边缘的畸变区域。
     """
     try:
         axis_angle_deg = float(axis_angle_deg)
@@ -758,18 +775,41 @@ def select_center_line_candidates(
     )
     if not math.isfinite(max_center_offset):
         return []
+    image_center_x = width / 2.0
+    image_center_y = height / 2.0
+    max_center_x_offset = image_center_x * float(center_band_ratio)
+    max_center_y_offset = image_center_y * float(center_band_ratio)
+    if not all(
+        math.isfinite(value)
+        for value in (
+            image_center_x,
+            image_center_y,
+            max_center_x_offset,
+            max_center_y_offset,
+        )
+    ):
+        return []
 
     selected = []
     for line in lines or []:
         try:
             line_length = float(line[4])
             line_angle = float(line[5])
+            line_center_x = float(line[6])
+            line_center_y = float(line[7])
         except (IndexError, TypeError, ValueError):
             continue
         if (
             not math.isfinite(line_length)
             or line_length <= 0.0
             or not math.isfinite(line_angle)
+            or not math.isfinite(line_center_x)
+            or not math.isfinite(line_center_y)
+        ):
+            continue
+        if (
+            abs(line_center_x - image_center_x) > max_center_x_offset
+            or abs(line_center_y - image_center_y) > max_center_y_offset
         ):
             continue
         offset = line_normal_offset_at_reference(
@@ -782,27 +822,27 @@ def select_center_line_candidates(
 
 def select_angle_line_candidates(
     lines,
-    reference_axis_angle_deg,
+    target_axis_angle_deg,
     width,
     height,
     center_band_ratio,
     max_angle_delta_deg,
 ):
-    """选择中心带内、接近相机参考轴的细栅格线。"""
+    """选择中心带内、接近目标轴的细栅格线。"""
     try:
-        reference_axis_angle_deg = float(reference_axis_angle_deg)
+        target_axis_angle_deg = float(target_axis_angle_deg)
         max_angle_delta_deg = float(max_angle_delta_deg)
     except (TypeError, ValueError, OverflowError):
         return []
     if (
-        not math.isfinite(reference_axis_angle_deg)
+        not math.isfinite(target_axis_angle_deg)
         or not math.isfinite(max_angle_delta_deg)
         or max_angle_delta_deg < 0.0
     ):
         return []
     center_lines = select_center_line_candidates(
         lines,
-        reference_axis_angle_deg,
+        target_axis_angle_deg,
         width,
         height,
         center_band_ratio,
@@ -810,7 +850,7 @@ def select_angle_line_candidates(
     return [
         line
         for line in center_lines
-        if undirected_angle_distance(line[5], reference_axis_angle_deg)
+        if undirected_angle_distance(line[5], target_axis_angle_deg)
         <= max_angle_delta_deg
     ]
 
@@ -1116,10 +1156,10 @@ class GridLineDetector(Node):
         # 没有新鲜 RTK 方向时使用的图像运行轴，单位为度。
         # 图像坐标约定为 0 度向右、90 度向下。
         self.declare_parameter('fallback_path_axis_image_deg', -5.0)
-        # 细栅格角度相对的相机参考轴，默认使用图像竖直方向，单位为度。
+        # 旧版细栅格相机参考轴参数；保留用于兼容配置，检测改用运行轴法向。
         self.declare_parameter('angle_reference_axis_image_deg', 0.0)
         # OpenMV 发布前的图像旋转角度；180 度时需要反转横向误差符号。
-        self.declare_parameter('image_rotation_deg', 180)
+        self.declare_parameter('image_rotation_deg', 0)
         # 已停用的旧参数声明，仅保留以兼容历史配置文件。
         # self.declare_parameter('target_line_offset_m', float('nan'))
         # 目标参考线相对图像中心的横向偏移，单位为米；当前单线模式以中心为零点。
@@ -1169,6 +1209,8 @@ class GridLineDetector(Node):
         self.declare_parameter('angle_line_min_length_px', 12.0)
         # 角度统计保留更细栅格线的最小估计宽度，单位为像素。
         self.declare_parameter('angle_line_min_width_px', 1.0)
+        # 角度统计细线的最大估计宽度，单位为像素；宽亮反光带不参与统计。
+        self.declare_parameter('angle_line_max_width_px', 6.0)
         # 角度统计细线沿线被白色掩膜支持的最小比例。
         self.declare_parameter('angle_line_min_support', 0.20)
         # 角度统计细线的 Hough 累加阈值，低于粗线阈值以保留弱细线。
@@ -1185,6 +1227,12 @@ class GridLineDetector(Node):
         self.declare_parameter('angle_line_merge_gap_px', 5.0)
         # 断点连接后参与角度平均和细线回退跟踪的最小总长度，单位为像素。
         self.declare_parameter('angle_line_min_merged_length_px', 60.0)
+        # 角度统计细线在调试图中的显示宽度，单位为像素。
+        self.declare_parameter('angle_line_overlay_thickness_px', 1)
+        # 细线显示用的深色轮廓宽度，单位为像素。
+        self.declare_parameter('angle_line_overlay_outline_thickness_px', 2)
+        # 当前跟踪参考线在调试图中的显示宽度，单位为像素。
+        self.declare_parameter('tracked_line_overlay_thickness_px', 2)
         # 检测定时器频率，单位为 FPS；只处理最新压缩图像帧。
         self.declare_parameter('detection_fps', 30.0)
         # 是否发布检测标注图、灰度图、二值图和边缘图调试话题。
@@ -1300,6 +1348,9 @@ class GridLineDetector(Node):
         self.angle_line_min_width_px = float(
             self.get_parameter('angle_line_min_width_px').value
         )
+        self.angle_line_max_width_px = float(
+            self.get_parameter('angle_line_max_width_px').value
+        )
         self.angle_line_min_support = float(
             self.get_parameter('angle_line_min_support').value
         )
@@ -1325,6 +1376,17 @@ class GridLineDetector(Node):
         )
         self.angle_line_min_merged_length_px = float(
             self.get_parameter('angle_line_min_merged_length_px').value
+        )
+        self.angle_line_overlay_thickness_px = int(
+            self.get_parameter('angle_line_overlay_thickness_px').value
+        )
+        self.angle_line_overlay_outline_thickness_px = int(
+            self.get_parameter(
+                'angle_line_overlay_outline_thickness_px'
+            ).value
+        )
+        self.tracked_line_overlay_thickness_px = int(
+            self.get_parameter('tracked_line_overlay_thickness_px').value
         )
         self.detection_fps = float(self.get_parameter('detection_fps').value)
         self.publish_debug_images_enabled = bool(
@@ -1450,6 +1512,14 @@ class GridLineDetector(Node):
         ):
             raise ValueError('angle_line_min_width_px must be finite and > 0')
         if (
+            not math.isfinite(self.angle_line_max_width_px)
+            or self.angle_line_max_width_px < self.angle_line_min_width_px
+        ):
+            raise ValueError(
+                'angle_line_max_width_px must be finite and >= '
+                'angle_line_min_width_px'
+            )
+        if (
             not math.isfinite(self.angle_line_min_support)
             or not 0.0 <= self.angle_line_min_support <= 1.0
         ):
@@ -1499,6 +1569,14 @@ class GridLineDetector(Node):
             raise ValueError(
                 'angle_line_min_merged_length_px must be finite and > 0'
             )
+        if self.angle_line_overlay_thickness_px <= 0:
+            raise ValueError('angle_line_overlay_thickness_px must be > 0')
+        if self.angle_line_overlay_outline_thickness_px <= 0:
+            raise ValueError(
+                'angle_line_overlay_outline_thickness_px must be > 0'
+            )
+        if self.tracked_line_overlay_thickness_px <= 0:
+            raise ValueError('tracked_line_overlay_thickness_px must be > 0')
         if not math.isfinite(self.detection_fps) or self.detection_fps <= 0.0:
             raise ValueError('detection_fps must be finite and > 0')
         if not math.isfinite(self.fallback_path_axis_image_deg):
@@ -2142,9 +2220,6 @@ class GridLineDetector(Node):
         self.update_tracking_axis(
             directed_path_axis_image, path_axis_source
         )
-        angle_reference_axis_image = undirected_angle(
-            self.angle_reference_axis_image_deg
-        )
         # Keep the raw fine-line mask. Gap filling is performed after Hough
         # detection using each segment's own direction and support metrics.
         angle_edges = cv2.Canny(
@@ -2261,6 +2336,7 @@ class GridLineDetector(Node):
             self.angle_line_min_length_px,
             self.angle_line_min_width_px,
             self.angle_line_min_support,
+            self.angle_line_max_width_px,
         )
         if not coarse_lines and not angle_candidate_lines:
             _, _, tracking_status = self.choose_parallel_line(
@@ -2320,12 +2396,14 @@ class GridLineDetector(Node):
             self.coarse_line_merge_gap_px,
         )
 
-        # Fine-line heading is camera-referenced. RTK remains the lateral
-        # tracking coordinate system, but must not discard a grid family that
-        # is visibly slanted relative to the RTK-derived image axis.
+        # Fine grid lines are expected to cross the running direction. Their
+        # target axis must follow the effective path axis so a turn or a
+        # fallback-axis change cannot make the detector watch the wrong grid
+        # family.
+        fine_line_axis_image = cross_axis_image
         angle_parallel_group = select_angle_line_candidates(
             angle_candidate_lines,
-            angle_reference_axis_image,
+            fine_line_axis_image,
             width,
             height,
             self.angle_average_center_band_ratio,
@@ -2333,7 +2411,7 @@ class GridLineDetector(Node):
         )
         angle_parallel_group = bridge_collinear_line_records(
             angle_parallel_group,
-            angle_reference_axis_image,
+            fine_line_axis_image,
             self.angle_line_gap_fill_px,
             self.angle_line_merge_gap_px,
             self.angle_line_bridge_angle_tolerance_deg,
@@ -2347,19 +2425,18 @@ class GridLineDetector(Node):
         # lateral position intentionally keeps the separately tracked line.
         angle_lines = select_center_line_candidates(
             angle_parallel_group,
-            angle_reference_axis_image,
+            fine_line_axis_image,
             width,
             height,
             self.angle_average_center_band_ratio,
         )
         parallel_angle = weighted_line_angle(angle_lines)
 
-        # Keep coarse tracking as the primary lateral reference. If reflection
-        # removes every coarse candidate, use a center-band fine line so the
-        # tracked lateral reference can bridge the same visual interruption as
-        # the heading estimator.
+        # A line crossing the running direction has no stable lateral offset:
+        # its normal is longitudinal. Keep lateral tracking on path-parallel
+        # coarse lines only, even when fine lines are available for heading.
         tracking_candidates, tracking_source = select_tracking_candidates(
-            parallel_group, angle_lines
+            parallel_group
         )
         selected_parallel_line, selected_line_offset, tracking_status = (
             self.choose_parallel_line(
@@ -2379,14 +2456,14 @@ class GridLineDetector(Node):
                     (line[0], line[1]),
                     (line[2], line[3]),
                     (0, 0, 0),
-                    5,
+                    self.angle_line_overlay_outline_thickness_px,
                 )
                 cv2.line(
                     display,
                     (line[0], line[1]),
                     (line[2], line[3]),
                     (0, 255, 255),
-                    3,
+                    self.angle_line_overlay_thickness_px,
                 )
             if selected_parallel_line is not None:
                 cv2.line(
@@ -2394,7 +2471,7 @@ class GridLineDetector(Node):
                     (selected_parallel_line[0], selected_parallel_line[1]),
                     (selected_parallel_line[2], selected_parallel_line[3]),
                     (0, 0, 255),
-                    4,
+                    self.tracked_line_overlay_thickness_px,
                 )
         heading_geometry = bool(angle_lines) and (
             parallel_angle is not None
@@ -2441,7 +2518,7 @@ class GridLineDetector(Node):
             self.lateral_valid_streak = 0
         self.valid_streak = self.lateral_valid_streak
         heading_error = (
-            undirected_angle(parallel_angle - angle_reference_axis_image)
+            undirected_angle(parallel_angle - fine_line_axis_image)
             if heading_geometry
             else 0.0
         )
@@ -2505,7 +2582,10 @@ class GridLineDetector(Node):
             and self.lateral_valid_streak >= self.reacquire_frames
             and lateral_reference_valid
         )
-        detected = heading_valid
+        # Either independent geometry can keep the indoor chain moving. A
+        # missing fine-line angle must disable only heading correction; a
+        # locked coarse line can still provide valid lateral correction.
+        detected = heading_valid or lateral_valid
         output_angle = heading_error if heading_valid else 0.0
         output_lateral = relative_lateral_m if lateral_valid else 0.0
         heading_confidence = 0.0

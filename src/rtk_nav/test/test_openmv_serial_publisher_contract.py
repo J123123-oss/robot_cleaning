@@ -41,7 +41,7 @@ def test_ros_node_supports_camera_mounting_rotation():
     assert 'self.declare_parameter("image_rotation_deg", 0)' in NODE_SOURCE
     assert "transform_jpeg_payload" in NODE_SOURCE
     assert "camera_image_rotation_deg" in LAUNCH_SOURCE
-    assert "default_value=TextSubstitution(text=\"180\")" in LAUNCH_SOURCE
+    assert "default_value=TextSubstitution(text=\"0\")" in LAUNCH_SOURCE
 
 
 def test_ros_node_supports_direct_file_execution():

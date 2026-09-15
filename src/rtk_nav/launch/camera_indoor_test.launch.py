@@ -35,8 +35,23 @@ def generate_launch_description():
     )
     declare_camera_image_rotation_arg = DeclareLaunchArgument(
         'camera_image_rotation_deg',
-        default_value=TextSubstitution(text='180'),
+        default_value=TextSubstitution(text='0'),
         description='Rotate OpenMV image before publishing: 0, 90, 180, or 270 degrees',
+    )
+    declare_line_tracking_enabled_arg = DeclareLaunchArgument(
+        'line_tracking_enabled',
+        default_value=TextSubstitution(text='true'),
+        description='Track one parallel line across frames',
+    )
+    declare_line_tracking_jump_arg = DeclareLaunchArgument(
+        'max_line_tracking_jump_px',
+        default_value=TextSubstitution(text='30.0'),
+        description='Maximum accepted line-normal jump in pixels',
+    )
+    declare_line_tracking_missed_arg = DeclareLaunchArgument(
+        'max_line_tracking_missed_frames',
+        default_value=TextSubstitution(text='2'),
+        description='Missed frames before constrained line reacquisition',
     )
     declare_base_speed_arg = DeclareLaunchArgument(
         'base_speed',
@@ -166,6 +181,13 @@ def generate_launch_description():
         default_value=TextSubstitution(text='1.0'),
         description='Minimum estimated fine-line width in pixels',
     )
+    declare_angle_line_max_width_arg = DeclareLaunchArgument(
+        'angle_line_max_width_px',
+        default_value=TextSubstitution(text='6.0'),
+        description=(
+            'Maximum estimated fine-line width; reject broad reflection bands'
+        ),
+    )
     declare_angle_line_min_support_arg = DeclareLaunchArgument(
         'angle_line_min_support',
         default_value=TextSubstitution(text='0.20'),
@@ -180,6 +202,21 @@ def generate_launch_description():
         'angle_line_min_merged_length_px',
         default_value=TextSubstitution(text='60.0'),
         description='Minimum bridged fine-line length used for angle statistics',
+    )
+    declare_angle_line_overlay_thickness_arg = DeclareLaunchArgument(
+        'angle_line_overlay_thickness_px',
+        default_value=TextSubstitution(text='1'),
+        description='Fine-line debug overlay thickness in pixels',
+    )
+    declare_angle_line_overlay_outline_thickness_arg = DeclareLaunchArgument(
+        'angle_line_overlay_outline_thickness_px',
+        default_value=TextSubstitution(text='2'),
+        description='Fine-line debug overlay outline thickness in pixels',
+    )
+    declare_tracked_line_overlay_thickness_arg = DeclareLaunchArgument(
+        'tracked_line_overlay_thickness_px',
+        default_value=TextSubstitution(text='2'),
+        description='Tracked reference-line debug overlay thickness in pixels',
     )
     declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
         'enable_grid_line_stream',
@@ -293,6 +330,18 @@ def generate_launch_description():
                     LaunchConfiguration('camera_image_rotation_deg'),
                     value_type=int,
                 ),
+                'line_tracking_enabled': ParameterValue(
+                    LaunchConfiguration('line_tracking_enabled'),
+                    value_type=bool,
+                ),
+                'max_line_tracking_jump_px': ParameterValue(
+                    LaunchConfiguration('max_line_tracking_jump_px'),
+                    value_type=float,
+                ),
+                'max_line_tracking_missed_frames': ParameterValue(
+                    LaunchConfiguration('max_line_tracking_missed_frames'),
+                    value_type=int,
+                ),
                 'publish_debug_images': ParameterValue(
                     LaunchConfiguration('publish_debug_images'), value_type=bool
                 ),
@@ -358,6 +407,10 @@ def generate_launch_description():
                     LaunchConfiguration('angle_line_min_width_px'),
                     value_type=float,
                 ),
+                'angle_line_max_width_px': ParameterValue(
+                    LaunchConfiguration('angle_line_max_width_px'),
+                    value_type=float,
+                ),
                 'angle_line_min_support': ParameterValue(
                     LaunchConfiguration('angle_line_min_support'),
                     value_type=float,
@@ -373,6 +426,18 @@ def generate_launch_description():
                 'angle_line_min_merged_length_px': ParameterValue(
                     LaunchConfiguration('angle_line_min_merged_length_px'),
                     value_type=float,
+                ),
+                'angle_line_overlay_thickness_px': ParameterValue(
+                    LaunchConfiguration('angle_line_overlay_thickness_px'),
+                    value_type=int,
+                ),
+                'angle_line_overlay_outline_thickness_px': ParameterValue(
+                    LaunchConfiguration('angle_line_overlay_outline_thickness_px'),
+                    value_type=int,
+                ),
+                'tracked_line_overlay_thickness_px': ParameterValue(
+                    LaunchConfiguration('tracked_line_overlay_thickness_px'),
+                    value_type=int,
                 ),
             }
         ],
@@ -461,6 +526,9 @@ def generate_launch_description():
             declare_camera_serial_no_data_timeout_arg,
             declare_camera_serial_max_frame_arg,
             declare_camera_image_rotation_arg,
+            declare_line_tracking_enabled_arg,
+            declare_line_tracking_jump_arg,
+            declare_line_tracking_missed_arg,
             declare_base_speed_arg,
             declare_heading_gain_arg,
             declare_lateral_gain_arg,
@@ -485,9 +553,13 @@ def generate_launch_description():
             declare_angle_average_center_band_ratio_arg,
             declare_angle_line_min_length_arg,
             declare_angle_line_min_width_arg,
+            declare_angle_line_max_width_arg,
             declare_angle_line_min_support_arg,
             declare_angle_line_hough_threshold_arg,
             declare_angle_line_min_merged_length_arg,
+            declare_angle_line_overlay_thickness_arg,
+            declare_angle_line_overlay_outline_thickness_arg,
+            declare_tracked_line_overlay_thickness_arg,
             declare_enable_grid_line_stream_arg,
             declare_grid_line_stream_rtsp_url_arg,
             declare_grid_line_stream_fps_arg,
