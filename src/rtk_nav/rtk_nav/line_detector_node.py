@@ -855,6 +855,71 @@ def select_angle_line_candidates(
     ]
 
 
+def prepare_angle_line_group(
+    lines,
+    target_axis_angle_deg,
+    width,
+    height,
+    center_band_ratio,
+    max_angle_delta_deg,
+    gap_fill_px,
+    merge_gap_px,
+    bridge_angle_tolerance_deg,
+    min_merged_length_px,
+):
+    """准备一组细线角度候选，保持筛选和几何连接顺序一致。"""
+    candidates = select_angle_line_candidates(
+        lines,
+        target_axis_angle_deg,
+        width,
+        height,
+        center_band_ratio,
+        max_angle_delta_deg,
+    )
+    candidates = bridge_collinear_line_records(
+        candidates,
+        target_axis_angle_deg,
+        gap_fill_px,
+        merge_gap_px,
+        bridge_angle_tolerance_deg,
+    )
+    candidates = select_minimum_length_lines(
+        candidates,
+        min_merged_length_px,
+    )
+    # Bridge endpoints can extend into a distorted area; apply the center
+    # band again to the merged record before including it in the average.
+    return select_center_line_candidates(
+        candidates,
+        target_axis_angle_deg,
+        width,
+        height,
+        center_band_ratio,
+    )
+
+
+def select_angle_line_family(
+    parallel_lines,
+    perpendicular_lines,
+    path_axis_angle_deg,
+    cross_axis_angle_deg,
+):
+    """选择用于平均偏角的细线族，并返回其目标轴和来源。"""
+    if perpendicular_lines:
+        return (
+            list(perpendicular_lines),
+            undirected_angle(cross_axis_angle_deg),
+            'perpendicular',
+        )
+    if parallel_lines:
+        return (
+            list(parallel_lines),
+            undirected_angle(path_axis_angle_deg),
+            'parallel',
+        )
+    return [], None, 'none'
+
+
 def select_line_for_tracking(
     lines,
     axis_angle_deg,
@@ -1217,7 +1282,7 @@ class GridLineDetector(Node):
         self.declare_parameter('angle_line_hough_threshold', 8)
         # 细线 Hough 阶段允许跨越的像素缺口，单位为像素。
         self.declare_parameter('angle_line_hough_gap_px', 2.0)
-        # 细线相对相机参考轴的最大夹角，单位为度；不改变实际平均方向。
+        # 细线相对当前运行轴或其法线的最大夹角，单位为度；不改变平均方向。
         self.declare_parameter('angle_line_axis_tolerance_deg', 25.0)
         # 角度统计在线段几何层连接的最大断点，单位为像素。
         self.declare_parameter('angle_line_gap_fill_px', 25.0)
@@ -1225,7 +1290,7 @@ class GridLineDetector(Node):
         self.declare_parameter('angle_line_bridge_angle_tolerance_deg', 3.0)
         # 仅合并同一细线的两侧边缘，避免相邻栅格线被合并。
         self.declare_parameter('angle_line_merge_gap_px', 5.0)
-        # 断点连接后参与角度平均和细线回退跟踪的最小总长度，单位为像素。
+        # 断点连接后参与角度平均的细线最小总长度，单位为像素。
         self.declare_parameter('angle_line_min_merged_length_px', 60.0)
         # 角度统计细线在调试图中的显示宽度，单位为像素。
         self.declare_parameter('angle_line_overlay_thickness_px', 1)
@@ -2396,41 +2461,43 @@ class GridLineDetector(Node):
             self.coarse_line_merge_gap_px,
         )
 
-        # Fine grid lines are expected to cross the running direction. Their
-        # target axis must follow the effective path axis so a turn or a
-        # fallback-axis change cannot make the detector watch the wrong grid
-        # family.
-        fine_line_axis_image = cross_axis_image
-        angle_parallel_group = select_angle_line_candidates(
+        # Prepare both orthogonal fine-grid families from the same raw mask.
+        # The selected family below is compared with its own target axis, so
+        # perpendicular lines are never averaged together with parallel ones.
+        angle_parallel_group = prepare_angle_line_group(
             angle_candidate_lines,
-            fine_line_axis_image,
+            path_axis_image,
             width,
             height,
             self.angle_average_center_band_ratio,
             self.angle_line_axis_tolerance_deg,
-        )
-        angle_parallel_group = bridge_collinear_line_records(
-            angle_parallel_group,
-            fine_line_axis_image,
             self.angle_line_gap_fill_px,
             self.angle_line_merge_gap_px,
             self.angle_line_bridge_angle_tolerance_deg,
-        )
-        # 短段可参与跨反光断点连接；仅连接后的长线用于最终角度统计。
-        angle_parallel_group = select_minimum_length_lines(
-            angle_parallel_group,
             self.angle_line_min_merged_length_px,
         )
-        # Heading uses more fine center-band lines to reduce lens distortion;
-        # lateral position intentionally keeps the separately tracked line.
-        angle_lines = select_center_line_candidates(
-            angle_parallel_group,
-            fine_line_axis_image,
+        angle_perpendicular_group = prepare_angle_line_group(
+            angle_candidate_lines,
+            cross_axis_image,
             width,
             height,
             self.angle_average_center_band_ratio,
+            self.angle_line_axis_tolerance_deg,
+            self.angle_line_gap_fill_px,
+            self.angle_line_merge_gap_px,
+            self.angle_line_bridge_angle_tolerance_deg,
+            self.angle_line_min_merged_length_px,
         )
-        parallel_angle = weighted_line_angle(angle_lines)
+        angle_lines = angle_parallel_group + angle_perpendicular_group
+        angle_average_lines, fine_line_axis_image, angle_line_source = (
+            select_angle_line_family(
+                angle_parallel_group,
+                angle_perpendicular_group,
+                path_axis_image,
+                cross_axis_image,
+            )
+        )
+        line_average_angle = weighted_line_angle(angle_average_lines)
 
         # A line crossing the running direction has no stable lateral offset:
         # its normal is longitudinal. Keep lateral tracking on path-parallel
@@ -2473,9 +2540,9 @@ class GridLineDetector(Node):
                     (0, 0, 255),
                     self.tracked_line_overlay_thickness_px,
                 )
-        heading_geometry = bool(angle_lines) and (
-            parallel_angle is not None
-            and math.isfinite(float(parallel_angle))
+        heading_geometry = bool(angle_average_lines) and (
+            line_average_angle is not None
+            and math.isfinite(float(line_average_angle))
         )
         lateral_pixel_error = float('nan')
         if selected_parallel_line is not None:
@@ -2518,7 +2585,7 @@ class GridLineDetector(Node):
             self.lateral_valid_streak = 0
         self.valid_streak = self.lateral_valid_streak
         heading_error = (
-            undirected_angle(parallel_angle - fine_line_axis_image)
+            undirected_angle(line_average_angle - fine_line_axis_image)
             if heading_geometry
             else 0.0
         )
@@ -2591,8 +2658,10 @@ class GridLineDetector(Node):
         heading_confidence = 0.0
         lateral_confidence = 0.0
         support_score = 0.0
-        if angle_lines:
-            support_scores = [float(line[9]) for line in angle_lines]
+        if angle_average_lines:
+            support_scores = [
+                float(line[9]) for line in angle_average_lines
+            ]
             support_score = sum(support_scores) / len(support_scores)
         elif selected_parallel_line is not None:
             support_score = float(selected_parallel_line[9])
@@ -2648,8 +2717,11 @@ class GridLineDetector(Node):
                     f'Vehicle: {self.vehicle_heading_deg:.1f}, '
                     f'Relative: {relative_heading:.1f}',
                     f'P:{len(parallel_group)} C:{len(perpendicular_group)} '
-                    f'A:{len(angle_parallel_group)} '
-                    f'angle_lines={len(angle_lines)}',
+                    f'fineP:{len(angle_parallel_group)} '
+                    f'fineC:{len(angle_perpendicular_group)} '
+                    f'A:{len(angle_lines)} '
+                    f'average={len(angle_average_lines)} '
+                    f'source={angle_line_source}',
                 ):
                     debug_text_top = draw_wrapped_text(
                         display,

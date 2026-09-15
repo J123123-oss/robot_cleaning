@@ -167,17 +167,17 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
     assert "angle_hough_lines" in detector
     assert "select_tracking_candidates" in detector
     assert "tracking_source" in detector
-    assert "select_angle_line_candidates" in detector
+    assert "select_angle_line_candidates" in source
     assert "cross_axis_image" in detector
-    assert "fine_line_axis_image = cross_axis_image" in detector
     assert "angle_parallel_group" in detector
-    assert "angle_lines = select_center_line_candidates" in detector
-    assert "angle_parallel_group" in detector.split(
-        "angle_lines = select_center_line_candidates", 1
-    )[1]
+    assert "angle_perpendicular_group" in detector
+    assert "select_angle_line_family" in detector
+    assert "prepare_angle_line_group" in detector
+    assert "angle_lines = angle_parallel_group + angle_perpendicular_group" in detector
+    assert "angle_average_lines, fine_line_axis_image, angle_line_source" in detector
     assert "select_tracking_candidates(parallel_group)" in detector
     assert "select_tracking_candidates(parallel_group, angle_lines)" not in detector
-    assert "parallel_angle - fine_line_axis_image" in detector
+    assert "line_average_angle - fine_line_axis_image" in detector
     assert any(
         isinstance(node, ast.If)
         and isinstance(node.test, ast.BoolOp)

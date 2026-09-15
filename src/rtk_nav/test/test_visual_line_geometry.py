@@ -24,6 +24,8 @@ def _helpers():
         "select_minimum_length_lines",
         "wrap_text_to_pixel_width",
         "select_angle_line_candidates",
+        "prepare_angle_line_group",
+        "select_angle_line_family",
         "center_band_half_extent_px",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
@@ -195,6 +197,48 @@ def test_angle_candidates_follow_axis_perpendicular_to_running_direction():
     )
 
     assert selected == [perpendicular_line]
+
+
+def test_angle_line_family_prefers_perpendicular_and_falls_back_parallel():
+    helpers = _helpers()
+    parallel_line = (
+        320,
+        0,
+        320,
+        480,
+        480.0,
+        90.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+    perpendicular_line = (
+        0,
+        240,
+        640,
+        240,
+        640.0,
+        0.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+
+    selected, target_axis, source = helpers["select_angle_line_family"](
+        [parallel_line], [perpendicular_line], 90.0, 0.0
+    )
+    assert selected == [perpendicular_line]
+    assert target_axis == 0.0
+    assert source == "perpendicular"
+
+    selected, target_axis, source = helpers["select_angle_line_family"](
+        [parallel_line], [], 90.0, 0.0
+    )
+    assert selected == [parallel_line]
+    assert target_axis == -90.0
+    assert source == "parallel"
 
 
 def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
@@ -372,7 +416,8 @@ def test_detector_uses_center_average_for_heading_and_tracked_line_for_lateral()
     )
     rendered = ast.unparse(detect_method)
 
-    assert "select_center_line_candidates" in rendered
+    assert "prepare_angle_line_group" in rendered
+    assert "weighted_line_angle(angle_average_lines)" in rendered
     assert "weighted_line_angle" in rendered
     assert "selected_line_offset" in rendered
     assert "lateral_pixel_error = selected_line_offset" in rendered
