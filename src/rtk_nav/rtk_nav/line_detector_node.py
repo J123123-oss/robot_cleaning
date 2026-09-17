@@ -898,26 +898,36 @@ def prepare_angle_line_group(
     )
 
 
-def select_angle_line_family(
-    parallel_lines,
-    perpendicular_lines,
-    path_axis_angle_deg,
-    cross_axis_angle_deg,
-):
-    """选择用于平均偏角的细线族，并返回其目标轴和来源。"""
-    if perpendicular_lines:
-        return (
-            list(perpendicular_lines),
-            undirected_angle(cross_axis_angle_deg),
-            'perpendicular',
+def select_angle_line_family(parallel_lines, perpendicular_lines):
+    """选择能形成有效平均角的细线族，平行族优先、垂直族回退。"""
+    for lines, source in (
+        (parallel_lines, 'parallel'),
+        (perpendicular_lines, 'perpendicular'),
+    ):
+        selected = list(lines or [])
+        if selected and weighted_line_angle_for_path(selected, source) is not None:
+            return selected, source
+    return [], 'none'
+
+
+def orient_angle_line_to_path_axis(angle_deg, line_family):
+    """将选中细线方向转换到运行轴方向，垂直族补偿 90 度。"""
+    angle = float(angle_deg)
+    if line_family == 'perpendicular':
+        angle += 90.0
+    return undirected_angle(angle)
+
+
+def weighted_line_angle_for_path(lines, line_family):
+    """按运行轴方向计算细线族的长度加权平均角度。"""
+    oriented_lines = []
+    for line in lines or []:
+        oriented_line = list(line)
+        oriented_line[5] = orient_angle_line_to_path_axis(
+            line[5], line_family
         )
-    if parallel_lines:
-        return (
-            list(parallel_lines),
-            undirected_angle(path_axis_angle_deg),
-            'parallel',
-        )
-    return [], None, 'none'
+        oriented_lines.append(tuple(oriented_line))
+    return weighted_line_angle(oriented_lines)
 
 
 def select_line_for_tracking(
@@ -2011,7 +2021,7 @@ class GridLineDetector(Node):
             (10, max(25, display.shape[0] - 10)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
-            (0, 255, 255),
+            (255, 255, 0),
             2,
         )
 
@@ -2308,7 +2318,7 @@ class GridLineDetector(Node):
                     int(round(center[1] + arrow_length * math.sin(axis_radians))),
                 )
                 cv2.arrowedLine(
-                    display, center, endpoint, (0, 165, 255), 4, tipLength=0.2
+                    display, center, endpoint, (255, 165, 0), 4, tipLength=0.2
                 )
 
         def estimate_line_metrics(x1, y1, x2, y2, scan_mask):
@@ -2489,15 +2499,16 @@ class GridLineDetector(Node):
             self.angle_line_min_merged_length_px,
         )
         angle_lines = angle_parallel_group + angle_perpendicular_group
-        angle_average_lines, fine_line_axis_image, angle_line_source = (
+        angle_average_lines, angle_line_source = (
             select_angle_line_family(
                 angle_parallel_group,
                 angle_perpendicular_group,
-                path_axis_image,
-                cross_axis_image,
             )
         )
-        line_average_angle = weighted_line_angle(angle_average_lines)
+        fine_line_axis_image = path_axis_image
+        line_average_angle = weighted_line_angle_for_path(
+            angle_average_lines, angle_line_source
+        )
 
         # A line crossing the running direction has no stable lateral offset:
         # its normal is longitudinal. Keep lateral tracking on path-parallel
@@ -2515,9 +2526,9 @@ class GridLineDetector(Node):
         )
 
         if display is not None:
-            for line in angle_lines:
-                # A dark outline keeps the fine-line overlay visible after
-                # RGB conversion and H.264 compression in the RTSP stream.
+            for line in angle_average_lines:
+                # The RTSP path swaps red and blue, so compensate the overlay
+                # colors here while keeping the detection image unchanged.
                 cv2.line(
                     display,
                     (line[0], line[1]),
@@ -2529,7 +2540,7 @@ class GridLineDetector(Node):
                     display,
                     (line[0], line[1]),
                     (line[2], line[3]),
-                    (0, 255, 255),
+                    (255, 255, 0),
                     self.angle_line_overlay_thickness_px,
                 )
             if selected_parallel_line is not None:
@@ -2537,7 +2548,7 @@ class GridLineDetector(Node):
                     display,
                     (selected_parallel_line[0], selected_parallel_line[1]),
                     (selected_parallel_line[2], selected_parallel_line[3]),
-                    (0, 0, 255),
+                    (255, 0, 0),
                     self.tracked_line_overlay_thickness_px,
                 )
         heading_geometry = bool(angle_average_lines) and (
@@ -2688,7 +2699,7 @@ class GridLineDetector(Node):
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 0, 255),
+                (255, 0, 0),
                 2,
             )
             cv2.putText(
@@ -2701,8 +2712,7 @@ class GridLineDetector(Node):
                 (10, 60),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                # OpenCV text colors use BGR order; keep this label red.
-                (0, 0, 255),
+                (255, 0, 0),
                 2,
             )
             if self.always_show_axis_debug:
@@ -2730,7 +2740,7 @@ class GridLineDetector(Node):
                         debug_text_top,
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.45,
-                        (0, 255, 0),
+                        (255, 255, 0),
                         1,
                     )
                 text2 = (
@@ -2744,7 +2754,7 @@ class GridLineDetector(Node):
                     debug_text_top,
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.45,
-                    (0, 255, 0),
+                    (255, 255, 0),
                     1,
                 )
 

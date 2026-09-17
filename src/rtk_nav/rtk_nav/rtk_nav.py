@@ -451,9 +451,9 @@ class RTKNavControlNode(Node):
         self.rtk_max_correction = max(
             0.0, float(self.get_parameter("rtk_max_correction").value)
         )
-        self.declare_parameter("visual_heading_gain", 0.1)
-        self.declare_parameter("visual_lateral_gain", 5.0)
-        self.declare_parameter("visual_max_correction", 1.5)
+        self.declare_parameter("visual_heading_gain", 0.05)
+        self.declare_parameter("visual_lateral_gain", 2.5)
+        self.declare_parameter("visual_max_correction", 0.5)
         self.declare_parameter("visual_confidence_threshold", 0.75)
         self.declare_parameter("visual_timeout_sec", 0.5)
         self.visual_heading_gain = float(

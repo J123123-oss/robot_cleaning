@@ -85,17 +85,17 @@ def generate_launch_description():
     )
     declare_visual_heading_gain_arg = DeclareLaunchArgument(
         "visual_heading_gain",
-        default_value=TextSubstitution(text="0.1"),
+        default_value=TextSubstitution(text="0.05"),
         description="Visual heading correction gain (motor speed units per degree)",
     )
     declare_visual_lateral_gain_arg = DeclareLaunchArgument(
         "visual_lateral_gain",
-        default_value=TextSubstitution(text="5.0"),
+        default_value=TextSubstitution(text="2.5"),
         description="Visual lateral correction gain (motor speed units per meter)",
     )
     declare_visual_max_correction_arg = DeclareLaunchArgument(
         "visual_max_correction",
-        default_value=TextSubstitution(text="1.5"),
+        default_value=TextSubstitution(text="0.5"),
         description="Maximum visual correction in motor speed units",
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
@@ -179,7 +179,7 @@ def generate_launch_description():
     )
     declare_angle_line_bridge_angle_arg = DeclareLaunchArgument(
         "angle_line_bridge_angle_tolerance_deg",
-        default_value=TextSubstitution(text="3.0"),
+        default_value=TextSubstitution(text="5.0"),
         description=(
             "Maximum direction difference for bridging grid-line segments"
         ),
@@ -218,7 +218,7 @@ def generate_launch_description():
     )
     declare_coarse_line_gap_fill_arg = DeclareLaunchArgument(
         "coarse_line_gap_fill_px",
-        default_value=TextSubstitution(text="30.0"),
+        default_value=TextSubstitution(text="80.0"),
         description="Maximum along-line reflection gap to bridge for coarse tracking",
     )
     declare_coarse_line_bridge_normal_gap_arg = DeclareLaunchArgument(

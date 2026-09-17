@@ -146,8 +146,8 @@ class CameraIndoorTestController(Node):
         # 速度单位与旧版 RS02 motor_driver 一致，直接写入 float，不做脉冲换算。
         self.declare_parameter('base_speed', 1.0)
         self.declare_parameter('heading_gain', 0.05)
-        self.declare_parameter('lateral_gain', 5.0)
-        self.declare_parameter('max_correction', 0.8)
+        self.declare_parameter('lateral_gain', 2.5)
+        self.declare_parameter('max_correction', 0.5)
         self.declare_parameter('min_confidence', 0.5)
         self.declare_parameter('visual_timeout_sec', 0.5)
         self.declare_parameter('heading_deadband_deg', 1.0)

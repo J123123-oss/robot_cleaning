@@ -65,17 +65,17 @@ def generate_launch_description():
     )
     declare_lateral_gain_arg = DeclareLaunchArgument(
         'lateral_gain',
-        default_value=TextSubstitution(text='3.0'),
+        default_value=TextSubstitution(text='2.5'),
         description='Lateral error gain in motor speed units per meter',
     )
     declare_max_correction_arg = DeclareLaunchArgument(
         'max_correction',
-        default_value=TextSubstitution(text='0.8'),
+        default_value=TextSubstitution(text='0.5'),
         description='Maximum differential correction in motor speed units',
     )
     declare_min_confidence_arg = DeclareLaunchArgument(
         'min_confidence',
-        default_value=TextSubstitution(text='0.5'),
+        default_value=TextSubstitution(text='0.75'),
         description='Minimum visual confidence required to move',
     )
     declare_visual_timeout_arg = DeclareLaunchArgument(
