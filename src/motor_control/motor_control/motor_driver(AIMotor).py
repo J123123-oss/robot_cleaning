@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""AIMOTOR CANopen/CiA402 driver.
+"""AIMOTOR CANopen/CiA402 电机驱动。
 
-The public driver methods intentionally keep the legacy motor-control API so
-the upper layer can switch drivers without changing its calls.  The wire
-protocol in this file is the AIMOTOR manual's standard 11-bit CANopen
-protocol, not the previous 29-bit vendor protocol.
+公共驱动方法有意保持旧版 motor_control API，使上层无需修改调用方式即可
+切换电机驱动。本文件使用 AIMOTOR 手册规定的 11 位标准 CANopen 协议，
+而不是之前的 29 位厂商协议。
 """
 
 import math
@@ -26,11 +25,10 @@ from std_msgs.msg import Float32MultiArray
 
 def build_sdo_frame(command: int, index: int, subindex: int,
                     value: bytes = b"") -> bytes:
-    """Build an expedited, 8-byte CANopen SDO frame.
+    """构造快速传输格式的 8 字节 CANopen SDO 帧。
 
-    ``value`` is encoded little-endian by the caller and is padded to the
-    CAN data length.  This helper only assembles the frame layout; it does not
-    validate the object type or send anything on the CAN bus.
+    ``value`` 由调用方按小端格式编码，本函数会将其填充到 CAN 数据长度。
+    此辅助函数只负责组装帧格式，不校验对象类型，也不向 CAN 总线发送数据。
     """
     if not 0 <= command <= 0xFF:
         raise ValueError("SDO command must fit in one byte")
@@ -44,21 +42,21 @@ def build_sdo_frame(command: int, index: int, subindex: int,
 
 
 class CanMotorDriver(Node):
-    """ROS2 node and AIMOTOR CANopen master-side adapter."""
+    """ROS2 节点以及 AIMOTOR CANopen 主站适配器。"""
 
     # CANopen 标准通信标识符。驱动使用 11 位标准帧 ID：
-    # SDO_RX_BASE 为主站发往从站的请求帧基址（0x600 + Node-ID），
-    # SDO_TX_BASE 为从站返回主站的响应帧基址（0x580 + Node-ID），
-    # EMCY_BASE 为紧急报文基址（0x080 + Node-ID），NMT 固定使用 0x000。
+    # SDO_RX_BASE 为主站发往从站的请求帧基址（0x600 + 节点 ID），
+    # SDO_TX_BASE 为从站返回主站的响应帧基址（0x580 + 节点 ID），
+    # EMCY_BASE 为紧急报文基址（0x080 + 节点 ID），NMT 固定使用 0x000。
     SDO_RX_BASE = 0x600
     SDO_TX_BASE = 0x580
     EMCY_BASE = 0x080
     NMT_COB_ID = 0x000
 
-    # AIMOTOR manual section 6.1 fault table:
-    # (H0B-34 manufacturer code, 603Fh CiA402 code, description,
-    #  hardware LED pattern, alarm type).  A standard code can occur in
-    # several rows, so the table must not be reduced to a one-to-one dict.
+    # AIMOTOR 手册第 6.1 节故障表：
+    # （H0B-34 厂家故障码、603Fh CiA402 标准故障码、故障描述、
+    # 硬件指示灯模式、报警类型）。同一个标准故障码可能对应多行，
+    # 因此不能将此表简化为一对一字典。
     AIMOTOR_FAULT_TABLE = (
         (0x0000, 0x0000, "无故障", "绿", "-"),
         (0x0101, 0x6320, "参数 ID 超范围", "10 红 1 绿", "NO.1"),
@@ -114,24 +112,24 @@ class CanMotorDriver(Node):
     # 6084h：速度模式减速度（Int32，RW），单位 Pul/s^2，在使能前写入。
     PROFILE_DECELERATION_INDEX = 0x6084
 
-    # Profile values are in motor-side pulses per second squared.  The manual's
-    # PV example uses these values for a 33333 Pul/s target speed.
+    # 轮廓参数单位为电机侧 Pul/s^2。手册中的 PV 示例以这些参数值
+    # 配置 33333 Pul/s 的目标速度。
     DEFAULT_PROFILE_ACCELERATION = 16666
     DEFAULT_PROFILE_DECELERATION = 11111
-    # The target/actual velocity conversion uses motor revolutions, then
-    # applies the configured mechanical reduction for output-shaft r/min.
+    # 目标速度和实际速度的换算先使用电机转数，再应用配置的机械减速比，
+    # 得到减速器输出轴 r/min。
     DEFAULT_PULSES_PER_MOTOR_REV = 1000
     DEFAULT_MECHANICAL_REDUCTION_RATIO = 40.0
-    # Defaults for the current four-node robot: drive motors 1/2 and brush
-    # motors 3/4 may have different gearbox ratios.
+    # 当前四节点机器人默认值：驱动电机 1/2 与滚刷电机 3/4
+    # 可能使用不同的齿轮箱减速比。
     DEFAULT_MECHANICAL_REDUCTION_RATIOS = {
         1: 50.0,
         2: 50.0,
         3: 40.0,
         4: 40.0,
     }
-    WHEEL_RADIUS = 0.05  # Wheel radius in meters, used by odometry.
-    MAX_WHEEL_LINEAR_SPEED_MPS = 0.35  # Safety/reference limit in m/s.
+    WHEEL_RADIUS = 0.05  # 轮半径，单位 m，用于里程计计算。
+    MAX_WHEEL_LINEAR_SPEED_MPS = 0.35  # 安全/参考线速度上限，单位 m/s。
 
     # SDO 快速传输命令字。命令字同时规定数据方向和有效数据长度：
     # 0x40 为读取请求；0x2F、0x2B、0x23 分别为写入 1、2、4 字节。
@@ -148,19 +146,19 @@ class CanMotorDriver(Node):
     # CiA402 模式和控制字常量。控制字通过 6040h 写入，状态反馈通过 6041h
     # 读取；初始化时必须按“关闭电压 -> 准备使能 -> 等待使能 -> 使能运行”的
     # 顺序切换，不能把这些值当作普通速度参数。
-    # 6060h=3：PV（Profile Velocity，轮廓速度）模式。
+    # 6060h=3：PV（轮廓速度）模式。
     CANOPEN_VELOCITY_MODE = 0x03
-    # 6040h=0x0006：Shutdown，关闭功率输出并进入“准备使能”状态。
+    # 6040h=0x0006：关闭，关闭功率输出并进入“准备使能”状态。
     CONTROL_SHUTDOWN = 0x0006
-    # 6040h=0x0007：Switch On，允许上电但尚未进入可运行状态。
+    # 6040h=0x0007：接通，允许上电但尚未进入可运行状态。
     CONTROL_SWITCH_ON = 0x0007
-    # 6040h=0x000F：Enable Operation，使能功率级并允许执行速度目标。
+    # 6040h=0x000F：使能运行，使能功率级并允许执行速度目标。
     CONTROL_ENABLE_OPERATION = 0x000F
-    # 6040h=0x0000：Disable Voltage，撤销驱动器电压使能。
+    # 6040h=0x0000：禁止电压，撤销驱动器电压使能。
     CONTROL_DISABLE_VOLTAGE = 0x0000
-    # 6040h=0x0002：Quick Stop，执行快速停止路径；停止后的状态取决于 605Ah。
+    # 6040h=0x0002：快速停止，执行快速停止路径；停止后的状态取决于 605Ah。
     CONTROL_QUICK_STOP = 0x0002
-    # 6040h bit7=1：Fault Reset，复位 CiA402 故障状态，不能替代故障原因排查。
+    # 6040h bit7=1：故障复位，复位 CiA402 故障状态，不能替代故障原因排查。
     CONTROL_FAULT_RESET = 0x0080
 
     def __init__(self, node_name="can_motor_driver", channel="can0",
@@ -170,24 +168,23 @@ class CanMotorDriver(Node):
                  mechanical_reduction_ratios=None,
                  profile_acceleration=DEFAULT_PROFILE_ACCELERATION,
                  profile_deceleration=DEFAULT_PROFILE_DECELERATION):
-        """Create the ROS2 driver, CAN transport, publishers, and timers.
+        """创建 ROS2 驱动、CAN 传输、发布器和定时器。
 
-        ``speed`` values accepted by the public API are output-shaft r/min;
-        the driver converts them to motor-side Pul/s before writing 60FFh.
-        ``motor_ids`` selects the configured nodes, while the optional
-        per-ID reduction map overrides the scalar fallback ratio.
+        公共 API 接收的 ``speed`` 单位为输出轴 r/min；驱动在写入 60FFh
+        前会将其转换为电机侧 Pul/s。``motor_ids`` 用于选择配置的节点，
+        可选的按 ID 减速比映射会覆盖标量备用减速比。
         """
         super().__init__(node_name)
 
-        # CAN transport configuration and connection state.
+        # CAN 总线传输配置和连接状态。
         self.can_interface = channel
         self.can_bus_interface = interface
         self.can_bitrate = int(baudrate)
         self.bus: Optional[can.Bus] = None
         self.can_initialized = False
 
-        # Runtime parameters are exposed through ROS2 so launch files can
-        # change timeouts, pulse scaling, reduction, and profile ramps.
+        # 运行参数通过 ROS2 参数暴露，使 launch 文件可以调整超时时间、
+        # 脉冲换算、减速比和速度轮廓加减速参数。
         self.declare_parameter("auto_enable", False)
         self.declare_parameter("command_timeout_sec", 0.0)
         self.declare_parameter("pulses_per_motor_rev", pulses_per_motor_rev)
@@ -203,7 +200,7 @@ class CanMotorDriver(Node):
         if not math.isfinite(self.command_timeout_sec) or self.command_timeout_sec < 0:
             raise ValueError("command_timeout_sec must be finite and >= 0")
 
-        # Validated profile ramps remain in Pul/s^2 for 6083h/6084h writes.
+        # 校验后的速度轮廓加减速参数保持 Pul/s^2 单位，用于写入 6083h/6084h。
         self.profile_acceleration = self._validate_profile_parameter(
             self.get_parameter("profile_acceleration").value,
             "profile_acceleration",
@@ -213,7 +210,7 @@ class CanMotorDriver(Node):
             "profile_deceleration",
         )
 
-        # Normalize and validate the selected CANopen node IDs.
+        # 规范化并校验选定的 CANopen 节点 ID。
         if motor_ids is None:
             motor_ids = (1, 2, 3)
         try:
@@ -227,7 +224,7 @@ class CanMotorDriver(Node):
         ):
             raise ValueError("motor_ids must contain unique CANopen IDs in range 1..127")
 
-        # Conversion parameters shared by command and feedback paths.
+        # 指令路径和反馈路径共用的单位换算参数。
         self.pulses_per_motor_rev = self._validate_positive_int_parameter(
             self.get_parameter("pulses_per_motor_rev").value,
             "pulses_per_motor_rev",
@@ -258,8 +255,8 @@ class CanMotorDriver(Node):
                 )
             )
 
-        # Per-motor command/feedback cache.  Velocities are output-shaft r/min;
-        # positions are radians and torque is the device-reported scaled value.
+        # 每个电机的指令/反馈缓存。速度为输出轴 r/min，位置为弧度，
+        # 转矩为设备按自身比例上报的换算值。
         self.motors = [
             {
                 "id": motor_id,
@@ -276,14 +273,14 @@ class CanMotorDriver(Node):
             }
             for motor_id in self.motor_ids
         ]
-        # Periodic scheduling and shutdown guards.
+        # 周期调度状态和停机保护标志。
         self._send_tick = 0
         self._feedback_tick = 0
         self.last_speed_command_time = time.monotonic()
         self._stopping = False
 
-        # Differential-drive odometry state: distances in meters, heading in
-        # radians, and BASE_SPEED as output-shaft r/min for slow local motion.
+        # 差速底盘里程计状态：距离单位为 m，航向单位为弧度，
+        # 慢速本地运动使用的 BASE_SPEED 单位为输出轴 r/min。
         self.wheel_radius = self.WHEEL_RADIUS
         self.wheel_base = 0.3
         self.x = 0.0
@@ -303,7 +300,7 @@ class CanMotorDriver(Node):
         if self.auto_enable:
             self.initialize_motors()
 
-        # ROS interfaces: command input, periodic feedback output, and odometry.
+        # ROS 接口：速度指令输入、周期反馈输出和里程计输出。
         self.subscription = self.create_subscription(
             Float32MultiArray, "motor_speed_commands",
             self.speed_command_callback, 10
@@ -320,7 +317,7 @@ class CanMotorDriver(Node):
         self.odom_publisher = self.create_publisher(Odometry, "odom", 10)
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        # Receive thread is started after the CAN bus and ROS interfaces exist.
+        # CAN 总线和 ROS 接口创建完成后，再启动接收线程。
         self.receive_thread = None
         self.running = True
         self.start_receive_thread()
@@ -330,14 +327,33 @@ class CanMotorDriver(Node):
         )
 
     def _get_motor(self, motor_id: int):
-        """Return the cached state for a configured motor ID, if present."""
+        """返回指定已配置电机 ID 的缓存状态；不存在时返回 ``None``。"""
         for motor in self.motors:
             if motor["id"] == motor_id:
                 return motor
         return None
 
+    def _log_velocity_feedback(self, motor_id: int, pulses_per_sec: int) -> None:
+        """同时以协议单位和输出轴单位记录目标速度与反馈速度。"""
+        motor = self._get_motor(motor_id)
+        reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
+        if motor is None or reduction_ratio is None:
+            return
+        target_speed = float(motor["velocity"])
+        target_pulses = int(round(
+            target_speed * reduction_ratio / 60.0 * self.pulses_per_motor_rev
+        ))
+        self.get_logger().debug(
+            f"[AIMotor] 电机{motor_id}速度："
+            f"设定转速={target_speed:+.3f} r/min（输出轴），"
+            f"实际转速={float(motor['actual_velocity']):+.3f} r/min（输出轴），"
+            f"设置脉冲数={target_pulses} Pul/s，"
+            f"实际反馈脉冲数={pulses_per_sec} Pul/s，"
+            f"减速比={reduction_ratio:.3f}"
+        )
+
     def _validate_motor_id(self, motor_id: int) -> bool:
-        """Check that ``motor_id`` is a valid 1..127 CANopen node ID."""
+        """检查 ``motor_id`` 是否为有效的 1..127 CANopen 节点 ID。"""
         if not isinstance(motor_id, int) or not 1 <= motor_id <= 0x7F:
             self.get_logger().error(f"Invalid CANopen motor ID: {motor_id}")
             return False
@@ -345,7 +361,7 @@ class CanMotorDriver(Node):
 
     @staticmethod
     def _validate_profile_parameter(value, name: str) -> int:
-        """Validate a positive INT32 profile acceleration/deceleration value."""
+        """校验速度轮廓加速度/减速度是否为有效的正 INT32 数值。"""
         try:
             numeric_value = float(value)
         except (TypeError, ValueError):
@@ -361,7 +377,7 @@ class CanMotorDriver(Node):
 
     @staticmethod
     def _validate_positive_float_parameter(value, name: str) -> float:
-        """Validate a finite positive scalar used for unit conversion."""
+        """校验用于单位换算的标量是否为有限正数。"""
         try:
             numeric_value = float(value)
         except (TypeError, ValueError):
@@ -372,7 +388,7 @@ class CanMotorDriver(Node):
 
     @staticmethod
     def _validate_positive_int_parameter(value, name: str) -> int:
-        """Validate a finite positive integer used as pulses per revolution."""
+        """校验每转脉冲数是否为有限正整数。"""
         try:
             numeric_value = float(value)
         except (TypeError, ValueError):
@@ -387,13 +403,13 @@ class CanMotorDriver(Node):
         return int(numeric_value)
 
     def _get_mechanical_reduction_ratio(self, motor_id: int) -> Optional[float]:
-        """Return the configured motor-specific reduction ratio."""
+        """返回指定电机配置的独立机械减速比。"""
         if not self._validate_motor_id(motor_id):
             return None
         return self.mechanical_reduction_ratios.get(motor_id)
 
     def create_can_bus(self) -> bool:
-        """Create the SocketCAN bus using the AIMOTOR default of 500 kbit/s."""
+        """按 AIMOTOR 默认的 500 kbit/s 配置创建 SocketCAN 总线。"""
         for attempt in range(1, 4):
             try:
                 self.bus = can.Bus(
@@ -416,7 +432,7 @@ class CanMotorDriver(Node):
         return False
 
     def reconnect_can_bus(self):
-        """Reset the SocketCAN interface and retry bus creation after errors."""
+        """发生错误后重置 SocketCAN 接口并重试创建总线。"""
         if self.can_initialized:
             return
         self.get_logger().info("Retrying CAN bus initialization...")
@@ -443,7 +459,7 @@ class CanMotorDriver(Node):
         self.create_can_bus()
 
     def send_can_frame(self, can_id: int, data: bytes) -> bool:
-        """Send one standard 11-bit CAN frame."""
+        """发送一帧 11 位标准 CAN 帧。"""
         if self.bus is None:
             self.get_logger().error("CAN bus not initialized")
             return False
@@ -467,7 +483,7 @@ class CanMotorDriver(Node):
 
     def _sdo_write(self, motor_id: int, index: int, subindex: int,
                    command: int, value: bytes = b"") -> bool:
-        """Send one validated expedited SDO request to a motor node."""
+        """向电机节点发送一条经过校验的快速传输 SDO 请求。"""
         if not self._validate_motor_id(motor_id):
             return False
         try:
@@ -478,18 +494,18 @@ class CanMotorDriver(Node):
         return self.send_can_frame(self.SDO_RX_BASE + motor_id, frame)
 
     def _sdo_read(self, motor_id: int, index: int, subindex: int) -> bool:
-        """Request an object-dictionary value through an SDO upload request."""
+        """通过 SDO 上传请求读取对象字典中的一个值。"""
         return self._sdo_write(motor_id, index, subindex, self.SDO_READ)
 
     def _write_u16(self, motor_id: int, index: int, value: int) -> bool:
-        """Write an unsigned 16-bit object-dictionary value."""
+        """向对象字典写入一个无符号 16 位数值。"""
         return self._sdo_write(
             motor_id, index, 0, self.SDO_WRITE_2,
             int(value).to_bytes(2, "little", signed=False)
         )
 
     def _write_i32(self, motor_id: int, index: int, value: int) -> bool:
-        """Write a signed 32-bit object-dictionary value with range checking."""
+        """在范围校验后向对象字典写入一个有符号 32 位数值。"""
         if not -0x80000000 <= value <= 0x7FFFFFFF:
             self.get_logger().error(f"INT32 value out of range: {value}")
             return False
@@ -499,22 +515,21 @@ class CanMotorDriver(Node):
         )
 
     def send_nmt_command(self, command: int, motor_id: int = 0) -> bool:
-        """Send an NMT command; node 0 addresses all nodes."""
+        """发送 NMT 命令；节点 0 表示寻址所有节点。"""
         if not 0 <= command <= 0xFF or not 0 <= motor_id <= 0x7F:
             return False
         return self.send_can_frame(self.NMT_COB_ID, bytes((command, motor_id)))
 
     def motor_clear_fault(self, motor_id: int) -> bool:
-        """Reset a CiA402 fault with controlword 0x0080."""
+        """使用控制字 0x0080 复位 CiA402 故障状态。"""
         return self._write_u16(motor_id, self.CONTROLWORD_INDEX, self.CONTROL_FAULT_RESET)
 
     def parse_motor_fault(self, can_id: int, data: bytes):
-        """Parse an EMCY frame and log the matching AIMOTOR fault entries.
+        """解析 EMCY 帧并记录匹配的 AIMOTOR 故障条目。
 
-        The first two data bytes are the little-endian CiA402 603Fh code and
-        byte 2 is the standard error register.  The manual's H0B-34 code is a
-        separate manufacturer object, so duplicate 603Fh codes are reported
-        as candidates instead of being guessed from the EMCY frame.
+        前两个数据字节是小端格式的 CiA402 603Fh 故障码，第 3 个字节是
+        标准错误寄存器。手册中的 H0B-34 故障码属于独立的厂家对象，
+        因此对于重复的 603Fh 故障码只能记录候选项，不能从 EMCY 帧中猜测。
         """
         logger = self.get_logger()
         if not self.EMCY_BASE <= can_id < self.EMCY_BASE + 0x80:
@@ -589,16 +604,16 @@ class CanMotorDriver(Node):
         self.publish_motor_fault_codes()
 
     def publish_motor_fault_codes(self):
-        """Publish one EMCY fault code per configured motor, in motor order."""
+        """按电机配置顺序为每个电机发布一个 EMCY 故障码。"""
         message = Float32MultiArray()
         message.data = [float(motor["fault_code"]) for motor in self.motors]
         self.motor_fault_publisher.publish(message)
 
     def motor_set_mode(self, motor_id: int, mode: int) -> bool:
-        """Set AIMOTOR profile velocity mode (6060h = 3).
+        """设置 AIMOTOR 轮廓速度模式（6060h = 3）。
 
-        The old upper layer used ``2`` for speed mode, so both 2 and the
-        CANopen value 3 are accepted and normalized to 3 on the wire.
+        旧版上层使用 ``2`` 表示速度模式，因此同时接受 2 和 CANopen
+        标准值 3，但在线路上统一发送 3。
         """
         if mode not in (2, self.CANOPEN_VELOCITY_MODE):
             self.get_logger().error(f"Unsupported AIMOTOR mode: {mode}")
@@ -609,7 +624,7 @@ class CanMotorDriver(Node):
         )
 
     def motor_set_acceleration(self, motor_id: int, acceleration=None) -> bool:
-        """Write PV profile acceleration to 6083h in Pul/s^2."""
+        """将 PV 轮廓加速度以 Pul/s^2 单位写入 6083h。"""
         if acceleration is None:
             acceleration = self.profile_acceleration
         try:
@@ -624,7 +639,7 @@ class CanMotorDriver(Node):
         )
 
     def motor_set_deceleration(self, motor_id: int, deceleration=None) -> bool:
-        """Write PV profile deceleration to 6084h in Pul/s^2."""
+        """将 PV 轮廓减速度以 Pul/s^2 单位写入 6084h。"""
         if deceleration is None:
             deceleration = self.profile_deceleration
         try:
@@ -639,7 +654,7 @@ class CanMotorDriver(Node):
         )
 
     def motor_set_current_limit(self, motor_id: int, current_limit: float) -> bool:
-        """Keep the legacy API; AIMOTOR manual exposes no generic current-limit object."""
+        """保留旧版 API；AIMOTOR 手册未定义通用电流限制对象。"""
         self.get_logger().warn(
             f"AIMOTOR CANopen does not define a portable current-limit object; "
             f"ignoring motor {motor_id} value {current_limit}"
@@ -647,7 +662,7 @@ class CanMotorDriver(Node):
         return False
 
     def motor_set_other_param(self, motor_id: int, param_value: float) -> bool:
-        """Keep the legacy API without sending the obsolete 0x7022 frame."""
+        """保留旧版 API，但不再发送已废弃的 0x7022 帧。"""
         self.get_logger().warn(
             f"AIMOTOR CANopen does not define the legacy vendor parameter; "
             f"ignoring motor {motor_id} value {param_value}"
@@ -655,7 +670,7 @@ class CanMotorDriver(Node):
         return False
 
     def motor_set_speed(self, motor_id: int, speed: float) -> bool:
-        """Write output-shaft speed in r/min to 60FFh as signed INT32 Pul/s."""
+        """将输出轴 r/min 速度转换为有符号 INT32 Pul/s 后写入 60FFh。"""
         reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
         if reduction_ratio is None:
             self.get_logger().error(
@@ -673,10 +688,22 @@ class CanMotorDriver(Node):
         target_pulses = int(round(
             numeric_speed * reduction_ratio / 60.0 * self.pulses_per_motor_rev
         ))
-        return self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, target_pulses)
+        motor = self._get_motor(motor_id)
+        if motor is not None:
+            # 直接 API 调用和 ROS 指令缓存写入共用同一个目标速度。
+            motor["velocity"] = numeric_speed
+        result = self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, target_pulses)
+        self.get_logger().debug(
+            f"[AIMotor] 电机{motor_id}设定："
+            f"目标转速={numeric_speed:+.3f} r/min（输出轴），"
+            f"设置脉冲数={target_pulses} Pul/s，"
+            f"减速比={reduction_ratio:.3f}，"
+            f"写入={'成功' if result else '失败'}"
+        )
+        return result
 
     def motor_query_feedback(self, motor_id: int) -> bool:
-        """Request status, actual position, actual velocity and torque via SDO."""
+        """通过 SDO 请求状态、实际位置、实际速度和转矩。"""
         if not self._validate_motor_id(motor_id):
             return False
         results = [
@@ -688,7 +715,7 @@ class CanMotorDriver(Node):
         return all(results)
 
     def motor_enable(self, motor_id: int) -> bool:
-        """Run the CiA402 enable sequence 06h -> 07h -> 0Fh."""
+        """执行 CiA402 使能序列 06h -> 07h -> 0Fh。"""
         if not self._validate_motor_id(motor_id):
             return False
         results = []
@@ -701,18 +728,18 @@ class CanMotorDriver(Node):
         return all(results)
 
     def motor_disable(self, motor_id: int) -> bool:
-        """Disable operation and return CiA402 to switch-on-disabled."""
+        """停止运行，并将 CiA402 返回到“禁止上电”状态。"""
         return self._write_u16(
             motor_id, self.CONTROLWORD_INDEX, self.CONTROL_DISABLE_VOLTAGE
         )
 
     def initialize_motors(self):
-        """Start nodes, set PV mode and ramps, then enable each motor."""
+        """启动节点，设置 PV 模式及加减速参数，然后逐个使能电机。"""
         self.get_logger().info("Initializing AIMOTOR CANopen nodes...")
         time.sleep(0.2)
         for motor in self.motors:
             motor_id = motor["id"]
-            self.send_nmt_command(0x01, motor_id)  # Start remote node.
+            self.send_nmt_command(0x01, motor_id)  # 启动远程节点。
             time.sleep(0.01)
             self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
             time.sleep(0.01)
@@ -731,7 +758,7 @@ class CanMotorDriver(Node):
             time.sleep(0.01)
 
     def speed_command_callback(self, msg: Float32MultiArray):
-        """Cache finite output-shaft r/min commands received from ROS2."""
+        """缓存从 ROS2 接收的有限输出轴 r/min 速度指令。"""
         expected_length = len(self.motors)
         if len(msg.data) not in (3, expected_length):
             self.get_logger().warn(
@@ -754,7 +781,7 @@ class CanMotorDriver(Node):
         self.last_speed_command_time = time.monotonic()
 
     def send_speed_commands(self):
-        """Write cached speeds and mark nodes offline after repeated failures."""
+        """写入缓存速度，并在连续失败后将节点标记为离线。"""
         send_error_threshold = 3
         retry_interval_ticks = 50
         self._send_tick += 1
@@ -776,13 +803,13 @@ class CanMotorDriver(Node):
                     )
 
     def query_motor_feedback(self):
-        """Request status, position, velocity, and torque from every motor."""
+        """向每个电机请求状态、位置、速度和转矩反馈。"""
         for motor in self.motors:
             if not self.motor_query_feedback(motor["id"]):
                 self.get_logger().warn(f"Failed to query motor {motor['id']} feedback")
 
     def _parse_sdo_feedback(self, motor_id: int, data: bytes):
-        """Decode one SDO response into the corresponding motor cache."""
+        """将一条 SDO 响应解析到对应的电机缓存。"""
         if len(data) < 8 or data[0] in (self.SDO_ABORT,):
             return
         index = data[1] | (data[2] << 8)
@@ -808,12 +835,13 @@ class CanMotorDriver(Node):
                     * 60.0
                     / (self.pulses_per_motor_rev * reduction_ratio)
                 )
+                self._log_velocity_feedback(motor_id, pulses_per_sec)
         elif index == self.TORQUE_ACTUAL_INDEX:
             torque_raw = int.from_bytes(value[:2], "little", signed=True)
             motor["actual_torque"] = torque_raw / 10.0
 
     def _parse_tpdo_feedback(self, can_id: int, data: bytes):
-        """Decode the manual's default status/position and velocity/torque TPDOs."""
+        """解析手册默认映射的状态/位置和速度/转矩 TPDO。"""
         node_id = can_id & 0x7F
         motor = self._get_motor(node_id)
         if motor is None:
@@ -833,25 +861,26 @@ class CanMotorDriver(Node):
                     * 60.0
                     / (self.pulses_per_motor_rev * reduction_ratio)
                 )
+                self._log_velocity_feedback(node_id, velocity)
             if len(data) >= 6:
                 motor["actual_torque"] = int.from_bytes(
                     data[4:6], "little", signed=True
                 ) / 10.0
 
     def parse_motor_feedback(self, can_id: int, data: bytearray):
-        """Parse SDO responses and the manual's default TPDO mappings."""
+        """解析 SDO 响应及手册默认的 TPDO 映射。"""
         if self.SDO_TX_BASE <= can_id <= self.SDO_TX_BASE + 0x7F:
             self._parse_sdo_feedback(can_id - self.SDO_TX_BASE, bytes(data))
         elif 0x180 <= can_id <= 0x2FF:
             self._parse_tpdo_feedback(can_id, bytes(data))
 
     def uint16_to_float(self, x, x_min, x_max, bits):
-        """Map an unsigned integer range linearly into ``[x_min, x_max]``."""
+        """将无符号整数范围线性映射到 ``[x_min, x_max]``。"""
         span = (1 << bits) - 1
         return (x_max - x_min) * x / span + x_min
 
     def update_odometry(self):
-        """Integrate differential-drive feedback and publish odometry."""
+        """积分差速底盘反馈并发布里程计。"""
         current_time = self.get_clock().now()
         dt = (current_time.nanoseconds - self.last_time.nanoseconds) / 1e9
         self.last_time = current_time
@@ -870,7 +899,7 @@ class CanMotorDriver(Node):
         self.publish_odometry(linear_velocity, angular_velocity)
 
     def publish_odometry(self, linear_velocity, angular_velocity):
-        """Publish the current pose and twist using SI units (m/s and rad/s)."""
+        """使用 SI 单位（m/s 和 rad/s）发布当前位姿和速度。"""
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
         odom.header.frame_id = "odom"
@@ -890,7 +919,7 @@ class CanMotorDriver(Node):
         self.odom_publisher.publish(odom)
 
     def quaternion_from_euler(self, roll, pitch, yaw):
-        """Convert roll/pitch/yaw in radians to a ROS quaternion message."""
+        """将弧度制的 roll/pitch/yaw 转换为 ROS 四元数消息。"""
         cy = math.cos(yaw * 0.5)
         sy = math.sin(yaw * 0.5)
         cp = math.cos(pitch * 0.5)
@@ -905,10 +934,9 @@ class CanMotorDriver(Node):
         return quaternion
 
     def receive_can_frames(self):
-        """Receive CAN frames, route protocol messages, and recover the bus."""
+        """接收 CAN 帧、分发协议消息，并在异常后恢复总线。"""
         self.get_logger().info("Starting AIMOTOR CANopen receive thread...")
-        # Consecutive receive errors trigger a transport reset, preventing a
-        # transient CAN failure from permanently wedging the node.
+        # 连续接收错误会触发传输层重置，避免短暂 CAN 故障使节点永久卡死。
         consecutive_errors = 0
         while self.running:
             try:
@@ -952,14 +980,14 @@ class CanMotorDriver(Node):
         self.get_logger().info("Stopped CANopen receive thread")
 
     def start_receive_thread(self):
-        """Start the daemon thread that consumes CAN feedback asynchronously."""
+        """启动异步消费 CAN 反馈的守护线程。"""
         self.receive_thread = threading.Thread(
             target=self.receive_can_frames, daemon=True
         )
         self.receive_thread.start()
 
     def timer_callback(self):
-        """Run the 10 Hz command, feedback-query, odometry, and publish cycle."""
+        """执行 10 Hz 的指令发送、反馈查询、里程计和消息发布周期。"""
         if (
             self.command_timeout_sec > 0
             and time.monotonic() - self.last_speed_command_time > self.command_timeout_sec
@@ -992,7 +1020,7 @@ class CanMotorDriver(Node):
         self.motor_feedback_publisher.publish(feedback_msg)
 
     def stop_all_motors(self):
-        """Stop all targets, then leave every motor in the disabled state."""
+        """停止所有目标速度，然后使每个电机进入失能状态。"""
         if self._stopping:
             return
         self._stopping = True
@@ -1006,7 +1034,7 @@ class CanMotorDriver(Node):
             time.sleep(0.01)
 
     def destroy_node(self):
-        """Stop motors, join the receiver, close CAN, then destroy the ROS node."""
+        """停止电机、等待接收线程、关闭 CAN，然后销毁 ROS 节点。"""
         self.stop_all_motors()
         if self.receive_thread:
             self.receive_thread.join(timeout=1.0)
@@ -1021,7 +1049,7 @@ class CanMotorDriver(Node):
 
 
 def main(args=None):
-    """Initialize ROS2, spin the driver, and perform deterministic cleanup."""
+    """初始化 ROS2、运行驱动节点，并执行确定性的资源清理。"""
     rclpy.init(args=args)
     motor_driver = None
     try:
