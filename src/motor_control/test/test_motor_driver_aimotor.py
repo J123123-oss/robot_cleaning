@@ -184,7 +184,7 @@ def test_enable_disable_and_fault_reset_use_cia402_controlword():
     ]
 
     assert driver.motor_disable(1)
-    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 07 00 00 00"))
+    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 00 00 00 00"))
     assert driver.motor_clear_fault(1)
     assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 80 00 00 00"))
 
@@ -230,9 +230,90 @@ def test_sdo_feedback_and_emcy_are_decoded():
     assert motor["actual_velocity"] == -24.0
     assert motor["actual_torque"] == 2.5
 
-    driver.parse_motor_fault(0x081, bytes.fromhex("34 12 08 00 00 00 00 00"))
-    assert motor["fault_code"] == 0x1234
+    driver.parse_motor_fault(0x081, bytes.fromhex("12 23 08 00 00 00 00 00"))
+    assert motor["fault_code"] == 0x2312
     driver.motor_fault_publisher.publish.assert_called_once()
+    messages = [
+        call.args[0]
+        for call in driver.get_logger.return_value.method_calls
+        if call.args
+    ]
+    assert any("硬件过流" in message for message in messages)
+    assert any("H0B-34：0x0201" in message for message in messages)
+
+
+def test_manual_fault_table_contains_all_documented_codes():
+    module = _load_module()
+    expected_codes = {
+        (0x0000, 0x0000),
+        (0x0101, 0x6320),
+        (0x0102, 0x6320),
+        (0x0104, 0x6320),
+        (0x0105, 0x6320),
+        (0x0130, 0x6320),
+        (0x0201, 0x2312),
+        (0x0208, 0xFF00),
+        (0x0207, 0x2311),
+        (0x0234, 0xFF00),
+        (0x0A33, 0x7306),
+        (0x0400, 0x3210),
+        (0x0410, 0x3220),
+        (0x0620, 0x3230),
+        (0x0650, 0x4210),
+        (0x0B00, 0x8611),
+        (0x0668, 0xFF00),
+        (0x0601, 0x8610),
+        (0x0900, 0x5442),
+        (0x0950, 0x5443),
+        (0x0952, 0x5444),
+        (0x0731, 0x7306),
+        (0x0733, 0x7306),
+        (0x0735, 0x7306),
+        (0x0730, 0x7307),
+        (0x0D03, 0x8130),
+        (0x0941, 0xFF00),
+        (0x0942, 0x7600),
+    }
+
+    table = module.CanMotorDriver.AIMOTOR_FAULT_TABLE
+    assert len(table) == 28
+    assert {(fault[0], fault[1]) for fault in table} == expected_codes
+
+
+def test_emcy_parser_logs_all_candidates_for_non_unique_standard_code():
+    module = _load_module()
+    driver = _make_driver(module)
+
+    driver.parse_motor_fault(
+        0x081, bytes.fromhex("20 63 00 01 02 03 04 05")
+    )
+
+    assert driver.motors[0]["fault_code"] == 0x6320
+    messages = [
+        call.args[0]
+        for call in driver.get_logger.return_value.method_calls
+        if call.args
+    ]
+    assert any("无法仅凭 EMCY 帧唯一确定" in message for message in messages)
+    for manufacturer_code in (0x0101, 0x0102, 0x0104, 0x0105, 0x0130):
+        assert any(
+            f"H0B-34=0x{manufacturer_code:04X}" in message
+            for message in messages
+        )
+    assert any("厂家特定数据：01 02 03 04 05" in message for message in messages)
+
+
+def test_emcy_parser_ignores_invalid_frames_without_publishing():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["fault_code"] = 0x2312
+
+    driver.parse_motor_fault(0x081, b"")
+    driver.parse_motor_fault(0x081, bytes.fromhex("12 23"))
+    driver.parse_motor_fault(0x123, bytes.fromhex("12 23 00"))
+
+    assert driver.motors[0]["fault_code"] == 0x2312
+    driver.motor_fault_publisher.publish.assert_not_called()
 
 
 def test_tpdo1_short_frame_does_not_partially_update_position():

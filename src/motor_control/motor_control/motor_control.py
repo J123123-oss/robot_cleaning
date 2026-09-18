@@ -51,16 +51,17 @@ class RobotStateKey(Enum):
 
 STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABLE', 'u':'START'...}
 
-WHEEL_RADIUS = 0.05
-MAX_LINEAR_SPEED_MPS = 0.35
-WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0
-LEGACY_SPEED_UNIT_TO_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS / 10.0
-MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 66.845 r/min
-MIN_SPEED = -MAX_SPEED
+WHEEL_RADIUS = 0.05  # 驱动轮有效半径（m）。
+MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
+WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
+LEGACY_SPEED_UNIT_TO_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS / 10.0  # 旧 0~10 速度单位 -> r/min。
+MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
+MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
 BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
-# 保留旧名称作为兼容别名，但其值已经是轮子输出轴 r/min -> m/s。
-SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS
-MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS
+# 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
+SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
+# 历史名称保留兼容旧代码；AIMotor 的 actual_velocity 当前按 r/min 解释，不是 rad/s。
+MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
 # 防跌落分层触发参数（与 rtk_nav 保持一致）
@@ -78,11 +79,11 @@ UNLOADING_SETTLE_DURATION = 2.0
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
 LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
-NAV_SPEED_BASE = 5.0 * LEGACY_SPEED_UNIT_TO_RPM  # 导航基础速度，单位 r/min
+NAV_SPEED_BASE = 5.0 * LEGACY_SPEED_UNIT_TO_RPM  # 导航基础速度（r/min）。
 NAV_ARRIVE_THRESHOLD = 0.03  # 到达目标点距离阈值（米）
 NAV_REALIGN_DIST = 1.0      # DRIVE阶段距离<此值时暂停重对准，避免GPS漂移冲过头
-NAV_DRIVE_KP = 0.08 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE航向纠偏增益，输出 r/min/deg
-NAV_DRIVE_MAX_CORR = 2.0 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE纠偏最大修正量，单位 r/min
+NAV_DRIVE_KP = 0.08 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE航向纠偏增益（r/min/deg）。
+NAV_DRIVE_MAX_CORR = 2.0 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE纠偏最大修正量（r/min）。
 NAV_DRIVE_DEADZONE = 0.3     # DRIVE纠偏死区（度），小于此误差不纠偏
 # NAV_USE_FIXED_HEADING_DIST = 1.0  # 近距离用进仓预设航向——实际进仓方向不固定，固定航向反而降低精度
 
@@ -96,11 +97,12 @@ ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 
 # PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
-MAX_CORRECTION = 0.8 * LEGACY_SPEED_UNIT_TO_RPM
+MAX_CORRECTION = 0.8 * LEGACY_SPEED_UNIT_TO_RPM  # 航向纠偏输出上限（r/min）。
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
+        """初始化电机控制节点、AIMotor 驱动、传感器订阅和控制定时器。"""
         super().__init__(node_name)
 
         # 声明RTK路径参数，用于获取route_id
@@ -130,10 +132,10 @@ class MotorControlNode(Node):
         self.last_yaw_error = 0.0  # 上一次的航向误差
         # MQTT点按方向定时器
         self.direction_timer = None
-        self.brush_speed = 0.0  # 滚刷速度
-        self.current_left_speed = 0.0  # 当前左轮速度
-        self.current_right_speed = 0.0  # 当前右轮速度
-        self.mqtt_control_speed = MAX_SPEED  # MQTT控制速度，单位 r/min
+        self.brush_speed = 0.0  # 当前滚刷输出轴速度（r/min）。
+        self.current_left_speed = 0.0  # 当前左轮输出轴速度（r/min）。
+        self.current_right_speed = 0.0  # 当前右轮输出轴速度（r/min）。
+        self.mqtt_control_speed = MAX_SPEED  # MQTT控制速度（r/min）。
 
         # 滚刷配置：数量只影响实际激活的旧版 RS02 节点，默认使用两个滚刷。
         self.declare_parameter("brush_motor_count", 2)
@@ -276,8 +278,11 @@ class MotorControlNode(Node):
             # AIMOTOR 出厂默认 CAN 速率为 500 kbit/s，不能沿用旧 RS02 的 1 Mbit/s。
             baudrate=500000,
             motor_ids=motor_ids,
+            # 编码器每转脉冲数，用于将 CANopen 反馈脉冲换算为电机轴转速。
             pulses_per_motor_rev=1000,
+            # 未提供单独配置时使用的默认机械减速比。
             mechanical_reduction_ratio=40.0,
+            # 1、2 号为左右轮减速器，3、4 号为滚刷减速器。
             mechanical_reduction_ratios={
                 1: 50.0,
                 2: 50.0,
@@ -1202,7 +1207,7 @@ class MotorControlNode(Node):
         return error
 
     def get_speed_correction(self, target_heading: float) -> float:
-        """修正：优化PID，修复角度差计算，避免反向修正"""
+        """根据航向误差计算左右轮对称纠偏量，返回值单位为 r/min。"""
         # 前置校验：IMU数据是否有效且最新
         # if self.imu_yaw_deg is None or (time.time() - self.last_imu_update_time) > self.imu_update_interval:
         #     self.get_logger().warn("[Correction] IMU数据过期/无效，跳过修正")
@@ -1218,14 +1223,14 @@ class MotorControlNode(Node):
 
         # 分段KP参数（优化小误差修正，避免累积）
         if yaw_error_abs > 30:
-            kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：快速转向，输出 r/min
+            kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：快速转向，输出 r/min/度。
         elif yaw_error_abs > 10: #20:
-            kp = 0.02 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：稳定修正，输出 r/min
+            kp = 0.02 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：稳定修正，输出 r/min/度。
         else:
-            kp = 0.005 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：精准修正，输出 r/min
+            kp = 0.005 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：精准修正，输出 r/min/度。
 
         # KD参数（阻尼，抑制波动）
-        kd = 0.05 * LEGACY_SPEED_UNIT_TO_RPM
+        kd = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 微分增益：输出 r/min/度差分。
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -1529,6 +1534,7 @@ class MotorControlNode(Node):
                     "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
                 },
                 "sensors_status":self.sensors_status,
+                # AIMotor actual_velocity 为轮子输出轴 r/min，此处换算为平均线速度 m/s。
                 "velocity": (abs(self.motor_ctrl.motors[0]["actual_velocity"]) + abs(self.motor_ctrl.motors[1]["actual_velocity"])) / 2.0 * WHEEL_RPM_TO_MPS,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
@@ -2562,7 +2568,7 @@ class MotorControlNode(Node):
         self.switch_state('z')  # DISABLE状态，确保电机停止
 
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
-        """设置双电机速度（完全保留原有功能）"""
+        """设置左右轮速度；输入和发布的轮速单位均为输出轴 r/min。"""
         # 保存当前速度值
         self.current_left_speed = float(left_speed)
         self.current_right_speed = float(right_speed)
@@ -2574,9 +2580,9 @@ class MotorControlNode(Node):
 
         # 构造并发布速度消息
         wheel_speed_msg = Vector3()
-        wheel_speed_msg.x = float(left_speed)    # 左轮角速度
-        wheel_speed_msg.y = float(right_speed)   # 右轮角速度
-        wheel_speed_msg.z = float(self.brush_speed)
+        wheel_speed_msg.x = float(left_speed)    # 左轮输出轴速度（r/min）。
+        wheel_speed_msg.y = float(right_speed)   # 右轮输出轴速度（r/min）。
+        wheel_speed_msg.z = float(self.brush_speed)  # 滚刷输出轴速度（r/min）。
         self.speed_pub.publish(wheel_speed_msg)
 
     def publish_rc_channels(self) -> None:

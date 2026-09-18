@@ -9,6 +9,7 @@ from launch.conditions import IfCondition
 from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
+    """构建并返回 RTK 导航系统的完整 ROS 2 launch 描述。"""
     # 全局路径配置
     rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
@@ -68,31 +69,39 @@ def generate_launch_description():
         default_value=TextSubstitution(text="0.42"),
         description="Stanley lateral gain within 1.3 m of the target",
     )
+    # 以下纠偏参数由 rtk_nav 消费：速度和纠偏量统一使用轮子减速器输出轴 r/min，
+    # ratio 为无量纲比例；默认值由旧的 0~10 速度指令单位换算而来。
+    # RTK/Stanley 纠偏比例，1.0 表示使用完整纠偏量。
     declare_rtk_correction_ratio_arg = DeclareLaunchArgument(
         "rtk_correction_ratio",
         default_value=TextSubstitution(text="1.0"),
         description="RTK/Stanley correction ratio applied to wheel output-shaft r/min",
     )
+    # RTK/Stanley 纠偏速度上限（轮子输出轴 r/min）。
     declare_rtk_max_correction_arg = DeclareLaunchArgument(
         "rtk_max_correction",
         default_value=TextSubstitution(text="10.026761"),
         description="Maximum RTK correction in wheel output-shaft r/min",
     )
+    # 视觉纠偏比例，1.0 表示使用完整视觉纠偏量。
     declare_visual_correction_ratio_arg = DeclareLaunchArgument(
         "visual_correction_ratio",
         default_value=TextSubstitution(text="1.0"),
         description="Visual correction ratio applied to wheel output-shaft r/min",
     )
+    # 视觉航向误差增益：输入为度，输出为轮速纠偏 r/min。
     declare_visual_heading_gain_arg = DeclareLaunchArgument(
         "visual_heading_gain",
         default_value=TextSubstitution(text="0.334225"),
         description="Visual heading correction gain (r/min per degree)",
     )
+    # 视觉横向误差增益：输入为米，输出为轮速纠偏 r/min。
     declare_visual_lateral_gain_arg = DeclareLaunchArgument(
         "visual_lateral_gain",
         default_value=TextSubstitution(text="16.711269"),
         description="Visual lateral correction gain (r/min per meter)",
     )
+    # 视觉纠偏对左右轮施加的最大速度偏置（轮子输出轴 r/min）。
     declare_visual_max_correction_arg = DeclareLaunchArgument(
         "visual_max_correction",
         default_value=TextSubstitution(text="3.342254"),
