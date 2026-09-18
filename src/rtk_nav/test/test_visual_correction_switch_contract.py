@@ -250,11 +250,12 @@ def test_visual_speed_parameters_use_wheel_rpm_units_after_migration():
     rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     launch_source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
-    assert '"visual_heading_gain", 0.05 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
-    assert '"visual_lateral_gain", 2.5 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
-    assert '"visual_max_correction", 0.5 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
-    assert 'kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
-    assert 'kd = 0.08 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert '"visual_heading_gain", 0.334225' in rtk_source
+    assert '"visual_lateral_gain", 16.711269' in rtk_source
+    assert '"visual_max_correction", 3.342254' in rtk_source
+    assert 'kp = 0.334225' in rtk_source
+    assert 'kd = 0.534761' in rtk_source
+    assert "LEGACY_SPEED_UNIT_TO_RPM" not in rtk_source
     assert 'description="Visual heading correction gain (r/min per degree)"' in launch_source
     assert 'description="Visual lateral correction gain (r/min per meter)"' in launch_source
     assert 'description="Maximum visual correction in wheel output-shaft r/min"' in launch_source

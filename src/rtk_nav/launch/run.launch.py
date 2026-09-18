@@ -70,7 +70,7 @@ def generate_launch_description():
         description="Stanley lateral gain within 1.3 m of the target",
     )
     # 以下纠偏参数由 rtk_nav 消费：速度和纠偏量统一使用轮子减速器输出轴 r/min，
-    # ratio 为无量纲比例；默认值由旧的 0~10 速度指令单位换算而来。
+    # ratio 为无量纲比例。
     # RTK/Stanley 纠偏比例，1.0 表示使用完整纠偏量。
     declare_rtk_correction_ratio_arg = DeclareLaunchArgument(
         "rtk_correction_ratio",

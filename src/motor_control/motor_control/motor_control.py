@@ -54,7 +54,6 @@ STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABL
 WHEEL_RADIUS = 0.05  # 驱动轮有效半径（m）。
 MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
 WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
-LEGACY_SPEED_UNIT_TO_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS / 10.0  # 旧 0~10 速度单位 -> r/min。
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
 BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
@@ -79,11 +78,11 @@ UNLOADING_SETTLE_DURATION = 2.0
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
 LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
-NAV_SPEED_BASE = 5.0 * LEGACY_SPEED_UNIT_TO_RPM  # 导航基础速度（r/min）。
+NAV_SPEED_BASE = 33.422538  # 导航基础速度（轮子输出轴 r/min）。
 NAV_ARRIVE_THRESHOLD = 0.03  # 到达目标点距离阈值（米）
 NAV_REALIGN_DIST = 1.0      # DRIVE阶段距离<此值时暂停重对准，避免GPS漂移冲过头
-NAV_DRIVE_KP = 0.08 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE航向纠偏增益（r/min/deg）。
-NAV_DRIVE_MAX_CORR = 2.0 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE纠偏最大修正量（r/min）。
+NAV_DRIVE_KP = 0.534761  # DRIVE航向纠偏增益（r/min/deg）。
+NAV_DRIVE_MAX_CORR = 13.369015  # DRIVE纠偏最大修正量（r/min）。
 NAV_DRIVE_DEADZONE = 0.3     # DRIVE纠偏死区（度），小于此误差不纠偏
 # NAV_USE_FIXED_HEADING_DIST = 1.0  # 近距离用进仓预设航向——实际进仓方向不固定，固定航向反而降低精度
 
@@ -97,7 +96,7 @@ ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 
 # PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
-MAX_CORRECTION = 0.8 * LEGACY_SPEED_UNIT_TO_RPM  # 航向纠偏输出上限（r/min）。
+MAX_CORRECTION = 5.347606  # 航向纠偏输出上限（r/min）。
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
@@ -1223,14 +1222,14 @@ class MotorControlNode(Node):
 
         # 分段KP参数（优化小误差修正，避免累积）
         if yaw_error_abs > 30:
-            kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：快速转向，输出 r/min/度。
+            kp = 0.334225  # 大误差：快速转向，输出 r/min/度。
         elif yaw_error_abs > 10: #20:
-            kp = 0.02 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：稳定修正，输出 r/min/度。
+            kp = 0.133690  # 中误差：稳定修正，输出 r/min/度。
         else:
-            kp = 0.005 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：精准修正，输出 r/min/度。
+            kp = 0.033423  # 小误差：精准修正，输出 r/min/度。
 
         # KD参数（阻尼，抑制波动）
-        kd = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 微分增益：输出 r/min/度差分。
+        kd = 0.334225  # 微分增益：输出 r/min/度差分。
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -2569,9 +2568,14 @@ class MotorControlNode(Node):
 
     def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
         """设置左右轮速度；输入和发布的轮速单位均为输出轴 r/min。"""
+        # 上层所有轮速都以输出轴 r/min 表示，最终下发前统一限制在
+        # 0.35 m/s 对应的物理轮速范围内，避免任一控制路径绕过限幅。
+        left_speed = max(MIN_SPEED, min(MAX_SPEED, float(left_speed)))
+        right_speed = max(MIN_SPEED, min(MAX_SPEED, float(right_speed)))
+
         # 保存当前速度值
-        self.current_left_speed = float(left_speed)
-        self.current_right_speed = float(right_speed)
+        self.current_left_speed = left_speed
+        self.current_right_speed = right_speed
         
         # 左电机（ID=1）
         self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[0]["id"], left_speed)
