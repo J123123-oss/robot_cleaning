@@ -273,7 +273,7 @@ def generate_launch_description():
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         'brush_motor_count',
         default_value=TextSubstitution(text='2'),
-        description='Brush motor count: 1 uses ID 3, 2 uses IDs 3 and 4',
+        description='Brush motor count: 0 uses no brush, 1 uses ID 3, 2 uses IDs 3 and 4',
     )
 
     openmv_camera_node = Node(
@@ -507,8 +507,8 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {
-                # The driver owns all four nodes: left/right wheels and two
-                # brush IDs.  The controller keeps both brush targets at 0.
+                # The driver owns the two wheel nodes and the configured brush
+                # nodes. The controller keeps every brush target at 0.
                 'auto_enable': True,
                 'command_timeout_sec': 0.8,
                 'brush_motor_count': ParameterValue(

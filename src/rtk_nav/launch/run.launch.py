@@ -22,11 +22,11 @@ def generate_launch_description():
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
-    # 滚刷配置：1只控制3号滚刷，2控制3、4号滚刷；方向模式只影响4号滚刷。
+    # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="1"),
-        description="滚刷电机数量，只支持1或2",
+        default_value=TextSubstitution(text="0"),
+        description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
         "brush_direction_mode",

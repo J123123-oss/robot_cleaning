@@ -98,6 +98,18 @@ ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 # PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
 MAX_CORRECTION = 5.347606  # 航向纠偏输出上限（r/min）。
 
+
+def brush_motor_ids_for_count(brush_motor_count: int) -> Tuple[int, ...]:
+    """将滚刷数量映射为实际使用的 CANopen 节点 ID。"""
+    if brush_motor_count not in (0, 1, 2):
+        raise ValueError("brush_motor_count must be 0, 1, or 2")
+    if brush_motor_count == 0:
+        return ()
+    if brush_motor_count == 1:
+        return (3,)
+    return (3, 4)
+
+
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
@@ -136,20 +148,20 @@ class MotorControlNode(Node):
         self.current_right_speed = 0.0  # 当前右轮输出轴速度（r/min）。
         self.mqtt_control_speed = MAX_SPEED  # MQTT控制速度（r/min）。
 
-        # 滚刷配置：数量只影响实际激活的旧版 RS02 节点，默认使用两个滚刷。
+        # 滚刷配置：0表示现场未安装滚刷，1/2分别激活3号/3、4号节点。
         self.declare_parameter("brush_motor_count", 2)
         try:
             brush_motor_count = int(self.get_parameter("brush_motor_count").value)
         except (TypeError, ValueError):
             brush_motor_count = 2
             self.get_logger().warn("brush_motor_count无效，回退为双滚刷")
-        if brush_motor_count not in (1, 2):
+        if brush_motor_count not in (0, 1, 2):
             self.get_logger().warn(
-                f"brush_motor_count={brush_motor_count}无效，仅支持1或2，回退为2"
+                f"brush_motor_count={brush_motor_count}无效，仅支持0、1或2，回退为2"
             )
             brush_motor_count = 2
         self.brush_motor_count = brush_motor_count
-        self.brush_motor_ids = [3] if brush_motor_count == 1 else [3, 4]
+        self.brush_motor_ids = list(brush_motor_ids_for_count(brush_motor_count))
 
         # 双滚刷共用一个上层速度值；opposite仅对4号滚刷取反。
         self.declare_parameter("brush_direction_mode", "same")
@@ -1538,7 +1550,10 @@ class MotorControlNode(Node):
                 "acceleration": {
                     "x": float(self.motor_ctrl.motors[0]["actual_velocity"]),
                     "y": float(self.motor_ctrl.motors[1]["actual_velocity"]),
-                    "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
+                    "z": float(
+                        self.motor_ctrl.motors[2]["actual_velocity"]
+                        if len(self.motor_ctrl.motors) > 2 else 0.0
+                    )
                 },
                 "sensors_status":self.sensors_status,
                 # AIMotor actual_velocity 为轮子输出轴 r/min，此处换算为平均线速度 m/s。
@@ -2617,6 +2632,10 @@ class MotorControlNode(Node):
             brush_speed = float(brush_speed)
         except (TypeError, ValueError):
             self.get_logger().warn(f"[ROSNode] 滚刷速度无效：{brush_speed!r}")
+            return
+
+        if not self.brush_motor_ids:
+            self.brush_speed = 0.0
             return
 
         brush_results = []

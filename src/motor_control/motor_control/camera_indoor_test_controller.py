@@ -179,8 +179,8 @@ class CameraIndoorTestController(Node):
         self.brush_motor_count = int(
             self.get_parameter('brush_motor_count').value
         )
-        if self.brush_motor_count not in (1, 2):
-            raise ValueError('brush_motor_count must be 1 or 2')
+        if self.brush_motor_count not in (0, 1, 2):
+            raise ValueError('brush_motor_count must be 0, 1, or 2')
         self._validate_parameters(control_frequency)
 
         self.angle_deg = 0.0
@@ -300,7 +300,7 @@ class CameraIndoorTestController(Node):
         )
 
     def timer_callback(self):
-        """按视觉数据新鲜度发布四路底盘速度，滚刷始终保持停止。"""
+        """按视觉数据新鲜度发布配置数量的电机速度，滚刷保持停止。"""
         now = time.monotonic()
         angle_fresh = self._is_fresh(self.last_angle_time, now)
         confidence_fresh = self._is_fresh(self.last_confidence_time, now)
@@ -339,7 +339,9 @@ class CameraIndoorTestController(Node):
             )
             self._last_control_log_time = now
         msg = Float32MultiArray()
-        msg.data = [float(left_speed), float(right_speed), 0.0]
+        msg.data = [float(left_speed), float(right_speed)]
+        if self.brush_motor_count >= 1:
+            msg.data.append(0.0)
         if self.brush_motor_count == 2:
             msg.data.append(0.0)
         self.speed_pub.publish(msg)
@@ -350,7 +352,9 @@ class CameraIndoorTestController(Node):
             return False
         try:
             msg = Float32MultiArray()
-            msg.data = [0.0, 0.0, 0.0]
+            msg.data = [0.0, 0.0]
+            if self.brush_motor_count >= 1:
+                msg.data.append(0.0)
             if self.brush_motor_count == 2:
                 msg.data.append(0.0)
             self.speed_pub.publish(msg)
