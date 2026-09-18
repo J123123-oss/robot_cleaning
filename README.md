@@ -362,12 +362,10 @@ graph TD
 ### 边界矫正状态机
 ```mermaid
 graph TD
-    subgraph 边界矫正状态机
-        SENSOR_TRIG["传感器触发 front/mid"] --> TURNING["TURNING 偏转1.0s"]
-        TURNING --> BACKING["BACKING 后退4.0s"]
-        BACKING --> RETURNING["RETURNING 反向偏转退回2.0s"]
-        RETURNING --> IDLE_BC["IDLE 恢复正常导航"]
-    end
+    SENSOR_TRIG["传感器触发 front/mid"] --> TURNING["TURNING 偏转1.0s"]
+    TURNING --> BACKING["BACKING 后退4.0s"]
+    BACKING --> RETURNING["RETURNING 反向偏转退回2.0s"]
+    RETURNING --> IDLE_BC["IDLE 恢复正常导航"]
 ```
 
 ### Stanley控制器流程

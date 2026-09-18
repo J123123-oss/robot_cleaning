@@ -55,6 +55,19 @@ class CanMotorDriver(object):
     VELOCITY_ACTUAL_INDEX = 0x606C
     TORQUE_ACTUAL_INDEX = 0x6077
     TARGET_VELOCITY_INDEX = 0x60FF
+    PROFILE_ACCELERATION_INDEX = 0x6083
+    PROFILE_DECELERATION_INDEX = 0x6084
+
+    DEFAULT_PROFILE_ACCELERATION = 16666
+    DEFAULT_PROFILE_DECELERATION = 11111
+    DEFAULT_PULSES_PER_MOTOR_REV = 1000
+    DEFAULT_MECHANICAL_REDUCTION_RATIO = 40.0
+    DEFAULT_MECHANICAL_REDUCTION_RATIOS = {
+        1: 50.0,
+        2: 50.0,
+        3: 40.0,
+        4: 40.0,
+    }
 
     SDO_READ = 0x40
     SDO_WRITE_1 = 0x2F
@@ -77,8 +90,11 @@ class CanMotorDriver(object):
         interface="socketcan",
         baudrate=500000,
         motor_ids=None,
-        velocity_ratio=10000.0,
-        encoder_pulses_per_rev=1000,
+        pulses_per_motor_rev=DEFAULT_PULSES_PER_MOTOR_REV,
+        mechanical_reduction_ratio=DEFAULT_MECHANICAL_REDUCTION_RATIO,
+        mechanical_reduction_ratios=None,
+        profile_acceleration=DEFAULT_PROFILE_ACCELERATION,
+        profile_deceleration=DEFAULT_PROFILE_DECELERATION,
     ):
         """Create the driver, publishers, subscriber, timer, and CAN thread.
 
@@ -104,16 +120,14 @@ class CanMotorDriver(object):
         ):
             raise ValueError("command_timeout_sec must be finite and >= 0")
 
-        self.velocity_ratio = float(
-            rospy.get_param("~velocity_ratio", velocity_ratio)
+        self.profile_acceleration = self._validate_profile_parameter(
+            rospy.get_param("~profile_acceleration", profile_acceleration),
+            "profile_acceleration",
         )
-        if not math.isfinite(self.velocity_ratio) or self.velocity_ratio <= 0:
-            raise ValueError("velocity_ratio must be greater than zero")
-        self.encoder_pulses_per_rev = int(
-            rospy.get_param("~encoder_pulses_per_rev", encoder_pulses_per_rev)
+        self.profile_deceleration = self._validate_profile_parameter(
+            rospy.get_param("~profile_deceleration", profile_deceleration),
+            "profile_deceleration",
         )
-        if self.encoder_pulses_per_rev <= 0:
-            raise ValueError("encoder_pulses_per_rev must be greater than zero")
 
         if motor_ids is None:
             motor_ids = (1, 2, 3)
@@ -129,6 +143,39 @@ class CanMotorDriver(object):
         ):
             raise ValueError(
                 "motor_ids must contain unique CANopen IDs in range 1..127"
+            )
+
+        self.pulses_per_motor_rev = self._validate_positive_int_parameter(
+            rospy.get_param("~pulses_per_motor_rev", pulses_per_motor_rev),
+            "pulses_per_motor_rev",
+        )
+        self.encoder_pulses_per_rev = self.pulses_per_motor_rev
+        default_reduction_ratio = self._validate_positive_float_parameter(
+            rospy.get_param(
+                "~mechanical_reduction_ratio", mechanical_reduction_ratio
+            ),
+            "mechanical_reduction_ratio",
+        )
+        configured_reduction_ratios = (
+            self.DEFAULT_MECHANICAL_REDUCTION_RATIOS
+            if mechanical_reduction_ratios is None
+            else mechanical_reduction_ratios
+        )
+        if not isinstance(configured_reduction_ratios, dict):
+            raise ValueError("mechanical_reduction_ratios must be a dict keyed by motor ID")
+        self.mechanical_reduction_ratios = {}
+        for motor_id in self.motor_ids:
+            parameter_name = f"mechanical_reduction_ratio_{motor_id}"
+            self.mechanical_reduction_ratios[motor_id] = (
+                self._validate_positive_float_parameter(
+                    rospy.get_param(
+                        f"~{parameter_name}",
+                        configured_reduction_ratios.get(
+                            motor_id, default_reduction_ratio
+                        ),
+                    ),
+                    parameter_name,
+                )
             )
 
         self.motors = [
@@ -214,6 +261,55 @@ class CanMotorDriver(object):
             rospy.logerr("Invalid CANopen motor ID: %r", motor_id)
             return False
         return True
+
+    @staticmethod
+    def _validate_profile_parameter(value, name):
+        """Validate a positive INT32 profile acceleration/deceleration value."""
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a finite positive integer")
+        if (
+            not math.isfinite(numeric_value)
+            or numeric_value <= 0
+            or not numeric_value.is_integer()
+            or numeric_value > 0x7FFFFFFF
+        ):
+            raise ValueError(f"{name} must be a finite positive INT32 value")
+        return int(numeric_value)
+
+    @staticmethod
+    def _validate_positive_float_parameter(value, name):
+        """Validate a finite positive scalar used for unit conversion."""
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a finite positive number")
+        if not math.isfinite(numeric_value) or numeric_value <= 0:
+            raise ValueError(f"{name} must be a finite positive number")
+        return numeric_value
+
+    @staticmethod
+    def _validate_positive_int_parameter(value, name):
+        """Validate a finite positive integer used as pulses per revolution."""
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a finite positive integer")
+        if (
+            not math.isfinite(numeric_value)
+            or numeric_value <= 0
+            or not numeric_value.is_integer()
+            or numeric_value > 0x7FFFFFFF
+        ):
+            raise ValueError(f"{name} must be a finite positive integer")
+        return int(numeric_value)
+
+    def _get_mechanical_reduction_ratio(self, motor_id):
+        """Return the configured motor-specific reduction ratio."""
+        if not self._validate_motor_id(motor_id):
+            return None
+        return self.mechanical_reduction_ratios.get(motor_id)
 
     def create_can_bus(self):
         """Open a python-can bus, supporting python-can 3.x and 4.x APIs."""
@@ -412,6 +508,36 @@ class CanMotorDriver(object):
             bytes((self.CANOPEN_VELOCITY_MODE,)),
         )
 
+    def motor_set_acceleration(self, motor_id, acceleration=None):
+        """Write PV profile acceleration to 6083h in Pul/s^2."""
+        if acceleration is None:
+            acceleration = self.profile_acceleration
+        try:
+            acceleration = self._validate_profile_parameter(
+                acceleration, "profile_acceleration"
+            )
+        except ValueError as exc:
+            rospy.logerr("%s", exc)
+            return False
+        return self._write_i32(
+            motor_id, self.PROFILE_ACCELERATION_INDEX, acceleration
+        )
+
+    def motor_set_deceleration(self, motor_id, deceleration=None):
+        """Write PV profile deceleration to 6084h in Pul/s^2."""
+        if deceleration is None:
+            deceleration = self.profile_deceleration
+        try:
+            deceleration = self._validate_profile_parameter(
+                deceleration, "profile_deceleration"
+            )
+        except ValueError as exc:
+            rospy.logerr("%s", exc)
+            return False
+        return self._write_i32(
+            motor_id, self.PROFILE_DECELERATION_INDEX, deceleration
+        )
+
     def motor_set_current_limit(self, motor_id, current_limit):
         """Keep the legacy API without sending an obsolete vendor frame."""
         rospy.logwarn(
@@ -433,7 +559,13 @@ class CanMotorDriver(object):
         return False
 
     def motor_set_speed(self, motor_id, speed):
-        """Write 60FFh target velocity as signed INT32 pulses per second."""
+        """Write output-shaft speed in r/min to 60FFh as signed INT32 Pul/s."""
+        reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
+        if reduction_ratio is None:
+            rospy.logerr(
+                "No mechanical reduction ratio configured for motor %s", motor_id
+            )
+            return False
         try:
             numeric_speed = float(speed)
         except (TypeError, ValueError):
@@ -442,7 +574,9 @@ class CanMotorDriver(object):
         if not math.isfinite(numeric_speed):
             rospy.logerr("Invalid target velocity: %r", speed)
             return False
-        target_pulses = int(round(numeric_speed * self.velocity_ratio))
+        target_pulses = int(round(
+            numeric_speed * reduction_ratio / 60.0 * self.pulses_per_motor_rev
+        ))
         return self._write_i32(
             motor_id, self.TARGET_VELOCITY_INDEX, target_pulses
         )
@@ -483,7 +617,7 @@ class CanMotorDriver(object):
         )
 
     def initialize_motors(self):
-        """Start nodes, select profile velocity mode, and enable them."""
+        """Start nodes, set PV mode and ramps, then enable each motor."""
         rospy.loginfo("Initializing AIMOTOR CANopen nodes...")
         time.sleep(0.2)
         for motor in self.motors:
@@ -491,6 +625,16 @@ class CanMotorDriver(object):
             self.send_nmt_command(0x01, motor_id)
             time.sleep(0.01)
             self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
+            time.sleep(0.01)
+            if not self.motor_set_acceleration(motor_id):
+                rospy.logerr(
+                    "Failed to set acceleration for AIMOTOR node %s", motor_id
+                )
+            time.sleep(0.01)
+            if not self.motor_set_deceleration(motor_id):
+                rospy.logerr(
+                    "Failed to set deceleration for AIMOTOR node %s", motor_id
+                )
             time.sleep(0.01)
             if not self.motor_enable(motor_id):
                 rospy.logerr("Failed to enable AIMOTOR node %s", motor_id)
@@ -575,7 +719,13 @@ class CanMotorDriver(object):
             )
         elif index == self.VELOCITY_ACTUAL_INDEX:
             pulses_per_sec = int.from_bytes(value, "little", signed=True)
-            motor["actual_velocity"] = pulses_per_sec / self.velocity_ratio
+            reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
+            if reduction_ratio is not None:
+                motor["actual_velocity"] = (
+                    pulses_per_sec
+                    * 60.0
+                    / (self.pulses_per_motor_rev * reduction_ratio)
+                )
         elif index == self.TORQUE_ACTUAL_INDEX:
             torque_raw = int.from_bytes(value[:2], "little", signed=True)
             motor["actual_torque"] = torque_raw / 10.0
@@ -594,7 +744,13 @@ class CanMotorDriver(object):
             )
         elif 0x280 <= can_id < 0x300 and len(data) >= 4:
             velocity = int.from_bytes(data[0:4], "little", signed=True)
-            motor["actual_velocity"] = velocity / self.velocity_ratio
+            reduction_ratio = self._get_mechanical_reduction_ratio(node_id)
+            if reduction_ratio is not None:
+                motor["actual_velocity"] = (
+                    velocity
+                    * 60.0
+                    / (self.pulses_per_motor_rev * reduction_ratio)
+                )
             if len(data) >= 6:
                 motor["actual_torque"] = int.from_bytes(
                     data[4:6], "little", signed=True
@@ -622,8 +778,9 @@ class CanMotorDriver(object):
 
         left_vel = self.motors[0]["actual_velocity"]
         right_vel = self.motors[1]["actual_velocity"]
-        left_linear = left_vel * self.wheel_radius
-        right_linear = right_vel * self.wheel_radius
+        rpm_to_mps = 2.0 * math.pi * self.wheel_radius / 60.0
+        left_linear = left_vel * rpm_to_mps
+        right_linear = right_vel * rpm_to_mps
         linear_velocity = (right_linear + left_linear) / 2.0
         angular_velocity = (right_linear - left_linear) / self.wheel_base
         self.x += linear_velocity * dt * math.cos(self.th)

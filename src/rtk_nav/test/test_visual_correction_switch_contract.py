@@ -172,9 +172,13 @@ def test_line_detector_uses_a_separate_fine_line_pipeline_for_angle_average():
     assert "angle_parallel_group" in detector
     assert "angle_perpendicular_group" in detector
     assert "select_angle_line_family" in detector
+    assert "orient_angle_line_to_path_axis" in source
+    assert "weighted_line_angle_for_path" in source
     assert "prepare_angle_line_group" in detector
     assert "angle_lines = angle_parallel_group + angle_perpendicular_group" in detector
-    assert "angle_average_lines, fine_line_axis_image, angle_line_source" in detector
+    assert "angle_average_lines, angle_line_source" in detector
+    assert "fine_line_axis_image = path_axis_image" in detector
+    assert "for line in angle_average_lines" in detector
     assert "select_tracking_candidates(parallel_group)" in detector
     assert "select_tracking_candidates(parallel_group, angle_lines)" not in detector
     assert "line_average_angle - fine_line_axis_image" in detector
@@ -201,11 +205,11 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
         ("stanley_k_path", "0.45"),
         ("stanley_k_near_target", "0.42"),
         ("rtk_correction_ratio", "1.0"),
-        ("rtk_max_correction", "1.5"),
+        ("rtk_max_correction", "10.026761"),
         ("visual_correction_ratio", "1.0"),
-        ("visual_heading_gain", "0.1"),
-        ("visual_lateral_gain", "5.0"),
-        ("visual_max_correction", "1.5"),
+        ("visual_heading_gain", "0.334225"),
+        ("visual_lateral_gain", "16.711269"),
+        ("visual_max_correction", "3.342254"),
         ("visual_confidence_threshold", "0.75"),
         ("visual_timeout_sec", "0.5"),
         ("target_line_offset_m", "nan"),
@@ -228,7 +232,6 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
     assert "'angle_line_axis_tolerance_deg': ParameterValue(" in source
     assert 'default_value=TextSubstitution(text="25.0")' in source
     assert "LaunchConfiguration('angle_line_axis_tolerance_deg')" in source
-
     for name, default, value_type in (
         ("line_tracking_enabled", "true", "bool"),
         ("max_line_tracking_jump_px", "30.0", "float"),
@@ -241,6 +244,20 @@ def test_launch_exposes_independent_rtk_and_visual_tuning_parameters():
             f'LaunchConfiguration("{name}")' in source
         )
         assert f"value_type={value_type}" in source
+
+
+def test_visual_speed_parameters_use_wheel_rpm_units_after_migration():
+    rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+    launch_source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+
+    assert '"visual_heading_gain", 0.05 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert '"visual_lateral_gain", 2.5 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert '"visual_max_correction", 0.5 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert 'kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert 'kd = 0.08 * LEGACY_SPEED_UNIT_TO_RPM' in rtk_source
+    assert 'description="Visual heading correction gain (r/min per degree)"' in launch_source
+    assert 'description="Visual lateral correction gain (r/min per meter)"' in launch_source
+    assert 'description="Maximum visual correction in wheel output-shaft r/min"' in launch_source
 
 
 def test_indoor_launch_forwards_constrained_line_tracking_parameters():

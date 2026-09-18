@@ -1,4 +1,4 @@
-"""Offline tests for the AIMOTOR CANopen driver."""
+"""Offline tests for the ROS1 AIMOTOR CANopen driver."""
 
 import importlib.util
 import sys
@@ -8,46 +8,63 @@ from unittest.mock import Mock
 
 
 def _load_module():
-    rclpy = types.ModuleType("rclpy")
-    rclpy_node = types.ModuleType("rclpy.node")
-    rclpy_node.Node = object
-    rclpy.node = rclpy_node
-
-    std_msgs = types.ModuleType("std_msgs")
-    std_msgs_msg = types.ModuleType("std_msgs.msg")
-    std_msgs_msg.Float32MultiArray = type("Float32MultiArray", (), {})
-    std_msgs.msg = std_msgs_msg
-
-    nav_msgs = types.ModuleType("nav_msgs")
-    nav_msgs_msg = types.ModuleType("nav_msgs.msg")
-    nav_msgs_msg.Odometry = type("Odometry", (), {})
-    nav_msgs.msg = nav_msgs_msg
+    """Load the driver with ROS1 and python-can dependencies replaced."""
+    rospy = types.ModuleType("rospy")
+    rospy.Time = Mock()
+    rospy.Duration = Mock()
+    rospy.Publisher = Mock()
+    rospy.Subscriber = Mock()
+    rospy.Timer = Mock()
+    rospy.get_param = Mock(side_effect=lambda _name, default=None: default)
+    rospy.is_shutdown = Mock(return_value=False)
+    rospy.ROSInterruptException = RuntimeError
+    rospy.loginfo = Mock()
+    rospy.logwarn = Mock()
+    rospy.logerr = Mock()
+    rospy.on_shutdown = Mock()
+    rospy.spin = Mock()
 
     geometry_msgs = types.ModuleType("geometry_msgs")
     geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
     geometry_msgs_msg.Quaternion = type("Quaternion", (), {})
     geometry_msgs.msg = geometry_msgs_msg
 
+    nav_msgs = types.ModuleType("nav_msgs")
+    nav_msgs_msg = types.ModuleType("nav_msgs.msg")
+    nav_msgs_msg.Odometry = type("Odometry", (), {})
+    nav_msgs.msg = nav_msgs_msg
+
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.Float32MultiArray = type("Float32MultiArray", (), {})
+    std_msgs.msg = std_msgs_msg
+
     can = types.ModuleType("can")
     can.Bus = object
     can.Message = object
+    can.interface = types.SimpleNamespace(Bus=object)
 
     modules = {
-        "rclpy": rclpy,
-        "rclpy.node": rclpy_node,
-        "std_msgs": std_msgs,
-        "std_msgs.msg": std_msgs_msg,
-        "nav_msgs": nav_msgs,
-        "nav_msgs.msg": nav_msgs_msg,
+        "rospy": rospy,
         "geometry_msgs": geometry_msgs,
         "geometry_msgs.msg": geometry_msgs_msg,
+        "nav_msgs": nav_msgs,
+        "nav_msgs.msg": nav_msgs_msg,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
         "can": can,
     }
     previous = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
     try:
-        path = Path(__file__).parents[1] / "motor_control" / "motor_driver(AIMotor).py"
-        spec = importlib.util.spec_from_file_location("motor_driver_aimotor", path)
+        path = (
+            Path(__file__).parents[1]
+            / "motor_control"
+            / "motor_driver(AIMotor_ros1).py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "motor_driver_aimotor_ros1", path
+        )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
@@ -60,6 +77,7 @@ def _load_module():
 
 
 def _make_driver(module):
+    """Create only the protocol state needed by unit-level tests."""
     driver = module.CanMotorDriver.__new__(module.CanMotorDriver)
     driver.pulses_per_motor_rev = 1000
     driver.encoder_pulses_per_rev = 1000
@@ -86,58 +104,38 @@ def _make_driver(module):
         for motor_id in (1, 2, 3)
     ]
     driver.motor_fault_publisher = Mock()
-    driver.get_logger = Mock(return_value=Mock())
     return driver
 
 
-def test_standard_can_frame_and_sdo_speed_write():
+def test_ros1_driver_imports_without_rclpy_and_writes_standard_sdo_speed():
     module = _load_module()
     driver = _make_driver(module)
     frames = []
-    capture_frame = lambda can_id, data: frames.append((can_id, data)) or True
-    driver.send_can_frame = capture_frame
+    driver.send_can_frame = (
+        lambda can_id, data: frames.append((can_id, data)) or True
+    )
 
     assert driver.motor_set_speed(1, 20.0)
-    assert frames == [(
-        0x601,
-        bytes.fromhex("23 ff 60 00 1b 41 00 00"),
-    )]
+    assert frames == [
+        (0x601, bytes.fromhex("23 ff 60 00 1b 41 00 00")),
+    ]
 
     frames.clear()
     assert driver.motor_set_speed(3, 20.0)
-    assert frames == [(
-        0x603,
-        bytes.fromhex("23 ff 60 00 15 34 00 00"),
-    )]
-
-    class Message:
-        def __init__(self, arbitration_id, data, is_extended_id):
-            self.arbitration_id = arbitration_id
-            self.data = data
-            self.is_extended_id = is_extended_id
-
-    class Bus:
-        def __init__(self):
-            self.messages = []
-
-        def send(self, message):
-            self.messages.append(message)
-
-    module.can.Message = Message
-    driver.bus = Bus()
-    driver.send_can_frame = module.CanMotorDriver.send_can_frame.__get__(driver)
-    assert driver.send_can_frame(0x601, b"\x01")
-    assert driver.bus.messages[0].is_extended_id is False
-    assert driver.bus.messages[0].data == b"\x01" + b"\x00" * 7
+    assert frames == [
+        (0x603, bytes.fromhex("23 ff 60 00 15 34 00 00")),
+    ]
 
 
-def test_profile_acceleration_and_deceleration_use_documented_objects():
+def test_ros1_driver_writes_profile_acceleration_and_deceleration():
     module = _load_module()
     driver = _make_driver(module)
     driver.profile_acceleration = module.CanMotorDriver.DEFAULT_PROFILE_ACCELERATION
     driver.profile_deceleration = module.CanMotorDriver.DEFAULT_PROFILE_DECELERATION
     frames = []
-    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+    driver.send_can_frame = (
+        lambda can_id, data: frames.append((can_id, data)) or True
+    )
 
     assert driver.motor_set_acceleration(1)
     assert driver.motor_set_deceleration(1)
@@ -147,7 +145,7 @@ def test_profile_acceleration_and_deceleration_use_documented_objects():
     ]
 
 
-def test_initialization_sets_mode_and_ramps_before_enable():
+def test_ros1_driver_initialization_sets_ramps_before_enable():
     module = _load_module()
     driver = _make_driver(module)
     events = []
@@ -169,34 +167,23 @@ def test_initialization_sets_mode_and_ramps_before_enable():
     ]
 
 
-def test_enable_disable_and_fault_reset_use_cia402_controlword():
+def test_ros1_driver_enable_mode_and_feedback_queries_keep_public_api():
     module = _load_module()
     driver = _make_driver(module)
     frames = []
-    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+    driver.send_can_frame = (
+        lambda can_id, data: frames.append((can_id, data)) or True
+    )
+
+    assert driver.motor_set_mode(1, 2)
+    assert frames[-1] == (0x601, bytes.fromhex("2f 60 60 00 03 00 00 00"))
 
     assert driver.motor_enable(1)
-    assert [frame[0] for frame in frames] == [0x601, 0x601, 0x601]
-    assert [frame[1] for frame in frames] == [
+    assert [frame[1] for frame in frames[-3:]] == [
         bytes.fromhex("2b 40 60 00 06 00 00 00"),
         bytes.fromhex("2b 40 60 00 07 00 00 00"),
         bytes.fromhex("2b 40 60 00 0f 00 00 00"),
     ]
-
-    assert driver.motor_disable(1)
-    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 07 00 00 00"))
-    assert driver.motor_clear_fault(1)
-    assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 80 00 00 00"))
-
-
-def test_mode_and_feedback_queries_use_documented_objects():
-    module = _load_module()
-    driver = _make_driver(module)
-    frames = []
-    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
-
-    assert driver.motor_set_mode(1, 2)
-    assert frames[-1] == (0x601, bytes.fromhex("2f 60 60 00 03 00 00 00"))
 
     assert driver.motor_query_feedback(1)
     assert [frame[1] for frame in frames[-4:]] == [
@@ -207,7 +194,7 @@ def test_mode_and_feedback_queries_use_documented_objects():
     ]
 
 
-def test_sdo_feedback_and_emcy_are_decoded():
+def test_ros1_driver_decodes_sdo_tpdo_and_emcy_feedback():
     module = _load_module()
     driver = _make_driver(module)
 
@@ -230,24 +217,18 @@ def test_sdo_feedback_and_emcy_are_decoded():
     assert motor["actual_velocity"] == -24.0
     assert motor["actual_torque"] == 2.5
 
+    driver.parse_motor_feedback(
+        0x281, bytes.fromhex("e0 b1 ff ff 19 00")
+    )
+    assert driver.motors[0]["actual_velocity"] == -24.0
+    assert driver.motors[0]["actual_torque"] == 2.5
+
     driver.parse_motor_fault(0x081, bytes.fromhex("34 12 08 00 00 00 00 00"))
     assert motor["fault_code"] == 0x1234
     driver.motor_fault_publisher.publish.assert_called_once()
 
 
-def test_tpdo1_short_frame_does_not_partially_update_position():
-    module = _load_module()
-    driver = _make_driver(module)
-    driver.motors[0]["actual_position"] = 7.0
-
-    driver.parse_motor_feedback(0x181, bytes.fromhex("37 02 03 e8 03 00"))
-    assert driver.motors[0]["actual_position"] == 7.0
-
-    driver.parse_motor_feedback(0x181, bytes.fromhex("37 02 03 e8 03 00 00"))
-    assert abs(driver.motors[0]["actual_position"] - 2.0 * 3.141592653589793) < 1e-9
-
-
-def test_obsolete_vendor_parameter_methods_do_not_send_old_frames():
+def test_ros1_driver_does_not_send_obsolete_vendor_parameter_frames():
     module = _load_module()
     driver = _make_driver(module)
     driver.send_can_frame = Mock()

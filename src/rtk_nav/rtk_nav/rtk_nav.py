@@ -26,13 +26,21 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, Paramet
 # 新增：信号漂移过滤配置
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
 
-# 滚刷速度
-RTK_BRUSH_SPEED = 18.0 #18.0  # 负数表示正常运行速度，与前进反方向，安装转轴后相反
+# 速度单位约定：所有下发给 motor_control 的轮/滚刷速度均为减速器输出轴
+# r/min；Stanley 的几何计算在内部将轮速转换为 m/s。
+WHEEL_RADIUS = 0.05
+MAX_LINEAR_SPEED_MPS = 0.35
+WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0
+LEGACY_SPEED_UNIT_TO_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS / 10.0
+MAX_WHEEL_SPEED_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS
+
+# 滚刷输出轴速度，单位 r/min。
+RTK_BRUSH_SPEED = 18.0
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
-LINEAR_SPEED_BASE = 10.0   # origin 8.0
+LINEAR_SPEED_BASE = MAX_WHEEL_SPEED_RPM
 # TURN_SPEED = 1.0 *2     # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
@@ -44,18 +52,18 @@ HEADING_CALIBRATION_TIMEOUT = 40.0
 HEADING_ABNORMAL_TIMEOUT = 15.0  # 航向角异常全局超时（秒），超时后暂停导航
 HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔（秒）
 CALIB_STUCK_MAX_RETRIES = 3  # 校准卡滞最大重试次数，超此次数后才永久暂停
-CALIB_RETRY_BACKUP_SPEED = 1.0  # 校准卡滞重试的差速后退速度
+CALIB_RETRY_BACKUP_SPEED = 1.0 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
 CALIB_RETRY_BACKUP_DURATION = 1.5  # 校准卡滞重试的后退脱困时长（秒）
 
-TURN_SPEED_FAST = 1.5 # 大误差快速转向基准速度
-TURN_SPEED_MID = 1.0  # 中误差中等转向基准速度
-TURN_SPEED_SLOW = 0.4 # 小误差慢速转向基准速度（草地需更高最低速克服静摩擦）
-MAX_CORRECTION = 2.0   # 车体停止后，旋转调整最大修正量
-# RTK直线运行纠偏上限，单位为电机速度指令值。
+TURN_SPEED_FAST = 1.5 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
+TURN_SPEED_MID = 1.0 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
+TURN_SPEED_SLOW = 0.4 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
+MAX_CORRECTION = 2.0 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
+# RTK直线运行纠偏上限，单位为轮子输出轴 r/min。
 STRAIGHT_PID_SCALE = 2.0  # 2.0
-RTK_MAX_CORRECTION_SPEED = 1.5  # 默认RTK纠偏上限，单位为电机速度指令值
-# RTK左右轮最终输出上限；基础巡航速度仍为LINEAR_SPEED_BASE=10.0。
-RTK_OUTPUT_SPEED_LIMIT = 12.0
+RTK_MAX_CORRECTION_SPEED = 1.5 * LEGACY_SPEED_UNIT_TO_RPM  # 单位 r/min
+# 最终输出限幅不能超过 0.35 m/s 对应的轮子输出轴转速。
+RTK_OUTPUT_SPEED_LIMIT = MAX_WHEEL_SPEED_RPM
 
 #近距离减速/REVERSE阈值
 LOW_DISTANCE = 1.5
@@ -86,11 +94,11 @@ INITIAL_HEADING_MIN = -180 #-100.0
 INITIAL_HEADING_MAX = 180 #  -80.0
 # Stanley控制器参数
 STANLEY_K = 2.0  # Stanley增益，控制横向误差响应强度
-STANLEY_MIN_SPEED = 0.15
+STANLEY_MIN_SPEED_RPM = 0.15 / WHEEL_RPM_TO_MPS
 STANLEY_K_BASE = 0.5
 STANLEY_MAX_K = 1.0
 MAX_LATERAL_ERROR = 1.0
-SPEED_CMD_TO_MPS = 0.0345  # 电机指令值 → 实际速度 (m/s) 的转换系数
+SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 兼容旧名称：轮子输出轴 r/min -> m/s
 
 # 固定进仓RTK航点: (lon, lat, heading)。
 # 填入现场标定的固定进仓点后，RTK导航结束会把该点追加到最后一个航点，且每轮任务只追加一次。
@@ -107,7 +115,7 @@ def combine_stanley_and_visual_correction(
 ) -> Tuple[float, float, float]:
     """把 Stanley 角度项和视觉速度纠偏合成为左右轮速度偏置。
 
-    两类纠偏均直接使用电机速度指令单位，不依赖基础行驶速度或其缩放
+    两类纠偏均直接使用轮子输出轴 r/min，不依赖基础行驶速度或其缩放
     比例。RTK 和视觉分别应用各自的上限与比例；左右轮最终输出的安全
     限幅由调用方统一执行。
     返回值依次为：RTK纠偏、视觉纠偏、两者合计纠偏。
@@ -451,9 +459,16 @@ class RTKNavControlNode(Node):
         self.rtk_max_correction = max(
             0.0, float(self.get_parameter("rtk_max_correction").value)
         )
-        self.declare_parameter("visual_heading_gain", 0.05)
-        self.declare_parameter("visual_lateral_gain", 2.5)
-        self.declare_parameter("visual_max_correction", 0.5)
+        # 视觉增益原按旧的 0~10 速度指令标定；这里只换算输出单位，保留原响应强度。
+        self.declare_parameter(
+            "visual_heading_gain", 0.05 * LEGACY_SPEED_UNIT_TO_RPM
+        )
+        self.declare_parameter(
+            "visual_lateral_gain", 2.5 * LEGACY_SPEED_UNIT_TO_RPM
+        )
+        self.declare_parameter(
+            "visual_max_correction", 0.5 * LEGACY_SPEED_UNIT_TO_RPM
+        )
         self.declare_parameter("visual_confidence_threshold", 0.75)
         self.declare_parameter("visual_timeout_sec", 0.5)
         self.visual_heading_gain = float(
@@ -808,7 +823,7 @@ class RTKNavControlNode(Node):
             else:
                 turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
                 correction = self.get_speed_correction(self.boundary_target_yaw)
-                min_positive_speed = 0.5
+                min_positive_speed = 0.5 * LEGACY_SPEED_UNIT_TO_RPM
                 if heading_error > 0:
                     left_speed = -max(turn_speed - correction, min_positive_speed)
                     right_speed = -max(turn_speed - correction, min_positive_speed)
@@ -849,7 +864,7 @@ class RTKNavControlNode(Node):
             else:
                 turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
                 correction = self.get_speed_correction(self.boundary_trigger_yaw)
-                min_positive_speed = 0.5
+                min_positive_speed = 0.5 * LEGACY_SPEED_UNIT_TO_RPM
                 if heading_error > 0:
                     left_speed = -max(turn_speed - correction, min_positive_speed)
                     right_speed = -max(turn_speed - correction, min_positive_speed)
@@ -1101,7 +1116,10 @@ class RTKNavControlNode(Node):
 
     def _get_motion_direction_from_speed(self, left_speed: float, right_speed: float) -> Optional[str]:
         """将左右轮速度映射为车体运动方向。"""
-        if abs(left_speed) < 0.1 and abs(right_speed) < 0.1:
+        if (
+            abs(left_speed) < 0.1 * LEGACY_SPEED_UNIT_TO_RPM
+            and abs(right_speed) < 0.1 * LEGACY_SPEED_UNIT_TO_RPM
+        ):
             return None
         if left_speed < 0 and right_speed > 0:
             return 'FORWARD'
@@ -1238,7 +1256,7 @@ class RTKNavControlNode(Node):
         return False
 
     def _retreat_to_waypoint(self, waypoint: Tuple[float, float, float],
-                             retreat_speed: float = 2.0,
+                             retreat_speed: float = 2.0 * LEGACY_SPEED_UNIT_TO_RPM,
                              distance_threshold: float = 0.2,
                              timeout: float = 30.0) -> Generator[Tuple[float, float], None, str]:
         """
@@ -1247,7 +1265,7 @@ class RTKNavControlNode(Node):
 
         Args:
             waypoint: 目标航点 (lon, lat, heading)
-            retreat_speed: 后退速度（电机指令值）
+            retreat_speed: 后退速度（轮子输出轴 r/min）
             distance_threshold: 距离阈值(米)，小于此值视为已归位
             timeout: 超时(秒)
         """
@@ -1466,7 +1484,11 @@ class RTKNavControlNode(Node):
             bearing = self.calculate_bearing(current_lat, current_lon, anchor_lat, anchor_lon)
             target_heading = bearing if drive_mode == "FORWARD" else self.normalize_angle(bearing + 180.0)
             hdg_err = self.get_heading_error(target_heading)
-            correction = max(-1.0, min(1.0, hdg_err * 0.05))
+            correction_limit = 1.0 * LEGACY_SPEED_UNIT_TO_RPM
+            correction = max(
+                -correction_limit,
+                min(correction_limit, hdg_err * 0.05 * LEGACY_SPEED_UNIT_TO_RPM),
+            )
             if not self.boundary_correct_locked:
                 if 'LEFT' in blocked_directions:
                     correction = max(0.0, correction)
@@ -1480,11 +1502,13 @@ class RTKNavControlNode(Node):
                 right_speed = -effective_speed - correction
             # 防止换向
             if drive_mode == "FORWARD":
-                left_speed = min(-0.3, left_speed)
-                right_speed = max(0.3, right_speed)
+                min_drive_speed = 0.3 * LEGACY_SPEED_UNIT_TO_RPM
+                left_speed = min(-min_drive_speed, left_speed)
+                right_speed = max(min_drive_speed, right_speed)
             else:
-                left_speed = max(0.3, left_speed)
-                right_speed = min(-0.3, right_speed)
+                min_drive_speed = 0.3 * LEGACY_SPEED_UNIT_TO_RPM
+                left_speed = max(min_drive_speed, left_speed)
+                right_speed = min(-min_drive_speed, right_speed)
             yield (left_speed, right_speed)
             self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, blocked={sorted(blocked_directions)}")
 
@@ -2904,13 +2928,13 @@ class RTKNavControlNode(Node):
         """
         Stanley控制器计算左右轮速度
         使用自适应K值和横向误差限幅
-        velocity: 电机指令值（非真实速度 m/s）
+        velocity: 轮子输出轴速度（r/min）；仅在 Stanley 几何计算中转换为 m/s
         bearing_only: force_bearing 方位角直行模式，抑制横向项，只用航向误差
                       （path_direction 已是实时指向目标的方位角，横向项基于旧固定
                        路径段会与之冲突，导致自激极限环，故置零）
         """
         heading_error = self.normalize_angle(path_direction - current_heading)
-        real_velocity = velocity * SPEED_CMD_TO_MPS
+        real_velocity = velocity * WHEEL_RPM_TO_MPS
         self.real_velocity = real_velocity
         if bearing_only:
             lateral_error = 0.0
@@ -2920,7 +2944,12 @@ class RTKNavControlNode(Node):
             lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
             lateral_error = max(-MAX_LATERAL_ERROR, min(MAX_LATERAL_ERROR, lateral_error))
             k = self.get_adaptive_stanley_k(real_velocity, distance_to_target)
-            steering_correction = math.degrees(math.atan(k * lateral_error / max(real_velocity, STANLEY_MIN_SPEED)))
+            steering_correction = math.degrees(
+                math.atan(
+                    k * lateral_error
+                    / max(real_velocity, STANLEY_MIN_SPEED_RPM * WHEEL_RPM_TO_MPS)
+                )
+            )
         visual_correction_raw = self.get_visual_steering_correction()
         total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
@@ -2981,17 +3010,17 @@ class RTKNavControlNode(Node):
 
         # # 2. KP参数优化：大幅增强
         if yaw_error_abs > 10:
-            kp = 0.15  # 大误差：大幅增强
+            kp = 0.15 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：大幅增强，输出 r/min
         elif yaw_error_abs > 5:
-            kp = 0.15  # 中误差：增强
+            kp = 0.15 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：增强，输出 r/min
         else:
-            kp = 0.12  # 小误差：增强
+            kp = 0.12 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：增强，输出 r/min
 
         # 3. KD参数：减小阻尼，避免过度抑制
-        kd = 0.04
+        kd = 0.04 * LEGACY_SPEED_UNIT_TO_RPM
 
         # 4. 积分项：增强积分作用
-        ki = 0.008
+        ki = 0.008 * LEGACY_SPEED_UNIT_TO_RPM
 
         # 5. 误差差分计算
         yaw_error_diff = yaw_error - self.last_yaw_error
@@ -3032,14 +3061,14 @@ class RTKNavControlNode(Node):
 
         # 2. KP参数优化：增强大误差时的修正能力
         if yaw_error_abs > 60:
-            kp = 0.15  # 大误差：大幅增强
+            kp = 0.15 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：大幅增强，输出 r/min
         elif yaw_error_abs > 20:
-            kp = 0.10  # 中误差：增强
+            kp = 0.10 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：增强，输出 r/min
         else:
-            kp = 0.05  # 小误差：精准修正
+            kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：精准修正，输出 r/min
 
         # 3. KD参数：增强阻尼
-        kd = 0.08
+        kd = 0.08 * LEGACY_SPEED_UNIT_TO_RPM
 
         # 4. 误差差分计算
         yaw_error_diff = yaw_error - self.last_yaw_error
@@ -3098,7 +3127,7 @@ class RTKNavControlNode(Node):
         escalated = False
         STUCK_ERROR_CHANGE = 0.3    # 误差变化小于此值视为卡滞（度）
         STUCK_ESCALATE_TIME = 5.0   # 卡滞超此时长后提速（秒）
-        STUCK_ESCALATE_SPEED = 0.7  # 卡滞提速目标转速
+        STUCK_ESCALATE_SPEED = 0.7 * LEGACY_SPEED_UNIT_TO_RPM  # 卡滞提速目标转速
 
         while rclpy.ok():
             heading_error = self.get_heading_error(target_heading)
@@ -3151,7 +3180,7 @@ class RTKNavControlNode(Node):
             correction = self.get_speed_correction(target_heading)
 
             # 根据修正后的误差计算转向方向
-            min_positive_speed = 0.5  # 最小转向速度，草地需更高值克服静摩擦
+            min_positive_speed = 0.5 * LEGACY_SPEED_UNIT_TO_RPM  # 最小转向速度
             if heading_error > 0:
                 left_speed = -max(turn_speed - correction, min_positive_speed)
                 right_speed = -max(turn_speed - correction, min_positive_speed)
@@ -4715,7 +4744,7 @@ class RTKNavControlNode(Node):
         self.last_visual_sample_time = time.monotonic()
 
     def get_visual_steering_correction(self) -> float:
-        """返回满足安全门控时的原始视觉纠偏量，单位为电机速度指令值。"""
+        """返回满足安全门控时的原始视觉纠偏量，单位为轮子输出轴 r/min。"""
         self._last_visual_heading_correction = 0.0
         self._last_visual_lateral_correction = 0.0
         if not self.enable_visual_correction:

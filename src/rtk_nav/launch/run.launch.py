@@ -71,32 +71,32 @@ def generate_launch_description():
     declare_rtk_correction_ratio_arg = DeclareLaunchArgument(
         "rtk_correction_ratio",
         default_value=TextSubstitution(text="1.0"),
-        description="RTK/Stanley correction ratio applied to motor speed units",
+        description="RTK/Stanley correction ratio applied to wheel output-shaft r/min",
     )
     declare_rtk_max_correction_arg = DeclareLaunchArgument(
         "rtk_max_correction",
-        default_value=TextSubstitution(text="1.5"),
-        description="Maximum RTK correction in motor speed units",
+        default_value=TextSubstitution(text="10.026761"),
+        description="Maximum RTK correction in wheel output-shaft r/min",
     )
     declare_visual_correction_ratio_arg = DeclareLaunchArgument(
         "visual_correction_ratio",
         default_value=TextSubstitution(text="1.0"),
-        description="Visual correction ratio applied to motor speed units",
+        description="Visual correction ratio applied to wheel output-shaft r/min",
     )
     declare_visual_heading_gain_arg = DeclareLaunchArgument(
         "visual_heading_gain",
-        default_value=TextSubstitution(text="0.05"),
-        description="Visual heading correction gain (motor speed units per degree)",
+        default_value=TextSubstitution(text="0.334225"),
+        description="Visual heading correction gain (r/min per degree)",
     )
     declare_visual_lateral_gain_arg = DeclareLaunchArgument(
         "visual_lateral_gain",
-        default_value=TextSubstitution(text="2.5"),
-        description="Visual lateral correction gain (motor speed units per meter)",
+        default_value=TextSubstitution(text="16.711269"),
+        description="Visual lateral correction gain (r/min per meter)",
     )
     declare_visual_max_correction_arg = DeclareLaunchArgument(
         "visual_max_correction",
-        default_value=TextSubstitution(text="0.5"),
-        description="Maximum visual correction in motor speed units",
+        default_value=TextSubstitution(text="3.342254"),
+        description="Maximum visual correction in wheel output-shaft r/min",
     )
     declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
         "visual_confidence_threshold",

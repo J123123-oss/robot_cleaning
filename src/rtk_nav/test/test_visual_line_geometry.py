@@ -26,6 +26,8 @@ def _helpers():
         "select_angle_line_candidates",
         "prepare_angle_line_group",
         "select_angle_line_family",
+        "orient_angle_line_to_path_axis",
+        "weighted_line_angle_for_path",
         "center_band_half_extent_px",
         "lateral_error_sign_for_image_rotation",
         "line_salience_score",
@@ -199,7 +201,7 @@ def test_angle_candidates_follow_axis_perpendicular_to_running_direction():
     assert selected == [perpendicular_line]
 
 
-def test_angle_line_family_prefers_perpendicular_and_falls_back_parallel():
+def test_angle_line_family_prefers_parallel_and_falls_back_perpendicular():
     helpers = _helpers()
     parallel_line = (
         320,
@@ -226,19 +228,68 @@ def test_angle_line_family_prefers_perpendicular_and_falls_back_parallel():
         0.85,
     )
 
-    selected, target_axis, source = helpers["select_angle_line_family"](
-        [parallel_line], [perpendicular_line], 90.0, 0.0
-    )
-    assert selected == [perpendicular_line]
-    assert target_axis == 0.0
-    assert source == "perpendicular"
-
-    selected, target_axis, source = helpers["select_angle_line_family"](
-        [parallel_line], [], 90.0, 0.0
+    selected, source = helpers["select_angle_line_family"](
+        [parallel_line], [perpendicular_line]
     )
     assert selected == [parallel_line]
-    assert target_axis == -90.0
     assert source == "parallel"
+
+    selected, source = helpers["select_angle_line_family"](
+        [], [perpendicular_line]
+    )
+    assert selected == [perpendicular_line]
+    assert source == "perpendicular"
+
+    assert helpers["orient_angle_line_to_path_axis"](0.0, "perpendicular") == -90.0
+    assert helpers["orient_angle_line_to_path_axis"](90.0, "parallel") == -90.0
+
+
+def test_perpendicular_fine_lines_rotate_90_degrees_before_average():
+    helpers = _helpers()
+    perpendicular_lines = [
+        (0, 240, 640, 240, 640.0, 0.0, 320.0, 240.0, 2.0, 0.85),
+        (0, 200, 640, 200, 640.0, 2.0, 320.0, 200.0, 2.0, 0.85),
+    ]
+
+    average = helpers["weighted_line_angle_for_path"](
+        perpendicular_lines, "perpendicular"
+    )
+    assert math.isclose(average, -89.0, abs_tol=0.2)
+
+
+def test_invalid_parallel_fine_family_falls_back_to_perpendicular():
+    helpers = _helpers()
+    invalid_parallel_line = (
+        320,
+        0,
+        320,
+        480,
+        float('nan'),
+        90.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+    perpendicular_line = (
+        0,
+        240,
+        640,
+        240,
+        640.0,
+        0.0,
+        320.0,
+        240.0,
+        2.0,
+        0.85,
+    )
+
+    selected, source = helpers["select_angle_line_family"](
+        [invalid_parallel_line], [perpendicular_line]
+    )
+
+    assert selected == [perpendicular_line]
+    assert source == "perpendicular"
 
 
 def test_edge_line_can_still_be_used_by_full_frame_line_tracking():
@@ -285,7 +336,7 @@ def test_center_band_default_is_eighty_percent_without_debug_boundary_overlay():
     assert "(255, 0, 255)" not in source
 
 
-def test_lateral_deviation_label_uses_bgr_red():
+def test_lateral_deviation_label_uses_stream_rgb_red():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     colors = []
     for node in ast.walk(tree):
@@ -303,7 +354,7 @@ def test_lateral_deviation_label_uses_bgr_red():
         ):
             colors.append(ast.literal_eval(node.args[5]))
 
-    assert colors == [(0, 0, 255)]
+    assert colors == [(255, 0, 0)]
 
 
 def test_collinear_gap_bridge_uses_segment_geometry_and_angle_gate():
@@ -417,7 +468,7 @@ def test_detector_uses_center_average_for_heading_and_tracked_line_for_lateral()
     rendered = ast.unparse(detect_method)
 
     assert "prepare_angle_line_group" in rendered
-    assert "weighted_line_angle(angle_average_lines)" in rendered
+    assert "weighted_line_angle_for_path(angle_average_lines" in rendered
     assert "weighted_line_angle" in rendered
     assert "selected_line_offset" in rendered
     assert "lateral_pixel_error = selected_line_offset" in rendered

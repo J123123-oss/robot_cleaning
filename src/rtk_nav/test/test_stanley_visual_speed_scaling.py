@@ -67,12 +67,12 @@ def test_rtk_and_visual_correction_ratios_scale_independently():
     assert math.isclose(total, 1.125, abs_tol=1e-9)
 
 
-def test_rtk_output_uses_twelve_speed_command_limit():
+def test_rtk_output_uses_wheel_rpm_speed_limit():
     source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     timer = ast.unparse(_function(tree, "rtk_timer_callback"))
 
-    assert "RTK_OUTPUT_SPEED_LIMIT = 12.0" in source
+    assert "RTK_OUTPUT_SPEED_LIMIT = MAX_WHEEL_SPEED_RPM" in source
     assert "RTK_OUTPUT_SPEED_LIMIT" in timer
     assert "visual_max_steering_deg" not in source
 

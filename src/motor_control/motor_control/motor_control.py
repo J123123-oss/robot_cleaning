@@ -7,6 +7,7 @@ import time
 import os
 import sys
 import math
+import importlib
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
@@ -26,8 +27,11 @@ from custom_msgs.msg import WTRTK
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 注：保留你的原有导入，此处省略（实际使用时直接替换原有代码即可）
-from motor_control.motor_driver import CanMotorDriver
+# AIMotor 文件名保留了括号，不能使用普通 import 语法；运行节点必须加载
+# 与 AIMotor 手册匹配的 CANopen 驱动，而不是旧版 RS02 驱动。
+CanMotorDriver = importlib.import_module(
+    "motor_control.motor_driver(AIMotor)"
+).CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
 from motor_control.charging import Charging485Node
 
@@ -47,11 +51,16 @@ class RobotStateKey(Enum):
 
 STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABLE', 'u':'START'...}
 
-MAX_SPEED = 10.0   # 遥控器最大速度
-MIN_SPEED = -10.0  # 遥控器最小速度
-BRUSH_SPEED = -18.0
-SPEED_CMD_TO_MPS = 0.0345  # 电机阶段速度指令 → 实际线速度 (m/s)，10 → 0.345 m/s
-MOTOR_RAD_S_TO_MPS = SPEED_CMD_TO_MPS * (10.0 / 22.0)  # 电机反馈 rad/s → 线速度 m/s，22rad/s → 0.345m/s
+WHEEL_RADIUS = 0.05
+MAX_LINEAR_SPEED_MPS = 0.35
+WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0
+LEGACY_SPEED_UNIT_TO_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS / 10.0
+MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 66.845 r/min
+MIN_SPEED = -MAX_SPEED
+BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
+# 保留旧名称作为兼容别名，但其值已经是轮子输出轴 r/min -> m/s。
+SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS
+MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
 # 防跌落分层触发参数（与 rtk_nav 保持一致）
@@ -69,11 +78,11 @@ UNLOADING_SETTLE_DURATION = 2.0
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
 LOADING_GPS_MAX_DIST = 10.0  # 距目标点超过此距离（米）拒绝进仓
 NAV_LOW_DISTANCE = 1.5       # 减速起始距离（米），参考 rtk_nav LOW_DISTANCE
-NAV_SPEED_BASE = 5.0         # 导航基础速度（motor_control 单位）
+NAV_SPEED_BASE = 5.0 * LEGACY_SPEED_UNIT_TO_RPM  # 导航基础速度，单位 r/min
 NAV_ARRIVE_THRESHOLD = 0.03  # 到达目标点距离阈值（米）
 NAV_REALIGN_DIST = 1.0      # DRIVE阶段距离<此值时暂停重对准，避免GPS漂移冲过头
-NAV_DRIVE_KP = 0.08          # DRIVE直线行驶航向纠偏比例增益
-NAV_DRIVE_MAX_CORR = 2.0     # DRIVE纠偏最大修正量（motor_control速度单位）
+NAV_DRIVE_KP = 0.08 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE航向纠偏增益，输出 r/min/deg
+NAV_DRIVE_MAX_CORR = 2.0 * LEGACY_SPEED_UNIT_TO_RPM  # DRIVE纠偏最大修正量，单位 r/min
 NAV_DRIVE_DEADZONE = 0.3     # DRIVE纠偏死区（度），小于此误差不纠偏
 # NAV_USE_FIXED_HEADING_DIST = 1.0  # 近距离用进仓预设航向——实际进仓方向不固定，固定航向反而降低精度
 
@@ -86,8 +95,8 @@ ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 
-#PID参数
-MAX_CORRECTION = 0.8
+# PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
+MAX_CORRECTION = 0.8 * LEGACY_SPEED_UNIT_TO_RPM
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
@@ -124,7 +133,7 @@ class MotorControlNode(Node):
         self.brush_speed = 0.0  # 滚刷速度
         self.current_left_speed = 0.0  # 当前左轮速度
         self.current_right_speed = 0.0  # 当前右轮速度
-        self.mqtt_control_speed = 10.0  # MQTT控制速度
+        self.mqtt_control_speed = MAX_SPEED  # MQTT控制速度，单位 r/min
 
         # 滚刷配置：数量只影响实际激活的旧版 RS02 节点，默认使用两个滚刷。
         self.declare_parameter("brush_motor_count", 2)
@@ -264,8 +273,17 @@ class MotorControlNode(Node):
             node_name='can_motor_driver',
             channel='can0',
             interface='socketcan',
-            baudrate=1000000,
+            # AIMOTOR 出厂默认 CAN 速率为 500 kbit/s，不能沿用旧 RS02 的 1 Mbit/s。
+            baudrate=500000,
             motor_ids=motor_ids,
+            pulses_per_motor_rev=1000,
+            mechanical_reduction_ratio=40.0,
+            mechanical_reduction_ratios={
+                1: 50.0,
+                2: 50.0,
+                3: 40.0,
+                4: 40.0,
+            },
         )
         self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
@@ -1200,14 +1218,14 @@ class MotorControlNode(Node):
 
         # 分段KP参数（优化小误差修正，避免累积）
         if yaw_error_abs > 30:
-            kp = 0.05  # 大误差：快速转向
+            kp = 0.05 * LEGACY_SPEED_UNIT_TO_RPM  # 大误差：快速转向，输出 r/min
         elif yaw_error_abs > 10: #20:
-            kp = 0.02  # 中误差：稳定修正
+            kp = 0.02 * LEGACY_SPEED_UNIT_TO_RPM  # 中误差：稳定修正，输出 r/min
         else:
-            kp = 0.005  # 小误差：精准修正
+            kp = 0.005 * LEGACY_SPEED_UNIT_TO_RPM  # 小误差：精准修正，输出 r/min
 
         # KD参数（阻尼，抑制波动）
-        kd = 0.05
+        kd = 0.05 * LEGACY_SPEED_UNIT_TO_RPM
         yaw_error_diff = yaw_error - self.last_yaw_error
         d_term = kd * yaw_error_diff
 
@@ -1511,7 +1529,7 @@ class MotorControlNode(Node):
                     "z": float(self.motor_ctrl.motors[2]["actual_velocity"])
                 },
                 "sensors_status":self.sensors_status,
-                "velocity": (abs(self.motor_ctrl.motors[0]["actual_velocity"]) + abs(self.motor_ctrl.motors[1]["actual_velocity"])) / 2.0 * MOTOR_RAD_S_TO_MPS,
+                "velocity": (abs(self.motor_ctrl.motors[0]["actual_velocity"]) + abs(self.motor_ctrl.motors[1]["actual_velocity"])) / 2.0 * WHEEL_RPM_TO_MPS,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
                 "complete_state": self.complete_state,
