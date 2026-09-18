@@ -86,7 +86,7 @@ class CanMotorDriver(object):
     def __init__(
         self,
         node_name="can_motor_driver",
-        channel="can0",
+        channel="can1",
         interface="socketcan",
         baudrate=500000,
         motor_ids=None,

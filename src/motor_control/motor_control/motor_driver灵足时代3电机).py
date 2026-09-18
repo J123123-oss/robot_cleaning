@@ -17,13 +17,13 @@ import threading
 
 
 class CanMotorDriver(Node):
-    def __init__(self, node_name='can_motor_driver', channel='can0', interface='socketcan', baudrate=1000000):
+    def __init__(self, node_name='can_motor_driver', channel='can1', interface='socketcan', baudrate=1000000):
 
         super().__init__(node_name)
 
 
         # CAN配置
-        self.can_interface = channel  # can0
+        self.can_interface = channel  # can1
         self.bus: Optional[can.Bus] = None
         self.can_initialized = False
 

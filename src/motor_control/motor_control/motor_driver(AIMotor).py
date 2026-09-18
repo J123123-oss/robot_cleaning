@@ -161,7 +161,7 @@ class CanMotorDriver(Node):
     # 6040h bit7=1：故障复位，复位 CiA402 故障状态，不能替代故障原因排查。
     CONTROL_FAULT_RESET = 0x0080
 
-    def __init__(self, node_name="can_motor_driver", channel="can0",
+    def __init__(self, node_name="can_motor_driver", channel="can1",
                  interface="socketcan", baudrate=500000, motor_ids=None,
                  pulses_per_motor_rev=DEFAULT_PULSES_PER_MOTOR_REV,
                  mechanical_reduction_ratio=DEFAULT_MECHANICAL_REDUCTION_RATIO,

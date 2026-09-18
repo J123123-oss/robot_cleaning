@@ -272,7 +272,7 @@ class MotorControlNode(Node):
         motor_ids = (1, 2) + tuple(self.brush_motor_ids)
         self.motor_ctrl = CanMotorDriver(
             node_name='can_motor_driver',
-            channel='can0',
+            channel='can1',
             interface='socketcan',
             # AIMOTOR 出厂默认 CAN 速率为 500 kbit/s，不能沿用旧 RS02 的 1 Mbit/s。
             baudrate=500000,

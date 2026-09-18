@@ -124,7 +124,7 @@ src/
 
 2. **硬编码路径和参数大量存在**：`run.launch.py` 和 `motor_control.py` 中串口设备名（`/dev/ttyS2`, `/dev/laser`, `/dev/WTRTK`）、文件路径、MQTT 凭据均硬编码。换机器需逐一修改。
 
-3. **CAN 接口依赖**：电机驱动通过 `socketcan`（can0）通信，启动前需 `can_ch340_init.sh` 初始化。还依赖 `ch341.ko` 内核模块。
+3. **CAN 接口依赖**：电机驱动通过 `socketcan`（can1）通信，启动前需 `can_ch340_init.sh` 初始化。还依赖 `ch341.ko` 内核模块。
 
 4. **systemd 自启**：`can_ch340_init.service` 和 `motor_start.service` 用于开机自启，后者会等待 MQTT broker 可达后启动 ROS2 launch。
 
