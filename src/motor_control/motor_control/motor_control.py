@@ -1218,6 +1218,10 @@ class MotorControlNode(Node):
         # 误差死区：小于0.3度不修正
         if yaw_error_abs < 0.3:
             self.last_yaw_error = 0.0
+            self.get_logger().debug(
+                f"[Correction] target={target_heading:.2f}°，"
+                f"yaw_error={yaw_error:+.2f}°，输出=0.000 r/min（死区）"
+            )
             return 0.0
 
         # 分段KP参数（优化小误差修正，避免累积）
@@ -1239,8 +1243,12 @@ class MotorControlNode(Node):
         correction_clamped = -max(min(correction, MAX_CORRECTION), -MAX_CORRECTION)
 
         # 日志输出（便于调试）
-        # if abs(yaw_error - self.last_yaw_error) > 0.1:
-            # self.get_logger().info(f"进出仓对正yaw_error={yaw_error:.2f}，修正量={correction_clamped:.2f}")
+        self.get_logger().debug(
+            f"[Correction] target={target_heading:.2f}°，"
+            f"yaw_error={yaw_error:+.2f}°，"
+            f"kp={kp:.6f} r/min/deg，kd={kd:.6f} r/min/deg，"
+            f"输出={correction_clamped:+.3f} r/min"
+        )
         
         self.last_yaw_error = yaw_error
         return correction_clamped

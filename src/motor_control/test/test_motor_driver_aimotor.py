@@ -109,6 +109,16 @@ def test_standard_can_frame_and_sdo_speed_write():
         0x603,
         bytes.fromhex("23 ff 60 00 15 34 00 00"),
     )]
+    messages = [
+        call.args[0]
+        for call in driver.get_logger.return_value.method_calls
+        if call.args
+    ]
+    assert any(
+        "目标转速=+20.000 r/min（输出轴）" in message
+        and "设置脉冲数=16667 Pul/s" in message
+        for message in messages
+    )
 
     class Message:
         def __init__(self, arbitration_id, data, is_extended_id):
@@ -210,6 +220,7 @@ def test_mode_and_feedback_queries_use_documented_objects():
 def test_sdo_feedback_and_emcy_are_decoded():
     module = _load_module()
     driver = _make_driver(module)
+    driver.motors[0]["velocity"] = 20.0
 
     driver.parse_motor_feedback(
         0x581, bytes.fromhex("4b 41 60 00 37 02 00 00")
@@ -240,6 +251,12 @@ def test_sdo_feedback_and_emcy_are_decoded():
     ]
     assert any("硬件过流" in message for message in messages)
     assert any("H0B-34：0x0201" in message for message in messages)
+    assert any(
+        "设定转速=+20.000 r/min（输出轴）" in message
+        and "实际转速=-24.000 r/min（输出轴）" in message
+        and "实际反馈脉冲数=-20000 Pul/s" in message
+        for message in messages
+    )
 
 
 def test_manual_fault_table_contains_all_documented_codes():
