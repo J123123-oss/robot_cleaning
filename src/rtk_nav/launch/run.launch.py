@@ -47,9 +47,13 @@ def generate_launch_description():
     declare_motor_direction_args = tuple(
         DeclareLaunchArgument(
             f"motor_direction_{motor_id}",
-            default_value=TextSubstitution(text="-1"),
+            default_value=TextSubstitution(
+                text="-1" if motor_id in (1, 2, 3) else "1"
+            ),
             description=(
-                f"AIMotor 电机 {motor_id} 速度指令方向，1 正常，-1 反向"
+                f"AIMotor 电机 {motor_id} 速度指令方向，"
+                f"默认{'反转' if motor_id in (1, 2, 3) else '正转'}，"
+                "1 正常，-1 反向"
             ),
         )
         for motor_id in range(1, 5)
@@ -390,6 +394,7 @@ def generate_launch_description():
         executable='motor_control',  # 对应 ROS1 的 type，可执行文件名称
         # name='motor_control',  # 对应 ROS1 的 name，节点名称
         output='screen',  # 对应 ROS1 的 output，输出到终端
+        arguments=['--ros-args', '--log-level', 'can_motor_driver:=info'],
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
             {'rtk_path_file': rtk_path_file},

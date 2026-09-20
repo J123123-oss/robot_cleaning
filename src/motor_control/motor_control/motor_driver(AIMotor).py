@@ -370,7 +370,7 @@ class CanMotorDriver(Node):
         target_pulses = int(round(
             target_speed * reduction_ratio / 60.0 * self.pulses_per_motor_rev
         ))
-        self.get_logger().debug(
+        self.get_logger().info(
             f"[AIMotor] 电机{motor_id}速度："
             f"设定转速={target_speed:+.3f} r/min（输出轴），"
             f"实际转速={float(motor['actual_velocity']):+.3f} r/min（输出轴），"
@@ -763,10 +763,11 @@ class CanMotorDriver(Node):
             # 直接 API 调用和 ROS 指令缓存写入共用同一个目标速度。
             motor["velocity"] = numeric_speed
         result = self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, target_pulses)
-        self.get_logger().debug(
+        self.get_logger().info(
             f"[AIMotor] 电机{motor_id}设定："
             f"目标转速={numeric_speed:+.3f} r/min（输出轴），"
             f"设置脉冲数={target_pulses} Pul/s，"
+            f"方向={self.motor_directions.get(motor_id, self.DEFAULT_MOTOR_DIRECTION):+d}，"
             f"减速比={reduction_ratio:.3f}，"
             f"写入={'成功' if result else '失败'}"
         )
