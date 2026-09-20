@@ -19,7 +19,7 @@ complete portrait image is retained.
 
 ```bash
 cd ~/robot_cleaning
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install --packages-select rtk_nav
 source install/setup.bash
 

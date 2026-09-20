@@ -174,6 +174,22 @@ class MotorControlNode(Node):
             )
             brush_direction_mode = "same"
         self.brush_direction_mode = brush_direction_mode
+
+        # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
+        self.declare_parameter(
+            "profile_acceleration", CanMotorDriver.DEFAULT_PROFILE_ACCELERATION
+        )
+        self.declare_parameter(
+            "profile_deceleration", CanMotorDriver.DEFAULT_PROFILE_DECELERATION
+        )
+        profile_acceleration = self.get_parameter("profile_acceleration").value
+        profile_deceleration = self.get_parameter("profile_deceleration").value
+        for motor_id in range(1, 5):
+            self.declare_parameter(
+                f"motor_direction_{motor_id}",
+                CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
+            )
+
         # UNLOADING parameters
         self.unloading_forword_threshold = 25.0 # seconds
         self.unloading_turn_start_time = None
@@ -282,9 +298,15 @@ class MotorControlNode(Node):
 
         # 1. 初始化电机控制模块
         motor_ids = (1, 2) + tuple(self.brush_motor_ids)
+        motor_directions = {
+            motor_id: self.get_parameter(
+                f"motor_direction_{motor_id}"
+            ).value
+            for motor_id in motor_ids
+        }
         self.motor_ctrl = CanMotorDriver(
             node_name='can_motor_driver',
-            channel='can1',
+            channel='can0',
             interface='socketcan',
             # AIMOTOR 出厂默认 CAN 速率为 500 kbit/s，不能沿用旧 RS02 的 1 Mbit/s。
             baudrate=500000,
@@ -300,6 +322,9 @@ class MotorControlNode(Node):
                 3: 40.0,
                 4: 40.0,
             },
+            profile_acceleration=profile_acceleration,
+            profile_deceleration=profile_deceleration,
+            motor_directions=motor_directions,
         )
         self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
@@ -621,7 +646,7 @@ class MotorControlNode(Node):
         if self.is_laser_timeout():
             now = time.time()
             if now - self.last_laser_timeout_log_time >= 10.0:
-                self.get_logger().warn("[Laser] 激光距离话题超时，未收到最新laser_distance数据")
+                # self.get_logger().warn("[Laser] 激光距离话题超时，未收到最新laser_distance数据")
                 self.last_laser_timeout_log_time = now
 
         # ═══════════════════════════════════════════════════════════

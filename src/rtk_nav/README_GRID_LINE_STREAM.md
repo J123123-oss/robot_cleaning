@@ -203,7 +203,7 @@ RTSP 发布地址为本机 ZLMediaKit：
 
 ```bash
 cd ~/robot_cleaning
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ros2 launch rtk_nav run.launch.py \
   publish_debug_images:=true \

@@ -33,6 +33,27 @@ def generate_launch_description():
         default_value=TextSubstitution(text="same"),
         description="双滚刷方向模式：same或opposite",
     )
+    # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
+    declare_profile_acceleration_arg = DeclareLaunchArgument(
+        "profile_acceleration",
+        default_value=TextSubstitution(text="33333"),
+        description="AIMotor 速度模式加速度，单位 Pul/s^2",
+    )
+    declare_profile_deceleration_arg = DeclareLaunchArgument(
+        "profile_deceleration",
+        default_value=TextSubstitution(text="33333"),
+        description="AIMotor 速度模式减速度，单位 Pul/s^2",
+    )
+    declare_motor_direction_args = tuple(
+        DeclareLaunchArgument(
+            f"motor_direction_{motor_id}",
+            default_value=TextSubstitution(text="-1"),
+            description=(
+                f"AIMotor 电机 {motor_id} 速度指令方向，1 正常，-1 反向"
+            ),
+        )
+        for motor_id in range(1, 5)
+    )
 
     declare_visual_correction_arg = DeclareLaunchArgument(
         "enable_visual_correction",
@@ -380,6 +401,19 @@ def generate_launch_description():
                 'brush_direction_mode': LaunchConfiguration(
                     'brush_direction_mode'
                 ),
+                'profile_acceleration': ParameterValue(
+                    LaunchConfiguration('profile_acceleration'), value_type=int
+                ),
+                'profile_deceleration': ParameterValue(
+                    LaunchConfiguration('profile_deceleration'), value_type=int
+                ),
+                **{
+                    f'motor_direction_{motor_id}': ParameterValue(
+                        LaunchConfiguration(f'motor_direction_{motor_id}'),
+                        value_type=int,
+                    )
+                    for motor_id in range(1, 5)
+                },
             },
         ]
     )
@@ -735,6 +769,10 @@ def generate_launch_description():
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_brush_motor_count_arg)
     ld.add_action(declare_brush_direction_mode_arg)
+    ld.add_action(declare_profile_acceleration_arg)
+    ld.add_action(declare_profile_deceleration_arg)
+    for declare_motor_direction_arg in declare_motor_direction_args:
+        ld.add_action(declare_motor_direction_arg)
     ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_fallback_path_axis_arg)

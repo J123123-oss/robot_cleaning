@@ -6,7 +6,7 @@
 
 **Architecture:** `run.launch.py` declares the global launch argument, passes it to `rtk_nav`, and conditionally starts the packaged `line_detector_node`. `rtk_nav.py` publishes the current path context as valid only when the switch and RTK navigation gates pass. The detector consumes that context and publishes invalid output on timeout, state loss, or failed geometry.
 
-**Tech Stack:** ROS2 Humble launch, `rclpy`, Python `pytest`, existing `rtk_nav` node.
+**Tech Stack:** ROS2 jazzy launch, `rclpy`, Python `pytest`, existing `rtk_nav` node.
 
 ---
 

@@ -6,7 +6,7 @@
 
 **Architecture:** `GridLineDetector` retains `enable_visual_correction` as its first runtime gate. A new `bypass_path_context_gate` parameter defaults to `false`; when true it bypasses only the path-context validity and timeout branch in `image_callback`. Launch and RTK navigation ownership remain unchanged.
 
-**Tech Stack:** ROS 2 Humble Python (`rclpy`), `pytest`, AST-based source contract tests.
+**Tech Stack:** ROS 2 jazzy Python (`rclpy`), `pytest`, AST-based source contract tests.
 
 ---
 

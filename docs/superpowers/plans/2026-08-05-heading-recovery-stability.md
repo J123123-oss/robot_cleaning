@@ -6,7 +6,7 @@
 
 **Architecture:** Keep one 30-second circular-heading history while the AUTO gate is pending. Gate release requires both the existing five-second range and a 30-second range to be at most one degree. A release into `WAYPOINT_MOVE` changes to `WAYPOINT_CALIB` and starts the existing calibration generator before the navigation generator can issue a Stanley speed command.
 
-**Tech Stack:** Python 3, ROS 2 Humble (`rclpy`), `pytest`, AST source-contract tests.
+**Tech Stack:** Python 3, ROS 2 jazzy (`rclpy`), `pytest`, AST source-contract tests.
 
 ---
 

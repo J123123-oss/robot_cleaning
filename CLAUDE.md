@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-ROS2 (humble) 室外机器人清扫系统，核心功能：RTK 多航点循迹导航、CAN 总线差速底盘控制、MQTT 云端桥接、485 传感器采集、激光辅助进仓对位。
+ROS2 (jazzy) 室外机器人清扫系统，核心功能：RTK 多航点循迹导航、CAN 总线差速底盘控制、MQTT 云端桥接、485 传感器采集、激光辅助进仓对位。
 
 ## 构建、测试与运行
 
@@ -105,6 +105,6 @@ src/
 
 1. **MQTT 远程 shell**：`mqtt_ros2_bridge.py` 中 `topic_command` 直接 `Popen(shell=True)`，P0 风险。
 2. **硬编码**：串口、文件路径、MQTT 凭据硬编码在 `run.launch.py` 和代码中。
-3. **CAN 依赖**：电机通过 socketcan (can1) 通信，需 `can_ch340_init.sh` + `ch341.ko`。
+3. **CAN 依赖**：电机通过 socketcan (can0) 通信，需 `can_ch340_init.sh` + `ch341.ko`。
 4. **systemd 自启**：`can_ch340_init.service` + `motor_start.service`，后者等待 MQTT broker 后启动。
 5. **路径文件格式**：每行 `lon,lat,heading`，跨文件自动按数字前缀切换。

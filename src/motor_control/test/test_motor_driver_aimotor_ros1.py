@@ -87,6 +87,7 @@ def _make_driver(module):
         3: 40.0,
         4: 40.0,
     }
+    driver.motor_directions = {1: 1, 2: 1, 3: 1, 4: 1}
     driver.motors = [
         {
             "id": motor_id,
@@ -140,9 +141,24 @@ def test_ros1_driver_writes_profile_acceleration_and_deceleration():
     assert driver.motor_set_acceleration(1)
     assert driver.motor_set_deceleration(1)
     assert frames == [
-        (0x601, bytes.fromhex("23 83 60 00 1a 41 00 00")),
-        (0x601, bytes.fromhex("23 84 60 00 67 2b 00 00")),
+        (0x601, bytes.fromhex("23 83 60 00 35 82 00 00")),
+        (0x601, bytes.fromhex("23 84 60 00 35 82 00 00")),
     ]
+
+
+def test_ros1_driver_velocity_direction_uses_607e_bit6():
+    module = _load_module()
+    driver = _make_driver(module)
+    frames = []
+    driver.send_can_frame = (
+        lambda can_id, data: frames.append((can_id, data)) or True
+    )
+
+    assert driver.motor_set_direction(1, 1)
+    assert frames[-1] == (0x601, bytes.fromhex("2f 7e 60 00 00 00 00 00"))
+
+    assert driver.motor_set_direction(1, -1)
+    assert frames[-1] == (0x601, bytes.fromhex("2f 7e 60 00 40 00 00 00"))
 
 
 def test_ros1_driver_initialization_sets_ramps_before_enable():
@@ -152,15 +168,17 @@ def test_ros1_driver_initialization_sets_ramps_before_enable():
     module.time.sleep = lambda _duration: None
     driver.send_nmt_command = lambda command, motor_id: events.append(("nmt", motor_id)) or True
     driver.motor_set_mode = lambda motor_id, mode: events.append(("mode", motor_id)) or True
+    driver.motor_set_direction = lambda motor_id: events.append(("direction", motor_id)) or True
     driver.motor_set_acceleration = lambda motor_id: events.append(("accel", motor_id)) or True
     driver.motor_set_deceleration = lambda motor_id: events.append(("decel", motor_id)) or True
     driver.motor_enable = lambda motor_id: events.append(("enable", motor_id)) or True
 
     driver.initialize_motors()
 
-    assert events[:5] == [
+    assert events[:6] == [
         ("nmt", 1),
         ("mode", 1),
+        ("direction", 1),
         ("accel", 1),
         ("decel", 1),
         ("enable", 1),

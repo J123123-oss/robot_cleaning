@@ -100,7 +100,7 @@ ros2 param set /openmv_serial_publisher light_brightness 70
 
 ```bash
 cd ~/robot_cleaning
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install --packages-select rtk_nav
 source install/setup.bash
 ```
@@ -117,7 +117,7 @@ ros2 run rtk_nav openmv_serial_publisher_node --ros-args \
 保留 `--ros-args`：
 
 ```bash
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 /usr/bin/python \
   ~/robot_cleaning/src/rtk_nav/rtk_nav/openmv_serial_publisher_node.py \
   --ros-args \

@@ -6,7 +6,7 @@
 
 **Architecture:** `run.launch.py` declares two RTK gain arguments and five visual tuning arguments, converting each to a typed ROS parameter for `rtk_nav`. `RTKNavControlNode` stores the two Stanley gains and selects the near-target or normal value in `get_adaptive_stanley_k()`; visual correction remains an independently bounded additive term controlled by `enable_visual_correction`.
 
-**Tech Stack:** ROS2 Humble launch, `rclpy`, Python AST contract tests, `py_compile`.
+**Tech Stack:** ROS2 jazzy launch, `rclpy`, Python AST contract tests, `py_compile`.
 
 ---
 

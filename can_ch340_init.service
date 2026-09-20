@@ -1,5 +1,5 @@
 [Unit]
-Description=Init can1 and CH340 Driver
+Description=Init can0 and CH340 Driver
 # 关键1：RK3576必须等内核、总线、网卡驱动加载完成再执行，顺序不能乱
 After=sysinit.target network.target systemd-modules-load.service
 # 关键3：仅在开机执行一次，不重复启动

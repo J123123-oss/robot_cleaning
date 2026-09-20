@@ -21,7 +21,7 @@
 | RTK 接收机 (WTRTK) | `/dev/ttyS2` |
 | 485 传感器 | `/dev/ttyS1` |
 | 激光测距 | `/dev/laser` |
-| CAN 总线 | `can1` (socketcan) |
+| CAN 总线 | `can0` (socketcan) |
 
 换机器需逐一修改。建议改为 launch 参数或 yaml 配置。
 

@@ -7,15 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_STATE_DIR = Path(
-    os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")
-)
-LOG_DIR = Path(
-    os.environ.get(
-        "MOTOR_START_LOG_DIR",
-        DEFAULT_STATE_DIR / "robot_cleaning",
-    )
-)
+LOG_DIR = Path(os.environ.get("MOTOR_START_LOG_DIR", "/home/forlinx/robot_cleaning/motor_start_log"))
 MAX_BYTES = int(os.environ.get("MOTOR_START_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
 
 

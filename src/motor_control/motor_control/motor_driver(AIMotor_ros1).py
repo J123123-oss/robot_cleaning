@@ -57,11 +57,14 @@ class CanMotorDriver(object):
     TARGET_VELOCITY_INDEX = 0x60FF
     PROFILE_ACCELERATION_INDEX = 0x6083
     PROFILE_DECELERATION_INDEX = 0x6084
+    COMMAND_POLARITY_INDEX = 0x607E
 
-    DEFAULT_PROFILE_ACCELERATION = 16666
-    DEFAULT_PROFILE_DECELERATION = 11111
+    DEFAULT_PROFILE_ACCELERATION = 33333
+    DEFAULT_PROFILE_DECELERATION = 33333
     DEFAULT_PULSES_PER_MOTOR_REV = 1000
     DEFAULT_MECHANICAL_REDUCTION_RATIO = 40.0
+    DEFAULT_MOTOR_DIRECTION = 1
+    VELOCITY_DIRECTION_REVERSE_BIT = 1 << 6
     DEFAULT_MECHANICAL_REDUCTION_RATIOS = {
         1: 50.0,
         2: 50.0,
@@ -86,7 +89,7 @@ class CanMotorDriver(object):
     def __init__(
         self,
         node_name="can_motor_driver",
-        channel="can1",
+        channel="can0",
         interface="socketcan",
         baudrate=500000,
         motor_ids=None,
@@ -95,6 +98,7 @@ class CanMotorDriver(object):
         mechanical_reduction_ratios=None,
         profile_acceleration=DEFAULT_PROFILE_ACCELERATION,
         profile_deceleration=DEFAULT_PROFILE_DECELERATION,
+        motor_directions=None,
     ):
         """Create the driver, publishers, subscriber, timer, and CAN thread.
 
@@ -176,6 +180,24 @@ class CanMotorDriver(object):
                     ),
                     parameter_name,
                 )
+            )
+
+        configured_motor_directions = (
+            {} if motor_directions is None else motor_directions
+        )
+        if not isinstance(configured_motor_directions, dict):
+            raise ValueError("motor_directions must be a dict keyed by motor ID")
+        self.motor_directions = {}
+        for motor_id in self.motor_ids:
+            parameter_name = f"motor_direction_{motor_id}"
+            self.motor_directions[motor_id] = self._validate_motor_direction(
+                rospy.get_param(
+                    f"~{parameter_name}",
+                    configured_motor_directions.get(
+                        motor_id, self.DEFAULT_MOTOR_DIRECTION
+                    ),
+                ),
+                parameter_name,
             )
 
         self.motors = [
@@ -303,6 +325,21 @@ class CanMotorDriver(object):
             or numeric_value > 0x7FFFFFFF
         ):
             raise ValueError(f"{name} must be a finite positive integer")
+        return int(numeric_value)
+
+    @staticmethod
+    def _validate_motor_direction(value, name):
+        """Validate a motor direction: 1 for normal or -1 for reverse."""
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be either 1 or -1")
+        if (
+            not math.isfinite(numeric_value)
+            or not numeric_value.is_integer()
+            or int(numeric_value) not in (-1, 1)
+        ):
+            raise ValueError(f"{name} must be either 1 or -1")
         return int(numeric_value)
 
     def _get_mechanical_reduction_ratio(self, motor_id):
@@ -508,6 +545,34 @@ class CanMotorDriver(object):
             bytes((self.CANOPEN_VELOCITY_MODE,)),
         )
 
+    def motor_set_direction(self, motor_id, direction=None):
+        """Set PV/CSV velocity command direction: 1 normal, -1 reverse."""
+        if not self._validate_motor_id(motor_id):
+            return False
+        if direction is None:
+            direction = self.motor_directions.get(motor_id)
+        try:
+            direction = self._validate_motor_direction(
+                direction, f"motor_direction_{motor_id}"
+            )
+        except ValueError as exc:
+            rospy.logerr("%s", exc)
+            return False
+
+        polarity = (
+            self.VELOCITY_DIRECTION_REVERSE_BIT if direction == -1 else 0
+        )
+        result = self._sdo_write(
+            motor_id,
+            self.COMMAND_POLARITY_INDEX,
+            0,
+            self.SDO_WRITE_1,
+            bytes((polarity,)),
+        )
+        if result:
+            self.motor_directions[motor_id] = direction
+        return result
+
     def motor_set_acceleration(self, motor_id, acceleration=None):
         """Write PV profile acceleration to 6083h in Pul/s^2."""
         if acceleration is None:
@@ -617,7 +682,7 @@ class CanMotorDriver(object):
         )
 
     def initialize_motors(self):
-        """Start nodes, set PV mode and ramps, then enable each motor."""
+        """Start nodes, set PV mode, direction and ramps, then enable each motor."""
         rospy.loginfo("Initializing AIMOTOR CANopen nodes...")
         time.sleep(0.2)
         for motor in self.motors:
@@ -625,6 +690,11 @@ class CanMotorDriver(object):
             self.send_nmt_command(0x01, motor_id)
             time.sleep(0.01)
             self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
+            time.sleep(0.01)
+            if not self.motor_set_direction(motor_id):
+                rospy.logerr(
+                    "Failed to set direction for AIMOTOR node %s", motor_id
+                )
             time.sleep(0.01)
             if not self.motor_set_acceleration(motor_id):
                 rospy.logerr(

@@ -6,7 +6,7 @@
 
 **Architecture:** Add a ROS 2 node that subscribes to the annotated image and delegates frame pacing, FFmpeg command construction, latest-frame replacement, and child-process recovery to a small standard-library core. The node converts BGR frames to RGB before writing them to an FFmpeg subprocess; FFmpeg publishes RTSP over TCP. Launch integration is opt-in and does not change the detector or motor-control path.
 
-**Tech Stack:** Python 3, ROS 2 Humble `rclpy`, `sensor_msgs/msg/Image`, `cv_bridge`, FFmpeg, standard-library threading/subprocess/urllib, pytest/unittest contract tests.
+**Tech Stack:** Python 3, ROS 2 jazzy `rclpy`, `sensor_msgs/msg/Image`, `cv_bridge`, FFmpeg, standard-library threading/subprocess/urllib, pytest/unittest contract tests.
 
 **Spec:** `docs/superpowers/specs/2026-09-09-grid-line-rtsp-streaming-design.md`
 

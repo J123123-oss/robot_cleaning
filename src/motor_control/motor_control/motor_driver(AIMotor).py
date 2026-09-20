@@ -111,15 +111,20 @@ class CanMotorDriver(Node):
     PROFILE_ACCELERATION_INDEX = 0x6083
     # 6084h：速度模式减速度（Int32，RW），单位 Pul/s^2，在使能前写入。
     PROFILE_DECELERATION_INDEX = 0x6084
+    # 607Eh：指令方向极性（Uint8，RW）；PV/CSV 速度模式使用 bit6。
+    COMMAND_POLARITY_INDEX = 0x607E
 
     # 轮廓参数单位为电机侧 Pul/s^2。手册中的 PV 示例以这些参数值
     # 配置 33333 Pul/s 的目标速度。
-    DEFAULT_PROFILE_ACCELERATION = 16666
-    DEFAULT_PROFILE_DECELERATION = 11111
+    DEFAULT_PROFILE_ACCELERATION = 33333
+    DEFAULT_PROFILE_DECELERATION = 33333
     # 目标速度和实际速度的换算先使用电机转数，再应用配置的机械减速比，
     # 得到减速器输出轴 r/min。
     DEFAULT_PULSES_PER_MOTOR_REV = 1000
     DEFAULT_MECHANICAL_REDUCTION_RATIO = 40.0
+    # 电机方向配置：1 表示正常，-1 表示反向；反向由 607Eh bit6 实现。
+    DEFAULT_MOTOR_DIRECTION = 1
+    VELOCITY_DIRECTION_REVERSE_BIT = 1 << 6
     # 当前四节点机器人默认值：驱动电机 1/2 与滚刷电机 3/4
     # 可能使用不同的齿轮箱减速比。
     DEFAULT_MECHANICAL_REDUCTION_RATIOS = {
@@ -161,18 +166,20 @@ class CanMotorDriver(Node):
     # 6040h bit7=1：故障复位，复位 CiA402 故障状态，不能替代故障原因排查。
     CONTROL_FAULT_RESET = 0x0080
 
-    def __init__(self, node_name="can_motor_driver", channel="can1",
+    def __init__(self, node_name="can_motor_driver", channel="can0",
                  interface="socketcan", baudrate=500000, motor_ids=None,
                  pulses_per_motor_rev=DEFAULT_PULSES_PER_MOTOR_REV,
                  mechanical_reduction_ratio=DEFAULT_MECHANICAL_REDUCTION_RATIO,
                  mechanical_reduction_ratios=None,
                  profile_acceleration=DEFAULT_PROFILE_ACCELERATION,
-                 profile_deceleration=DEFAULT_PROFILE_DECELERATION):
+                 profile_deceleration=DEFAULT_PROFILE_DECELERATION,
+                 motor_directions=None):
         """创建 ROS2 驱动、CAN 传输、发布器和定时器。
 
         公共 API 接收的 ``speed`` 单位为输出轴 r/min；驱动在写入 60FFh
         前会将其转换为电机侧 Pul/s。``motor_ids`` 用于选择配置的节点，
-        可选的按 ID 减速比映射会覆盖标量备用减速比。
+        可选的按 ID 减速比映射会覆盖标量备用减速比；``motor_directions``
+        使用电机 ID 到方向值（1 或 -1）的映射。
         """
         super().__init__(node_name)
 
@@ -253,6 +260,26 @@ class CanMotorDriver(Node):
                     self.get_parameter(parameter_name).value,
                     parameter_name,
                 )
+            )
+
+        # 按电机 ID 配置方向：1 为正常，-1 为反向，写入 607Eh bit6。
+        configured_motor_directions = (
+            {} if motor_directions is None else motor_directions
+        )
+        if not isinstance(configured_motor_directions, dict):
+            raise ValueError("motor_directions must be a dict keyed by motor ID")
+        self.motor_directions = {}
+        for motor_id in self.motor_ids:
+            parameter_name = f"motor_direction_{motor_id}"
+            self.declare_parameter(
+                parameter_name,
+                configured_motor_directions.get(
+                    motor_id, self.DEFAULT_MOTOR_DIRECTION
+                ),
+            )
+            self.motor_directions[motor_id] = self._validate_motor_direction(
+                self.get_parameter(parameter_name).value,
+                parameter_name,
             )
 
         # 每个电机的指令/反馈缓存。速度为输出轴 r/min，位置为弧度，
@@ -400,6 +427,21 @@ class CanMotorDriver(Node):
             or numeric_value > 0x7FFFFFFF
         ):
             raise ValueError(f"{name} must be a finite positive integer")
+        return int(numeric_value)
+
+    @staticmethod
+    def _validate_motor_direction(value, name: str) -> int:
+        """校验电机方向是否为 1（正常）或 -1（反向）。"""
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be either 1 or -1")
+        if (
+            not math.isfinite(numeric_value)
+            or not numeric_value.is_integer()
+            or int(numeric_value) not in (-1, 1)
+        ):
+            raise ValueError(f"{name} must be either 1 or -1")
         return int(numeric_value)
 
     def _get_mechanical_reduction_ratio(self, motor_id: int) -> Optional[float]:
@@ -623,6 +665,34 @@ class CanMotorDriver(Node):
             self.SDO_WRITE_1, bytes((self.CANOPEN_VELOCITY_MODE,))
         )
 
+    def motor_set_direction(self, motor_id: int, direction=None) -> bool:
+        """设置 PV/CSV 速度指令方向；1 正常，-1 反向。"""
+        if not self._validate_motor_id(motor_id):
+            return False
+        if direction is None:
+            direction = self.motor_directions.get(motor_id)
+        try:
+            direction = self._validate_motor_direction(
+                direction, f"motor_direction_{motor_id}"
+            )
+        except ValueError as exc:
+            self.get_logger().error(str(exc))
+            return False
+
+        polarity = (
+            self.VELOCITY_DIRECTION_REVERSE_BIT if direction == -1 else 0
+        )
+        result = self._sdo_write(
+            motor_id,
+            self.COMMAND_POLARITY_INDEX,
+            0,
+            self.SDO_WRITE_1,
+            bytes((polarity,)),
+        )
+        if result:
+            self.motor_directions[motor_id] = direction
+        return result
+
     def motor_set_acceleration(self, motor_id: int, acceleration=None) -> bool:
         """将 PV 轮廓加速度以 Pul/s^2 单位写入 6083h。"""
         if acceleration is None:
@@ -734,7 +804,7 @@ class CanMotorDriver(Node):
         )
 
     def initialize_motors(self):
-        """启动节点，设置 PV 模式及加减速参数，然后逐个使能电机。"""
+        """启动节点，设置 PV 模式、方向及加减速参数，然后逐个使能电机。"""
         self.get_logger().info("Initializing AIMOTOR CANopen nodes...")
         time.sleep(0.2)
         for motor in self.motors:
@@ -742,6 +812,11 @@ class CanMotorDriver(Node):
             self.send_nmt_command(0x01, motor_id)  # 启动远程节点。
             time.sleep(0.01)
             self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
+            time.sleep(0.01)
+            if not self.motor_set_direction(motor_id):
+                self.get_logger().error(
+                    f"Failed to set direction for AIMOTOR node {motor_id}"
+                )
             time.sleep(0.01)
             if not self.motor_set_acceleration(motor_id):
                 self.get_logger().error(
