@@ -3,9 +3,9 @@ set -o pipefail
 export PYTHONDONTWRITEBYTECODE=1
 # export ROS_LOCALHOST_ONLY=1
 # GPIO_3控制开启RTK
-gpioset gpiochip3 3=0
+# gpioset gpiochip3 3=0
 
-gpioset gpiochip3 2=0
+# gpioset gpiochip3 2=0
 # 指定需要ping通的目标地址，可根据需要修改
 TARGET_IP="121.40.57.48"
 
