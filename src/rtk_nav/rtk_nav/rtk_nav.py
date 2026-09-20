@@ -34,7 +34,7 @@ WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min 
 MAX_WHEEL_SPEED_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 最大轮子输出轴转速（r/min）。
 
 # 滚刷输出轴速度，单位 r/min。
-RTK_BRUSH_SPEED = 80.0
+RTK_BRUSH_SPEED = 70.0
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值

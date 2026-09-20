@@ -56,6 +56,8 @@ MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
 WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
+MANUAL_DRIVE_SPEED_SCALE = 0.8  # 普通模式前进/后退速度相对最大轮速的比例。
+MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
 SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
@@ -580,8 +582,8 @@ class MotorControlNode(Node):
         error = 0
         if any(code != 0 for code in self.motor_fault_codes):
             error |= ERROR_MOTOR_FAULT
-        if self.laser_no_response or self.is_laser_timeout():
-            error |= ERROR_LASER_TIMEOUT
+        # if self.laser_no_response or self.is_laser_timeout():
+        #     error |= ERROR_LASER_TIMEOUT
         error |= self.rtk_error_code & (
             ERROR_RTK_NOT_FIXED
             | ERROR_RTK_TIMEOUT
@@ -772,26 +774,26 @@ class MotorControlNode(Node):
                 self.set_motors_speed(0.0, 0.0)
                 self.set_brush_speed(0.0)
             elif self.current_status == "FORWARD":
-                left_speed = -self.mqtt_control_speed *0.8
-                right_speed = self.mqtt_control_speed *0.8
+                left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "BACKWARD":
-                left_speed = self.mqtt_control_speed *0.8 
-                right_speed = -self.mqtt_control_speed *0.8
+                left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
-                left_speed = self.mqtt_control_speed * 0.25
-                right_speed = self.mqtt_control_speed * 0.25
+                left_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
+                right_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "RIGHT":
-                left_speed = -self.mqtt_control_speed * 0.25
-                right_speed = -self.mqtt_control_speed * 0.25
+                left_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
+                right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            self.set_brush_speed(0.0)
+            self.set_brush_speed(70.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -1438,9 +1440,9 @@ class MotorControlNode(Node):
                 self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
 
         elif new_state == "FORWARD":
-            # 前进：双电机正转
-            left_speed = -self.mqtt_control_speed
-            right_speed = self.mqtt_control_speed
+            # 与 timer_callback 保持相同速度比例，避免状态切换瞬间先冲到全速。
+            left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -1448,27 +1450,24 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("w"))
 
         elif new_state == "BACKWARD":
-            # 后退：双电机反转
-            left_speed = self.mqtt_control_speed
-            right_speed = -self.mqtt_control_speed
+            left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("s"))
         elif new_state == "LEFT":
-            # 左转
-            left_speed = self.mqtt_control_speed
-            right_speed = self.mqtt_control_speed
+            left_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
+            right_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("a"))
         elif new_state == "RIGHT":
-            # 右转
-            left_speed = -self.mqtt_control_speed
-            right_speed = -self.mqtt_control_speed
+            left_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
+            right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:

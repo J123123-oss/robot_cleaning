@@ -1,190 +1,191 @@
 #!/usr/bin/env python3
-import struct
+import os
+import shutil
+import subprocess
 
 import rclpy
-import serial
 from rclpy.node import Node
 from std_msgs.msg import UInt8
 
+try:
+    import gpiod
+except ImportError:
+    gpiod = None
+
 
 class Sensors485(Node):
+    """Read the four boundary inputs from the RK3576 GPIO expander."""
+
     def __init__(self):
         super().__init__('sensors_485_node')
 
-        self.declare_parameter('serial_port', '/dev/ttyS1')
-        self.declare_parameter('io_baudrate', 9600)
+        self.declare_parameter('gpio_chip', '/dev/gpiochip6')
+        self.declare_parameter('gpio_lines', [9, 8, 7, 6])
         self.declare_parameter('poll_interval', 0.1)
-        self.declare_parameter('timeout', 0.1)
-        self.declare_parameter('device_addr', 0x01)
-        self.declare_parameter('io_channel_count', 8)
+        self.declare_parameter('gpio_use_sudo', False)
 
-        self.port = self.get_parameter('serial_port').get_parameter_value().string_value
-        self.io_baudrate = self.get_parameter('io_baudrate').get_parameter_value().integer_value
-        self.poll_interval = self.get_parameter('poll_interval').value
-        self.timeout = self.get_parameter('timeout').value
-        self.device_addr = self.get_parameter('device_addr').get_parameter_value().integer_value
-        self.io_channel_count = self.get_parameter('io_channel_count').get_parameter_value().integer_value
+        # Keep legacy launch parameters declared while the 485 IO source is removed.
+        self.declare_parameter('port', '/dev/ttyS1')
+        self.declare_parameter('baud', 9600)
 
-        self.io_channel_count = max(1, min(self.io_channel_count, 8))
-        self.io_func_code = 0x04
-        self.io_cmd = self.build_modbus_request(
-            self.device_addr,
-            self.io_func_code,
-            0x0000,
-            self.io_channel_count,
-        )
-        self.ser = None
-        self.last_io_poll_time = 0.0
-        self.last_reconnect_time = 0.0
-        self.reconnect_interval = 1.0
-        self.buffer = bytearray()
+        self.gpio_chip = str(self.get_parameter('gpio_chip').value)
+        self.gpio_lines = [
+            int(line) for line in self.get_parameter('gpio_lines').value
+        ]
+        self.poll_interval = float(self.get_parameter('poll_interval').value)
+        self.gpio_use_sudo = bool(self.get_parameter('gpio_use_sudo').value)
+
+        if len(self.gpio_lines) != 4:
+            raise ValueError('gpio_lines must contain exactly four line offsets')
+        if any(line < 0 or line > 23 for line in self.gpio_lines):
+            raise ValueError('gpio_lines must be valid gpiochip6 offsets (0-23)')
+
+        self.gpio_request = None
+        self.gpio_chip_handle = None
+        self.gpio_api = None
+        self.gpio_command_prefix = []
+        self.last_gpio_error_time = 0.0
 
         self.io_pub = self.create_publisher(UInt8, '/io_data', 1)
+        self.open_gpio_lines()
+        self.polling_timer = self.create_timer(
+            self.poll_interval, self.polling_callback
+        )
 
-        self.init_serial()
-        self.polling_timer = self.create_timer(0.01, self.polling_callback)
+    def open_gpio_lines(self):
+        if gpiod is None:
+            if shutil.which('gpioget') is None:
+                raise RuntimeError(
+                    'Neither Python gpiod nor the gpioget command is installed'
+                )
 
-    def init_serial(self):
-        try:
-            if self.ser and self.ser.is_open:
-                self.ser.close()
-            self.ser = serial.Serial(
-                port=self.port,
-                baudrate=self.io_baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=self.timeout,
+            if self.gpio_use_sudo and getattr(os, 'geteuid', lambda: 0)() != 0:
+                if shutil.which('sudo') is None:
+                    raise RuntimeError(
+                        'sudo is required for GPIO reads but is not installed'
+                    )
+                self.gpio_command_prefix = ['sudo', '-n']
+
+            self.gpio_api = 'cli'
+            self.get_logger().warning(
+                'Python gpiod is unavailable; falling back to gpioget'
             )
-            self.buffer.clear()
-            self.get_logger().info(
-                f"Connected IO serial: {self.port}, baudrate={self.io_baudrate}"
+            return
+
+        # libgpiod 2.x uses request_lines(); older boards commonly expose 1.x.
+        if hasattr(gpiod, 'request_lines'):
+            from gpiod.line import Direction, LineSettings
+
+            settings = LineSettings(direction=Direction.INPUT)
+            config = {line: settings for line in self.gpio_lines}
+            self.gpio_request = gpiod.request_lines(
+                self.gpio_chip,
+                consumer='sensors_485_node',
+                config=config,
             )
-            return True
-        except Exception as exc:
-            self.get_logger().error(f"IO serial init failed: {exc}")
-            return False
+            self.gpio_api = 'v2'
+        else:
+            chip_name = self.gpio_chip.removeprefix('/dev/')
+            self.gpio_chip_handle = gpiod.Chip(chip_name)
+            self.gpio_request = self.gpio_chip_handle.get_lines(self.gpio_lines)
+            self.gpio_request.request(
+                consumer='sensors_485_node',
+                type=gpiod.LINE_REQ_DIR_IN,
+            )
+            self.gpio_api = 'v1'
+
+        self.get_logger().info(
+            f'Opened {self.gpio_chip} lines {self.gpio_lines} '
+            f'using libgpiod {self.gpio_api}'
+        )
+
+    def read_gpio_values(self):
+        if self.gpio_api == 'cli':
+            chip_name = self.gpio_chip.removeprefix('/dev/')
+            command = [
+                *self.gpio_command_prefix,
+                'gpioget',
+                chip_name,
+                *(str(line) for line in self.gpio_lines),
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(0.2, self.poll_interval),
+                )
+            except subprocess.CalledProcessError as exc:
+                detail = exc.stderr.strip() or 'no error details'
+                raise RuntimeError(
+                    f'gpioget failed with exit code {exc.returncode}: {detail}'
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError('gpioget timed out') from exc
+
+            raw_values = result.stdout.split()
+            if len(raw_values) != len(self.gpio_lines):
+                raise RuntimeError(
+                    f'unexpected gpioget output: {result.stdout.strip()}'
+                )
+
+            value_map = {
+                '0': 0,
+                '1': 1,
+                'inactive': 0,
+                'active': 1,
+            }
+            try:
+                return [value_map[value.lower()] for value in raw_values]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f'unrecognized gpioget value: {exc.args[0]}'
+                ) from exc
+
+        if self.gpio_api == 'v2':
+            values = []
+            for line in self.gpio_lines:
+                raw_value = self.gpio_request.get_value(line)
+                value_name = getattr(raw_value, 'name', None)
+                if value_name is not None:
+                    values.append(int(value_name == 'ACTIVE'))
+                else:
+                    values.append(int(raw_value))
+            return values
+
+        return [int(value) for value in self.gpio_request.get_values()]
 
     def polling_callback(self):
-        now = self.get_clock().now().nanoseconds / 1e9
-
-        if (not self.ser or not self.ser.is_open) and now - self.last_reconnect_time >= self.reconnect_interval:
-            self.last_reconnect_time = now
-            self.init_serial()
-            return
-
-        if not self.ser or not self.ser.is_open:
-            return
-
         try:
-            if now - self.last_io_poll_time >= self.poll_interval:
-                self.ser.write(self.io_cmd)
-                self.last_io_poll_time = now
-
-            bytes_available = self.ser.in_waiting
-            if bytes_available > 0:
-                self.buffer += self.ser.read(min(bytes_available, 1024))
-                self.process_buffer()
+            gpio_values = self.read_gpio_values()
         except Exception as exc:
-            self.get_logger().error(f"IO polling failed: {exc}")
-            self.init_serial()
+            now = self.get_clock().now().nanoseconds / 1e9
+            if now - self.last_gpio_error_time >= 1.0:
+                self.get_logger().error(f'GPIO read failed: {exc}')
+                self.last_gpio_error_time = now
+            return
 
-    def process_buffer(self):
-        while len(self.buffer) >= 5:
-            header_pos = self.find_frame_header()
-            if header_pos < 0:
-                self.buffer.clear()
-                return
-
-            if header_pos > 0:
-                del self.buffer[:header_pos]
-
-            if len(self.buffer) < 5:
-                return
-
-            if self.buffer[1] != self.io_func_code:
-                del self.buffer[0]
-                continue
-
-            expected_length = 5 + self.buffer[2]
-            if len(self.buffer) < expected_length:
-                return
-
-            frame = bytes(self.buffer[:expected_length])
-            del self.buffer[:expected_length]
-
-            parsed = self.parse_io_response(frame)
-            if parsed is not None:
-                msg = UInt8()
-                msg.data = parsed
-                self.io_pub.publish(msg)
-
-    def find_frame_header(self):
-        for idx, value in enumerate(self.buffer):
-            if value == self.device_addr:
-                return idx
-        return -1
-
-    def parse_io_response(self, data):
-        if len(data) < 5 or data[1] != self.io_func_code:
-            return None
-
-        expected_length = 5 + data[2]
-        if len(data) != expected_length:
-            return None
-
-        expected_byte_count = self.io_channel_count * 2
-        if data[2] != expected_byte_count:
-            self.get_logger().warn(
-                f"Unexpected IO payload length: expected={expected_byte_count}, actual={data[2]}"
-            )
-            return None
-
-        recv_crc = data[-2:]
-        calc_crc = self.calculate_modbus_crc(data[:-2])
-        if recv_crc != calc_crc:
-            self.get_logger().warn("IO CRC check failed")
-            return None
-
-        io_bitmap = 0
-        for channel in range(self.io_channel_count):
-            reg_offset = 3 + channel * 2
-            register_value = (data[reg_offset] << 8) | data[reg_offset + 1]
-            if register_value != 0x0000:
-                io_bitmap |= 1 << channel
-        # 1. 取出高4位
-        high4 = (io_bitmap >> 4) & 0x0F
-        return high4
-
-    @classmethod
-    def build_modbus_request(cls, device_addr, func_code, start_addr, quantity):
-        payload = bytes((
-            device_addr & 0xFF,
-            func_code & 0xFF,
-            (start_addr >> 8) & 0xFF,
-            start_addr & 0xFF,
-            (quantity >> 8) & 0xFF,
-            quantity & 0xFF,
-        ))
-        return payload + cls.calculate_modbus_crc(payload)
-
-    @staticmethod
-    def calculate_modbus_crc(data):
-        crc = 0xFFFF
-        for byte in data:
-            crc ^= byte
-            for _ in range(8):
-                if crc & 0x0001:
-                    crc >>= 1
-                    crc ^= 0xA001
-                else:
-                    crc >>= 1
-        return struct.pack('<H', crc)
+        # line 9/8/7/6 maps to bit 0/1/2/3. The consumer treats low as active.
+        io_bitmap = sum(
+            (value & 0x01) << bit for bit, value in enumerate(gpio_values)
+        )
+        msg = UInt8()
+        msg.data = io_bitmap
+        self.io_pub.publish(msg)
 
     def destroy_node(self):
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-            self.get_logger().info("IO serial connection closed.")
+        if self.gpio_request is not None:
+            try:
+                self.gpio_request.release()
+            except Exception as exc:
+                self.get_logger().warning(f'GPIO release failed: {exc}')
+
+        if self.gpio_chip_handle is not None:
+            close = getattr(self.gpio_chip_handle, 'close', None)
+            if close is not None:
+                close()
+
         super().destroy_node()
 
 

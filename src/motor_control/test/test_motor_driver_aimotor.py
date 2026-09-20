@@ -104,6 +104,16 @@ def test_standard_can_frame_and_sdo_speed_write():
         bytes.fromhex("23 ff 60 00 1b 41 00 00"),
     )]
 
+    # 周期写入仍然执行，但相同设定不应重复刷 INFO 日志。
+    assert driver.motor_set_speed(1, 20.0)
+    motor_one_logs = [
+        call.args[0]
+        for call in driver.get_logger.return_value.method_calls
+        if call.args and "电机1设定" in call.args[0]
+    ]
+    assert len(motor_one_logs) == 1
+    assert len(frames) == 2
+
     frames.clear()
     assert driver.motor_set_speed(3, 20.0)
     assert frames == [(

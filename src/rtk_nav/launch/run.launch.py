@@ -25,7 +25,7 @@ def generate_launch_description():
     # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="0"),
+        default_value=TextSubstitution(text="2"),
         description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
@@ -41,18 +41,18 @@ def generate_launch_description():
     )
     declare_profile_deceleration_arg = DeclareLaunchArgument(
         "profile_deceleration",
-        default_value=TextSubstitution(text="33333"),
+        default_value=TextSubstitution(text="60000"),
         description="AIMotor 速度模式减速度，单位 Pul/s^2",
     )
     declare_motor_direction_args = tuple(
         DeclareLaunchArgument(
             f"motor_direction_{motor_id}",
             default_value=TextSubstitution(
-                text="-1" if motor_id in (1, 2, 3) else "1"
+                text="-1" if motor_id in (1, 2, 4) else "1"
             ),
             description=(
                 f"AIMotor 电机 {motor_id} 速度指令方向，"
-                f"默认{'反转' if motor_id in (1, 2, 3) else '正转'}，"
+                f"默认{'反转' if motor_id in (1, 2, 4) else '正转'}，"
                 "1 正常，-1 反向"
             ),
         )
@@ -428,8 +428,9 @@ def generate_launch_description():
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
-            {'port': '/dev/ttyS1'},
-            {'baud': 9600}
+            {'gpio_chip': '/dev/gpiochip6'},
+            {'gpio_lines': [9, 8, 7, 6]},
+            {'gpio_use_sudo': False},
         ]
     )
         # 配置激光节点
@@ -848,8 +849,8 @@ def generate_launch_description():
     ld.add_action(rtk_navigator)
     # # 若需要启用注释的节点，取消以下对应行的注释
     ld.add_action(wtrtk_serial_driver_node)
-    ld.add_action(line_detector_node)
-    ld.add_action(openmv_serial_publisher_node)
-    ld.add_action(grid_line_streamer_node)
+    # ld.add_action(line_detector_node)
+    # ld.add_action(openmv_serial_publisher_node)
+    # ld.add_action(grid_line_streamer_node)
 
     return ld

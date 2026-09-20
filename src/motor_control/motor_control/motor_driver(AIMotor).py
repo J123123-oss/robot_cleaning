@@ -300,6 +300,9 @@ class CanMotorDriver(Node):
             }
             for motor_id in self.motor_ids
         ]
+        # 仅在实际指令或写入结果变化时记录 INFO，避免 10 Hz 周期下发刷屏；
+        # CAN 写入本身不去重，确保驱动层的周期刷新和故障恢复逻辑不变。
+        self._last_speed_log_signature = {}
         # 周期调度状态和停机保护标志。
         self._send_tick = 0
         self._feedback_tick = 0
@@ -763,14 +766,30 @@ class CanMotorDriver(Node):
             # 直接 API 调用和 ROS 指令缓存写入共用同一个目标速度。
             motor["velocity"] = numeric_speed
         result = self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, target_pulses)
-        self.get_logger().info(
-            f"[AIMotor] 电机{motor_id}设定："
-            f"目标转速={numeric_speed:+.3f} r/min（输出轴），"
-            f"设置脉冲数={target_pulses} Pul/s，"
-            f"方向={self.motor_directions.get(motor_id, self.DEFAULT_MOTOR_DIRECTION):+d}，"
-            f"减速比={reduction_ratio:.3f}，"
-            f"写入={'成功' if result else '失败'}"
+        direction = self.motor_directions.get(
+            motor_id, self.DEFAULT_MOTOR_DIRECTION
         )
+        log_signature = (
+            round(numeric_speed, 3),
+            target_pulses,
+            direction,
+            round(reduction_ratio, 6),
+            bool(result),
+        )
+        last_signatures = getattr(self, "_last_speed_log_signature", None)
+        if last_signatures is None:
+            last_signatures = {}
+            self._last_speed_log_signature = last_signatures
+        if last_signatures.get(motor_id) != log_signature:
+            self.get_logger().info(
+                f"[AIMotor] 电机{motor_id}设定："
+                f"目标转速={numeric_speed:+.3f} r/min（输出轴），"
+                f"设置脉冲数={target_pulses} Pul/s，"
+                f"方向={direction:+d}，"
+                f"减速比={reduction_ratio:.3f}，"
+                f"写入={'成功' if result else '失败'}"
+            )
+            last_signatures[motor_id] = log_signature
         return result
 
     def motor_query_feedback(self, motor_id: int) -> bool:
