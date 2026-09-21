@@ -300,12 +300,15 @@ class CanMotorDriver(Node):
             }
             for motor_id in self.motor_ids
         ]
+        self._feedback_lock = threading.RLock()
         # 仅在实际指令或写入结果变化时记录 INFO，避免 10 Hz 周期下发刷屏；
         # CAN 写入本身不去重，确保驱动层的周期刷新和故障恢复逻辑不变。
         self._last_speed_log_signature = {}
         # 周期调度状态和停机保护标志。
         self._send_tick = 0
         self._feedback_tick = 0
+        self._feedback_log_last_time = {}
+        self._feedback_log_last_signature = {}
         self.last_speed_command_time = time.monotonic()
         self._stopping = False
 
@@ -339,7 +342,7 @@ class CanMotorDriver(Node):
             Float32MultiArray, "motor_velocities", 10
         )
         self.motor_feedback_publisher = self.create_publisher(
-            Float32MultiArray, "motor_feedback", 10
+            Float32MultiArray, "motor_feedback", 1
         )
         self.motor_fault_publisher = self.create_publisher(
             Float32MultiArray, "motor_fault_codes", 10
@@ -363,8 +366,26 @@ class CanMotorDriver(Node):
                 return motor
         return None
 
+    def get_feedback_snapshot(self):
+        """返回供 ``motor_control`` 使用的电机反馈快照。"""
+        with self._feedback_lock:
+            return [
+                {
+                    "id": motor["id"],
+                    "actual_velocity": float(motor["actual_velocity"]),
+                    "actual_position": float(motor["actual_position"]),
+                    "actual_torque": float(motor["actual_torque"]),
+                    "actual_temperature": float(motor["actual_temperature"]),
+                    "status_word": int(motor["status_word"]),
+                    "mode_display": int(motor["mode_display"]),
+                    "fault_code": int(motor["fault_code"]),
+                    "online": bool(motor["online"]),
+                }
+                for motor in self.motors
+            ]
+
     def _log_velocity_feedback(self, motor_id: int, pulses_per_sec: int) -> None:
-        """同时以协议单位和输出轴单位记录目标速度与反馈速度。"""
+        """按反馈变化或时间间隔记录速度，避免周期查询造成日志刷屏。"""
         motor = self._get_motor(motor_id)
         reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
         if motor is None or reduction_ratio is None:
@@ -373,7 +394,17 @@ class CanMotorDriver(Node):
         target_pulses = int(round(
             target_speed * reduction_ratio / 60.0 * self.pulses_per_motor_rev
         ))
-        self.get_logger().info(
+        signature = (target_pulses, int(pulses_per_sec))
+        now = time.monotonic()
+        last_time = self._feedback_log_last_time.get(motor_id, 0.0)
+        if (
+            self._feedback_log_last_signature.get(motor_id) == signature
+            and now - last_time < 5.0
+        ):
+            return
+        self._feedback_log_last_time[motor_id] = now
+        self._feedback_log_last_signature[motor_id] = signature
+        self.get_logger().debug(
             f"[AIMotor] 电机{motor_id}速度："
             f"设定转速={target_speed:+.3f} r/min（输出轴），"
             f"实际转速={float(motor['actual_velocity']):+.3f} r/min（输出轴），"
@@ -781,7 +812,7 @@ class CanMotorDriver(Node):
             last_signatures = {}
             self._last_speed_log_signature = last_signatures
         if last_signatures.get(motor_id) != log_signature:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"[AIMotor] 电机{motor_id}设定："
                 f"目标转速={numeric_speed:+.3f} r/min（输出轴），"
                 f"设置脉冲数={target_pulses} Pul/s，"
@@ -909,58 +940,60 @@ class CanMotorDriver(Node):
             return
         index = data[1] | (data[2] << 8)
         value = data[4:8]
-        motor = self._get_motor(motor_id)
-        if motor is None:
-            return
-        if index == self.STATUSWORD_INDEX:
-            motor["status_word"] = int.from_bytes(value[:2], "little")
-        elif index == self.MODES_OF_OPERATION_DISPLAY_INDEX:
-            motor["mode_display"] = int.from_bytes(value[:1], "little", signed=True)
-        elif index == self.POSITION_ACTUAL_INDEX:
-            pulses = int.from_bytes(value, "little", signed=True)
-            motor["actual_position"] = (
-                pulses * 2.0 * math.pi / self.encoder_pulses_per_rev
-            )
-        elif index == self.VELOCITY_ACTUAL_INDEX:
-            pulses_per_sec = int.from_bytes(value, "little", signed=True)
-            reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
-            if reduction_ratio is not None:
-                motor["actual_velocity"] = (
-                    pulses_per_sec
-                    * 60.0
-                    / (self.pulses_per_motor_rev * reduction_ratio)
+        with self._feedback_lock:
+            motor = self._get_motor(motor_id)
+            if motor is None:
+                return
+            if index == self.STATUSWORD_INDEX:
+                motor["status_word"] = int.from_bytes(value[:2], "little")
+            elif index == self.MODES_OF_OPERATION_DISPLAY_INDEX:
+                motor["mode_display"] = int.from_bytes(value[:1], "little", signed=True)
+            elif index == self.POSITION_ACTUAL_INDEX:
+                pulses = int.from_bytes(value, "little", signed=True)
+                motor["actual_position"] = (
+                    pulses * 2.0 * math.pi / self.encoder_pulses_per_rev
                 )
-                self._log_velocity_feedback(motor_id, pulses_per_sec)
-        elif index == self.TORQUE_ACTUAL_INDEX:
-            torque_raw = int.from_bytes(value[:2], "little", signed=True)
-            motor["actual_torque"] = torque_raw / 10.0
+            elif index == self.VELOCITY_ACTUAL_INDEX:
+                pulses_per_sec = int.from_bytes(value, "little", signed=True)
+                reduction_ratio = self._get_mechanical_reduction_ratio(motor_id)
+                if reduction_ratio is not None:
+                    motor["actual_velocity"] = (
+                        pulses_per_sec
+                        * 60.0
+                        / (self.pulses_per_motor_rev * reduction_ratio)
+                    )
+                    self._log_velocity_feedback(motor_id, pulses_per_sec)
+            elif index == self.TORQUE_ACTUAL_INDEX:
+                torque_raw = int.from_bytes(value[:2], "little", signed=True)
+                motor["actual_torque"] = torque_raw / 10.0
 
     def _parse_tpdo_feedback(self, can_id: int, data: bytes):
         """解析手册默认映射的状态/位置和速度/转矩 TPDO。"""
         node_id = can_id & 0x7F
-        motor = self._get_motor(node_id)
-        if motor is None:
-            return
-        if 0x180 <= can_id <= 0x1FF and len(data) >= 7:
-            motor["status_word"] = int.from_bytes(data[0:2], "little")
-            position = int.from_bytes(data[3:7], "little", signed=True)
-            motor["actual_position"] = (
-                position * 2.0 * math.pi / self.encoder_pulses_per_rev
-            )
-        elif 0x280 <= can_id <= 0x2FF and len(data) >= 4:
-            velocity = int.from_bytes(data[0:4], "little", signed=True)
-            reduction_ratio = self._get_mechanical_reduction_ratio(node_id)
-            if reduction_ratio is not None:
-                motor["actual_velocity"] = (
-                    velocity
-                    * 60.0
-                    / (self.pulses_per_motor_rev * reduction_ratio)
+        with self._feedback_lock:
+            motor = self._get_motor(node_id)
+            if motor is None:
+                return
+            if 0x180 <= can_id <= 0x1FF and len(data) >= 7:
+                motor["status_word"] = int.from_bytes(data[0:2], "little")
+                position = int.from_bytes(data[3:7], "little", signed=True)
+                motor["actual_position"] = (
+                    position * 2.0 * math.pi / self.encoder_pulses_per_rev
                 )
-                self._log_velocity_feedback(node_id, velocity)
-            if len(data) >= 6:
-                motor["actual_torque"] = int.from_bytes(
-                    data[4:6], "little", signed=True
-                ) / 10.0
+            elif 0x280 <= can_id <= 0x2FF and len(data) >= 4:
+                velocity = int.from_bytes(data[0:4], "little", signed=True)
+                reduction_ratio = self._get_mechanical_reduction_ratio(node_id)
+                if reduction_ratio is not None:
+                    motor["actual_velocity"] = (
+                        velocity
+                        * 60.0
+                        / (self.pulses_per_motor_rev * reduction_ratio)
+                    )
+                    self._log_velocity_feedback(node_id, velocity)
+                if len(data) >= 6:
+                    motor["actual_torque"] = int.from_bytes(
+                        data[4:6], "little", signed=True
+                    ) / 10.0
 
     def parse_motor_feedback(self, can_id: int, data: bytearray):
         """解析 SDO 响应及手册默认的 TPDO 映射。"""
@@ -1091,28 +1124,34 @@ class CanMotorDriver(Node):
                 motor["velocity"] = 0.0
 
         self.send_speed_commands()
-        self._feedback_tick += 1
-        if self._feedback_tick >= 5:
-            self._feedback_tick = 0
-            self.query_motor_feedback()
+        self.poll_feedback()
         self.update_odometry()
 
         velocity_msg = Float32MultiArray()
         velocity_msg.data = [float(motor["actual_velocity"]) for motor in self.motors]
         self.velocity_publisher.publish(velocity_msg)
 
+    def poll_feedback(self):
+        """主动查询反馈、发布最新话题数据并返回反馈快照。"""
+        self._feedback_tick += 1
+        if self._feedback_tick >= 5:
+            self._feedback_tick = 0
+            self.query_motor_feedback()
+        snapshot = self.get_feedback_snapshot()
         feedback_msg = Float32MultiArray()
-        feedback_data = []
-        for motor in self.motors:
-            feedback_data.extend([
+        feedback_msg.data = [
+            value
+            for motor in snapshot
+            for value in (
                 float(motor["id"]),
                 motor["actual_position"],
                 motor["actual_velocity"],
                 motor["actual_torque"],
                 motor["actual_temperature"],
-            ])
-        feedback_msg.data = feedback_data
+            )
+        ]
         self.motor_feedback_publisher.publish(feedback_msg)
+        return snapshot
 
     def stop_all_motors(self):
         """停止所有目标速度，然后使每个电机进入失能状态。"""

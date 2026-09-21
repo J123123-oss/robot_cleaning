@@ -36,7 +36,7 @@ def generate_launch_description():
     # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
     declare_profile_acceleration_arg = DeclareLaunchArgument(
         "profile_acceleration",
-        default_value=TextSubstitution(text="33333"),
+        default_value=TextSubstitution(text="60000"),
         description="AIMotor 速度模式加速度，单位 Pul/s^2",
     )
     declare_profile_deceleration_arg = DeclareLaunchArgument(

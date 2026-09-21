@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import Mock
@@ -70,6 +71,7 @@ def _make_driver(module):
         4: 40.0,
     }
     driver.motor_directions = {1: 1, 2: 1, 3: 1, 4: 1}
+    driver._feedback_lock = threading.RLock()
     driver.motors = [
         {
             "id": motor_id,
@@ -87,8 +89,56 @@ def _make_driver(module):
         for motor_id in (1, 2, 3)
     ]
     driver.motor_fault_publisher = Mock()
+    driver.motor_feedback_publisher = Mock()
+    driver._feedback_log_last_time = {}
+    driver._feedback_log_last_signature = {}
     driver.get_logger = Mock(return_value=Mock())
     return driver
+
+
+def test_feedback_snapshot_is_detached_from_driver_cache():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["actual_velocity"] = 12.5
+
+    snapshot = driver.get_feedback_snapshot()
+    snapshot[0]["actual_velocity"] = 0.0
+
+    assert driver.motors[0]["actual_velocity"] == 12.5
+    assert snapshot[0]["id"] == 1
+
+
+def test_poll_feedback_queries_every_fifth_tick_and_returns_snapshot():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver._feedback_tick = 4
+    driver.query_motor_feedback = Mock()
+    driver.motors[0]["actual_velocity"] = 8.0
+
+    snapshot = driver.poll_feedback()
+
+    driver.query_motor_feedback.assert_called_once_with()
+    assert driver._feedback_tick == 0
+    assert snapshot[0]["actual_velocity"] == 8.0
+    driver.motor_feedback_publisher.publish.assert_called_once()
+
+
+def test_repeated_feedback_log_is_rate_limited():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.parse_motor_feedback(
+        0x581, bytes.fromhex("43 6c 60 00 e0 b1 ff ff")
+    )
+    driver.parse_motor_feedback(
+        0x581, bytes.fromhex("43 6c 60 00 e0 b1 ff ff")
+    )
+
+    messages = [
+        call.args[0]
+        for call in driver.get_logger.return_value.method_calls
+        if call.args and "电机1速度" in call.args[0]
+    ]
+    assert len(messages) == 1
 
 
 def test_standard_can_frame_and_sdo_speed_write():
