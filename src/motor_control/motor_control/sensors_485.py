@@ -166,10 +166,17 @@ class Sensors485(Node):
                 self.last_gpio_error_time = now
             return
 
-        # line 9/8/7/6 maps to bit 0/1/2/3. The consumer treats low as active.
-        io_bitmap = sum(
-            (value & 0x01) << bit for bit, value in enumerate(gpio_values)
-        )
+        # # line 9/8/7/6 maps to bit 0/1/2/3. The consumer treats low as active.
+        # io_bitmap = sum(
+        #     (value & 0x01) << bit for bit, value in enumerate(gpio_values)
+        # )
+        # line 9/8/7/6 maps to bit 0/1/2/3. The consumer treats high as active.
+        # 硬件读到的值取反：物理高电平 → active(bit=1)
+        io_bitmap = 0
+        for bit, raw_val in enumerate(gpio_values):
+            active = 1 - raw_val   # 电平翻转
+            if active == 1:
+                io_bitmap |= (1 << bit)
         msg = UInt8()
         msg.data = io_bitmap
         self.io_pub.publish(msg)
