@@ -39,7 +39,7 @@ RTK_BRUSH_SPEED = 70.0
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
-LINEAR_SPEED_BASE = MAX_WHEEL_SPEED_RPM  # 直线跟踪默认轮速（r/min）。
+LINEAR_SPEED_BASE = 52.0  # 留出14.85 r/min轮速余量，覆盖默认RTK与视觉纠偏（r/min）。
 # TURN_SPEED = 1.0 *2     # origin 0.1
 INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
