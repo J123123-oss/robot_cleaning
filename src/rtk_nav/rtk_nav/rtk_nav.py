@@ -37,11 +37,11 @@ MAX_WHEEL_SPEED_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 最大轮子输
 RTK_BRUSH_SPEED = 70.0
 
 # RTK导航配置
-RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
+RTK_WAYPOINT_TOLERANCE = 0.3 # 多点导航距离阈值
 RTK_HEADING_TOLERANCE = 1.0  # 多点导航角度阈值 0.2
 LINEAR_SPEED_BASE = MAX_WHEEL_SPEED_RPM  # 直线跟踪默认轮速（r/min）。
 # TURN_SPEED = 1.0 *2     # origin 0.1
-INITIAL_MOVE_TOLERANCE = 0.1 #起始点距离阈值
+INITIAL_MOVE_TOLERANCE = 0.5 #起始点距离阈值
 RTK_CALIBRATION_TIMEOUT = 5.0
 RTK_DATA_TIMEOUT = 1.0
 RTK_ZERO_ANGLE_TIMEOUT = RTK_DATA_TIMEOUT  # angle_x/angle_y持续为0时视为RTK数据异常
@@ -314,7 +314,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 180.0 #-90.0    #-90.0(old)  # RTK安装偏移角度,向右转+90度
+        self.rtk_install_offset = -180.0 #-90.0    #-90.0(old)  # RTK安装偏移角度,向右转+90度
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）

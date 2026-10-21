@@ -20,7 +20,6 @@ import threading
 from enum import Enum
 from sensor_msgs.msg import NavSatFix
 import collections  # 用于创建固定长度的双端队列
-from rclpy.executors import MultiThreadedExecutor
 from std_srvs.srv import Trigger
 from custom_msgs.srv import ChargeControl  # 导入自定义充电控制服务类型
 from custom_msgs.msg import WTRTK
@@ -65,10 +64,9 @@ SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
-# 防跌落分层触发参数（与 rtk_nav 保持一致）
-BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
+# 防跌落输入在首个有效采样即触发，释放仍需两帧确认
+BOUNDARY_TRIGGER_CONFIRM_FRAMES = 1
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
-BOUNDARY_SLOW_PERSIST_FRAMES = 5  # 单传感器慢速通道：持续N帧(0.5s@10Hz)触发
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
@@ -117,6 +115,21 @@ class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
         """初始化电机控制节点、AIMotor 驱动、传感器订阅和控制定时器。"""
         super().__init__(node_name)
+
+        self.declare_parameter("manual_drive_speed_scale", MANUAL_DRIVE_SPEED_SCALE)
+        self.manual_drive_speed_scale = float(
+            self.get_parameter("manual_drive_speed_scale").value
+        )
+        if not 0.01 <= self.manual_drive_speed_scale <= MANUAL_DRIVE_SPEED_SCALE:
+            raise ValueError(
+                "manual_drive_speed_scale must be between 0.01 and "
+                f"{MANUAL_DRIVE_SPEED_SCALE}"
+            )
+        self._manual_drive_speed_parameter_callback = (
+            self.add_on_set_parameters_callback(
+                self._validate_manual_drive_speed_parameter
+            )
+        )
 
         # 声明RTK路径参数，用于获取route_id
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
@@ -278,7 +291,6 @@ class MotorControlNode(Node):
         self.blocked_directions = set()    # 基于confirmed_sensors计算的禁止方向
         self.boundary_active_count = 0
         self.boundary_clear_count = 0
-        self.boundary_slow_count = 0
 
         self.dock_sensors = 0  #停机仓传感器状态
         self._dock_sensor_blocked_logged_unloading = False
@@ -434,6 +446,15 @@ class MotorControlNode(Node):
             "motor_fault_codes",
             self.motor_fault_callback,
             10
+        )
+        # 电机反馈只保留最新一帧，避免状态节点处理积压的旧速度数据。
+        self._motor_feedback_topic_lock = threading.RLock()
+        self._motor_feedback_topic = []
+        self.motor_feedback_subscription = self.create_subscription(
+            Float32MultiArray,
+            "motor_feedback",
+            self.motor_feedback_callback,
+            1
         )
         # 4. ROS2 发布器
         self.state_pub = self.create_publisher(String, "/motor/state", 10)  # 电机状态
@@ -640,11 +661,31 @@ class MotorControlNode(Node):
                     else:
                         self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
                         self.is_charge_paused = False
+    def _validate_manual_drive_speed_parameter(self, parameter):
+        from rcl_interfaces.msg import SetParametersResult
+
+        for item in parameter:
+            if item.name != "manual_drive_speed_scale":
+                continue
+            value = float(item.value)
+            if not 0.01 <= value <= MANUAL_DRIVE_SPEED_SCALE:
+                return SetParametersResult(
+                    successful=False,
+                    reason=(
+                        "manual_drive_speed_scale must be between 0.01 and "
+                        f"{MANUAL_DRIVE_SPEED_SCALE}"
+                    ),
+                )
+            self.manual_drive_speed_scale = value
+        return SetParametersResult(successful=True)
+
     def timer_callback(self):
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
             self.motor_ctrl.reconnect_can_bus()
+        # AIMotor 驱动由当前控制节点主动轮询，并发布最新反馈话题。
+        self.motor_ctrl.poll_feedback()
         if self.is_laser_timeout():
             now = time.time()
             if now - self.last_laser_timeout_log_time >= 10.0:
@@ -774,12 +815,12 @@ class MotorControlNode(Node):
                 self.set_motors_speed(0.0, 0.0)
                 self.set_brush_speed(0.0)
             elif self.current_status == "FORWARD":
-                left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-                right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                left_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
+                right_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "BACKWARD":
-                left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-                right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                left_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
+                right_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
                 left_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
@@ -793,7 +834,7 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            self.set_brush_speed(70.0)
+            # self.set_brush_speed(70.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -1011,9 +1052,7 @@ class MotorControlNode(Node):
             self.blocked_directions.clear()
             return
 
-        # ---- 4传感器分层触发（mid/back × 左右）----
-        same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
-        same_side = (self.mid_left and self.back_left) or (self.mid_right and self.back_right)
+        # ---- 4传感器快速停车保护（mid/back × 左右）----
         # 本帧触发的传感器列表
         active_set = set()
         if self.mid_left: active_set.add('mid_left')
@@ -1021,7 +1060,8 @@ class MotorControlNode(Node):
         if self.back_left: active_set.add('back_left')
         if self.back_right: active_set.add('back_right')
         num_active = len(active_set)
-        spatial_consensus = same_row or same_side or num_active >= 3
+        # 防跌落是安全输入：任一传感器有效时，不再等待空间组合或多帧去抖。
+        spatial_consensus = num_active > 0
 
         changed = False
         # 已确认但当前帧不再触发的传感器 → 立即移除（去抖只防误加，不防移除）
@@ -1032,10 +1072,9 @@ class MotorControlNode(Node):
             self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
 
         if spatial_consensus:
-            # 快通道：空间一致 → 3帧确认
+            # 首帧确认触发，立即更新方向限制并停车。
             self.boundary_active_count += 1
             self.boundary_clear_count = 0
-            self.boundary_slow_count = 0
             if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
                 if active_set != self.confirmed_sensors:
                     self.confirmed_sensors = active_set
@@ -1043,23 +1082,9 @@ class MotorControlNode(Node):
                     self.get_logger().warn(
                         f"[Motor] 防跌落快触发：{sorted(active_set)}，"
                         f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
-        elif num_active == 1:
-            # 慢通道：单传感器 → 持续若干帧确认
-            self.boundary_slow_count += 1
-            self.boundary_active_count = 0
-            self.boundary_clear_count = 0
-            if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
-                sensor_name = next(iter(active_set))
-                if sensor_name not in self.confirmed_sensors:
-                    self.confirmed_sensors.add(sensor_name)
-                    changed = True
-                    self.get_logger().warn(
-                        f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
-                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
         else:
-            # 无传感器触发 / 对角不匹配 → 重置
+            # 无传感器触发 → 重置
             self.boundary_active_count = 0
-            self.boundary_slow_count = 0
             self.boundary_clear_count += 1
             if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
                 if self.confirmed_sensors:
@@ -1189,6 +1214,36 @@ class MotorControlNode(Node):
             for motor in self.motor_ctrl.motors:
                 self.motor_ctrl.motor_clear_fault(motor["id"])
             self.get_logger().warn(f"发送清除故障指令！")
+
+    def motor_feedback_callback(self, msg: Float32MultiArray):
+        """缓存 AIMotor 发布的最新反馈话题数据。"""
+        values = list(msg.data)
+        motor_count = len(self.motor_ctrl.motors)
+        if len(values) != motor_count * 5:
+            self.get_logger().warn(
+                f"[Motor] 忽略格式错误的反馈话题：收到{len(values)}个值，"
+                f"期望{motor_count * 5}个值"
+            )
+            return
+
+        feedback = []
+        for offset in range(0, len(values), 5):
+            feedback.append({
+                "id": int(values[offset]),
+                "actual_position": float(values[offset + 1]),
+                "actual_velocity": float(values[offset + 2]),
+                "actual_torque": float(values[offset + 3]),
+                "actual_temperature": float(values[offset + 4]),
+            })
+        with self._motor_feedback_topic_lock:
+            self._motor_feedback_topic = feedback
+
+    def get_motor_feedback_snapshot(self):
+        """返回最新话题反馈；话题尚未到达时回退到驱动快照。"""
+        with self._motor_feedback_topic_lock:
+            if self._motor_feedback_topic:
+                return [dict(motor) for motor in self._motor_feedback_topic]
+        return self.motor_ctrl.get_feedback_snapshot()
 
     def laser_callback(self, msg: UInt16MultiArray):
         """订阅激光距离数据的回调函数，添加滑动平均滤波避免数据突变"""
@@ -1441,8 +1496,8 @@ class MotorControlNode(Node):
 
         elif new_state == "FORWARD":
             # 与 timer_callback 保持相同速度比例，避免状态切换瞬间先冲到全速。
-            left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-            right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            left_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
+            right_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -1450,8 +1505,8 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("w"))
 
         elif new_state == "BACKWARD":
-            left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-            right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            left_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
+            right_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -1548,6 +1603,12 @@ class MotorControlNode(Node):
     def publish_state(self):
         """发布机器人状态消息（MQTT）"""
         try:
+            motor_feedback = self.get_motor_feedback_snapshot()
+            left_feedback = motor_feedback[0]
+            right_feedback = motor_feedback[1]
+            brush_feedback = (
+                motor_feedback[2] if len(motor_feedback) > 2 else None
+            )
             state_msg = {
                 "status": self.current_status,
                 "nav_status": self.nav_status,# rtk导航状态
@@ -1572,16 +1633,19 @@ class MotorControlNode(Node):
                     "z": self.imu_yaw_deg if self.imu_yaw_deg is not None else 0.00,
                 },
                 "acceleration": {
-                    "x": float(self.motor_ctrl.motors[0]["actual_velocity"]),
-                    "y": float(self.motor_ctrl.motors[1]["actual_velocity"]),
+                    "x": left_feedback["actual_velocity"],
+                    "y": right_feedback["actual_velocity"],
                     "z": float(
-                        self.motor_ctrl.motors[2]["actual_velocity"]
-                        if len(self.motor_ctrl.motors) > 2 else 0.0
+                        brush_feedback["actual_velocity"]
+                        if brush_feedback is not None else 0.0
                     )
                 },
                 "sensors_status":self.sensors_status,
                 # AIMotor actual_velocity 为轮子输出轴 r/min，此处换算为平均线速度 m/s。
-                "velocity": (abs(self.motor_ctrl.motors[0]["actual_velocity"]) + abs(self.motor_ctrl.motors[1]["actual_velocity"])) / 2.0 * WHEEL_RPM_TO_MPS,
+                "velocity": (
+                    abs(left_feedback["actual_velocity"])
+                    + abs(right_feedback["actual_velocity"])
+                ) / 2.0 * WHEEL_RPM_TO_MPS,
                 "laser_left": self.laser_distance[0],
                 "laser_right": self.laser_distance[1],
                 "complete_state": self.complete_state,
@@ -2424,8 +2488,9 @@ class MotorControlNode(Node):
                         self._last_turn_diag_time = 0.0
                     if current_time - self._last_turn_diag_time >= 1.0:
                         imu_age = current_time - self.last_imu_update_time if self.last_imu_update_time > 0 else -1
-                        actual_left = self.motor_ctrl.motors[0]["actual_velocity"]
-                        actual_right = self.motor_ctrl.motors[1]["actual_velocity"]
+                        motor_feedback = self.get_motor_feedback_snapshot()
+                        actual_left = motor_feedback[0]["actual_velocity"]
+                        actual_right = motor_feedback[1]["actual_velocity"]
                         self.get_logger().info(
                             f"[LOADING] yaw_diff={yaw_diff:.1f}°, imu={self.imu_yaw_deg:.1f}°, "
                             f"target={self.loading_turn_target_deg:.1f}°, "
@@ -2734,9 +2799,6 @@ def main(args=None):
 
     # 创建电机控制节点
     motor_node = MotorControlNode()
-    # 使用多线程执行器（支持异步调用）
-    executor = MultiThreadedExecutor()
-
     try:
         rclpy.spin(motor_node)
     except KeyboardInterrupt:

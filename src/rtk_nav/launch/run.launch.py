@@ -25,7 +25,7 @@ def generate_launch_description():
     # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="2"),
+        default_value=TextSubstitution(text="0"),
         description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
@@ -36,13 +36,16 @@ def generate_launch_description():
     # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
     declare_profile_acceleration_arg = DeclareLaunchArgument(
         "profile_acceleration",
-        default_value=TextSubstitution(text="33333"),
+        default_value=TextSubstitution(text="60000"),
         description="AIMotor 速度模式加速度，单位 Pul/s^2",
     )
     declare_profile_deceleration_arg = DeclareLaunchArgument(
         "profile_deceleration",
-        default_value=TextSubstitution(text="60000"),
-        description="AIMotor 速度模式减速度，单位 Pul/s^2",
+        default_value=TextSubstitution(text="445000"),
+        description=(
+            "AIMotor 速度模式减速度，单位 Pul/s^2；按0.35m/s最大轮速"
+            "理论目标约0.25秒停车"
+        ),
     )
     declare_motor_direction_args = tuple(
         DeclareLaunchArgument(
@@ -430,6 +433,7 @@ def generate_launch_description():
         parameters=[
             {'gpio_chip': '/dev/gpiochip6'},
             {'gpio_lines': [9, 8, 7, 6]},
+            {'poll_interval': 0.05},
             {'gpio_use_sudo': False},
         ]
     )
@@ -842,7 +846,7 @@ def generate_launch_description():
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
-    # ld.add_action(sensors_485_node)
+    ld.add_action(sensors_485_node)
     # ld.add_action(laser_node)
     # ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
