@@ -25,7 +25,7 @@ def generate_launch_description():
     # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="0"),
+        default_value=TextSubstitution(text="2"),
         description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
@@ -42,10 +42,7 @@ def generate_launch_description():
     declare_profile_deceleration_arg = DeclareLaunchArgument(
         "profile_deceleration",
         default_value=TextSubstitution(text="445000"),
-        description=(
-            "AIMotor 速度模式减速度，单位 Pul/s^2；按0.35m/s最大轮速"
-            "理论目标约0.25秒停车"
-        ),
+        description="AIMotor 速度模式减速度，单位 Pul/s^2；启动时通过0x6084回读确认",
     )
     declare_motor_direction_args = tuple(
         DeclareLaunchArgument(
@@ -433,7 +430,7 @@ def generate_launch_description():
         parameters=[
             {'gpio_chip': '/dev/gpiochip6'},
             {'gpio_lines': [9, 8, 7, 6]},
-            {'poll_interval': 0.05},
+            {'poll_interval': 0.01},
             {'gpio_use_sudo': False},
         ]
     )

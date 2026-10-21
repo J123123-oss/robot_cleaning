@@ -56,6 +56,7 @@ WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min 
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
 MANUAL_DRIVE_SPEED_SCALE = 0.8  # 普通模式前进/后退速度相对最大轮速的比例。
+MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为0.8。
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
@@ -64,7 +65,7 @@ SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
-# 防跌落输入在首个有效采样即触发，释放仍需两帧确认
+# 防跌落输入在首个有效采样即触发；传感器释放即时生效
 BOUNDARY_TRIGGER_CONFIRM_FRAMES = 1
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
@@ -120,10 +121,10 @@ class MotorControlNode(Node):
         self.manual_drive_speed_scale = float(
             self.get_parameter("manual_drive_speed_scale").value
         )
-        if not 0.01 <= self.manual_drive_speed_scale <= MANUAL_DRIVE_SPEED_SCALE:
+        if not 0.01 <= self.manual_drive_speed_scale <= MAX_MANUAL_DRIVE_SPEED_SCALE:
             raise ValueError(
                 "manual_drive_speed_scale must be between 0.01 and "
-                f"{MANUAL_DRIVE_SPEED_SCALE}"
+                f"{MAX_MANUAL_DRIVE_SPEED_SCALE}"
             )
         self._manual_drive_speed_parameter_callback = (
             self.add_on_set_parameters_callback(
@@ -668,12 +669,12 @@ class MotorControlNode(Node):
             if item.name != "manual_drive_speed_scale":
                 continue
             value = float(item.value)
-            if not 0.01 <= value <= MANUAL_DRIVE_SPEED_SCALE:
+            if not 0.01 <= value <= MAX_MANUAL_DRIVE_SPEED_SCALE:
                 return SetParametersResult(
                     successful=False,
                     reason=(
                         "manual_drive_speed_scale must be between 0.01 and "
-                        f"{MANUAL_DRIVE_SPEED_SCALE}"
+                        f"{MAX_MANUAL_DRIVE_SPEED_SCALE}"
                     ),
                 )
             self.manual_drive_speed_scale = value
@@ -1061,7 +1062,7 @@ class MotorControlNode(Node):
         if self.back_right: active_set.add('back_right')
         num_active = len(active_set)
         # 防跌落是安全输入：任一传感器有效时，不再等待空间组合或多帧去抖。
-        spatial_consensus = num_active > 0
+        boundary_triggered = num_active > 0
 
         changed = False
         # 已确认但当前帧不再触发的传感器 → 立即移除（去抖只防误加，不防移除）
@@ -1071,7 +1072,7 @@ class MotorControlNode(Node):
             changed = True
             self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
 
-        if spatial_consensus:
+        if boundary_triggered:
             # 首帧确认触发，立即更新方向限制并停车。
             self.boundary_active_count += 1
             self.boundary_clear_count = 0

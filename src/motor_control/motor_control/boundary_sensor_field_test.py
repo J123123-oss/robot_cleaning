@@ -6,14 +6,15 @@ import csv
 import os
 import sys
 import time
+from collections import deque
 from datetime import datetime
 
 import rclpy
+from geometry_msgs.msg import Vector3
 from rcl_interfaces.msg import ParameterType
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
-from geometry_msgs.msg import Vector3
 from std_msgs.msg import Float32MultiArray, Float64MultiArray, String, UInt8
 
 
@@ -32,29 +33,40 @@ class BoundaryTestNode(Node):
         self.control_mode = None
         self.feedback = {}
         self.feedback_time = None
-        self.writer = None
-        self.writer_file = None
-        self.event_context = {}
-        self.leg_active = False
-        self.expected_mask = 0
-        self.sensor_trigger_mono = None
-        self.sensor_trigger_wall = None
-        self.gpio_trigger_seen = False
-        self.first_zero_command_mono = None
-        self.first_stop_feedback_mono = None
-        self.stop_rpm = 1.0
-        self.previous_feedback_pair = None
-        self.feedback_duplicate_count = 0
+        self.feedback_wall_time = None
+        self.feedback_seq = 0
+        self.velocity_feedback = {}
+        self.velocity_feedback_time = {}
+        self.velocity_feedback_wall_time = {}
+        self.velocity_feedback_seq = {}
+        self.velocity_feedback_event_seq = 0
+        self.velocity_feedback_events = deque(maxlen=512)
+        self.speed_command = None
+        self.speed_command_time = None
+        self.speed_command_wall_time = None
+        self.speed_command_seq = 0
+        self.can_speed_send_events = deque(maxlen=256)
         self.keyboard_pub = self.create_publisher(String, "/keyboard/control", 10)
         self.create_subscription(UInt8, "/io_data", self._io_callback, 10)
-        self.create_subscription(
-            Float64MultiArray, "/io_data_diagnostics", self._diagnostic_callback, 10
-        )
-        self.create_subscription(Vector3, "/motor/current_speed", self._speed_callback, 10)
         self.create_subscription(String, "/motor/state", self._state_callback, 10)
         self.create_subscription(String, "/control/mode", self._mode_callback, 10)
         self.create_subscription(
+            Vector3, "/motor/current_speed", self._speed_command_callback, 10
+        )
+        self.create_subscription(
+            Float64MultiArray,
+            "/motor/can_speed_send_trace",
+            self._can_speed_send_trace_callback,
+            20,
+        )
+        self.create_subscription(
             Float32MultiArray, "/motor_feedback", self._feedback_callback, 10
+        )
+        self.create_subscription(
+            Float32MultiArray,
+            "/motor_velocity_feedback",
+            self._velocity_feedback_callback,
+            10,
         )
         self.parameter_client = AsyncParameterClient(self, "/motor_control_node")
 
@@ -62,21 +74,6 @@ class BoundaryTestNode(Node):
         self.io_raw = int(msg.data) & 0x0F
         self.io_time = time.monotonic()
         self.io_wall_time = time.time()
-        if self.leg_active:
-            mask = self.triggered_mask or 0
-            self._log_event(
-                "IO_TOPIC_SAMPLE", self.io_time, self.io_wall_time,
-                io_bitmap=f"0x{self.io_raw:02x}",
-                trigger_sensor_bits=f"0x{mask:02x}",
-            )
-            if self.sensor_trigger_mono is None and mask & self.expected_mask:
-                self.sensor_trigger_mono = self.io_time
-                self.sensor_trigger_wall = self.io_wall_time
-                self._log_event(
-                    "IO_TOPIC_TRIGGER", self.io_time, self.io_wall_time,
-                    io_bitmap=f"0x{self.io_raw:02x}",
-                    trigger_sensor_bits=f"0x{mask & self.expected_mask:02x}",
-                )
 
     def _state_callback(self, msg):
         self.motor_state = msg.data.strip().upper()
@@ -94,85 +91,53 @@ class BoundaryTestNode(Node):
             feedback[motor_id] = float(values[offset + 2])
         self.feedback = feedback
         self.feedback_time = time.monotonic()
-        pair = (feedback.get(1), feedback.get(2))
-        changed = pair != self.previous_feedback_pair
-        if self.leg_active and self.sensor_trigger_mono is not None:
-            self._log_event(
-                "FEEDBACK_SAMPLE", self.feedback_time, time.time(),
-                left_rpm=pair[0], right_rpm=pair[1],
-                feedback_changed=int(changed),
-            )
-            if not changed:
-                self.feedback_duplicate_count += 1
-            if (self.first_stop_feedback_mono is None and
-                    pair[0] is not None and pair[1] is not None and
-                    abs(pair[0]) <= self.stop_rpm and abs(pair[1]) <= self.stop_rpm):
-                self.first_stop_feedback_mono = self.feedback_time
-                self._log_event(
-                    "FIRST_STOP_FEEDBACK", self.feedback_time, time.time(),
-                    left_rpm=pair[0], right_rpm=pair[1],
-                    feedback_changed=int(changed),
-                )
-        self.previous_feedback_pair = pair
+        self.feedback_wall_time = time.time()
+        self.feedback_seq += 1
 
-    def _log_event(self, event, monotonic_time, wall_time, **values):
-        if self.writer is None:
+    def _velocity_feedback_callback(self, msg):
+        values = list(msg.data)
+        if len(values) != 2:
             return
-        row = {
-            **self.event_context,
-            "event": event,
-            "event_time": datetime.fromtimestamp(wall_time).astimezone().isoformat(
-                timespec="milliseconds"
-            ),
-            "event_monotonic": f"{monotonic_time:.6f}",
-            "elapsed_from_sensor_ms": (
-                f"{(monotonic_time - self.sensor_trigger_mono) * 1000:.1f}"
-                if self.sensor_trigger_mono is not None else ""
-            ),
-            **values,
-        }
-        self.writer.writerow(row)
-        self.writer_file.flush()
-
-    def _diagnostic_callback(self, msg):
-        if len(msg.data) < 4 or not self.leg_active:
+        motor_id = int(values[0])
+        if motor_id not in (1, 2):
             return
-        wall, monotonic, raw_bitmap, io_bitmap = msg.data[:4]
-        raw_bitmap, io_bitmap = int(raw_bitmap), int(io_bitmap)
-        active_mask = (~io_bitmap) & 0x0F
-        self._log_event(
-            "GPIO_SAMPLE", monotonic, wall,
-            gpio_raw_bitmap=f"0x{raw_bitmap:02x}",
-            io_bitmap=f"0x{io_bitmap:02x}",
-            trigger_sensor_bits=f"0x{active_mask:02x}",
+        actual_rpm = float(values[1])
+        sample_time = time.monotonic()
+        sample_wall_time = time.time()
+        self.velocity_feedback[motor_id] = actual_rpm
+        self.velocity_feedback_time[motor_id] = sample_time
+        self.velocity_feedback_wall_time[motor_id] = sample_wall_time
+        self.velocity_feedback_seq[motor_id] = (
+            self.velocity_feedback_seq.get(motor_id, 0) + 1
         )
-        if active_mask & self.expected_mask and not self.gpio_trigger_seen:
-            self.gpio_trigger_seen = True
-            if self.first_zero_command_mono is None:
-                self.sensor_trigger_mono = monotonic
-                self.sensor_trigger_wall = wall
-            self._log_event(
-                "GPIO_TRIGGER_SAMPLE", monotonic, wall,
-                gpio_raw_bitmap=f"0x{raw_bitmap:02x}",
-                io_bitmap=f"0x{io_bitmap:02x}",
-                trigger_sensor_bits=f"0x{active_mask & self.expected_mask:02x}",
-            )
+        self.velocity_feedback_event_seq += 1
+        self.velocity_feedback_events.append({
+            "seq": self.velocity_feedback_event_seq,
+            "motor_id": motor_id,
+            "actual_rpm": actual_rpm,
+            "monotonic": sample_time,
+            "wall_time": sample_wall_time,
+        })
 
-    def _speed_callback(self, msg):
-        if not self.leg_active:
+    def _speed_command_callback(self, msg):
+        self.speed_command = (float(msg.x), float(msg.y))
+        self.speed_command_time = time.monotonic()
+        self.speed_command_wall_time = time.time()
+        self.speed_command_seq += 1
+
+    def _can_speed_send_trace_callback(self, msg):
+        if len(msg.data) != 4:
             return
-        now = time.monotonic()
-        zero = max(abs(msg.x), abs(msg.y), abs(msg.z)) < 1e-6
-        if zero and self.sensor_trigger_mono is not None and self.first_zero_command_mono is None:
-            self.first_zero_command_mono = now
-            self._log_event(
-                "FIRST_ZERO_SPEED_COMMAND", now, time.time(),
-                motor_x=msg.x, motor_y=msg.y, motor_z=msg.z,
-            )
-        self._log_event(
-            "MOTOR_SPEED_COMMAND", now, time.time(),
-            motor_x=msg.x, motor_y=msg.y, motor_z=msg.z,
-        )
+        motor_id = int(msg.data[0])
+        target_pulses = int(msg.data[1])
+        if motor_id not in (1, 2) or target_pulses != 0:
+            return
+        self.can_speed_send_events.append({
+            "motor_id": motor_id,
+            "target_pulses": target_pulses,
+            "send_monotonic": float(msg.data[2]),
+            "send_wall_time": float(msg.data[3]),
+        })
 
     @property
     def triggered_mask(self):
@@ -200,6 +165,37 @@ def await_future(node, future, timeout_sec=5.0):
     if not future.done():
         raise RuntimeError("ROS parameter service timed out")
     return future.result()
+
+
+def update_zero_can_send_metrics(node, metrics, zero_command_time):
+    """Associate the zero-speed topic event with the preceding drive-wheel CAN sends."""
+    lower_bound = zero_command_time - 0.25
+    latest_by_motor = {}
+    for event in node.can_speed_send_events:
+        send_time = event["send_monotonic"]
+        if not lower_bound <= send_time <= zero_command_time + 0.005:
+            continue
+        motor_id = event["motor_id"]
+        if (
+            motor_id not in latest_by_motor
+            or send_time > latest_by_motor[motor_id]["send_monotonic"]
+        ):
+            latest_by_motor[motor_id] = event
+
+    if not {1, 2}.issubset(latest_by_motor):
+        return
+
+    left_event = latest_by_motor[1]
+    right_event = latest_by_motor[2]
+    metrics["left_zero_can_send_time"] = left_event["send_monotonic"]
+    metrics["left_zero_can_send_wall_time"] = left_event["send_wall_time"]
+    metrics["right_zero_can_send_time"] = right_event["send_monotonic"]
+    metrics["right_zero_can_send_wall_time"] = right_event["send_wall_time"]
+    later_event = max(
+        (left_event, right_event), key=lambda item: item["send_monotonic"]
+    )
+    metrics["both_zero_can_send_time"] = later_event["send_monotonic"]
+    metrics["both_zero_can_send_wall_time"] = later_event["send_wall_time"]
 
 
 def set_speed_scale(node, value):
@@ -237,7 +233,7 @@ def parse_args():
     parser.add_argument("--round-trips", type=int, default=3, help="往返次数（默认3）")
     parser.add_argument(
         "--speed-scale", type=float, default=0.10,
-        help="手动前后速度比例，范围0.01到0.4；默认0.10，约0.035m/s",
+        help="手动前后速度比例，范围0.01到1.0；默认0.10，约0.035m/s",
     )
     parser.add_argument("--pause-sec", type=float, default=2.0, help="每次停稳后的暂停秒数")
     parser.add_argument("--leg-timeout-sec", type=float, default=30.0, help="每段等待传感器触发的超时")
@@ -266,12 +262,24 @@ def require_runtime_ready(
         raise RuntimeError("/motor_feedback 未包含左右驱动轮 ID 1、2")
     if node.feedback_time is None or now - node.feedback_time > 0.5:
         raise RuntimeError("/motor_feedback 数据超时")
+    if not {1, 2}.issubset(node.velocity_feedback):
+        raise RuntimeError(
+            "/motor_velocity_feedback 没有左右轮新鲜采样；"
+            "请构建并启动更新后的 motor_control"
+        )
+    if any(
+        now - node.velocity_feedback_time.get(motor_id, 0.0) > 0.5
+        for motor_id in (1, 2)
+    ):
+        raise RuntimeError("/motor_velocity_feedback 数据超时")
     if require_clear_sensors and node.triggered_mask != 0:
         raise RuntimeError(
             f"传感器基线不是全释放：io_data=0x{node.io_raw:02x}, "
             f"triggered=0x{node.triggered_mask:01x}；请先排除触发/接线问题"
         )
-    if any(abs(node.feedback[motor_id]) > 1.0 for motor_id in (1, 2)):
+    if any(
+        abs(node.velocity_feedback[motor_id]) > 1.0 for motor_id in (1, 2)
+    ):
         raise RuntimeError("启动前驱动轮还在转；请先让车停稳")
 
 
@@ -280,29 +288,53 @@ def wait_for_stop(node, args, direction_mask, expected_state, leg_timeout):
     trigger_time = None
     trigger_wall_time = None
     raw_at_trigger = None
-    stop_wall_time = None
     trigger_mask = 0
-    stop_count = 0
     state_check_at = 0.0
     command_seen = False
+    stop_count = 0
+    last_velocity_seq = {
+        motor_id: node.velocity_feedback_seq.get(motor_id, 0)
+        for motor_id in (1, 2)
+    }
+    velocity_pair_sample_times = []
+    metrics = {
+        "zero_command_time": None,
+        "zero_command_wall_time": None,
+        "left_zero_can_send_time": None,
+        "left_zero_can_send_wall_time": None,
+        "right_zero_can_send_time": None,
+        "right_zero_can_send_wall_time": None,
+        "both_zero_can_send_time": None,
+        "both_zero_can_send_wall_time": None,
+        "first_stop_feedback_time": None,
+        "first_stop_feedback_wall_time": None,
+        "stable_stop_feedback_time": None,
+        "stable_stop_feedback_wall_time": None,
+        "velocity_pair_sample_count": 0,
+        "velocity_pair_interval_avg_ms": None,
+        "velocity_pair_interval_max_ms": None,
+        "velocity_sample_events": [],
+        "last_velocity_event_seq": 0,
+    }
 
     while rclpy.ok():
-        rclpy.spin_once(node, timeout_sec=0.05)
+        # This only makes the test observer more responsive; it does not alter robot control.
+        rclpy.spin_once(node, timeout_sec=0.01)
         now = time.monotonic()
         mask = node.triggered_mask
         if node.io_time is None or now - node.io_time > 0.5:
-            return "IO_TIMEOUT", trigger_time, trigger_wall_time, None, stop_wall_time, trigger_mask, raw_at_trigger
+            return "IO_TIMEOUT", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
         if now >= state_check_at:
             if node.control_mode != "NORMAL":
-                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, stop_wall_time, trigger_mask, raw_at_trigger
+                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
             if node.motor_state == expected_state:
                 command_seen = True
             elif command_seen:
-                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, stop_wall_time, trigger_mask, raw_at_trigger
+                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
             elif now - leg_start > 1.0:
-                return "COMMAND_NOT_ACCEPTED", trigger_time, trigger_wall_time, None, stop_wall_time, trigger_mask, raw_at_trigger
+                return "COMMAND_NOT_ACCEPTED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
             elif node.motor_state not in ("ENABLE", "HOLD"):
-                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, stop_wall_time, trigger_mask, raw_at_trigger
+                return "CONTROL_CHANGED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
             state_check_at = now + 0.2
 
         if trigger_time is None:
@@ -311,32 +343,130 @@ def wait_for_stop(node, args, direction_mask, expected_state, leg_timeout):
                 trigger_wall_time = node.io_wall_time
                 raw_at_trigger = node.io_raw
                 trigger_mask = mask & direction_mask
+                last_velocity_seq = {
+                    motor_id: node.velocity_feedback_seq.get(motor_id, 0)
+                    for motor_id in (1, 2)
+                }
             elif now - leg_start >= leg_timeout:
-                return "NO_TRIGGER_TIMEOUT", None, None, None, None, 0, None
+                return "NO_TRIGGER_TIMEOUT", None, None, None, None, 0, None, metrics
         else:
             if mask:
                 trigger_mask |= mask
-            if node.feedback_time is not None and now - node.feedback_time <= 0.5:
-                if all(abs(node.feedback.get(motor_id, float("inf"))) <= args.stop_rpm for motor_id in (1, 2)):
-                    stop_count += 1
+
+            if (
+                metrics["zero_command_time"] is None
+                and node.speed_command_time is not None
+                and node.speed_command_time >= trigger_time
+                and node.speed_command is not None
+                and all(abs(speed) <= 0.01 for speed in node.speed_command)
+            ):
+                metrics["zero_command_time"] = node.speed_command_time
+                metrics["zero_command_wall_time"] = node.speed_command_wall_time
+                last_velocity_seq = {
+                    motor_id: node.velocity_feedback_seq.get(motor_id, 0)
+                    for motor_id in (1, 2)
+                }
+
+            if metrics["zero_command_time"] is not None:
+                update_zero_can_send_metrics(
+                    node, metrics, metrics["zero_command_time"]
+                )
+                if metrics["both_zero_can_send_time"] is not None:
+                    for event in node.velocity_feedback_events:
+                        if event["seq"] <= metrics["last_velocity_event_seq"]:
+                            continue
+                        metrics["last_velocity_event_seq"] = event["seq"]
+                        motor_id = event["motor_id"]
+                        zero_send_time = metrics[
+                            "left_zero_can_send_time"
+                            if motor_id == 1
+                            else "right_zero_can_send_time"
+                        ]
+                        if (
+                            zero_send_time is not None
+                            and event["monotonic"] >= zero_send_time
+                        ):
+                            metrics["velocity_sample_events"].append(event)
+
+            current_velocity_seq = {
+                motor_id: node.velocity_feedback_seq.get(motor_id, 0)
+                for motor_id in (1, 2)
+            }
+            if (
+                metrics["zero_command_time"] is not None
+                and all(
+                    current_velocity_seq[motor_id] > last_velocity_seq[motor_id]
+                    for motor_id in (1, 2)
+                )
+            ):
+                last_velocity_seq = current_velocity_seq
+                sample_times = [
+                    node.velocity_feedback_time[motor_id]
+                    for motor_id in (1, 2)
+                ]
+                sample_wall_times = [
+                    node.velocity_feedback_wall_time[motor_id] for motor_id in (1, 2)
+                ]
+                sample_time = max(sample_times)
+                sample_wall_time = max(sample_wall_times)
+                measurement_start = metrics["zero_command_time"]
+                samples_are_aligned = max(sample_times) - min(sample_times) <= 0.1
+                samples_are_fresh = all(now - value <= 0.15 for value in sample_times)
+
+                if (
+                    samples_are_aligned
+                    and samples_are_fresh
+                    and all(value >= measurement_start for value in sample_times)
+                ):
+                    velocity_pair_sample_times.append(sample_time)
+                    metrics["velocity_pair_sample_count"] += 1
+                    if len(velocity_pair_sample_times) > 1:
+                        intervals_ms = [
+                            (later - earlier) * 1000.0
+                            for earlier, later in zip(
+                                velocity_pair_sample_times,
+                                velocity_pair_sample_times[1:],
+                            )
+                        ]
+                        metrics["velocity_pair_interval_avg_ms"] = (
+                            sum(intervals_ms) / len(intervals_ms)
+                        )
+                        metrics["velocity_pair_interval_max_ms"] = max(intervals_ms)
+
+                    stopped = all(
+                        abs(node.velocity_feedback.get(motor_id, float("inf")))
+                        <= args.stop_rpm
+                        for motor_id in (1, 2)
+                    )
+                    if stopped:
+                        if metrics["first_stop_feedback_time"] is None:
+                            metrics["first_stop_feedback_time"] = sample_time
+                            metrics["first_stop_feedback_wall_time"] = sample_wall_time
+                        stop_count += 1
+                    else:
+                        stop_count = 0
                 else:
                     stop_count = 0
-            else:
-                stop_count = 0
-            if stop_count >= 3:
-                stop_wall_time = time.time()
-                return "OK", trigger_time, trigger_wall_time, now, stop_wall_time, trigger_mask, raw_at_trigger
+
+                if stop_count >= 3:
+                    metrics["stable_stop_feedback_time"] = sample_time
+                    metrics["stable_stop_feedback_wall_time"] = sample_wall_time
+                    return (
+                        "OK", trigger_time, trigger_wall_time,
+                        sample_time, sample_wall_time,
+                        trigger_mask, raw_at_trigger, metrics,
+                    )
             if now - trigger_time >= args.stop_timeout_sec:
-                return "STOP_TIMEOUT", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger
-    return "INTERRUPTED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger
+                return "STOP_TIMEOUT", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
+    return "INTERRUPTED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
 
 
 def main():
     args = parse_args()
     if args.round_trips < 1:
         raise SystemExit("--round-trips 必须至少为1")
-    if not 0.01 <= args.speed_scale <= 0.4:
-        raise SystemExit("--speed-scale 范围是0.01到0.4")
+    if not 0.01 <= args.speed_scale <= 1.0:
+        raise SystemExit("--speed-scale 范围是0.01到1.0")
     if min(args.pause_sec, args.leg_timeout_sec, args.stop_timeout_sec) <= 0:
         raise SystemExit("暂停和超时时间必须大于0")
     if args.stop_rpm <= 0:
@@ -362,12 +492,18 @@ def main():
         "event", "leg_index", "round_trip", "direction", "departure_time",
         "expected_sensor_bits",
         "trigger_sensor_names", "trigger_time", "stop_time", "trigger_to_stop_ms",
-        "result", "io_raw_at_trigger", "event_time", "event_monotonic",
-        "elapsed_from_sensor_ms", "gpio_raw_bitmap", "io_bitmap",
-        "trigger_sensor_bits", "motor_x", "motor_y", "motor_z",
-        "left_rpm", "right_rpm", "feedback_changed",
-        "sensor_to_zero_command_ms", "sensor_to_first_stop_feedback_ms",
-        "zero_command_to_first_stop_feedback_ms", "feedback_duplicate_count",
+        "stop_command_time", "trigger_to_stop_command_ms",
+        "left_zero_can_send_time", "right_zero_can_send_time",
+        "trigger_to_left_zero_can_send_ms", "trigger_to_right_zero_can_send_ms",
+        "trigger_to_both_zero_can_send_ms", "both_zero_can_send_to_topic_ms",
+        "first_stop_feedback_time", "stop_command_to_first_feedback_ms",
+        "both_zero_can_send_to_first_feedback_ms",
+        "stable_stop_feedback_time", "stop_command_to_stable_feedback_ms",
+        "velocity_pair_sample_count", "velocity_pair_interval_avg_ms",
+        "velocity_pair_interval_max_ms", "velocity_sample_count",
+        "sample_time", "sample_motor_id", "sample_actual_rpm",
+        "sample_since_zero_can_send_ms", "sample_since_zero_topic_ms",
+        "result", "io_raw_at_trigger",
     ]
     writer = None
 
@@ -389,8 +525,6 @@ def main():
         os.makedirs(log_dir, exist_ok=True)
         log_file = open(log_path, "w", newline="", encoding="utf-8")
         writer = csv.DictWriter(log_file, fieldnames=fieldnames)
-        node.writer = writer
-        node.writer_file = log_file
         writer.writeheader()
         log_file.flush()
 
@@ -416,27 +550,6 @@ def main():
                     )
                 print(f"第 {leg_index}/{args.round_trips * 2} 段：{direction}，等待 {expected_names} 触发")
                 departure_wall_time = time.time()
-                node.event_context = {
-                    "run_timestamp": run_timestamp,
-                    "speed_scale": f"{args.speed_scale:.4f}",
-                    "target_speed_mps": f"{target_speed_mps:.4f}",
-                    "round_trip_count": args.round_trips,
-                    "leg_index": leg_index,
-                    "round_trip": round_trip,
-                    "direction": direction,
-                    "departure_time": datetime.fromtimestamp(departure_wall_time)
-                        .astimezone().isoformat(timespec="milliseconds"),
-                    "expected_sensor_bits": f"0x{mask:02x}",
-                }
-                node.expected_mask = mask
-                node.sensor_trigger_mono = None
-                node.sensor_trigger_wall = None
-                node.gpio_trigger_seen = False
-                node.first_zero_command_mono = None
-                node.first_stop_feedback_mono = None
-                node.feedback_duplicate_count = 0
-                node.stop_rpm = args.stop_rpm
-                node.leg_active = True
                 common_row = {
                     "run_timestamp": run_timestamp,
                     "speed_scale": f"{args.speed_scale:.4f}",
@@ -460,14 +573,13 @@ def main():
                 })
                 log_file.flush()
                 node.publish_key(key)
-                result, trigger_time, trigger_wall_time, stop_time, stop_wall_time, seen_mask, raw_at_trigger = wait_for_stop(
+                result, trigger_time, trigger_wall_time, stop_time, stop_wall_time, seen_mask, raw_at_trigger, metrics = wait_for_stop(
                     node,
                     args,
                     mask,
                     "FORWARD" if direction == "FORWARD" else "BACKWARD",
                     args.leg_timeout_sec,
                 )
-                node.leg_active = False
                 if result == "OK":
                     node.publish_key("h")
                     spin_for(node, args.pause_sec)
@@ -477,6 +589,87 @@ def main():
                 trigger_names = [
                     SENSOR_NAMES[bit] for bit in range(4) if seen_mask & (1 << bit)
                 ]
+                zero_command_time = metrics["zero_command_time"]
+                first_stop_feedback_time = metrics["first_stop_feedback_time"]
+                stable_stop_feedback_time = metrics["stable_stop_feedback_time"]
+                latency_fields = {
+                    "stop_command_time": datetime.fromtimestamp(
+                        metrics["zero_command_wall_time"]
+                    ).astimezone().isoformat(timespec="milliseconds")
+                    if metrics["zero_command_wall_time"] else "",
+                    "trigger_to_stop_command_ms": f"{(zero_command_time - trigger_time) * 1000:.1f}"
+                    if trigger_time is not None and zero_command_time is not None else "",
+                    "left_zero_can_send_time": datetime.fromtimestamp(
+                        metrics["left_zero_can_send_wall_time"]
+                    ).astimezone().isoformat(timespec="milliseconds")
+                    if metrics["left_zero_can_send_wall_time"] else "",
+                    "right_zero_can_send_time": datetime.fromtimestamp(
+                        metrics["right_zero_can_send_wall_time"]
+                    ).astimezone().isoformat(timespec="milliseconds")
+                    if metrics["right_zero_can_send_wall_time"] else "",
+                    "trigger_to_left_zero_can_send_ms": f"{(metrics['left_zero_can_send_time'] - trigger_time) * 1000:.1f}"
+                    if trigger_time is not None and metrics["left_zero_can_send_time"] is not None else "",
+                    "trigger_to_right_zero_can_send_ms": f"{(metrics['right_zero_can_send_time'] - trigger_time) * 1000:.1f}"
+                    if trigger_time is not None and metrics["right_zero_can_send_time"] is not None else "",
+                    "trigger_to_both_zero_can_send_ms": f"{(metrics['both_zero_can_send_time'] - trigger_time) * 1000:.1f}"
+                    if trigger_time is not None and metrics["both_zero_can_send_time"] is not None else "",
+                    "both_zero_can_send_to_topic_ms": f"{(zero_command_time - metrics['both_zero_can_send_time']) * 1000:.1f}"
+                    if zero_command_time is not None and metrics["both_zero_can_send_time"] is not None else "",
+                    "first_stop_feedback_time": datetime.fromtimestamp(
+                        metrics["first_stop_feedback_wall_time"]
+                    ).astimezone().isoformat(timespec="milliseconds")
+                    if metrics["first_stop_feedback_wall_time"] else "",
+                    "stop_command_to_first_feedback_ms": f"{(first_stop_feedback_time - zero_command_time) * 1000:.1f}"
+                    if first_stop_feedback_time is not None and zero_command_time is not None else "",
+                    "both_zero_can_send_to_first_feedback_ms": f"{(first_stop_feedback_time - metrics['both_zero_can_send_time']) * 1000:.1f}"
+                    if first_stop_feedback_time is not None and metrics["both_zero_can_send_time"] is not None else "",
+                    "stable_stop_feedback_time": datetime.fromtimestamp(
+                        metrics["stable_stop_feedback_wall_time"]
+                    ).astimezone().isoformat(timespec="milliseconds")
+                    if metrics["stable_stop_feedback_wall_time"] else "",
+                    "stop_command_to_stable_feedback_ms": f"{(stable_stop_feedback_time - zero_command_time) * 1000:.1f}"
+                    if stable_stop_feedback_time is not None and zero_command_time is not None else "",
+                    "velocity_pair_sample_count": metrics[
+                        "velocity_pair_sample_count"
+                    ],
+                    "velocity_pair_interval_avg_ms": f"{metrics['velocity_pair_interval_avg_ms']:.1f}"
+                    if metrics["velocity_pair_interval_avg_ms"] is not None else "",
+                    "velocity_pair_interval_max_ms": f"{metrics['velocity_pair_interval_max_ms']:.1f}"
+                    if metrics["velocity_pair_interval_max_ms"] is not None else "",
+                    "velocity_sample_count": len(metrics["velocity_sample_events"]),
+                }
+                for sample in metrics["velocity_sample_events"]:
+                    motor_id = sample["motor_id"]
+                    zero_send_time = metrics[
+                        "left_zero_can_send_time"
+                        if motor_id == 1
+                        else "right_zero_can_send_time"
+                    ]
+                    writer.writerow({
+                        **common_row,
+                        "event": "VELOCITY_SAMPLE",
+                        "trigger_sensor_names": ";".join(trigger_names),
+                        "trigger_time": datetime.fromtimestamp(
+                            trigger_wall_time
+                        ).astimezone().isoformat(timespec="milliseconds")
+                        if trigger_wall_time else "",
+                        "stop_command_time": latency_fields["stop_command_time"],
+                        "velocity_sample_count": len(
+                            metrics["velocity_sample_events"]
+                        ),
+                        "sample_time": datetime.fromtimestamp(
+                            sample["wall_time"]
+                        ).astimezone().isoformat(timespec="milliseconds"),
+                        "sample_motor_id": motor_id,
+                        "sample_actual_rpm": f"{sample['actual_rpm']:.4f}",
+                        "sample_since_zero_can_send_ms": f"{(sample['monotonic'] - zero_send_time) * 1000:.1f}"
+                        if zero_send_time is not None else "",
+                        "sample_since_zero_topic_ms": f"{(sample['monotonic'] - zero_command_time) * 1000:.1f}"
+                        if zero_command_time is not None else "",
+                        "result": "TRACE",
+                        "io_raw_at_trigger": f"0x{raw_at_trigger:02x}"
+                        if raw_at_trigger is not None else "",
+                    })
                 writer.writerow({
                     **common_row,
                     "event": "RESULT",
@@ -484,27 +677,65 @@ def main():
                     "trigger_time": datetime.fromtimestamp(trigger_wall_time).astimezone().isoformat(timespec="milliseconds") if trigger_wall_time else "",
                     "stop_time": datetime.fromtimestamp(stop_wall_time).astimezone().isoformat(timespec="milliseconds") if stop_wall_time else "",
                     "trigger_to_stop_ms": f"{(stop_time - trigger_time) * 1000:.1f}" if trigger_time and stop_time else "",
+                    **latency_fields,
                     "result": result,
                     "io_raw_at_trigger": f"0x{raw_at_trigger:02x}" if trigger_time and raw_at_trigger is not None else "",
-                    "sensor_to_zero_command_ms": (
-                        f"{(node.first_zero_command_mono - node.sensor_trigger_mono) * 1000:.1f}"
-                        if node.sensor_trigger_mono is not None and node.first_zero_command_mono is not None else ""
-                    ),
-                    "sensor_to_first_stop_feedback_ms": (
-                        f"{(node.first_stop_feedback_mono - node.sensor_trigger_mono) * 1000:.1f}"
-                        if node.sensor_trigger_mono is not None and node.first_stop_feedback_mono is not None else ""
-                    ),
-                    "zero_command_to_first_stop_feedback_ms": (
-                        f"{(node.first_stop_feedback_mono - node.first_zero_command_mono) * 1000:.1f}"
-                        if node.first_zero_command_mono is not None and node.first_stop_feedback_mono is not None else ""
-                    ),
-                    "feedback_duplicate_count": node.feedback_duplicate_count,
                 })
                 log_file.flush()
-                print(f"结果: {result}" + (
-                    f"，触发到停稳 {(stop_time - trigger_time) * 1000:.1f} ms"
-                    if trigger_time and stop_time else ""
-                ))
+                print(f"结果: {result}")
+                if trigger_time is not None and zero_command_time is not None:
+                    print(
+                        "  传感器触发→零速命令话题: "
+                        f"{(zero_command_time - trigger_time) * 1000:.1f} ms"
+                    )
+                elif trigger_time is not None:
+                    print("  未观测到 /motor/current_speed 的零速命令")
+                if metrics["both_zero_can_send_time"] is not None:
+                    print(
+                        "  传感器话题采样→左右轮 60FF=0 CAN send 返回: "
+                        f"{(metrics['left_zero_can_send_time'] - trigger_time) * 1000:.1f}/"
+                        f"{(metrics['right_zero_can_send_time'] - trigger_time) * 1000:.1f} ms"
+                    )
+                    if zero_command_time is not None:
+                        print(
+                            "  两轮零速 CAN send 返回→零速话题: "
+                            f"{(zero_command_time - metrics['both_zero_can_send_time']) * 1000:.1f} ms"
+                        )
+                if zero_command_time is not None and first_stop_feedback_time is not None:
+                    print(
+                        "  零速命令→首次停稳反馈: "
+                        f"{(first_stop_feedback_time - zero_command_time) * 1000:.1f} ms"
+                    )
+                if (
+                    metrics["both_zero_can_send_time"] is not None
+                    and first_stop_feedback_time is not None
+                ):
+                    print(
+                        "  两轮零速 CAN send 返回→首次停稳反馈: "
+                        f"{(first_stop_feedback_time - metrics['both_zero_can_send_time']) * 1000:.1f} ms"
+                    )
+                if zero_command_time is not None and stable_stop_feedback_time is not None:
+                    print(
+                        "  零速命令→连续3组新CAN速度采样确认: "
+                        f"{(stable_stop_feedback_time - zero_command_time) * 1000:.1f} ms"
+                    )
+                if metrics["velocity_pair_interval_avg_ms"] is not None:
+                    print(
+                        "  停止阶段左右轮新CAN反馈组间隔 avg/max: "
+                        f"{metrics['velocity_pair_interval_avg_ms']:.1f}/"
+                        f"{metrics['velocity_pair_interval_max_ms']:.1f} ms，"
+                        f"共 {metrics['velocity_pair_sample_count']} 组"
+                    )
+                if metrics["velocity_sample_events"]:
+                    print(
+                        "  左右轮停机速度曲线样点已写入 CSV: "
+                        f"{len(metrics['velocity_sample_events'])} 条"
+                    )
+                if trigger_time is not None and stop_time is not None:
+                    print(
+                        "  传感器触发→连续反馈确认停稳: "
+                        f"{(stop_time - trigger_time) * 1000:.1f} ms"
+                    )
                 if result != "OK":
                     print("测试中止；机器人已收到 HOLD。请检查传感器方向、话题和反馈。")
                     exit_code = 1
