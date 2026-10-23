@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IMU heading-hold forward/reverse field test for the boundary sensors."""
+"""Boundary sensor field tests for forward/reverse and boundary-loop motion."""
 
 import argparse
 import csv
@@ -26,6 +26,16 @@ MAX_WHEEL_SPEED_RPM = (
     MAX_LINEAR_SPEED_MPS * 60.0 / (2.0 * math.pi * WHEEL_RADIUS_M)
 )
 DEFAULT_HEADING_DEADZONE_DEG = 0.3
+DEFAULT_BOUNDARY_SPEED_SCALE = 0.40
+DEFAULT_BOUNDARY_RUN_TIME_SEC = 120.0
+DEFAULT_BOUNDARY_RETREAT_SEC = 1.0
+DEFAULT_BOUNDARY_REVERSE_ARC_SEC = 0.8
+DEFAULT_BOUNDARY_FORWARD_STRAIGHT_SEC = 1.0
+DEFAULT_BOUNDARY_ADVANCE_SEC = 1.5
+DEFAULT_BOUNDARY_ARC_INNER_SPEED_RATIO = 0.6
+DEFAULT_RETREAT_TIMEOUT_SEC = 3.0
+BOUNDARY_FRONT_MASK = 0b0011
+BOUNDARY_REAR_MASK = 0b1100
 IMU_TIMEOUT_SEC = 0.35
 CONTROL_PERIOD_SEC = 0.05
 SENSOR_NAMES = ("mid_left", "mid_right", "back_left", "back_right")
@@ -33,7 +43,7 @@ EMERGENCY_STOP_TIMEOUT_SEC = 3.0
 
 
 class BoundaryTestNode(Node):
-    def __init__(self):
+    def __init__(self, use_heading_feedback=True):
         super().__init__("boundary_sensor_field_test")
         self.io_raw = None
         self.io_time = None
@@ -60,7 +70,10 @@ class BoundaryTestNode(Node):
         self.imu_heading_wall_time = None
         self.imu_heading_seq = 0
         self.boundary_test_status = None
-        self.rtk_parameter_client = AsyncParameterClient(self, "/rtk_nav")
+        self.rtk_parameter_client = (
+            AsyncParameterClient(self, "/rtk_nav")
+            if use_heading_feedback else None
+        )
         self.keyboard_pub = self.create_publisher(String, "/keyboard/control", 10)
         self.test_speed_pub = self.create_publisher(
             Vector3, "/boundary_test/motor_speed", 10
@@ -71,7 +84,10 @@ class BoundaryTestNode(Node):
         self.create_subscription(UInt8, "/io_data", self._io_callback, 10)
         self.create_subscription(String, "/motor/state", self._state_callback, 10)
         self.create_subscription(String, "/control/mode", self._mode_callback, 10)
-        self.create_subscription(Float32, "/imu_heading", self._imu_heading_callback, 10)
+        if use_heading_feedback:
+            self.create_subscription(
+                Float32, "/imu_heading", self._imu_heading_callback, 10
+            )
         self.create_subscription(
             String, "/boundary_test/status", self._boundary_test_status_callback, 10
         )
@@ -354,6 +370,50 @@ def normalize_heading_error(target_deg, current_deg):
     return (target_deg - current_deg + 180.0) % 360.0 - 180.0
 
 
+def calculate_boundary_motion_command(args, motion):
+    base_rpm = MAX_WHEEL_SPEED_RPM * args.speed_scale
+    if motion == "BACKWARD":
+        return base_rpm, -base_rpm, -1
+    if motion == "FORWARD_STRAIGHT":
+        return -base_rpm, base_rpm, 1
+
+    inner_rpm = base_rpm * args.arc_inner_speed_ratio
+    if motion == "FORWARD_ARC":
+        if args.boundary_side == "right":
+            # Motor signs are mirrored: left negative/right positive drives forward.
+            return -base_rpm, inner_rpm, 1
+        return -inner_rpm, base_rpm, 1
+    if motion == "BACKWARD_ARC":
+        if args.boundary_side == "right":
+            # During reverse travel, a rightward path requires the left track
+            # to move backward faster than the right track. This is opposite
+            # to merely commanding the chassis to yaw right while reversing.
+            return base_rpm, -inner_rpm, -1
+        return inner_rpm, -base_rpm, -1
+    raise ValueError(f"unsupported boundary motion: {motion}")
+
+
+def boundary_runtime_expired(start_time, now, run_time_sec):
+    return run_time_sec != -1.0 and now - start_time >= run_time_sec
+
+
+def calculate_boundary_advance_target(
+    configured_advance_sec, retreat_elapsed_sec, reverse_arc_elapsed_sec,
+    forward_straight_sec, arc_inner_speed_ratio,
+):
+    if retreat_elapsed_sec is None or reverse_arc_elapsed_sec is None:
+        return configured_advance_sec
+    arc_speed_factor = (1.0 + arc_inner_speed_ratio) / 2.0
+    backward_distance_sec = (
+        retreat_elapsed_sec + reverse_arc_elapsed_sec * arc_speed_factor
+    )
+    required_arc_sec = max(
+        0.0,
+        (backward_distance_sec - forward_straight_sec) / arc_speed_factor,
+    ) + 0.1
+    return max(configured_advance_sec, required_arc_sec)
+
+
 def capture_target_heading(node, capture_sec=1.5):
     """Capture a stable circular mean while the robot is stationary."""
     deadline = time.monotonic() + capture_sec
@@ -456,12 +516,50 @@ def calculate_heading_command(args, direction, target_heading, current_heading):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="IMU保持航向前后往返，记录边界传感器触发到驱动轮停稳的时间。"
+        description="前后往返边界测试，或低速右手边界绕行测试。"
+    )
+    parser.add_argument(
+        "--mode", choices=("back-and-forth", "boundary-loop"),
+        default="back-and-forth", help="运动模式（默认back-and-forth）",
     )
     parser.add_argument("--round-trips", type=int, default=3, help="往返次数（默认3）")
     parser.add_argument(
-        "--speed-scale", type=float, default=0.10,
-        help="手动前后速度比例，范围0.01到1.0；默认0.10，约0.035m/s",
+        "--speed-scale", type=float, default=None,
+        help="速度比例，范围0.01到1.0；往返默认0.10，边界绕行默认0.40",
+    )
+    parser.add_argument(
+        "--boundary-side", choices=("right", "left"), default="right",
+        help="边界弧线行驶的内侧（默认right）",
+    )
+    parser.add_argument(
+        "--run-time-sec", type=float, default=DEFAULT_BOUNDARY_RUN_TIME_SEC,
+        help="边界绕行总运行时间秒；-1表示无总时限，默认120秒",
+    )
+    parser.add_argument(
+        "--retreat-timeout-sec", type=float, default=DEFAULT_RETREAT_TIMEOUT_SEC,
+        help="前部传感器未释放时倒退阶段的最长时间（默认3秒）",
+    )
+    parser.add_argument(
+        "--retreat-sec", type=float, default=DEFAULT_BOUNDARY_RETREAT_SEC,
+        help="触发后直线倒退至少多久，并等待前传感器释放（默认1秒）",
+    )
+    parser.add_argument(
+        "--reverse-arc-sec", type=float, default=DEFAULT_BOUNDARY_REVERSE_ARC_SEC,
+        help="直退后右后/左后弧线倒退时间（默认0.8秒）",
+    )
+    parser.add_argument(
+        "--forward-straight-sec", type=float,
+        default=DEFAULT_BOUNDARY_FORWARD_STRAIGHT_SEC,
+        help="右前弧线前先直行前进时间（默认1秒）",
+    )
+    parser.add_argument(
+        "--advance-sec", type=float, default=DEFAULT_BOUNDARY_ADVANCE_SEC,
+        help="右前弧线最短目标时间；会按后退路程动态增加，传感器触发仍优先停车（默认1.5秒）",
+    )
+    parser.add_argument(
+        "--arc-inner-speed-ratio", type=float,
+        default=DEFAULT_BOUNDARY_ARC_INNER_SPEED_RATIO,
+        help="弧线内侧履带速度/外侧履带速度，范围(0,1)，默认0.6",
     )
     parser.add_argument(
         "--heading-kp", type=float, default=None,
@@ -484,7 +582,22 @@ def parse_args():
     parser.add_argument("--stop-timeout-sec", type=float, default=5.0, help="触发后等待轮子停稳的超时")
     parser.add_argument("--stop-rpm", type=float, default=1.0, help="轮子停稳阈值（绝对转速RPM）")
     parser.add_argument("--log-dir", default="~/robot_cleaning/test_logs", help="CSV日志目录")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.speed_scale is None:
+        args.speed_scale = (
+            DEFAULT_BOUNDARY_SPEED_SCALE
+            if args.mode == "boundary-loop"
+            else 0.10
+        )
+    if args.run_time_sec != -1.0 and args.run_time_sec <= 0.0:
+        parser.error("--run-time-sec 必须大于0或为-1（无时间限制）")
+    if args.retreat_sec <= 0.0 or args.retreat_timeout_sec <= args.retreat_sec:
+        parser.error("倒退超时必须大于最短倒退时间，且最短倒退时间必须大于0")
+    if min(args.reverse_arc_sec, args.forward_straight_sec, args.advance_sec) <= 0.0:
+        parser.error("右后弧退、前直行和右前弧线目标时间都必须大于0")
+    if not 0.0 < args.arc_inner_speed_ratio < 1.0:
+        parser.error("--arc-inner-speed-ratio 必须在(0, 1)范围内")
+    return args
 
 
 def require_runtime_ready(
@@ -533,13 +646,14 @@ def require_runtime_ready(
 
 def wait_for_stop(
     node, args, direction, direction_mask, leg_timeout, target_heading,
-    writer, common_row, log_file,
+    writer, common_row, log_file, abort_mask=0, initial_trigger=None,
+    record_imu=True,
 ):
     leg_start = time.monotonic()
-    trigger_time = None
-    trigger_wall_time = None
-    raw_at_trigger = None
-    trigger_mask = 0
+    trigger_time = initial_trigger["monotonic"] if initial_trigger else None
+    trigger_wall_time = initial_trigger["wall_time"] if initial_trigger else None
+    raw_at_trigger = initial_trigger["raw"] if initial_trigger else None
+    trigger_mask = initial_trigger["mask"] if initial_trigger else 0
     next_command_at = 0.0
     last_terminal_log = 0.0
     last_csv_flush = time.monotonic()
@@ -548,6 +662,9 @@ def wait_for_stop(
         motor_id: node.velocity_feedback_seq.get(motor_id, 0)
         for motor_id in (1, 2)
     }
+    if initial_trigger:
+        last_velocity_seq = dict(initial_trigger["velocity_seq"])
+        node.publish_test_speed(0.0, 0.0, 0)
     velocity_pair_sample_times = []
     metrics = {
         "zero_command_time": None,
@@ -586,6 +703,14 @@ def wait_for_stop(
             return "IO_TIMEOUT", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
 
         if trigger_time is None:
+            if mask & abort_mask:
+                node.publish_test_speed(0.0, 0.0, 0)
+                raw_at_trigger = node.io_raw
+                trigger_mask = mask & abort_mask
+                return (
+                    "UNEXPECTED_SENSOR_TRIGGER", None, None, None, None,
+                    trigger_mask, raw_at_trigger, metrics,
+                )
             if mask & direction_mask:
                 trigger_time = node.io_time
                 trigger_wall_time = node.io_wall_time
@@ -626,7 +751,8 @@ def wait_for_stop(
             else:
                 heading_error = (
                     normalize_heading_error(target_heading, node.imu_heading_deg)
-                    if node.imu_heading_deg is not None else None
+                    if target_heading is not None and node.imu_heading_deg is not None
+                    else None
                 )
                 correction = 0.0
                 left_speed = 0.0
@@ -641,7 +767,7 @@ def wait_for_stop(
                 (now - node.imu_heading_time) * 1000.0
                 if node.imu_heading_time is not None else None
             )
-            if writer is not None:
+            if writer is not None and record_imu:
                 writer.writerow({
                     **common_row,
                     "event": "IMU_SAMPLE",
@@ -649,7 +775,8 @@ def wait_for_stop(
                         node.imu_heading_wall_time
                         if node.imu_heading_wall_time is not None else time.time()
                     ).astimezone().isoformat(timespec="milliseconds"),
-                    "target_heading_deg": f"{target_heading:.3f}",
+                    "target_heading_deg": f"{target_heading:.3f}"
+                    if target_heading is not None else "",
                     "imu_heading_deg": f"{node.imu_heading_deg:.3f}"
                     if node.imu_heading_deg is not None else "",
                     "heading_error_deg": f"{heading_error:.3f}"
@@ -665,7 +792,7 @@ def wait_for_stop(
                     log_file.flush()
                     last_csv_flush = now
 
-            if now - last_terminal_log >= 0.5:
+            if record_imu and now - last_terminal_log >= 0.5:
                 phase = "STOPPING" if trigger_time is not None else "DRIVE"
                 yaw_text = (
                     f"{node.imu_heading_deg:.2f}°"
@@ -673,8 +800,9 @@ def wait_for_stop(
                 )
                 error_text = f"{heading_error:+.2f}°" if heading_error is not None else "--"
                 age_text = f"{heading_age_ms:.0f}ms" if heading_age_ms is not None else "--"
+                target_text = f"{target_heading:.2f}°" if target_heading is not None else "--"
                 print(
-                    f"  [IMU/{phase}] target={target_heading:.2f}° current={yaw_text} "
+                    f"  [IMU/{phase}] target={target_text} current={yaw_text} "
                     f"error={error_text} age={age_text} "
                     f"corr={correction:+.2f}rpm L/R={left_speed:+.2f}/{right_speed:+.2f}rpm"
                 )
@@ -793,6 +921,566 @@ def wait_for_stop(
     return "INTERRUPTED", trigger_time, trigger_wall_time, None, None, trigger_mask, raw_at_trigger, metrics
 
 
+def write_boundary_event(
+    writer, log_file, common_row, event, result, target_heading,
+    trigger_mask=0, trigger_time=None, stop_time=None, raw_at_trigger=None,
+    **extra,
+):
+    if writer is None:
+        return
+    trigger_names = [
+        SENSOR_NAMES[bit] for bit in range(4) if trigger_mask & (1 << bit)
+    ]
+    writer.writerow({
+        **common_row,
+        "event": event,
+        "target_heading_deg": f"{target_heading:.3f}"
+        if target_heading is not None else "",
+        "imu_heading_deg": extra.get("imu_heading_deg", ""),
+        "trigger_sensor_names": ";".join(trigger_names),
+        "trigger_time": datetime.fromtimestamp(trigger_time).astimezone().isoformat(
+            timespec="milliseconds"
+        ) if trigger_time else "",
+        "stop_time": datetime.fromtimestamp(stop_time).astimezone().isoformat(
+            timespec="milliseconds"
+        ) if stop_time else "",
+        "trigger_to_stop_ms": f"{(stop_time - trigger_time) * 1000.0:.1f}"
+        if trigger_time and stop_time else "",
+        "result": result,
+        "io_raw_at_trigger": f"0x{raw_at_trigger:02x}"
+        if raw_at_trigger is not None else "",
+        **extra,
+    })
+    log_file.flush()
+
+
+def write_boundary_motion_sample(
+    writer, log_file, common_row, phase, direction, elapsed_sec,
+    left_speed, right_speed, sample_wall_time=None,
+    io_raw=None, triggered_mask=None,
+):
+    if writer is None:
+        return
+    writer.writerow({
+        **common_row,
+        "event": "MOTION_SAMPLE",
+        "phase": phase,
+        "direction": direction,
+        "sample_time": datetime.fromtimestamp(
+            sample_wall_time if sample_wall_time is not None else time.time()
+        ).astimezone().isoformat(
+            timespec="milliseconds"
+        ),
+        "motion_elapsed_sec": f"{elapsed_sec:.3f}",
+        "command_left_rpm": f"{left_speed:.3f}",
+        "command_right_rpm": f"{right_speed:.3f}",
+        "io_raw_sample": f"0x{io_raw:02x}" if io_raw is not None else "",
+        "triggered_mask_sample": (
+            f"0x{triggered_mask:02x}" if triggered_mask is not None else ""
+        ),
+        "result": "TRACE",
+    })
+    if elapsed_sec == 0.0 or int(elapsed_sec * 10) % 10 == 0:
+        log_file.flush()
+
+
+def boundary_trigger_snapshot(node, mask):
+    return {
+        "monotonic": node.io_time,
+        "wall_time": node.io_wall_time,
+        "mask": mask & BOUNDARY_FRONT_MASK,
+        "raw": node.io_raw,
+        "velocity_seq": {
+            motor_id: node.velocity_feedback_seq.get(motor_id, 0)
+            for motor_id in (1, 2)
+        },
+    }
+
+
+def run_boundary_motion_phase(
+    node, args, run_start, writer, log_file, common_row,
+    phase, motion, duration_sec, trigger_on_front=False,
+    advance_target_sec=None, front_trigger_result="EDGE_TRIGGERED",
+):
+    left_speed, right_speed, direction_code = calculate_boundary_motion_command(
+        args, motion
+    )
+    motion_start = time.monotonic()
+    next_command_at = 0.0
+    last_sample_at = 0.0
+    last_terminal_log = 0.0
+    advance_target_logged = False
+
+    while rclpy.ok():
+        now = time.monotonic()
+        elapsed = now - motion_start
+        if boundary_runtime_expired(run_start, now, args.run_time_sec):
+            node.publish_test_speed(0.0, 0.0, 0)
+            return "RUN_TIME_LIMIT", None, elapsed
+        if node.boundary_test_status != "ACTIVE":
+            node.publish_test_speed(0.0, 0.0, 0)
+            return "TEST_CONTROL_LOST", None, elapsed
+        if node.io_time is None or now - node.io_time > 0.5:
+            node.publish_test_speed(0.0, 0.0, 0)
+            return "IO_TIMEOUT", None, elapsed
+
+        mask = node.triggered_mask
+        if direction_code < 0 and mask & BOUNDARY_REAR_MASK:
+            trigger = {
+                "wall_time": node.io_wall_time,
+                "mask": mask & BOUNDARY_REAR_MASK,
+                "raw": node.io_raw,
+            }
+            node.publish_test_speed(0.0, 0.0, 0)
+            return f"REAR_SENSOR_DURING_{phase}", trigger, elapsed
+        if trigger_on_front and mask & BOUNDARY_FRONT_MASK:
+            trigger = boundary_trigger_snapshot(node, mask)
+            node.publish_test_speed(0.0, 0.0, 0)
+            return front_trigger_result, trigger, elapsed
+        if duration_sec is not None and elapsed >= duration_sec:
+            return "PHASE_COMPLETE", None, elapsed
+
+        if now >= next_command_at:
+            node.publish_test_speed(left_speed, right_speed, direction_code)
+            if now - last_sample_at >= 0.1:
+                write_boundary_motion_sample(
+                    writer, log_file, common_row, phase, motion, elapsed,
+                    left_speed, right_speed,
+                    io_raw=node.io_raw,
+                    triggered_mask=mask,
+                )
+                last_sample_at = now
+            if (
+                advance_target_sec is not None
+                and not advance_target_logged
+                and elapsed >= advance_target_sec
+            ):
+                write_boundary_event(
+                    writer, log_file, common_row, "ADVANCE_TARGET_REACHED",
+                    "TARGET_MET", None,
+                    advance_elapsed_sec=f"{elapsed:.3f}",
+                    advance_target_sec=f"{advance_target_sec:.3f}",
+                )
+                print(
+                    f"  {phase} 已行驶 {elapsed:.2f}s，达到前进目标；"
+                    "继续前进直到前部传感器触发。"
+                )
+                advance_target_logged = True
+            if now - last_terminal_log >= 0.5:
+                print(
+                    f"  [MOVE/{phase}] "
+                    f"elapsed={elapsed:.2f}s L/R={left_speed:+.2f}/{right_speed:+.2f}rpm "
+                    f"IO=0x{node.io_raw:02x} triggered=0x{mask:02x}"
+                )
+                last_terminal_log = now
+            next_command_at = now + CONTROL_PERIOD_SEC
+        rclpy.spin_once(node, timeout_sec=0.01)
+
+    node.publish_test_speed(0.0, 0.0, 0)
+    return "INTERRUPTED", None, time.monotonic() - motion_start
+
+
+def drive_boundary_forward_until_trigger(
+    node, args, run_start, writer, log_file, common_row,
+    retreat_elapsed, reverse_arc_elapsed, include_forward_straight,
+):
+    forward_straight_elapsed = 0.0
+    advance_target_sec = calculate_boundary_advance_target(
+        args.advance_sec,
+        retreat_elapsed,
+        reverse_arc_elapsed,
+        args.forward_straight_sec if include_forward_straight else 0.0,
+        args.arc_inner_speed_ratio,
+    )
+    if include_forward_straight:
+        common_row["phase"] = "FORWARD_STRAIGHT"
+        common_row["direction"] = "FORWARD"
+        result, trigger, forward_straight_elapsed = run_boundary_motion_phase(
+            node, args, run_start, writer, log_file, common_row,
+            "FORWARD_STRAIGHT", "FORWARD_STRAIGHT",
+            args.forward_straight_sec, trigger_on_front=True,
+        )
+        if result != "PHASE_COMPLETE":
+            return result, trigger, forward_straight_elapsed, 0.0, advance_target_sec
+        write_boundary_event(
+            writer, log_file, common_row, "FORWARD_STRAIGHT_END",
+            "PHASE_COMPLETE", None,
+            forward_straight_elapsed_sec=f"{forward_straight_elapsed:.3f}",
+        )
+        common_row["phase"] = f"FORWARD_{args.boundary_side.upper()}_ARC"
+        write_boundary_event(
+            writer, log_file, common_row, "FORWARD_ARC_START", "RUNNING", None,
+        )
+
+    result, trigger, forward_arc_elapsed = run_boundary_motion_phase(
+        node, args, run_start, writer, log_file, common_row,
+        f"FORWARD_{args.boundary_side.upper()}_ARC", "FORWARD_ARC",
+        None, trigger_on_front=True,
+        advance_target_sec=advance_target_sec,
+    )
+    return (
+        result, trigger, forward_straight_elapsed,
+        forward_arc_elapsed, advance_target_sec,
+    )
+
+
+def retreat_boundary_arc(node, args, run_start, writer, log_file, common_row):
+    """Make the configured right/left reverse arc after straight retreat."""
+    phase = f"BACKWARD_{args.boundary_side.upper()}_ARC"
+    common_row["phase"] = phase
+    common_row["direction"] = "BACKWARD"
+    write_boundary_event(
+        writer, log_file, common_row, "REVERSE_ARC_START", "RUNNING", None,
+    )
+    print(
+        f"  前传感器已释放；向{args.boundary_side}后弧退"
+        f"{args.reverse_arc_sec:.2f}s。"
+    )
+    result, trigger, elapsed = run_boundary_motion_phase(
+        node, args, run_start, writer, log_file, common_row,
+        phase, "BACKWARD_ARC", args.reverse_arc_sec,
+        # Front sensors describe the edge ahead of the robot. During reverse
+        # travel the robot is moving away from that edge, so they must not
+        # interrupt this arc; rear sensors remain the reverse safety stop.
+        trigger_on_front=False,
+    )
+    write_boundary_event(
+        writer, log_file, common_row, "REVERSE_ARC_END", result, None,
+        reverse_arc_elapsed_sec=f"{elapsed:.3f}",
+        trigger_mask=trigger["mask"] if trigger else 0,
+        trigger_time=trigger["wall_time"] if trigger else None,
+        raw_at_trigger=trigger["raw"] if trigger else None,
+    )
+    if result == "PHASE_COMPLETE":
+        print(f"  后退弧线完成：{elapsed:.2f}s。")
+    elif result == f"REAR_SENSOR_DURING_{phase}":
+        print("  后部传感器触发，已立即停止倒车弧线；将转入前进阶段清除触发。")
+    return result, elapsed
+
+
+def retreat_from_boundary(node, args, run_start, writer, log_file, common_row):
+    retreat_start = time.monotonic()
+    retreat_wall_start = time.time()
+    left_speed, right_speed, direction_code = calculate_boundary_motion_command(
+        args, "BACKWARD"
+    )
+    next_command_at = 0.0
+    last_sample_at = 0.0
+    last_terminal_log = 0.0
+    result = "RETREAT_TIMEOUT"
+
+    while rclpy.ok():
+        now = time.monotonic()
+        elapsed = now - retreat_start
+        if node.boundary_test_status != "ACTIVE":
+            result = "TEST_CONTROL_LOST"
+            break
+        if boundary_runtime_expired(run_start, now, args.run_time_sec):
+            result = "RUN_TIME_LIMIT"
+            break
+        if node.io_time is None or now - node.io_time > 0.5:
+            result = "IO_TIMEOUT"
+            break
+
+        mask = node.triggered_mask
+        if mask & BOUNDARY_REAR_MASK:
+            result = "REAR_SENSOR_DURING_RETREAT"
+            break
+        front_clear = not (mask & BOUNDARY_FRONT_MASK)
+        if front_clear and elapsed >= args.retreat_sec:
+            result = "RETREAT_COMPLETE"
+            break
+        if elapsed >= args.retreat_timeout_sec:
+            result = "RETREAT_TIMEOUT"
+            break
+
+        if now >= next_command_at:
+            node.publish_test_speed(left_speed, right_speed, direction_code)
+            if now - last_sample_at >= 0.1:
+                write_boundary_motion_sample(
+                    writer, log_file, common_row, "RETREAT", "BACKWARD",
+                    elapsed, left_speed, right_speed,
+                    io_raw=node.io_raw,
+                    triggered_mask=mask,
+                )
+                last_sample_at = now
+            if now - last_terminal_log >= 0.5:
+                print(
+                    f"  [MOVE/RETREAT] elapsed={elapsed:.2f}/{args.retreat_sec:.2f}s "
+                    f"front_clear={front_clear} IO=0x{node.io_raw:02x}"
+                )
+                last_terminal_log = now
+            next_command_at = now + CONTROL_PERIOD_SEC
+        rclpy.spin_once(node, timeout_sec=0.01)
+
+    node.publish_test_speed(0.0, 0.0, 0)
+    elapsed = time.monotonic() - retreat_start
+    write_boundary_event(
+        writer, log_file, common_row, "RETREAT_END", result, None,
+        retreat_elapsed_sec=f"{elapsed:.3f}",
+        retreat_start_time=datetime.fromtimestamp(
+            retreat_wall_start
+        ).astimezone().isoformat(timespec="milliseconds"),
+    )
+    return result, elapsed
+
+
+def run_boundary_loop(node, args, run_timestamp, target_speed_mps, writer, log_file):
+    """Trace a boundary with straight retreat, reverse arc and forward phases."""
+    run_start = time.monotonic()
+    edge_count = 0
+    previous_retreat_elapsed = None
+    previous_reverse_arc_elapsed = None
+    forward_factor = (1.0 + args.arc_inner_speed_ratio) / 2.0
+
+    while rclpy.ok():
+        now = time.monotonic()
+        common_row = {
+            "run_timestamp": run_timestamp,
+            "mode": args.mode,
+            "run_time_sec": args.run_time_sec,
+            "speed_scale": f"{args.speed_scale:.4f}",
+            "target_speed_mps": f"{target_speed_mps:.4f}",
+            "round_trip_count": args.round_trips,
+            "boundary_side": args.boundary_side,
+            "retreat_sec": f"{args.retreat_sec:.3f}",
+            "reverse_arc_sec": f"{args.reverse_arc_sec:.3f}",
+            "forward_straight_sec": f"{args.forward_straight_sec:.3f}",
+            "advance_sec": f"{args.advance_sec:.3f}",
+            "arc_inner_speed_ratio": f"{args.arc_inner_speed_ratio:.3f}",
+            "retreat_timeout_sec": f"{args.retreat_timeout_sec:.2f}",
+            "leg_index": edge_count + 1,
+            "phase": "FORWARD_ARC",
+            "direction": "FORWARD",
+            "expected_sensor_bits": f"0x{BOUNDARY_FRONT_MASK:02x}",
+        }
+        include_forward_straight = edge_count > 0
+        common_row["phase"] = (
+            "FORWARD_STRAIGHT" if include_forward_straight
+            else f"FORWARD_{args.boundary_side.upper()}_ARC"
+        )
+        common_row["direction"] = "FORWARD"
+        advance_target_sec = calculate_boundary_advance_target(
+            args.advance_sec,
+            previous_retreat_elapsed,
+            previous_reverse_arc_elapsed,
+            args.forward_straight_sec if include_forward_straight else 0.0,
+            args.arc_inner_speed_ratio,
+        )
+        common_row["advance_target_sec"] = f"{advance_target_sec:.3f}"
+        if boundary_runtime_expired(run_start, now, args.run_time_sec):
+            node.publish_test_speed(0.0, 0.0, 0)
+            write_boundary_event(
+                writer, log_file, common_row, "RUN_TIME_LIMIT", "STOPPED", None,
+            )
+            print("已达到边界绕行运行时限，正在停车。")
+            return "RUN_TIME_LIMIT"
+        if node.boundary_test_status != "ACTIVE":
+            node.publish_test_speed(0.0, 0.0, 0)
+            write_boundary_event(
+                writer, log_file, common_row, "CONTROL_ABORT", "TEST_CONTROL_LOST", None,
+            )
+            return "TEST_CONTROL_LOST"
+        if node.io_time is None or now - node.io_time > 0.5:
+            node.publish_test_speed(0.0, 0.0, 0)
+            write_boundary_event(
+                writer, log_file, common_row, "CONTROL_ABORT", "IO_TIMEOUT", None,
+            )
+            return "IO_TIMEOUT"
+        pre_move_mask = node.triggered_mask
+        if pre_move_mask & BOUNDARY_FRONT_MASK:
+            node.publish_test_speed(0.0, 0.0, 0)
+            write_boundary_event(
+                writer, log_file, common_row, "SENSOR_ACTIVE_BEFORE_MOVE",
+                "STOPPED", None,
+                trigger_mask=pre_move_mask,
+                raw_at_trigger=node.io_raw,
+            )
+            return "SENSOR_ACTIVE_BEFORE_MOVE"
+        if pre_move_mask & BOUNDARY_REAR_MASK:
+            print("  后部传感器仍触发；允许前进离开边界。")
+
+        edge_count += 1
+        common_row["leg_index"] = edge_count
+        departure_wall_time = time.time()
+        common_row["departure_time"] = datetime.fromtimestamp(
+            departure_wall_time
+        ).astimezone().isoformat(timespec="milliseconds")
+        start_event = (
+            "FORWARD_STRAIGHT_START"
+            if include_forward_straight else "FORWARD_ARC_START"
+        )
+        write_boundary_event(
+            writer, log_file, common_row, start_event, "RUNNING", None,
+        )
+        if include_forward_straight:
+            print(
+                f"边界事件 {edge_count}：先直行前进 "
+                f"{args.forward_straight_sec:.2f}s，再向{args.boundary_side}前弧行，"
+                "等待前部传感器触发。"
+            )
+        else:
+            print(
+                f"边界事件 {edge_count}：向{args.boundary_side}前弧行，"
+                "等待前部传感器触发。"
+            )
+
+        result, trigger, forward_straight_elapsed, forward_arc_elapsed, advance_target_sec = drive_boundary_forward_until_trigger(
+            node, args, run_start, writer, log_file, common_row,
+            previous_retreat_elapsed,
+            previous_reverse_arc_elapsed,
+            include_forward_straight,
+        )
+        if result == "RUN_TIME_LIMIT":
+            write_boundary_event(
+                writer, log_file, common_row, "RUN_TIME_LIMIT", "STOPPED", None,
+                forward_straight_elapsed_sec=f"{forward_straight_elapsed:.3f}",
+                forward_arc_elapsed_sec=f"{forward_arc_elapsed:.3f}",
+            )
+            return result
+        if result != "EDGE_TRIGGERED":
+            write_boundary_event(
+                writer, log_file, common_row, "FORWARD_MOTION_ABORT", result, None,
+                forward_straight_elapsed_sec=f"{forward_straight_elapsed:.3f}",
+                forward_arc_elapsed_sec=f"{forward_arc_elapsed:.3f}",
+                trigger_mask=node.triggered_mask or 0,
+                raw_at_trigger=node.io_raw,
+            )
+            return result
+
+        common_row["phase"] = (
+            "FORWARD_STRAIGHT"
+            if include_forward_straight
+            and forward_straight_elapsed < args.forward_straight_sec
+            else f"FORWARD_{args.boundary_side.upper()}_ARC"
+        )
+
+        forward_distance_equiv = (
+            forward_straight_elapsed + forward_arc_elapsed * forward_factor
+        )
+        backward_distance_equiv = (
+            previous_retreat_elapsed + previous_reverse_arc_elapsed * forward_factor
+            if previous_retreat_elapsed is not None
+            and previous_reverse_arc_elapsed is not None
+            else None
+        )
+        arc_distance_ratio = (
+            forward_distance_equiv / backward_distance_equiv
+            if backward_distance_equiv is not None and backward_distance_equiv > 0.0
+            else None
+        )
+        advance_target_met = forward_arc_elapsed >= advance_target_sec
+        write_boundary_event(
+            writer, log_file, common_row, "EDGE_TRIGGERED", "TRIGGERED", None,
+            trigger_mask=trigger["mask"], trigger_time=trigger["wall_time"],
+            raw_at_trigger=trigger["raw"],
+            advance_elapsed_sec=f"{forward_arc_elapsed:.3f}",
+            advance_target_sec=f"{advance_target_sec:.3f}",
+            forward_straight_elapsed_sec=f"{forward_straight_elapsed:.3f}",
+            forward_arc_elapsed_sec=f"{forward_arc_elapsed:.3f}",
+            retreat_elapsed_sec=f"{previous_retreat_elapsed:.3f}"
+            if previous_retreat_elapsed is not None else "",
+            reverse_arc_elapsed_sec=f"{previous_reverse_arc_elapsed:.3f}"
+            if previous_reverse_arc_elapsed is not None else "",
+            forward_distance_equiv_sec=f"{forward_distance_equiv:.3f}",
+            backward_distance_equiv_sec=f"{backward_distance_equiv:.3f}"
+            if backward_distance_equiv is not None else "",
+            nominal_advance_to_retreat_ratio=f"{arc_distance_ratio:.3f}"
+            if arc_distance_ratio is not None else "",
+            advance_target_met=str(advance_target_met).lower(),
+        )
+        print(
+            f"  前传感器触发：前直行 {forward_straight_elapsed:.2f}s，"
+            f"向{args.boundary_side}前弧行 {forward_arc_elapsed:.2f}s "
+            f"（弧行目标至少 {advance_target_sec:.2f}s）；安全优先，立即停车。"
+        )
+        if not advance_target_met:
+            print("  前部传感器提前触发，安全优先立即停；本段未达到前进时间目标。")
+        if arc_distance_ratio is not None:
+            if arc_distance_ratio > 1.0:
+                print(
+                    f"  名义前进/后退距离比约 {arc_distance_ratio:.2f}，"
+                    "前进量大于上次后退量。"
+                )
+            else:
+                print(
+                    f"  名义前进/后退距离比约 {arc_distance_ratio:.2f}；"
+                    "未达到前进量大于后退量的目标。"
+                )
+
+        stop_result, trigger_time, trigger_wall_time, stop_time, stop_wall_time, seen_mask, raw_at_trigger, metrics = wait_for_stop(
+            node,
+            args,
+            "FORWARD",
+            BOUNDARY_FRONT_MASK,
+            math.inf,
+            None,
+            writer,
+            common_row,
+            log_file,
+            abort_mask=BOUNDARY_REAR_MASK,
+            initial_trigger=trigger,
+            record_imu=False,
+        )
+        common_row["phase"] = "STOPPING"
+        common_row["direction"] = "STOP"
+        if stop_result != "OK":
+            write_boundary_event(
+                writer, log_file, common_row, "EDGE_STOP_FAILED", stop_result,
+                None, trigger_mask=seen_mask,
+                trigger_time=trigger_wall_time,
+                raw_at_trigger=raw_at_trigger,
+            )
+            return stop_result
+        write_boundary_event(
+            writer, log_file, common_row, "EDGE_STOP", "OK", None,
+            trigger_mask=seen_mask, trigger_time=trigger_wall_time,
+            stop_time=stop_wall_time, raw_at_trigger=raw_at_trigger,
+            stop_command_to_stable_feedback_ms=(
+                f"{(metrics['stable_stop_feedback_time'] - metrics['zero_command_time']) * 1000.0:.1f}"
+                if metrics["stable_stop_feedback_time"] is not None
+                and metrics["zero_command_time"] is not None else ""
+            ),
+        )
+        print(
+            "  已确认停稳，传感器触发到连续反馈停稳 "
+            f"{(stop_time - trigger_time) * 1000.0:.1f}ms；"
+            f"直退至少 {args.retreat_sec:.2f}s。"
+        )
+
+        common_row["phase"] = "RETREAT_STRAIGHT"
+        common_row["direction"] = "BACKWARD"
+        write_boundary_event(
+            writer, log_file, common_row, "RETREAT_START", "RUNNING", None,
+            trigger_mask=seen_mask, trigger_time=trigger_wall_time,
+            raw_at_trigger=raw_at_trigger,
+        )
+        retreat_result, retreat_elapsed = retreat_from_boundary(
+            node, args, run_start, writer, log_file, common_row,
+        )
+        if retreat_result != "RETREAT_COMPLETE":
+            print(f"倒退阶段中止：{retreat_result}；已发送零速。")
+            return retreat_result
+        previous_retreat_elapsed = retreat_elapsed
+        print(
+            f"  直线倒退 {retreat_elapsed:.2f}s，前部传感器已释放。"
+        )
+        reverse_arc_result, reverse_arc_elapsed = retreat_boundary_arc(
+            node, args, run_start, writer, log_file, common_row,
+        )
+        rear_sensor_during_reverse_arc = (
+            f"REAR_SENSOR_DURING_BACKWARD_{args.boundary_side.upper()}_ARC"
+        )
+        if reverse_arc_result not in (
+            "PHASE_COMPLETE", rear_sensor_during_reverse_arc
+        ):
+            print(f"后退弧线阶段中止：{reverse_arc_result}；已发送零速。")
+            return reverse_arc_result
+        previous_reverse_arc_elapsed = reverse_arc_elapsed
+
+    return "INTERRUPTED"
+
+
 def main():
     args = parse_args()
     if args.round_trips < 1:
@@ -807,6 +1495,13 @@ def main():
         not math.isfinite(value)
         for value in (
             args.speed_scale,
+            args.run_time_sec,
+            args.retreat_timeout_sec,
+            args.retreat_sec,
+            args.reverse_arc_sec,
+            args.forward_straight_sec,
+            args.advance_sec,
+            args.arc_inner_speed_ratio,
             args.pause_sec,
             args.leg_timeout_sec,
             args.stop_timeout_sec,
@@ -833,22 +1528,40 @@ def main():
     # Let Python raise KeyboardInterrupt on Ctrl+C without rclpy first shutting
     # down the context; the finally block needs live ROS publishers to stop.
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    node = BoundaryTestNode()
+    node = BoundaryTestNode(use_heading_feedback=args.mode == "back-and-forth")
     log_file = None
     started = False
     control_requested = False
     exit_code = 0
+    target_heading = None
     run_timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     target_speed_mps = MAX_LINEAR_SPEED_MPS * args.speed_scale
     log_dir = os.path.expanduser(args.log_dir)
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     speed_tag = f"{args.speed_scale:.2f}".replace(".", "p")
-    log_path = os.path.join(
-        log_dir,
-        f"boundary_test_{stamp}_speed{speed_tag}_rounds{args.round_trips}.csv",
-    )
+    if args.mode == "boundary-loop":
+        runtime_tag = (
+            "unlimited" if args.run_time_sec == -1.0
+            else f"{args.run_time_sec:g}s".replace(".", "p")
+        )
+        log_name = (
+            f"boundary_test_{stamp}_speed{speed_tag}_modeboundary_"
+            f"{args.boundary_side}_runtime{runtime_tag}.csv"
+        )
+    else:
+        log_name = f"boundary_test_{stamp}_speed{speed_tag}_rounds{args.round_trips}.csv"
+    log_path = os.path.join(log_dir, log_name)
     fieldnames = [
-        "run_timestamp", "speed_scale", "target_speed_mps", "round_trip_count",
+        "run_timestamp", "mode", "run_time_sec", "boundary_side",
+        "retreat_sec", "reverse_arc_sec", "forward_straight_sec",
+        "advance_sec", "arc_inner_speed_ratio",
+        "retreat_timeout_sec", "retreat_elapsed_sec", "retreat_start_time",
+        "reverse_arc_elapsed_sec", "forward_straight_elapsed_sec",
+        "forward_arc_elapsed_sec", "forward_distance_equiv_sec",
+        "backward_distance_equiv_sec", "advance_target_sec", "advance_elapsed_sec",
+        "nominal_advance_to_retreat_ratio",
+        "advance_target_met", "phase",
+        "speed_scale", "target_speed_mps", "round_trip_count",
         "heading_kp", "heading_max_correction_rpm", "heading_deadzone_deg",
         "event", "leg_index", "round_trip", "direction", "departure_time",
         "expected_sensor_bits", "target_heading_deg", "imu_heading_deg",
@@ -864,7 +1577,8 @@ def main():
         "stable_stop_feedback_time", "stop_command_to_stable_feedback_ms",
         "velocity_pair_sample_count", "velocity_pair_interval_avg_ms",
         "velocity_pair_interval_max_ms", "velocity_sample_count",
-        "sample_time", "sample_motor_id", "sample_actual_rpm",
+        "sample_time", "motion_elapsed_sec", "io_raw_sample",
+        "triggered_mask_sample", "sample_motor_id", "sample_actual_rpm",
         "sample_since_zero_can_send_ms", "sample_since_zero_topic_ms",
         "result", "io_raw_at_trigger",
     ]
@@ -872,28 +1586,53 @@ def main():
 
     try:
         require_runtime_ready(node)
-        rtk_max_correction, rtk_correction_ratio = get_rtk_heading_parameters(node)
-        if args.heading_max_correction_rpm is None:
-            args.heading_max_correction_rpm = rtk_max_correction
-        if args.heading_kp is None:
-            args.heading_kp = rtk_max_correction * rtk_correction_ratio / 45.0
+        rtk_max_correction = None
+        rtk_correction_ratio = None
+        if args.mode == "back-and-forth":
+            rtk_max_correction, rtk_correction_ratio = get_rtk_heading_parameters(node)
+            if args.heading_max_correction_rpm is None:
+                args.heading_max_correction_rpm = rtk_max_correction
+            if args.heading_kp is None:
+                args.heading_kp = rtk_max_correction * rtk_correction_ratio / 45.0
 
         print(f"速度比例: {args.speed_scale:.3f}，理论线速度约 {target_speed_mps:.3f} m/s")
-        print(f"往返次数: {args.round_trips}，每段停顿: {args.pause_sec:.1f} 秒")
-        print(
-            f"IMU航向保持: Kp={args.heading_kp:.3f} rpm/度，"
-            f"最大纠偏={args.heading_max_correction_rpm:.2f} rpm，"
-            f"死区={args.heading_deadzone_deg:.2f}度"
-        )
-        print(
-            "纠偏默认值读取自运行中的 /rtk_nav："
-            f"rtk_max_correction={rtk_max_correction:.3f} rpm，"
-            f"rtk_correction_ratio={rtk_correction_ratio:.3f}"
-        )
+        if args.mode == "boundary-loop":
+            runtime_label = (
+                "无限制（Ctrl+C 停止）" if args.run_time_sec == -1.0
+                else f"{args.run_time_sec:.1f} 秒"
+            )
+            print(
+                f"测试模式: 前进偏{args.boundary_side}弧线边界测试；"
+                f"速度比例 {args.speed_scale:.2f}，"
+                f"运行时限 {runtime_label}"
+            )
+            print(
+                f"触边停稳后：直退至少 {args.retreat_sec:.2f}s 并等前传感器释放"
+                f" → {args.boundary_side}后弧退 {args.reverse_arc_sec:.2f}s"
+                f" → 前直行 {args.forward_straight_sec:.2f}s"
+                f" → {args.boundary_side}前弧行直到传感器触发；"
+                f"弧线内侧履带比例 {args.arc_inner_speed_ratio:.2f}，"
+                f"后退释放超时 {args.retreat_timeout_sec:.1f}s，"
+                f"前弧最短目标 {args.advance_sec:.2f}s"
+            )
+            print("本模式不读取或使用 IMU 航向与 RTK 参数。")
+        else:
+            print(f"往返次数: {args.round_trips}，每段停顿: {args.pause_sec:.1f} 秒")
+            print(
+                f"IMU航向保持: Kp={args.heading_kp:.3f} rpm/度，"
+                f"最大纠偏={args.heading_max_correction_rpm:.2f} rpm，"
+                f"死区={args.heading_deadzone_deg:.2f}度"
+            )
+            print(
+                "纠偏默认值读取自运行中的 /rtk_nav："
+                f"rtk_max_correction={rtk_max_correction:.3f} rpm，"
+                f"rtk_correction_ratio={rtk_correction_ratio:.3f}"
+            )
         print(f"日志文件: {log_path}")
-        print(
-            "确认机器人在平整、安全、可控的测试场地；GO 后会静止采集当前 IMU 航向作为目标。"
-        )
+        if args.mode == "boundary-loop":
+            print("确认机器人在平整、安全、可控的测试场地；边界模式不需要 RTK 或 IMU。")
+        else:
+            print("确认机器人在平整、安全、可控的测试场地；GO 后会静止采集当前 IMU 航向作为目标。")
         if input("输入 GO 开始运动，其他输入取消：").strip() != "GO":
             print("已取消；机器人未收到运动指令。")
             return 0
@@ -904,14 +1643,29 @@ def main():
         writer.writeheader()
         log_file.flush()
 
-        target_heading, heading_sample_count, heading_spread = capture_target_heading(node)
-        print(
-            f"目标航向已锁定: {target_heading:.2f}° "
-            f"（{heading_sample_count}个样本，最大波动{heading_spread:.2f}°）"
-        )
+        if args.mode == "back-and-forth":
+            target_heading, heading_sample_count, heading_spread = capture_target_heading(node)
+            print(
+                f"目标航向已锁定: {target_heading:.2f}° "
+                f"（{heading_sample_count}个样本，最大波动{heading_spread:.2f}°）"
+            )
         control_requested = True
         await_test_control_active(node)
         started = True
+        if args.mode == "boundary-loop":
+            print("底盘测试控制已就绪；按设定的边界恢复四阶段运行。")
+            result = run_boundary_loop(
+                node,
+                args,
+                run_timestamp,
+                target_speed_mps,
+                writer,
+                log_file,
+            )
+            print(f"边界绕行结束：{result}")
+            print(f"CSV 已写入: {log_path}")
+            return 0 if result == "RUN_TIME_LIMIT" else 1
+
         print("底盘测试控制已就绪；前后方向都保持同一个目标航向。")
 
         leg_index = 0
@@ -1146,6 +1900,12 @@ def main():
         print(f"CSV 已写入: {log_path}")
     except KeyboardInterrupt:
         print("收到 Ctrl+C，正在执行并确认停机。")
+        if writer is not None:
+            write_boundary_event(
+                writer, log_file,
+                {"run_timestamp": run_timestamp, "mode": args.mode},
+                "INTERRUPTED", "CTRL_C", target_heading,
+            )
         exit_code = 130
     except Exception as exc:
         print(f"测试未能继续: {exc}", file=sys.stderr)
