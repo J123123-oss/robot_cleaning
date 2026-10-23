@@ -64,6 +64,14 @@ def generate_launch_description():
         default_value=TextSubstitution(text="true"),
         description="Enable visual correction",
     )
+    declare_imu_odom_fallback_arg = DeclareLaunchArgument(
+        "enable_imu_odom_fallback",
+        default_value=TextSubstitution(text="false"),
+        description=(
+            "Enable short RTK position-loss IMU/odometry hold on an eligible "
+            "straight waypoint segment"
+        ),
+    )
 
     declare_bypass_path_context_gate_arg = DeclareLaunchArgument(
         "bypass_path_context_gate",
@@ -451,7 +459,7 @@ def generate_launch_description():
         executable='charging',
         name='charging_485_node',
         parameters=[
-            {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
+            {'serial_port': '/dev/ttyACM0'},    # 替换为实际串口设备路径
             {'slave_addr': 1},
             {'battery_addr': 11},
             {'timeout': 0.5}
@@ -468,6 +476,10 @@ def generate_launch_description():
             {
                 'enable_visual_correction': ParameterValue(
                     LaunchConfiguration("enable_visual_correction"),
+                    value_type=bool,
+                ),
+                'enable_imu_odom_fallback': ParameterValue(
+                    LaunchConfiguration("enable_imu_odom_fallback"),
                     value_type=bool,
                 ),
                 'stanley_k_path': ParameterValue(
@@ -781,6 +793,7 @@ def generate_launch_description():
     for declare_motor_direction_arg in declare_motor_direction_args:
         ld.add_action(declare_motor_direction_arg)
     ld.add_action(declare_visual_correction_arg)
+    ld.add_action(declare_imu_odom_fallback_arg)
     ld.add_action(declare_bypass_path_context_gate_arg)
     ld.add_action(declare_fallback_path_axis_arg)
     ld.add_action(declare_angle_reference_axis_arg)

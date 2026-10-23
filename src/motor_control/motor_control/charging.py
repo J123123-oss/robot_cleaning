@@ -94,7 +94,7 @@ class Charging485Node(Node):
         self.battery_temp_poll_interval = self.get_parameter('battery_temp_poll_interval').value
         self.charge_poll_interval = self.get_parameter('charge_poll_interval').value
 
-        self.THREE_BYTE_ADDR = [0x10, 0x04, 0x5D]
+        self.THREE_BYTE_ADDR = [0x10, 0x03, 0x64]
 
         self.ser = None
         self.mutex = threading.Lock()
