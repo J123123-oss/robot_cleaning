@@ -1,0 +1,29 @@
+[Unit]
+Description=Wi-Fi and Quectel LTE failover and recovery watchdog
+Wants=NetworkManager.service ModemManager.service
+After=NetworkManager.service ModemManager.service
+
+[Service]
+Type=simple
+User=root
+Environment=NETWORK_PROBE_IP=121.40.57.48
+Environment=NETWORK_PROBE_PORT=1883
+Environment=WIFI_INTERFACE=wlan0
+Environment=WWAN_INTERFACE=wwan0
+Environment=WIFI_PROFILE=GiiFen-5G
+Environment=WWAN_PROFILE=4G-CMNET
+Environment=CHECK_INTERVAL_SEC=10
+Environment=FAILURE_THRESHOLD=3
+Environment=SUCCESS_THRESHOLD=3
+Environment=FORCE_WIFI_CYCLE_THRESHOLD=6
+Environment=RECOVERY_COOLDOWN_SEC=60
+Environment=PROBE_TIMEOUT_SEC=3
+Environment=WIFI_PREFERRED_METRIC=600
+Environment=WIFI_STANDBY_METRIC=800
+ExecStart=/usr/bin/python3 /usr/local/sbin/network_failover_watchdog.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
