@@ -17,6 +17,7 @@ def _load_module():
     std_msgs = types.ModuleType("std_msgs")
     std_msgs_msg = types.ModuleType("std_msgs.msg")
     std_msgs_msg.Float32MultiArray = type("Float32MultiArray", (), {})
+    std_msgs_msg.Float64MultiArray = type("Float64MultiArray", (), {})
     std_msgs.msg = std_msgs_msg
 
     nav_msgs = types.ModuleType("nav_msgs")

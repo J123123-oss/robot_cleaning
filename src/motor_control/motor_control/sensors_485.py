@@ -2,10 +2,11 @@
 import os
 import shutil
 import subprocess
+import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import UInt8
+from std_msgs.msg import Float64MultiArray, UInt8
 
 try:
     import gpiod
@@ -21,7 +22,7 @@ class Sensors485(Node):
 
         self.declare_parameter('gpio_chip', '/dev/gpiochip6')
         self.declare_parameter('gpio_lines', [9, 8, 7, 6])
-        self.declare_parameter('poll_interval', 0.1)
+        self.declare_parameter('poll_interval', 0.05)
         self.declare_parameter('gpio_use_sudo', False)
 
         # Keep legacy launch parameters declared while the 485 IO source is removed.
@@ -47,6 +48,9 @@ class Sensors485(Node):
         self.last_gpio_error_time = 0.0
 
         self.io_pub = self.create_publisher(UInt8, '/io_data', 1)
+        self.diagnostic_pub = self.create_publisher(
+            Float64MultiArray, '/io_data_diagnostics', 10
+        )
         self.open_gpio_lines()
         self.polling_timer = self.create_timer(
             self.poll_interval, self.polling_callback
@@ -159,6 +163,8 @@ class Sensors485(Node):
     def polling_callback(self):
         try:
             gpio_values = self.read_gpio_values()
+            sample_wall_time = time.time()
+            sample_monotonic = time.monotonic()
         except Exception as exc:
             now = self.get_clock().now().nanoseconds / 1e9
             if now - self.last_gpio_error_time >= 1.0:
@@ -180,6 +186,16 @@ class Sensors485(Node):
         msg = UInt8()
         msg.data = io_bitmap
         self.io_pub.publish(msg)
+
+        raw_bitmap = sum(
+            (int(raw_val) & 0x01) << bit
+            for bit, raw_val in enumerate(gpio_values)
+        )
+        diagnostic = Float64MultiArray()
+        diagnostic.data = [
+            sample_wall_time, sample_monotonic, float(raw_bitmap), float(io_bitmap)
+        ]
+        self.diagnostic_pub.publish(diagnostic)
 
     def destroy_node(self):
         if self.gpio_request is not None:

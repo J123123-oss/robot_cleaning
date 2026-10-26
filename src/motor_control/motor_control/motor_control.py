@@ -56,6 +56,7 @@ WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min 
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
 MANUAL_DRIVE_SPEED_SCALE = 0.8  # 普通模式前进/后退速度相对最大轮速的比例。
+MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为0.8。
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
@@ -64,10 +65,9 @@ SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
-# 防跌落分层触发参数（与 rtk_nav 保持一致）
-BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
+# 防跌落输入在首个有效采样即触发；传感器释放即时生效
+BOUNDARY_TRIGGER_CONFIRM_FRAMES = 1
 BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
-BOUNDARY_SLOW_PERSIST_FRAMES = 5  # 单传感器慢速通道：持续N帧(0.5s@10Hz)触发
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
@@ -116,6 +116,21 @@ class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
         """初始化电机控制节点、AIMotor 驱动、传感器订阅和控制定时器。"""
         super().__init__(node_name)
+
+        self.declare_parameter("manual_drive_speed_scale", MANUAL_DRIVE_SPEED_SCALE)
+        self.manual_drive_speed_scale = float(
+            self.get_parameter("manual_drive_speed_scale").value
+        )
+        if not 0.01 <= self.manual_drive_speed_scale <= MAX_MANUAL_DRIVE_SPEED_SCALE:
+            raise ValueError(
+                "manual_drive_speed_scale must be between 0.01 and "
+                f"{MAX_MANUAL_DRIVE_SPEED_SCALE}"
+            )
+        self._manual_drive_speed_parameter_callback = (
+            self.add_on_set_parameters_callback(
+                self._validate_manual_drive_speed_parameter
+            )
+        )
 
         # 声明RTK路径参数，用于获取route_id
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
@@ -266,6 +281,15 @@ class MotorControlNode(Node):
         # Web 遥控器独占控制标志（由 /web_rc/control_active 回调更新）
         self.web_control_active = False
 
+        # 现场测试专用底盘速度入口；只在 NORMAL 且已使能/保持状态下工作。
+        self.boundary_test_control_active = False
+        self.boundary_test_left_speed = 0.0
+        self.boundary_test_right_speed = 0.0
+        self.boundary_test_direction = None
+        self.boundary_test_last_update = 0.0
+        self.boundary_test_timeout = 0.35
+        self.last_io_update_time = 0.0
+
         self.battery_total_voltage = None  # 电池总电压
         self.battery_current = None  # 电池电流
         self.battery_remaining = None # 电池百分比
@@ -277,7 +301,6 @@ class MotorControlNode(Node):
         self.blocked_directions = set()    # 基于confirmed_sensors计算的禁止方向
         self.boundary_active_count = 0
         self.boundary_clear_count = 0
-        self.boundary_slow_count = 0
 
         self.dock_sensors = 0  #停机仓传感器状态
         self._dock_sensor_blocked_logged_unloading = False
@@ -466,6 +489,21 @@ class MotorControlNode(Node):
             self.web_rc_control_callback,
             10
         )
+        self.boundary_test_speed_sub = self.create_subscription(
+            Vector3,
+            "/boundary_test/motor_speed",
+            self.boundary_test_speed_callback,
+            10,
+        )
+        self.boundary_test_control_sub = self.create_subscription(
+            Bool,
+            "/boundary_test/control_active",
+            self.boundary_test_control_callback,
+            10,
+        )
+        self.boundary_test_status_pub = self.create_publisher(
+            String, "/boundary_test/status", 10
+        )
 
         # 全局变量
         self.current_control_mode = "NORMAL"  # 默认普通模式
@@ -648,6 +686,24 @@ class MotorControlNode(Node):
                     else:
                         self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
                         self.is_charge_paused = False
+    def _validate_manual_drive_speed_parameter(self, parameter):
+        from rcl_interfaces.msg import SetParametersResult
+
+        for item in parameter:
+            if item.name != "manual_drive_speed_scale":
+                continue
+            value = float(item.value)
+            if not 0.01 <= value <= MAX_MANUAL_DRIVE_SPEED_SCALE:
+                return SetParametersResult(
+                    successful=False,
+                    reason=(
+                        "manual_drive_speed_scale must be between 0.01 and "
+                        f"{MAX_MANUAL_DRIVE_SPEED_SCALE}"
+                    ),
+                )
+            self.manual_drive_speed_scale = value
+        return SetParametersResult(successful=True)
+
     def timer_callback(self):
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
@@ -667,6 +723,8 @@ class MotorControlNode(Node):
         # 此模式下忽略所有其他控制来源（键盘/MQTT/RTK/rc_control）
         # ═══════════════════════════════════════════════════════════
         if self.web_control_active:
+            if self.boundary_test_control_active:
+                self._stop_boundary_test_control("WEB_REMOTE_TAKEOVER")
             self.current_control_mode = "WEB_REMOTE"
 
             # 防跌落边界保护：传感器触发时强制停车（安全优先）
@@ -710,6 +768,52 @@ class MotorControlNode(Node):
         mode_msg.data = self.current_control_mode if isinstance(self.current_control_mode, str) else "NORMAL"
         self.mode_pub.publish(mode_msg)
         # self.publish_rc_channels()
+
+        if self.boundary_test_control_active:
+            if (
+                self.current_control_mode != "NORMAL"
+                or self.current_status not in ("ENABLE", "HOLD")
+                or self.rc_control
+                or self.is_in_bin_process
+            ):
+                self._stop_boundary_test_control("CONTROL_TAKEOVER")
+                self.set_motors_speed(0.0, 0.0)
+                state_msg = String()
+                state_msg.data = str(self.current_status)
+                self.state_pub.publish(state_msg)
+                return
+
+            if time.monotonic() - self.boundary_test_last_update > self.boundary_test_timeout:
+                self._stop_boundary_test_control("COMMAND_TIMEOUT")
+                self.set_motors_speed(0.0, 0.0)
+                state_msg = String()
+                state_msg.data = str(self.current_status)
+                self.state_pub.publish(state_msg)
+                return
+
+            if (
+                self.last_io_update_time <= 0.0
+                or time.monotonic() - self.last_io_update_time > 0.5
+            ):
+                self._stop_boundary_test_control("IO_TIMEOUT")
+                self.set_motors_speed(0.0, 0.0)
+                state_msg = String()
+                state_msg.data = str(self.current_status)
+                self.state_pub.publish(state_msg)
+                return
+
+            direction = self.boundary_test_direction
+            if direction is None or direction in self.blocked_directions:
+                self.set_motors_speed(0.0, 0.0)
+            else:
+                self.set_motors_speed(
+                    self.boundary_test_left_speed,
+                    self.boundary_test_right_speed,
+                )
+            state_msg = String()
+            state_msg.data = str(self.current_status)
+            self.state_pub.publish(state_msg)
+            return
 
         # 进出仓流程的暂停/恢复逻辑：
         # - 当正在进/出仓（is_in_bin_process=True）且当前控制模式不等于流程发起时，暂停流程；
@@ -784,12 +888,12 @@ class MotorControlNode(Node):
                 self.set_motors_speed(0.0, 0.0)
                 self.set_brush_speed(0.0)
             elif self.current_status == "FORWARD":
-                left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-                right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                left_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
+                right_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "BACKWARD":
-                left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-                right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+                left_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
+                right_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status == "LEFT":
                 left_speed = self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
@@ -831,6 +935,18 @@ class MotorControlNode(Node):
                 f"[WebRC] MANUAL模式独占控制中，忽略键盘指令: {key} "
                 f"(发送 [Web] AUTO 退出MANUAL模式)"
             )
+            return
+
+        if self.boundary_test_control_active and key in STATE_DICT:
+            self._stop_boundary_test_control("KEYBOARD_TAKEOVER")
+            self.set_motors_speed(0.0, 0.0)
+            if key == "h":
+                self.switch_state(key)
+            else:
+                self.get_logger().warn(
+                    f"[BoundaryTest] 键盘指令 {key!r} 取消测试控制；"
+                    "请确认机器人停稳后再操作"
+                )
             return
 
         # 模式切换指令
@@ -885,6 +1001,93 @@ class MotorControlNode(Node):
                 # 释放控制权后立即停车，等待后续指令
                 self.set_motors_speed(0.0, 0.0)
                 self.set_brush_speed(0.0)
+
+    def _publish_boundary_test_status(self, status: str):
+        msg = String()
+        msg.data = status
+        self.boundary_test_status_pub.publish(msg)
+
+    def _stop_boundary_test_control(self, reason: str):
+        was_active = self.boundary_test_control_active
+        self.boundary_test_control_active = False
+        self.boundary_test_left_speed = 0.0
+        self.boundary_test_right_speed = 0.0
+        self.boundary_test_direction = None
+        self.boundary_test_last_update = 0.0
+        self._publish_boundary_test_status(reason)
+        if was_active:
+            self.get_logger().info(f"[BoundaryTest] 专用控制已停止：{reason}")
+
+    def boundary_test_control_callback(self, msg: Bool):
+        if not msg.data:
+            self._stop_boundary_test_control("STOPPED")
+            self.set_motors_speed(0.0, 0.0)
+            return
+
+        if (
+            self.current_control_mode != "NORMAL"
+            or self.current_status not in ("ENABLE", "HOLD")
+            or self.web_control_active
+            or self.rc_control
+            or self.is_in_bin_process
+            or self.last_io_update_time <= 0.0
+            or time.monotonic() - self.last_io_update_time > 0.5
+            or self.sensors_status != 0
+        ):
+            self._publish_boundary_test_status("REJECTED_NOT_READY")
+            self.get_logger().warn(
+                "[BoundaryTest] 拒绝专用速度控制：需 NORMAL 模式、ENABLE/HOLD 状态，"
+                "且无遥控接管或进出仓流程"
+            )
+            return
+
+        self.boundary_test_control_active = True
+        self.boundary_test_left_speed = 0.0
+        self.boundary_test_right_speed = 0.0
+        self.boundary_test_direction = None
+        self.boundary_test_last_update = time.monotonic()
+        self._publish_boundary_test_status("ACTIVE")
+        self.get_logger().warn(
+            "[BoundaryTest] 专用差速测试控制已激活；命令超时或控制权变化将停车"
+        )
+
+    def boundary_test_speed_callback(self, msg: Vector3):
+        if not self.boundary_test_control_active:
+            return
+
+        try:
+            left_speed = float(msg.x)
+            right_speed = float(msg.y)
+            direction_code = int(round(float(msg.z)))
+        except (TypeError, ValueError, OverflowError):
+            self._stop_boundary_test_control("INVALID_COMMAND")
+            self.set_motors_speed(0.0, 0.0)
+            return
+
+        if (
+            not math.isfinite(left_speed)
+            or not math.isfinite(right_speed)
+            or direction_code not in (-1, 0, 1)
+            or abs(float(msg.z) - direction_code) > 1e-6
+            or max(abs(left_speed), abs(right_speed)) > MAX_SPEED
+        ):
+            self._stop_boundary_test_control("INVALID_COMMAND")
+            self.set_motors_speed(0.0, 0.0)
+            return
+
+        if direction_code == 0 and (abs(left_speed) > 1e-6 or abs(right_speed) > 1e-6):
+            self._stop_boundary_test_control("INVALID_STOP_COMMAND")
+            self.set_motors_speed(0.0, 0.0)
+            return
+
+        self.boundary_test_left_speed = left_speed
+        self.boundary_test_right_speed = right_speed
+        self.boundary_test_direction = {
+            1: "FORWARD",
+            -1: "BACKWARD",
+            0: None,
+        }[direction_code]
+        self.boundary_test_last_update = time.monotonic()
 
     def rtk_nav_status_callback(self, msg: String):
         """按结构化RTK状态区分可自动恢复和人工介入暂停。"""
@@ -1000,6 +1203,7 @@ class MotorControlNode(Node):
 
     def io_data_callback(self, msg: UInt8):
         """实时更新传感器状态，并为手动控制执行边界保护。"""
+        self.last_io_update_time = time.monotonic()
         # 传感器位解析必须在所有控制模式下执行，sensors_status不能沿用旧值。
         # 低电平有效，bit=0表示触发，与rtk_nav保持一致。
         self.mid_left = (msg.data & 0x01) == 0x00
@@ -1021,9 +1225,7 @@ class MotorControlNode(Node):
             self.blocked_directions.clear()
             return
 
-        # ---- 4传感器分层触发（mid/back × 左右）----
-        same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
-        same_side = (self.mid_left and self.back_left) or (self.mid_right and self.back_right)
+        # ---- 4传感器快速停车保护（mid/back × 左右）----
         # 本帧触发的传感器列表
         active_set = set()
         if self.mid_left: active_set.add('mid_left')
@@ -1031,7 +1233,8 @@ class MotorControlNode(Node):
         if self.back_left: active_set.add('back_left')
         if self.back_right: active_set.add('back_right')
         num_active = len(active_set)
-        spatial_consensus = same_row or same_side or num_active >= 3
+        # 防跌落是安全输入：任一传感器有效时，不再等待空间组合或多帧去抖。
+        boundary_triggered = num_active > 0
 
         changed = False
         # 已确认但当前帧不再触发的传感器 → 立即移除（去抖只防误加，不防移除）
@@ -1041,11 +1244,10 @@ class MotorControlNode(Node):
             changed = True
             self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
 
-        if spatial_consensus:
-            # 快通道：空间一致 → 3帧确认
+        if boundary_triggered:
+            # 首帧确认触发，立即更新方向限制并停车。
             self.boundary_active_count += 1
             self.boundary_clear_count = 0
-            self.boundary_slow_count = 0
             if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
                 if active_set != self.confirmed_sensors:
                     self.confirmed_sensors = active_set
@@ -1053,23 +1255,9 @@ class MotorControlNode(Node):
                     self.get_logger().warn(
                         f"[Motor] 防跌落快触发：{sorted(active_set)}，"
                         f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
-        elif num_active == 1:
-            # 慢通道：单传感器 → 持续若干帧确认
-            self.boundary_slow_count += 1
-            self.boundary_active_count = 0
-            self.boundary_clear_count = 0
-            if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
-                sensor_name = next(iter(active_set))
-                if sensor_name not in self.confirmed_sensors:
-                    self.confirmed_sensors.add(sensor_name)
-                    changed = True
-                    self.get_logger().warn(
-                        f"[Motor] 防跌落慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
-                        f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
         else:
-            # 无传感器触发 / 对角不匹配 → 重置
+            # 无传感器触发 → 重置
             self.boundary_active_count = 0
-            self.boundary_slow_count = 0
             self.boundary_clear_count += 1
             if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
                 if self.confirmed_sensors:
@@ -1100,6 +1288,11 @@ class MotorControlNode(Node):
         if 'mid_right' in self.confirmed_sensors or 'back_right' in self.confirmed_sensors:
             new.add('RIGHT')
         self.blocked_directions = new
+        if (
+            self.boundary_test_control_active
+            and self.boundary_test_direction in self.blocked_directions
+        ):
+            self.set_motors_speed(0.0, 0.0)
         if old != new:
             self.get_logger().info(
                 f"[Motor] 禁止方向更新：{sorted(old) if old else '无'} → {sorted(new) if new else '无'}，"
@@ -1481,8 +1674,8 @@ class MotorControlNode(Node):
 
         elif new_state == "FORWARD":
             # 与 timer_callback 保持相同速度比例，避免状态切换瞬间先冲到全速。
-            left_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-            right_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            left_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
+            right_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:
@@ -1490,8 +1683,8 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("w"))
 
         elif new_state == "BACKWARD":
-            left_speed = self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
-            right_speed = -self.mqtt_control_speed * MANUAL_DRIVE_SPEED_SCALE
+            left_speed = self.mqtt_control_speed * self.manual_drive_speed_scale
+            right_speed = -self.mqtt_control_speed * self.manual_drive_speed_scale
             self.set_motors_speed(left_speed, right_speed)
             # 点按前进：1秒后自动停止
             if self.direction_timer:

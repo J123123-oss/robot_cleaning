@@ -11,6 +11,7 @@ import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
+from nav_msgs.msg import Odometry
 from std_msgs.msg import (
     String,
     UInt8,
@@ -21,6 +22,13 @@ from std_msgs.msg import (
 )  # 用于发布控制模式和导航状态
 from custom_msgs.msg import WTRTK
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
+from rtk_nav.imu_odom_fallback import (
+    calculate_heading_hold_wheel_speeds,
+    fallback_budget_exhausted,
+    integrate_local_enu_delta,
+    normalize_heading_error,
+    position_residual_m,
+)
 
 # -------------------------- 全局配置与枚举 --------------------------
 # 新增：信号漂移过滤配置
@@ -86,6 +94,11 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "force_bearing_diverge",
     "boundary_retreat_timeout",
     "boundary_cycle_exhausted",
+    "imu_odom_fallback_ineligible",
+    "imu_odom_fallback_stale_data",
+    "imu_odom_fallback_boundary_blocked",
+    "imu_odom_fallback_recovery_mismatch",
+    "imu_odom_fallback_manual_takeover",
 })
 # 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
 # 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
@@ -188,6 +201,18 @@ HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
 HEADING_QUALITY_GAP_MAX = 15.0        # 可桥接的最长非 Fixed 间隔（秒）3.0
 HEADING_FIXED_CONFIRM_WINDOW = 8.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）1.0
 RTK_QUALITY_LOSS_DEBOUNCE = 8.0       # RTK非Fixed持续此时长后才暂停导航（秒）5.0
+RTK_FALLBACK_QUALITY_LOSS_DELAY = 0.3
+RTK_FALLBACK_SENSOR_MAX_AGE = 0.25
+RTK_FALLBACK_SPEED_SCALE = 0.20
+RTK_FALLBACK_MAX_DISTANCE_M = 1.0
+RTK_FALLBACK_MAX_ACTIVE_SEC = 3.0
+RTK_FALLBACK_RECOVERY_FIXED_SEC = 1.0
+RTK_FALLBACK_RECOVERY_TOLERANCE_M = 0.30
+RTK_FALLBACK_RECOVERY_BLEND_SEC = 0.5
+RTK_FALLBACK_BUDGET_RESET_FIXED_SEC = 5.0
+RTK_FALLBACK_HEADING_KP = 0.90
+RTK_FALLBACK_MAX_CORRECTION_RPM = 10.0
+RTK_FALLBACK_HEADING_DEADBAND_DEG = 0.30
 AUTO_HEADING_GATE_TIMEOUT = 600.0   # AUTO入口持续不稳定时进入可自动恢复的PAUSE  180秒改为600秒
 # 定位 Fixed、定向 Float 时，仅在直线行驶中允许基于稳定 IMU 航向降级运行。
 # 这些阈值只决定是否允许继续低速运动，不会把状态伪装成双 Fixed。
@@ -437,6 +462,10 @@ class RTKNavControlNode(Node):
             .get_parameter_value()
             .bool_value
         )
+        self.declare_parameter("enable_imu_odom_fallback", False)
+        self.enable_imu_odom_fallback = bool(
+            self.get_parameter("enable_imu_odom_fallback").value
+        )
         self.declare_parameter("stanley_k_path", 0.45)
         self.declare_parameter("stanley_k_near_target", 0.42)
         self.stanley_k_path = max(
@@ -538,6 +567,20 @@ class RTKNavControlNode(Node):
         self.nav_generator: Optional[Generator] = None
         self.nav_running = False
         self.last_wtrtk_time = time.monotonic()
+        self.last_odom_time = None
+        self.odom_linear_velocity_mps = float("nan")
+        self.last_io_time = None
+        self._rtk_position_loss_since = None
+        self._last_dual_fixed_position_xy = None
+        self._last_dual_fixed_position_lonlat = None
+        self._fallback_candidate = None
+        self._fallback_episode = None
+        self._fallback_lockout_reason = None
+        self._fallback_position_blend = None
+        self._fallback_localization_mode = "RTK_TRACKING"
+        self._fallback_last_exit_reason = None
+        self._fallback_last_heading_error = 0.0
+        self._fallback_last_heading_correction_rpm = 0.0
         self.zero_angle_start_time = None
         self.rtk_data_timed_out = False
         self.last_gps_status = -1
@@ -600,6 +643,9 @@ class RTKNavControlNode(Node):
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
+        self.odom_sub = self.create_subscription(
+            Odometry, "/odom", self.odom_callback, 10
+        )
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
         self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
         self.route_change_sub = self.create_subscription(String, "/rtk/route_change", self.route_change_callback, 10)
@@ -1685,6 +1731,7 @@ class RTKNavControlNode(Node):
     def io_data_rtk_callback(self, msg: UInt8):
 
         # 4路传感器低电平有效：mid_left, mid_right, back_left, back_right。
+        self.last_io_time = time.monotonic()
         self.mid_left = (msg.data & 0x01) == 0x00
         self.mid_right = (msg.data & 0x02) == 0x00
         self.back_left = (msg.data & 0x04) == 0x00
@@ -1695,6 +1742,15 @@ class RTKNavControlNode(Node):
             | (int(self.back_left) << 2)
             | (int(self.back_right) << 3)
         )
+        episode = getattr(self, "_fallback_episode", None)
+        if episode and episode.get("active") and (
+            self.boundary_correct_locked
+            or self._has_raw_boundary_trigger()
+            or episode.get("direction") in self._get_live_blocked_directions()
+        ):
+            self._pause_imu_odom_fallback(
+                "imu_odom_fallback_boundary_blocked", time.monotonic(), lockout=True
+            )
         # 屏蔽不清除原始 IO 和 sensors_status；它抑制新的边界事件，
         # 即时校准保护也通过同一门控忽略屏蔽期间的新原始触发。
         # 已有 confirmed_sensors 不得被区域配置强制清除。
@@ -2200,6 +2256,469 @@ class RTKNavControlNode(Node):
         gaps.append(ordered[0] + 360.0 - ordered[-1])
         return 360.0 - max(gaps)
 
+    def _update_fallback_quality_state(self, now: float, position_ok: bool,
+                                      dual_fixed: bool):
+        if not self.enable_imu_odom_fallback:
+            return
+        episode = self._fallback_episode
+        if not position_ok:
+            if self._rtk_position_loss_since is None:
+                self._rtk_position_loss_since = now
+                if not (episode and episode.get("active")):
+                    anchor = self._last_dual_fixed_position_xy
+                    self._fallback_candidate = {
+                        "anchor_xy": anchor, "east_m": 0.0, "north_m": 0.0,
+                        "distance_m": 0.0, "last_odom_integration_time": now,
+                        "estimator_valid": anchor is not None,
+                    }
+        else:
+            self._rtk_position_loss_since = None
+            if not (episode and episode.get("active")):
+                self._fallback_candidate = None
+        if episode:
+            if dual_fixed:
+                if episode.get("recovery_fixed_since") is None:
+                    episode["recovery_fixed_since"] = now
+            else:
+                episode["recovery_fixed_since"] = None
+                episode["fixed_since"] = None
+                if episode.get("recovering"):
+                    episode["recovering"] = False
+                    self._fallback_position_blend = None
+                    if episode.get("pause_reason") is None:
+                        episode["active"] = True
+                        episode["last_active_update"] = now
+                        self._fallback_localization_mode = "IMU_ODOM_HOLD"
+
+    def odom_callback(self, msg: Odometry):
+        now = time.monotonic()
+        try:
+            velocity = float(msg.twist.twist.linear.x)
+        except (TypeError, ValueError, AttributeError):
+            velocity = float("nan")
+        self.last_odom_time = now
+        self.odom_linear_velocity_mps = velocity
+        episode = self._fallback_episode
+        estimate = (
+            episode if episode and episode.get("integrating")
+            else self._fallback_candidate
+        )
+        if estimate is None:
+            return
+        previous = estimate.get("last_odom_integration_time", now)
+        estimate["last_odom_integration_time"] = now
+        dt = now - previous
+        if dt <= 0.0:
+            return
+        if (
+            dt > RTK_FALLBACK_SENSOR_MAX_AGE
+            or not math.isfinite(velocity)
+            or not math.isfinite(self.imu_yaw)
+            or self.last_wtrtk_time is None
+            or now - self.last_wtrtk_time > RTK_FALLBACK_SENSOR_MAX_AGE
+        ):
+            estimate["estimator_valid"] = False
+            return
+        try:
+            east, north, distance = integrate_local_enu_delta(
+                estimate["east_m"], estimate["north_m"], velocity,
+                self.imu_yaw, dt,
+            )
+        except (KeyError, TypeError, ValueError):
+            estimate["estimator_valid"] = False
+            return
+        estimate["east_m"] = east
+        estimate["north_m"] = north
+        estimate["distance_m"] = estimate.get("distance_m", 0.0) + distance
+        if estimate is episode:
+            episode["fallback_distance_m"] += distance
+
+    @staticmethod
+    def _fallback_age(now: float, stamp: Optional[float]) -> float:
+        return float("inf") if stamp is None else max(0.0, now - stamp)
+
+    def _fallback_entry_block_reason(self, now: float) -> Optional[str]:
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            return "control_mode_not_auto"
+        if self.last_state != ControlMode.AUTO_CLEANING:
+            return "motor_state_not_auto_cleaning"
+        if self.nav_context.get("nav_state") != NavState.WAYPOINT_MOVE:
+            return "nav_state_not_waypoint_move"
+        if (
+            self.nav_context.get("calibration_active")
+            or self.nav_context.get("retreat_active")
+            or self.nav_context.get("force_bearing_mode")
+            or self.boundary_correct_locked
+            or self.waiting_for_next_unloading
+        ):
+            return "navigation_action_not_straight"
+        direction_deg = getattr(self, "stanley_path_direction", None)
+        if direction_deg is None or not math.isfinite(float(direction_deg)):
+            return "path_direction_unavailable"
+        waypoint = self.nav_context.get("target_waypoint")
+        if (
+            waypoint is None or len(waypoint) < 2
+            or not all(math.isfinite(float(value)) for value in waypoint[:2])
+        ):
+            return "target_waypoint_unavailable"
+        candidate = self._fallback_candidate
+        if (
+            candidate is None or candidate.get("anchor_xy") is None
+            or not candidate.get("estimator_valid", False)
+        ):
+            return "last_fixed_position_or_odometry_unavailable"
+        if (
+            self._fallback_age(now, self.last_wtrtk_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+            or self._fallback_age(now, self.last_odom_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+            or self._fallback_age(now, self.last_io_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+            or not math.isfinite(self.imu_yaw)
+            or not math.isfinite(self.odom_linear_velocity_mps)
+        ):
+            return "required_sensor_stale_or_invalid"
+        direction = self._get_motion_direction_from_speed(
+            self._last_motor_left, self._last_motor_right
+        )
+        if direction not in ("FORWARD", "BACKWARD"):
+            return "current_motion_not_straight"
+        if self._has_raw_boundary_trigger() or direction in self._get_live_blocked_directions():
+            return "boundary_direction_blocked"
+        base_rpm = min(
+            LINEAR_SPEED_BASE,
+            (abs(self._last_motor_left) + abs(self._last_motor_right)) / 2.0,
+        )
+        if not math.isfinite(base_rpm) or base_rpm <= 0.0:
+            return "normal_base_speed_unavailable"
+        return None
+
+    def _fallback_segment_end_reached(self, estimate: dict, path_direction_deg: float,
+                                      target_waypoint: tuple) -> bool:
+        anchor_x, anchor_y = estimate["anchor_xy"]
+        target_x, target_y = self.latlon_to_utm(
+            float(target_waypoint[1]), float(target_waypoint[0])
+        )
+        heading_rad = math.radians(path_direction_deg)
+        unit_east, unit_north = math.sin(heading_rad), math.cos(heading_rad)
+        remaining = (target_x - anchor_x) * unit_east + (target_y - anchor_y) * unit_north
+        progress = estimate["east_m"] * unit_east + estimate["north_m"] * unit_north
+        return remaining <= RTK_WAYPOINT_TOLERANCE or progress >= remaining - RTK_WAYPOINT_TOLERANCE
+
+    def _pause_imu_odom_fallback(self, reason: str, now: float,
+                                 lockout: bool = False):
+        episode = self._fallback_episode
+        if episode:
+            episode["active"] = False
+            episode["pause_reason"] = reason
+            episode["integrating"] = True
+        if lockout:
+            self._fallback_lockout_reason = reason
+            self._fallback_localization_mode = "FALLBACK_PAUSED"
+        else:
+            self._fallback_localization_mode = "FALLBACK_RECOVERY_WAIT"
+        if self.nav_context.get("nav_state") != NavState.PAUSE:
+            self.nav_context["pre_pause_state"] = self.nav_context.get(
+                "nav_state", NavState.WAYPOINT_MOVE
+            )
+        self.nav_context["nav_state"] = NavState.PAUSE
+        self.nav_context["pause_reason"] = reason
+        self.nav_context["brush_active"] = self.brush_active
+        self._fallback_last_exit_reason = reason
+        self._last_motor_left = self._last_motor_right = 0.0
+        self.publish_nav_state(NavState.PAUSE)
+        self.publish_stop_speed()
+        self.get_logger().warn(f"[RTK备用定位] 停车并暂停：{reason}")
+
+    def _begin_imu_odom_fallback(self, now: float):
+        candidate = self._fallback_candidate
+        direction = self._get_motion_direction_from_speed(
+            self._last_motor_left, self._last_motor_right
+        )
+        path_direction = float(self.stanley_path_direction) % 360.0
+        heading_target = path_direction if direction == "FORWARD" else (path_direction + 180.0) % 360.0
+        base_rpm = min(
+            LINEAR_SPEED_BASE,
+            (abs(self._last_motor_left) + abs(self._last_motor_right)) / 2.0,
+        )
+        episode = self._fallback_episode
+        if episode is None:
+            episode = {"fallback_distance_m": 0.0, "fallback_elapsed_sec": 0.0,
+                       "fixed_since": None}
+            self._fallback_episode = episode
+        episode.update({
+            "anchor_xy": candidate["anchor_xy"],
+            "east_m": candidate["east_m"], "north_m": candidate["north_m"],
+            "distance_m": candidate.get("distance_m", 0.0),
+            "last_odom_integration_time": candidate.get("last_odom_integration_time", now),
+            "estimator_valid": candidate.get("estimator_valid", False),
+            "direction": direction, "path_direction_deg": path_direction,
+            "heading_target_deg": heading_target, "base_rpm": base_rpm,
+            "target_waypoint": tuple(self.nav_context["target_waypoint"]),
+            "waypoint_idx": self.current_waypoint_idx, "active": True,
+            "integrating": True, "last_active_update": now,
+            "recovery_fixed_since": None, "recovering": False, "pause_reason": None,
+        })
+        self._fallback_candidate = None
+        self._fallback_lockout_reason = None
+        self._fallback_localization_mode = "IMU_ODOM_HOLD"
+        self.get_logger().warn(
+            f"[RTK备用定位] 进入短时直线保持：方向={direction}，目标航向="
+            f"{heading_target:.2f}°，基础轮速={base_rpm:.2f} rpm，"
+            f"已用额度={episode['fallback_distance_m']:.2f}m/"
+            f"{episode['fallback_elapsed_sec']:.2f}s"
+        )
+
+    def _apply_fallback_position_blend(self, lon: float, lat: float, now: float):
+        blend = self._fallback_position_blend
+        if blend is None:
+            return lon, lat
+        elapsed = now - blend["start_time"]
+        if elapsed >= RTK_FALLBACK_RECOVERY_BLEND_SEC:
+            self._fallback_position_blend = None
+            return lon, lat
+        ratio = 1.0 - max(0.0, elapsed) / RTK_FALLBACK_RECOVERY_BLEND_SEC
+        lat_rad = math.radians(lat)
+        cos_lat = math.cos(lat_rad)
+        if abs(cos_lat) < 1e-9:
+            return lon, lat
+        radius = 6378137.0
+        return (
+            lon + math.degrees(blend["east_m"] * ratio / (radius * cos_lat)),
+            lat + math.degrees(blend["north_m"] * ratio / radius),
+        )
+
+    def _publish_imu_odom_fallback_speed(self, episode: dict):
+        fallback_base_rpm = episode["base_rpm"] * RTK_FALLBACK_SPEED_SCALE
+        left_speed, right_speed = calculate_heading_hold_wheel_speeds(
+            episode["direction"], fallback_base_rpm,
+            episode["heading_target_deg"], self.imu_yaw,
+            kp=RTK_FALLBACK_HEADING_KP,
+            max_correction_rpm=RTK_FALLBACK_MAX_CORRECTION_RPM,
+            deadband_deg=RTK_FALLBACK_HEADING_DEADBAND_DEG,
+        )
+        left_speed = max(-RTK_OUTPUT_SPEED_LIMIT, min(RTK_OUTPUT_SPEED_LIMIT, left_speed))
+        right_speed = max(-RTK_OUTPUT_SPEED_LIMIT, min(RTK_OUTPUT_SPEED_LIMIT, right_speed))
+        self._fallback_last_heading_error = normalize_heading_error(
+            episode["heading_target_deg"], self.imu_yaw
+        )
+        self._fallback_last_heading_correction_rpm = (left_speed + right_speed) / 2.0
+        self._last_motor_left, self._last_motor_right = left_speed, right_speed
+        speed_msg = Vector3()
+        speed_msg.x, speed_msg.y = left_speed, right_speed
+        speed_msg.z = RTK_BRUSH_SPEED if self.brush_active else 0.0
+        self.motor_speed_pub.publish(speed_msg)
+        velocity_msg = Float32()
+        velocity_msg.data = fallback_base_rpm * WHEEL_RPM_TO_MPS
+        self.velocity_pub.publish(velocity_msg)
+
+    def _advance_imu_odom_recovery(self, now: float, episode: dict):
+        dual_fixed = (
+            self.position_data_valid and self.last_gps_status == 4
+            and self.last_orientation_status == 4 and self.rtk_solution_ready
+        )
+        recovery_inputs_fresh = (
+            self._fallback_age(now, self.last_wtrtk_time)
+            <= RTK_FALLBACK_SENSOR_MAX_AGE
+            and self._fallback_age(now, self.last_odom_time)
+            <= RTK_FALLBACK_SENSOR_MAX_AGE
+            and self._fallback_age(now, self.last_io_time)
+            <= RTK_FALLBACK_SENSOR_MAX_AGE
+            and math.isfinite(self.imu_yaw)
+            and math.isfinite(self.odom_linear_velocity_mps)
+        )
+        if not dual_fixed or not recovery_inputs_fresh:
+            episode["recovery_fixed_since"] = None
+            episode["fixed_since"] = None
+            if episode.get("recovering"):
+                episode["recovering"] = False
+                self._fallback_position_blend = None
+                self._fallback_localization_mode = (
+                    "IMU_ODOM_HOLD" if episode.get("active")
+                    else "FALLBACK_RECOVERY_WAIT"
+                )
+            return False
+        if episode.get("recovery_fixed_since") is None:
+            episode["recovery_fixed_since"] = now
+        fixed_elapsed = now - episode["recovery_fixed_since"]
+        episode["fixed_since"] = episode["recovery_fixed_since"]
+        if fixed_elapsed < RTK_FALLBACK_RECOVERY_FIXED_SEC:
+            return False
+        if not episode.get("estimator_valid") or self._last_dual_fixed_position_xy is None:
+            self._pause_imu_odom_fallback("imu_odom_fallback_stale_data", now, lockout=True)
+            return True
+        predicted = (
+            episode["anchor_xy"][0] + episode["east_m"],
+            episode["anchor_xy"][1] + episode["north_m"],
+        )
+        measured = self._last_dual_fixed_position_xy
+        residual = position_residual_m(predicted, measured)
+        episode["recovery_residual_m"] = residual
+        if residual > RTK_FALLBACK_RECOVERY_TOLERANCE_M:
+            self._pause_imu_odom_fallback(
+                "imu_odom_fallback_recovery_mismatch", now, lockout=True
+            )
+            self.get_logger().error(
+                f"[RTK备用定位] 恢复位置不一致：残差={residual:.3f}m，"
+                f"上限={RTK_FALLBACK_RECOVERY_TOLERANCE_M:.2f}m"
+            )
+            return True
+        if not episode.get("recovering"):
+            episode["recovering"] = True
+            episode["recovery_blend_start"] = now
+            self._fallback_position_blend = {
+                "start_time": now,
+                "east_m": predicted[0] - measured[0],
+                "north_m": predicted[1] - measured[1],
+            }
+            self._fallback_localization_mode = "RTK_RECOVERY_BLEND"
+            self.get_logger().info(
+                f"[RTK备用定位] 双Fixed稳定{fixed_elapsed:.1f}s，"
+                f"位置残差={residual:.3f}m，通过检查，开始平滑切回"
+            )
+        if now - episode["recovery_blend_start"] < RTK_FALLBACK_RECOVERY_BLEND_SEC:
+            return False
+        episode["active"] = False
+        episode["integrating"] = False
+        episode["recovering"] = False
+        episode["pause_reason"] = None
+        self._fallback_candidate = None
+        self._fallback_localization_mode = "RTK_TRACKING"
+        self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
+        self.nav_context["pause_reason"] = None
+        self.nav_context["pre_pause_state"] = None
+        self.publish_nav_state(NavState.WAYPOINT_MOVE)
+        self.get_logger().info(
+            f"[RTK备用定位] 已平滑切回RTK，保持航点{self.current_waypoint_idx}"
+        )
+        return True
+
+    def _process_imu_odom_fallback(self, now: float) -> bool:
+        if not self.enable_imu_odom_fallback:
+            return False
+        if self._fallback_lockout_reason:
+            self.publish_stop_speed()
+            return True
+        episode = self._fallback_episode
+        if episode and episode.get("recovering"):
+            if self._advance_imu_odom_recovery(now, episode):
+                return True
+        if episode and episode.get("active"):
+            episode["fallback_elapsed_sec"] += max(
+                0.0, now - episode.get("last_active_update", now)
+            )
+            episode["last_active_update"] = now
+            if (
+                self._fallback_age(now, self.last_wtrtk_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+                or self._fallback_age(now, self.last_odom_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+                or self._fallback_age(now, self.last_io_time) > RTK_FALLBACK_SENSOR_MAX_AGE
+                or not math.isfinite(self.imu_yaw)
+                or not math.isfinite(self.odom_linear_velocity_mps)
+                or not episode.get("estimator_valid")
+            ):
+                self._pause_imu_odom_fallback("imu_odom_fallback_stale_data", now, lockout=True)
+                return True
+            direction = episode.get("direction")
+            if (
+                self.boundary_correct_locked or self._has_raw_boundary_trigger()
+                or direction in self._get_live_blocked_directions()
+            ):
+                self._pause_imu_odom_fallback(
+                    "imu_odom_fallback_boundary_blocked", now, lockout=True
+                )
+                return True
+            if (
+                self.current_control_mode != ControlMode.AUTO_CLEANING
+                or self.last_state != ControlMode.AUTO_CLEANING
+                or self.nav_context.get("nav_state") != NavState.WAYPOINT_MOVE
+                or self.current_waypoint_idx != episode.get("waypoint_idx")
+                or tuple(self.nav_context.get("target_waypoint") or ())
+                != episode.get("target_waypoint")
+                or self.nav_context.get("calibration_active")
+                or self.nav_context.get("retreat_active")
+                or self.nav_context.get("force_bearing_mode")
+                or self.waiting_for_next_unloading
+            ):
+                self._pause_imu_odom_fallback("imu_odom_fallback_ineligible", now, lockout=True)
+                return True
+            if self.nav_context.get("pause_reason") == "imu_odom_fallback_limit_reached":
+                self.publish_stop_speed()
+                self._advance_imu_odom_recovery(now, episode)
+                return True
+            if self._fallback_segment_end_reached(
+                episode, episode["path_direction_deg"], episode["target_waypoint"]
+            ) or fallback_budget_exhausted(
+                episode["fallback_distance_m"], episode["fallback_elapsed_sec"],
+                RTK_FALLBACK_MAX_DISTANCE_M, RTK_FALLBACK_MAX_ACTIVE_SEC,
+            ):
+                self._pause_imu_odom_fallback(
+                    "imu_odom_fallback_limit_reached", now, lockout=False
+                )
+                self._advance_imu_odom_recovery(now, episode)
+                return True
+            if not episode.get("recovering"):
+                self._advance_imu_odom_recovery(now, episode)
+            if episode.get("active"):
+                self._publish_imu_odom_fallback_speed(episode)
+            return True
+        if episode and episode.get("pause_reason") == "imu_odom_fallback_limit_reached":
+            self.publish_stop_speed()
+            self._advance_imu_odom_recovery(now, episode)
+            return True
+        if episode and self.rtk_solution_ready:
+            if episode.get("fixed_since") is None:
+                episode["fixed_since"] = now
+            elif now - episode["fixed_since"] >= RTK_FALLBACK_BUDGET_RESET_FIXED_SEC:
+                self.get_logger().info("[RTK备用定位] 双Fixed连续稳定5s，重置备用额度")
+                self._fallback_episode = None
+                self._fallback_localization_mode = "RTK_TRACKING"
+        elif episode:
+            episode["fixed_since"] = None
+        if (
+            self._rtk_position_loss_since is not None
+            and now - self._rtk_position_loss_since >= RTK_FALLBACK_QUALITY_LOSS_DELAY
+        ):
+            reason = self._fallback_entry_block_reason(now)
+            if reason:
+                self._pause_imu_odom_fallback(
+                    "imu_odom_fallback_ineligible", now, lockout=True
+                )
+                self._fallback_last_exit_reason = reason
+                self.get_logger().error(
+                    f"[RTK备用定位] 位置质量丢失已持续"
+                    f"{now - self._rtk_position_loss_since:.2f}s，"
+                    f"当前状态不允许备用行驶：{reason}"
+                )
+                return True
+            self._begin_imu_odom_fallback(now)
+            episode = self._fallback_episode
+            if self._fallback_segment_end_reached(
+                episode, episode["path_direction_deg"], episode["target_waypoint"]
+            ) or fallback_budget_exhausted(
+                episode["fallback_distance_m"], episode["fallback_elapsed_sec"],
+                RTK_FALLBACK_MAX_DISTANCE_M, RTK_FALLBACK_MAX_ACTIVE_SEC,
+            ):
+                self._pause_imu_odom_fallback(
+                    "imu_odom_fallback_limit_reached", now, lockout=False
+                )
+                self._advance_imu_odom_recovery(now, episode)
+                return True
+            self._publish_imu_odom_fallback_speed(episode)
+            return True
+        return False
+
+    def _fallback_diagnostics_active(self) -> bool:
+        return bool(
+            self._fallback_episode or self._fallback_lockout_reason
+            or self._rtk_position_loss_since is not None
+        )
+
+    def _clear_imu_odom_fallback_session(self):
+        self._fallback_candidate = None
+        self._fallback_episode = None
+        self._fallback_lockout_reason = None
+        self._fallback_position_blend = None
+        self._rtk_position_loss_since = None
+        self._fallback_localization_mode = "RTK_TRACKING"
+        self._fallback_last_exit_reason = None
+
     def heading_callback(self, msg: WTRTK) -> None:
         now = time.monotonic()
         self.last_wtrtk_time = now
@@ -2221,6 +2740,10 @@ class RTKNavControlNode(Node):
             position_data_valid
             and position_status == 4
             and orientation_status == 4
+        )
+        position_quality_ok = position_data_valid and position_status == 4
+        self._update_fallback_quality_state(
+            now, position_quality_ok, current_sample_fixed
         )
 
         ins_heading_deg = msg.ins_heading
@@ -2627,7 +3150,31 @@ class RTKNavControlNode(Node):
 
         self.current_lat = car_lat
         self.current_lon = car_lon
-        self.current_gps = (car_lon, car_lat)
+        if (
+            current_sample_fixed
+            and math.isfinite(car_lon)
+            and math.isfinite(car_lat)
+            and -180.0 <= car_lon <= 180.0
+            and -90.0 <= car_lat <= 90.0
+        ):
+            self._last_dual_fixed_position_xy = self.latlon_to_utm(car_lat, car_lon)
+            self._last_dual_fixed_position_lonlat = (car_lon, car_lat)
+        nav_lon, nav_lat = (car_lon, car_lat)
+        if (
+            self.enable_imu_odom_fallback
+            and not position_quality_ok
+            and self._last_dual_fixed_position_lonlat is not None
+        ):
+            # Keep the last good map pose during the 0.3s transition window;
+            # never feed a Float/invalid (often zero) position into Stanley.
+            nav_lon, nav_lat = self._last_dual_fixed_position_lonlat
+        elif current_sample_fixed:
+            nav_lon, nav_lat = self._apply_fallback_position_blend(
+                car_lon, car_lat, now
+            )
+        self.current_lat = nav_lat
+        self.current_lon = nav_lon
+        self.current_gps = (nav_lon, nav_lat)
         self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
@@ -4603,6 +5150,13 @@ class RTKNavControlNode(Node):
 
     def publish_nav_context(self):
         """发布 nav_context 快照（JSON），便于调试定位问题"""
+        now = time.monotonic()
+        episode = self._fallback_episode or {}
+        age_or_none = lambda stamp: (
+            max(0.0, now - stamp)
+            if stamp is not None and math.isfinite(float(stamp))
+            else None
+        )
         ctx = {
             "nav_state": self.nav_context.get("nav_state", ""),
             "current_waypoint_idx": self.current_waypoint_idx,
@@ -4635,6 +5189,36 @@ class RTKNavControlNode(Node):
             "orientation_status": self.last_orientation_status,
             "position_data_valid": self.position_data_valid,
             "rtk_solution_ready": self.rtk_solution_ready,
+            "enable_imu_odom_fallback": self.enable_imu_odom_fallback,
+            "localization_mode": self._fallback_localization_mode,
+            "position_quality_loss_elapsed_sec": (
+                max(0.0, now - self._rtk_position_loss_since)
+                if self._rtk_position_loss_since is not None else 0.0
+            ),
+            "imu_data_age_sec": age_or_none(self.last_wtrtk_time),
+            "odometry_age_sec": age_or_none(self.last_odom_time),
+            "io_data_age_sec": age_or_none(self.last_io_time),
+            "fallback_distance_m": episode.get("fallback_distance_m", 0.0),
+            "fallback_elapsed_sec": episode.get("fallback_elapsed_sec", 0.0),
+            "fallback_remaining_distance_m": max(
+                0.0,
+                RTK_FALLBACK_MAX_DISTANCE_M - episode.get("fallback_distance_m", 0.0),
+            ),
+            "fallback_remaining_time_sec": max(
+                0.0,
+                RTK_FALLBACK_MAX_ACTIVE_SEC - episode.get("fallback_elapsed_sec", 0.0),
+            ),
+            "fallback_base_wheel_rpm": (
+                episode.get("base_rpm", 0.0) * RTK_FALLBACK_SPEED_SCALE
+            ),
+            "fallback_heading_target_deg": episode.get("heading_target_deg"),
+            "fallback_heading_current_deg": self.imu_yaw,
+            "fallback_heading_error_deg": self._fallback_last_heading_error,
+            "fallback_heading_correction_rpm": self._fallback_last_heading_correction_rpm,
+            "fallback_recovery_residual_m": episode.get("recovery_residual_m"),
+            "fallback_exit_reason": (
+                self._fallback_lockout_reason or self._fallback_last_exit_reason
+            ),
             "rtk_orientation_degraded": self.rtk_orientation_degraded,
             "last_dual_fixed_heading_deg": self._last_dual_fixed_heading_deg,
             "control_mode": self.current_control_mode,
@@ -5086,6 +5670,13 @@ class RTKNavControlNode(Node):
             self._exit_ultrasonic_suppression(f"motor_state={msg.data}")
 
         if msg.data == "HOLD" and self.last_state != "HOLD":
+            if (
+                (self._fallback_episode or self._fallback_candidate)
+                and not self._fallback_lockout_reason
+            ):
+                self._pause_imu_odom_fallback(
+                    "imu_odom_fallback_manual_takeover", time.monotonic(), lockout=True
+                )
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
             if self._is_manual_intervention_pause():
@@ -5109,6 +5700,8 @@ class RTKNavControlNode(Node):
                         f"（pause_reason={self.nav_context.get('pause_reason')}）"
                     )
                     self.publish_stop_speed()
+                else:
+                    self._clear_imu_odom_fallback_session()
             else:
                 self.get_logger().info("[RTKNav] 电机状态为AUTO_CLEANING，恢复导航")
                 if self.waiting_for_next_unloading:
@@ -5371,6 +5964,15 @@ class RTKNavControlNode(Node):
         previous_mode = getattr(self, '_last_mode_msg', None)
         self._last_mode_msg = msg.data
         self.current_control_mode = msg.data
+        if (
+            previous_mode == ControlMode.AUTO_CLEANING
+            and self.current_control_mode != ControlMode.AUTO_CLEANING
+            and (self._fallback_episode or self._fallback_candidate)
+            and not self._fallback_lockout_reason
+        ):
+            self._pause_imu_odom_fallback(
+                "imu_odom_fallback_manual_takeover", time.monotonic(), lockout=True
+            )
         # 切换到RTK模式时, 重置IMU校准
         # if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
         #     # self.reset_imu_calibration()
@@ -5398,6 +6000,8 @@ class RTKNavControlNode(Node):
                         f"切换到RTK模式但尚未确认人工接管："
                         f"{self.nav_context.get('pause_reason')}，保持PAUSE"
                     )
+                else:
+                    self._clear_imu_odom_fallback_session()
             else:
                 self.get_logger().info(f"切换到RTK模式，导航状态：{self.nav_context['nav_state']}")
 
@@ -5432,7 +6036,8 @@ class RTKNavControlNode(Node):
         self.publish_visual_path_context()
         self.publish_visual_path_reference()
         # 周期性发布 nav_context（每2s），便于 ros2 topic echo 调试
-        if time.monotonic() - self._last_nav_context_publish >= 2.0:
+        context_interval = 0.1 if self._fallback_diagnostics_active() else 2.0
+        if time.monotonic() - self._last_nav_context_publish >= context_interval:
             self.publish_nav_context()
 
         self.update_cleaning_area()
@@ -5462,6 +6067,9 @@ class RTKNavControlNode(Node):
             if self.waiting_for_next_unloading:
                 self.publish_stop_speed()
                 self.publish_nav_state(NavState.IDLE)
+                return
+
+            if self._process_imu_odom_fallback(time.monotonic()):
                 return
 
             if self.handle_rtk_data_timeout():
