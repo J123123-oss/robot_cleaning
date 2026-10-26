@@ -116,7 +116,7 @@ class CanMotorDriver(Node):
 
     # 轮廓参数单位为电机侧 Pul/s^2；减速度取值与启动文件保持一致。
     DEFAULT_PROFILE_ACCELERATION = 33333
-    DEFAULT_PROFILE_DECELERATION = 445000
+    DEFAULT_PROFILE_DECELERATION = 33333
     # 目标速度和实际速度的换算先使用电机转数，再应用配置的机械减速比，
     # 得到减速器输出轴 r/min。
     DEFAULT_PULSES_PER_MOTOR_REV = 1000
