@@ -41,11 +41,8 @@ def generate_launch_description():
     )
     declare_profile_deceleration_arg = DeclareLaunchArgument(
         "profile_deceleration",
-        default_value=TextSubstitution(text="225000"),
-        description=(
-            "AIMotor 速度模式减速度，单位 Pul/s^2；按0.35m/s最大轮速"
-            "理论目标约0.25秒停车"
-        ),
+        default_value=TextSubstitution(text="445000"),
+        description="AIMotor 速度模式减速度，单位 Pul/s^2；启动时通过0x6084回读确认",
     )
     declare_motor_direction_args = tuple(
         DeclareLaunchArgument(

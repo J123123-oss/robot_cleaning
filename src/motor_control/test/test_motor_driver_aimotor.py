@@ -265,7 +265,7 @@ def test_profile_acceleration_and_deceleration_use_documented_objects():
     assert driver.motor_set_deceleration(1)
     assert frames == [
         (0x601, bytes.fromhex("23 83 60 00 35 82 00 00")),
-        (0x601, bytes.fromhex("23 84 60 00 e8 6e 03 00")),
+        (0x601, bytes.fromhex("23 84 60 00 48 ca 06 00")),
     ]
 
 

@@ -116,11 +116,9 @@ class CanMotorDriver(Node):
     # 607Eh：指令方向极性（Uint8，RW）；PV/CSV 速度模式使用 bit6。
     COMMAND_POLARITY_INDEX = 0x607E
 
-    # 轮廓参数单位为电机侧 Pul/s^2。加速度保持平顺的默认值；减速度按
-    # 最大轮速约0.35m/s配置为225000 Pul/s^2，理论减速时间约0.25s，
-    # 实际停车时间仍需整车实测确认。
+    # 轮廓参数单位为电机侧 Pul/s^2；减速度取值与启动文件保持一致。
     DEFAULT_PROFILE_ACCELERATION = 33333
-    DEFAULT_PROFILE_DECELERATION = 225000
+    DEFAULT_PROFILE_DECELERATION = 445000
     DEFAULT_CAN_TX_INTERVAL_SEC = 0.005
     DEFAULT_FEEDBACK_POLL_INTERVAL_SEC = 0.5
     # 目标速度和实际速度的换算先使用电机转数，再应用配置的机械减速比，

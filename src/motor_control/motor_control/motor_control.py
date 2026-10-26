@@ -51,7 +51,7 @@ class RobotStateKey(Enum):
 STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABLE', 'u':'START'...}
 
 WHEEL_RADIUS = 0.05  # 驱动轮有效半径（m）。
-MAX_LINEAR_SPEED_MPS = 0.40  # 允许的最大车体线速度（m/s）。
+MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
 WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
