@@ -109,17 +109,15 @@ def test_feedback_snapshot_is_detached_from_driver_cache():
     assert snapshot[0]["id"] == 1
 
 
-def test_poll_feedback_queries_every_fifth_tick_and_returns_snapshot():
+def test_poll_feedback_only_publishes_snapshot_without_querying():
     module = _load_module()
     driver = _make_driver(module)
-    driver._feedback_tick = 4
     driver.query_motor_feedback = Mock()
     driver.motors[0]["actual_velocity"] = 8.0
 
     snapshot = driver.poll_feedback()
 
-    driver.query_motor_feedback.assert_called_once_with()
-    assert driver._feedback_tick == 0
+    driver.query_motor_feedback.assert_not_called()
     assert snapshot[0]["actual_velocity"] == 8.0
     driver.motor_feedback_publisher.publish.assert_called_once()
 
@@ -203,6 +201,58 @@ def test_standard_can_frame_and_sdo_speed_write():
     assert driver.bus.messages[0].data == b"\x01" + b"\x00" * 7
 
 
+def test_can_sender_queue_serializes_and_prioritizes_control_frames():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.can_tx_interval_sec = 0.0
+    driver._can_tx_condition = threading.Condition()
+    driver._can_tx_heap = []
+    driver._can_tx_sequence = module.itertools.count()
+    driver._can_tx_stop = threading.Event()
+    driver._can_tx_thread = None
+    driver._can_tx_last_send_time = 0.0
+    sent = []
+
+    def capture_frame(can_id, data):
+        sent.append((can_id, data))
+        return True
+
+    driver._send_can_frame_direct = capture_frame
+    try:
+        # Queue both before waking the worker so priority, not submission
+        # timing, determines which class of frame is sent first.
+        requests = []
+        for can_id, data in (
+            (0x601, bytes.fromhex("40 6c 60 00 00 00 00 00")),
+            (0x601, bytes.fromhex("23 ff 60 00 01 00 00 00")),
+        ):
+            request = {
+                "can_id": can_id,
+                "data": data,
+                "done": threading.Event(),
+                "result": False,
+            }
+            requests.append(request)
+            with driver._can_tx_condition:
+                module.heapq.heappush(
+                    driver._can_tx_heap,
+                    (
+                        driver._can_tx_priority(data),
+                        next(driver._can_tx_sequence),
+                        request,
+                    ),
+                )
+        driver.start_can_sender()
+        with driver._can_tx_condition:
+            driver._can_tx_condition.notify_all()
+        assert all(request["done"].wait(1.0) for request in requests)
+    finally:
+        driver.stop_can_sender()
+
+    assert sent[0][1][0] == 0x23
+    assert sent[1][1][0] == module.CanMotorDriver.SDO_READ
+
+
 def test_profile_acceleration_and_deceleration_use_documented_objects():
     module = _load_module()
     driver = _make_driver(module)
@@ -215,7 +265,7 @@ def test_profile_acceleration_and_deceleration_use_documented_objects():
     assert driver.motor_set_deceleration(1)
     assert frames == [
         (0x601, bytes.fromhex("23 83 60 00 35 82 00 00")),
-        (0x601, bytes.fromhex("23 84 60 00 35 82 00 00")),
+        (0x601, bytes.fromhex("23 84 60 00 e8 6e 03 00")),
     ]
 
 

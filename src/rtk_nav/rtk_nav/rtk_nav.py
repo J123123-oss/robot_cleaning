@@ -177,11 +177,12 @@ def combine_stanley_and_visual_correction(
         total_correction,
     )
 
-BOUNDARY_TRIGGER_CONFIRM_FRAMES = 3
-BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
+# 边界去抖时间窗；不依赖 /io_data 的发布频率。
+BOUNDARY_TRIGGER_CONFIRM_SEC = 0.3
+BOUNDARY_CLEAR_CONFIRM_SEC = 0.2
 # 边界航向角闭环矫正
 TURN_AWAY_DEG = 25.0               # 偏离边缘的目标转角（度）
-BOUNDARY_SLOW_PERSIST_FRAMES = 15  # 单传感器慢速通道：持续N帧(1.5s@10Hz)触发
+BOUNDARY_SLOW_PERSIST_SEC = 1.5  # 单传感器慢速通道持续时间（秒）
 BOUNDARY_CORRECTION_TIMEOUT = 15.0 # 整体纠偏超时（秒）
 ERROR_RTK_NOT_FIXED = 4
 ERROR_RTK_TIMEOUT = 8  # RTK断流/零角度超过1s，或运行中航向误差>15°持续15s；恢复仅检查数据新鲜度
@@ -336,10 +337,11 @@ class RTKNavControlNode(Node):
         self.ultrasonic_suppression_active = False
         self.ultrasonic_suppression_area = ""
         self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
+        self.gps_update_sequence = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 180.0 #-90.0    #-90.0(old)  # RTK安装偏移角度,向右转+90度
+        self.rtk_install_offset = -180.0 #-90.0    #-90.0(old)  # RTK安装偏移角度,向右转+90度
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
@@ -408,15 +410,17 @@ class RTKNavControlNode(Node):
         self.BOUNDARY_TURN_DURATION = 1.0    # 偏转持续时间（秒）
         self.BOUNDARY_BACK_DURATION = 2.0    # 边界矫正后退持续时间（秒）
         self.BOUNDARY_RETURN_DURATION = 1.0  # 反向偏转退回持续时间（秒）
-        self.boundary_active_count = 0
-        self.boundary_clear_count = 0
+        self.boundary_active_since = None
+        self.boundary_clear_since = None
+        self.boundary_active_signature = None
         self.boundary_cycle_count = 0
         self.boundary_cycle_sensor_signature = ()
         self.boundary_last_raw_trigger = False
         self.boundary_stop_published = False
         self.boundary_trigger_yaw = 0.0                # 触发瞬间的IMU航向
         self.boundary_target_yaw = 0.0                 # TURNING/RETURNING目标航向
-        self.boundary_slow_count = 0                  # 单传感器持续帧计数
+        self.boundary_slow_since = None               # 单传感器持续起点（monotonic秒）
+        self.boundary_slow_sensor = None
         self.boundary_correction_start_time = None    # 整体超时起点（monotonic秒）
         self.confirmed_sensors = set()               # 已确认触发的传感器名（经debounce后）
         self.blocked_directions = set()              # 基于confirmed_sensors计算的禁止方向
@@ -601,6 +605,9 @@ class RTKNavControlNode(Node):
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
         self._last_nav_context_publish = 0.0      # 上次 nav_context 发布时间
         self.multi_waypoint_generator = None  # 多点导航生成器
+        # 航向门控恢复可能早于导航生成器初始化路径段。
+        self.stanley_path_start = None
+        self.stanley_path_direction = None
         self.real_velocity = 0.0  # 当前真实速度 (m/s)
         # All control inputs below are captured from one detector frame.
         self.visual_sample_heading_error_deg = 0.0
@@ -1074,11 +1081,13 @@ class RTKNavControlNode(Node):
         self.boundary_correct_locked = False
         self.boundary_trigger_yaw = 0.0
         self.boundary_target_yaw = 0.0
-        self.boundary_slow_count = 0
+        self.boundary_slow_since = None
+        self.boundary_slow_sensor = None
         self.boundary_correction_start_time = None
         self.boundary_stop_published = False
-        self.boundary_active_count = 0
-        self.boundary_clear_count = 0
+        self.boundary_active_since = None
+        self.boundary_clear_since = None
+        self.boundary_active_signature = None
         if not self._active_boundary_sensor_names():
             self._reset_boundary_cycle_tracking()
 
@@ -1120,10 +1129,13 @@ class RTKNavControlNode(Node):
         # priority because the gate then returns False and live sensor checks
         # remain active.
         suppression_active = self._is_ultrasonic_suppression_allowed()
+        raw_boundary_trigger = any(
+            (self.mid_left, self.mid_right, self.back_left, self.back_right)
+        )
         return (
             self.boundary_correct_locked
             or bool(self.confirmed_sensors)
-            or (not suppression_active and self._has_raw_boundary_trigger())
+            or (not suppression_active and raw_boundary_trigger)
         )
 
     def _has_raw_boundary_trigger(self) -> bool:
@@ -1729,7 +1741,7 @@ class RTKNavControlNode(Node):
                 self._clear_retreat_context()
 
     def io_data_rtk_callback(self, msg: UInt8):
-
+        now = time.monotonic()
         # 4路传感器低电平有效：mid_left, mid_right, back_left, back_right。
         self.last_io_time = time.monotonic()
         self.mid_left = (msg.data & 0x01) == 0x00
@@ -1757,9 +1769,11 @@ class RTKNavControlNode(Node):
         if (self._is_ultrasonic_suppression_allowed()
                 and not self.confirmed_sensors
                 and not self.boundary_correct_locked):
-            self.boundary_active_count = 0
-            self.boundary_slow_count = 0
-            self.boundary_clear_count = 0
+            self.boundary_active_since = None
+            self.boundary_slow_since = None
+            self.boundary_clear_since = None
+            self.boundary_active_signature = None
+            self.boundary_slow_sensor = None
             return
         # 4传感器分层触发（mid/back × 左右）
         if self.current_control_mode == ControlMode.AUTO_CLEANING and not self.boundary_correct_locked:
@@ -1774,41 +1788,54 @@ class RTKNavControlNode(Node):
             spatial_consensus = same_row or same_side or num_active >= 3
 
             changed = False
-            # 已确认但当前帧不再触发的传感器 → 立即移除
+            # 已确认但当前帧不再触发的传感器也按时间去抖，避免50Hz下瞬时释放。
             stale = self.confirmed_sensors - active_set
             if stale:
-                self.confirmed_sensors -= stale
-                changed = True
-                self.get_logger().info(f"[RTKNav] 边界传感器释放：{sorted(stale)}")
+                if self.boundary_clear_since is None:
+                    self.boundary_clear_since = now
+                if now - self.boundary_clear_since >= BOUNDARY_CLEAR_CONFIRM_SEC:
+                    self.confirmed_sensors -= stale
+                    changed = True
+                    self.get_logger().info(f"[RTKNav] 边界传感器释放：{sorted(stale)}")
+            else:
+                self.boundary_clear_since = None
 
             if spatial_consensus:
-                self.boundary_active_count += 1
-                self.boundary_clear_count = 0
-                self.boundary_slow_count = 0
-                if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+                active_signature = tuple(sorted(active_set))
+                if self.boundary_active_signature != active_signature:
+                    self.boundary_active_since = now
+                    self.boundary_active_signature = active_signature
+                self.boundary_slow_since = None
+                self.boundary_slow_sensor = None
+                if now - self.boundary_active_since >= BOUNDARY_TRIGGER_CONFIRM_SEC:
                     if active_set != self.confirmed_sensors:
-                        self.confirmed_sensors = active_set
+                        self.confirmed_sensors = set(active_set)
                         changed = True
                         self.get_logger().warn(
                             f"[RTKNav] 边界快触发：{sorted(active_set)}，"
                             f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
             elif num_active == 1:
-                self.boundary_slow_count += 1
-                self.boundary_active_count = 0
-                self.boundary_clear_count = 0
-                if self.boundary_slow_count >= BOUNDARY_SLOW_PERSIST_FRAMES:
-                    sensor_name = next(iter(active_set))
+                sensor_name = next(iter(active_set))
+                if self.boundary_slow_sensor != sensor_name:
+                    self.boundary_slow_since = now
+                    self.boundary_slow_sensor = sensor_name
+                self.boundary_active_since = None
+                self.boundary_active_signature = None
+                if now - self.boundary_slow_since >= BOUNDARY_SLOW_PERSIST_SEC:
                     if sensor_name not in self.confirmed_sensors:
                         self.confirmed_sensors.add(sensor_name)
                         changed = True
                         self.get_logger().warn(
-                            f"[RTKNav] 边界慢触发：{sensor_name} 持续{BOUNDARY_SLOW_PERSIST_FRAMES}帧 "
-                            f"({BOUNDARY_SLOW_PERSIST_FRAMES/10:.1f}s)")
+                            f"[RTKNav] 边界慢触发：{sensor_name} 持续"
+                            f"{BOUNDARY_SLOW_PERSIST_SEC:.1f}s")
             else:
-                self.boundary_active_count = 0
-                self.boundary_slow_count = 0
-                self.boundary_clear_count += 1
-                if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+                self.boundary_active_since = None
+                self.boundary_slow_since = None
+                self.boundary_active_signature = None
+                self.boundary_slow_sensor = None
+                if self.boundary_clear_since is None:
+                    self.boundary_clear_since = now
+                if now - self.boundary_clear_since >= BOUNDARY_CLEAR_CONFIRM_SEC:
                     if self.confirmed_sensors:
                         self.confirmed_sensors.clear()
                         changed = True
@@ -1818,9 +1845,11 @@ class RTKNavControlNode(Node):
             if changed:
                 self._update_blocked_directions()
         else:
-            self.boundary_active_count = 0
-            self.boundary_slow_count = 0
-            self.boundary_clear_count = 0
+            self.boundary_active_since = None
+            self.boundary_slow_since = None
+            self.boundary_clear_since = None
+            self.boundary_active_signature = None
+            self.boundary_slow_sensor = None
             if not self.boundary_correct_locked:
                 if self.confirmed_sensors:
                     self.confirmed_sensors.clear()
@@ -3175,6 +3204,7 @@ class RTKNavControlNode(Node):
         self.current_lat = nav_lat
         self.current_lon = nav_lon
         self.current_gps = (nav_lon, nav_lat)
+        self.gps_update_sequence += 1
         self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
@@ -3860,33 +3890,46 @@ class RTKNavControlNode(Node):
         # ========== 步骤2：初始航向对准（仅首次转向，后续用实时朝向角） ==========
         init_lon, init_lat = self.current_gps
         first_lon, first_lat, _ = first_waypoint
-        initial_bearing = self.calculate_bearing(init_lat, init_lon, first_lat, first_lon)
-        self.get_logger().info(f"初始点→第一个航点 初始朝向角：{initial_bearing:.2f}°")
-        
-        target_heading = initial_bearing
-        self.get_logger().info(f"开始初始航向对准：目标航向{target_heading:.2f}°")
-        heading_aligned = False
+        initially_at_waypoint = (
+            self.calc_distance_to_waypoint(first_waypoint) < INITIAL_MOVE_TOLERANCE
+        )
+        heading_aligned = initially_at_waypoint
         last_heading = None
-        try:
-            heading_aligned = yield from self._calibrate_with_boundary_retreat(
-                target_heading, first_waypoint, "初始航向对准", CalibOrigin.INITIAL_ALIGN)
-        except Exception as e:
-            self._pause_initial_heading_calibration_failure(f"执行异常: {e}")
-            yield (0.0, 0.0)
-            return False
-        if heading_aligned:
-            self.get_logger().info("初始航向对准完成, 开始实时纠偏直线行驶")
-            last_heading = (target_heading + 180) % 360 - 180
-            self.get_logger().info(f"记录初始旋转完成航向角：{last_heading:.2f}°")
+        if initially_at_waypoint:
+            # 已在首点容差内时，首段方位没有可靠长度；先停车并确认RTK位置。
+            self.get_logger().info(
+                "初始位置已在第一个航点容差内，跳过初始直线与首段航向对准，"
+                "停车确认后直接进行航点最终航向校准"
+            )
+            self.publish_stop_speed()
         else:
-            self._pause_initial_heading_calibration_failure("校准超时且误差仍未达标")
-            yield (0.0, 0.0)
-            return False
+            initial_bearing = self.calculate_bearing(init_lat, init_lon, first_lat, first_lon)
+            self.get_logger().info(f"初始点→第一个航点 初始朝向角：{initial_bearing:.2f}°")
+
+            target_heading = initial_bearing
+            self.get_logger().info(f"开始初始航向对准：目标航向{target_heading:.2f}°")
+            try:
+                heading_aligned = yield from self._calibrate_with_boundary_retreat(
+                    target_heading, first_waypoint, "初始航向对准", CalibOrigin.INITIAL_ALIGN)
+            except Exception as e:
+                self._pause_initial_heading_calibration_failure(f"执行异常: {e}")
+                yield (0.0, 0.0)
+                return False
+            if heading_aligned:
+                self.get_logger().info("初始航向对准完成, 开始实时纠偏直线行驶")
+                last_heading = (target_heading + 180) % 360 - 180
+                self.get_logger().info(f"记录初始旋转完成航向角：{last_heading:.2f}°")
+            else:
+                self._pause_initial_heading_calibration_failure("校准超时且误差仍未达标")
+                yield (0.0, 0.0)
+                return False
         
         # ========== 步骤3：Stanley控制器直线行驶 ==========
         last_distance = 0.0
         consecutive_threshold = 5
         consecutive_count = 0
+        arrival_hold_active = initially_at_waypoint
+        last_arrival_gps_sequence = self.gps_update_sequence
 
         last_left_speed = None
         last_right_speed = None
@@ -3908,8 +3951,36 @@ class RTKNavControlNode(Node):
                 last_distance = distance
 
             if distance < INITIAL_MOVE_TOLERANCE:
-                consecutive_count += 1
-                self.get_logger().info(f"距离达标, 连续计数：{consecutive_count}/{consecutive_threshold}")
+                arrival_hold_active = True
+
+            if arrival_hold_active:
+                # 命中阈值即发零速；仅新的车体中心RTK样本可推进确认计数。
+                self.publish_stop_speed()
+                if self.gps_update_sequence != last_arrival_gps_sequence:
+                    last_arrival_gps_sequence = self.gps_update_sequence
+                    if distance < INITIAL_MOVE_TOLERANCE:
+                        consecutive_count += 1
+                        self.get_logger().info(
+                            f"距离达标, 新RTK样本连续计数："
+                            f"{consecutive_count}/{consecutive_threshold}"
+                        )
+                    else:
+                        consecutive_count = 0
+                        self.get_logger().info(
+                            "首点确认期间RTK样本离开距离阈值，保持停车并重新计数"
+                        )
+                        if initially_at_waypoint:
+                            # 初始点实际在阈值外时，从最新位置重建有效路径段。
+                            initially_at_waypoint = False
+                            path_start = current_pos
+                            fixed_path_dir = self.calculate_path_bearing(
+                                current_lon, current_lat, first_lon, first_lat
+                            )
+                            self.get_logger().info(
+                                f"当前位置距首点{distance:.2f}m，"
+                                f"从新RTK位置恢复初始直线跟踪，方向={fixed_path_dir:.1f}°"
+                            )
+                        arrival_hold_active = False
                 if consecutive_count >= consecutive_threshold:
                     self.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f} m")
                     target_waypoint_heading = self.get_path_heading(first_waypoint)
@@ -3922,8 +3993,11 @@ class RTKNavControlNode(Node):
                     self.nav_context["calib_generator"] = None
                     self.nav_context["target_waypoint"] = None
                     return True
+                yield (0.0, 0.0)
+                continue
             else:
                 consecutive_count = 0
+                last_arrival_gps_sequence = self.gps_update_sequence
 
             if distance < LOW_DISTANCE:
                 speed_scale = max(0.3, distance / LOW_DISTANCE * 0.7)
@@ -4108,12 +4182,14 @@ class RTKNavControlNode(Node):
         self.boundary_correct_start_time = None
         self.boundary_correct_direction = None
         self.boundary_correct_locked = False
-        self.boundary_active_count = 0
-        self.boundary_clear_count = 0
+        self.boundary_active_since = None
+        self.boundary_clear_since = None
+        self.boundary_active_signature = None
         self.boundary_stop_published = False
         self.boundary_trigger_yaw = 0.0
         self.boundary_target_yaw = 0.0
-        self.boundary_slow_count = 0
+        self.boundary_slow_since = None
+        self.boundary_slow_sensor = None
         self.boundary_correction_start_time = None
         self._reset_boundary_cycle_tracking()
         self.confirmed_sensors.clear()
@@ -5526,9 +5602,8 @@ class RTKNavControlNode(Node):
             self.get_logger().warn("[AUTO航向门控] 等待当前路径目标，保持停车")
             return False
 
-        if self.stanley_path_direction is not None:
-            path_direction = self.stanley_path_direction
-        else:
+        path_direction = getattr(self, "stanley_path_direction", None)
+        if path_direction is None:
             target_lon, target_lat, _ = target_waypoint
             current_lon, current_lat = self.current_gps
             path_direction = self.calculate_bearing(

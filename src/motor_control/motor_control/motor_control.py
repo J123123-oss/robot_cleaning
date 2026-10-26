@@ -51,7 +51,7 @@ class RobotStateKey(Enum):
 STATE_DICT = {e.value: e.name for e in RobotStateKey}  # {'h':'HOLD', 'x':'ENABLE', 'u':'START'...}
 
 WHEEL_RADIUS = 0.05  # 驱动轮有效半径（m）。
-MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
+MAX_LINEAR_SPEED_MPS = 0.40  # 允许的最大车体线速度（m/s）。
 WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
 MAX_SPEED = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 遥控器最大轮速（r/min）。
 MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
@@ -65,9 +65,10 @@ SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 MOTOR_RAD_S_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 CH2_SENSITIVITY = 1.0  # 前进后退灵敏度
 
-# 防跌落输入在首个有效采样即触发；传感器释放即时生效
-BOUNDARY_TRIGGER_CONFIRM_FRAMES = 1
-BOUNDARY_CLEAR_CONFIRM_FRAMES = 2
+# 防跌落分层触发时间窗；与输入发布频率无关，避免50Hz时按帧数缩短保护时间。
+BOUNDARY_TRIGGER_CONFIRM_SEC = 0.3
+BOUNDARY_CLEAR_CONFIRM_SEC = 0.2
+BOUNDARY_SLOW_PERSIST_SEC = 0.5
 CH3_SENSITIVITY = 0.5  # 左右旋转灵敏度
 DEAD_ZONE = 0.08       # 控制死区
 RC_CH_MAX_VALUE = 1722
@@ -299,8 +300,11 @@ class MotorControlNode(Node):
         # 防跌落边界触发状态
         self.confirmed_sensors = set()     # 已确认触发的传感器名（经debounce后）
         self.blocked_directions = set()    # 基于confirmed_sensors计算的禁止方向
-        self.boundary_active_count = 0
-        self.boundary_clear_count = 0
+        self.boundary_active_since = None
+        self.boundary_clear_since = None
+        self.boundary_slow_since = None
+        self.boundary_active_signature = None
+        self.boundary_slow_sensor = None
 
         self.dock_sensors = 0  #停机仓传感器状态
         self._dock_sensor_blocked_logged_unloading = False
@@ -709,7 +713,7 @@ class MotorControlNode(Node):
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
             self.motor_ctrl.reconnect_can_bus()
-        # AIMotor 驱动由当前控制节点主动轮询，并发布最新反馈话题。
+        # AIMotor 后台线程负责 SDO 查询；这里仅发布已缓存的反馈快照。
         self.motor_ctrl.poll_feedback()
         if self.is_laser_timeout():
             now = time.time()
@@ -907,7 +911,7 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            # self.set_brush_speed(70.0)
+            self.set_brush_speed(70.0)
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -1203,7 +1207,8 @@ class MotorControlNode(Node):
 
     def io_data_callback(self, msg: UInt8):
         """实时更新传感器状态，并为手动控制执行边界保护。"""
-        self.last_io_update_time = time.monotonic()
+        now = time.monotonic()
+        self.last_io_update_time = now
         # 传感器位解析必须在所有控制模式下执行，sensors_status不能沿用旧值。
         # 低电平有效，bit=0表示触发，与rtk_nav保持一致。
         self.mid_left = (msg.data & 0x01) == 0x00
@@ -1223,9 +1228,16 @@ class MotorControlNode(Node):
         if self.is_in_bin_process or self.current_control_mode == "AUTO_CLEANING":
             self.confirmed_sensors.clear()
             self.blocked_directions.clear()
+            self.boundary_active_since = None
+            self.boundary_clear_since = None
+            self.boundary_slow_since = None
+            self.boundary_active_signature = None
+            self.boundary_slow_sensor = None
             return
 
-        # ---- 4传感器快速停车保护（mid/back × 左右）----
+        # ---- 4传感器分层触发（mid/back × 左右）----
+        same_row = (self.mid_left and self.mid_right) or (self.back_left and self.back_right)
+        same_side = (self.mid_left and self.back_left) or (self.mid_right and self.back_right)
         # 本帧触发的传感器列表
         active_set = set()
         if self.mid_left: active_set.add('mid_left')
@@ -1233,33 +1245,60 @@ class MotorControlNode(Node):
         if self.back_left: active_set.add('back_left')
         if self.back_right: active_set.add('back_right')
         num_active = len(active_set)
-        # 防跌落是安全输入：任一传感器有效时，不再等待空间组合或多帧去抖。
-        boundary_triggered = num_active > 0
+        spatial_consensus = same_row or same_side or num_active >= 3
 
         changed = False
-        # 已确认但当前帧不再触发的传感器 → 立即移除（去抖只防误加，不防移除）
+        # 已确认但当前帧不再触发的传感器也按时间去抖，避免50Hz下瞬时释放。
         stale = self.confirmed_sensors - active_set
         if stale:
-            self.confirmed_sensors -= stale
-            changed = True
-            self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
+            if self.boundary_clear_since is None:
+                self.boundary_clear_since = now
+            if now - self.boundary_clear_since >= BOUNDARY_CLEAR_CONFIRM_SEC:
+                self.confirmed_sensors -= stale
+                changed = True
+                self.get_logger().info(f"[Motor] 传感器释放：{sorted(stale)}")
+        else:
+            self.boundary_clear_since = None
 
-        if boundary_triggered:
-            # 首帧确认触发，立即更新方向限制并停车。
-            self.boundary_active_count += 1
-            self.boundary_clear_count = 0
-            if self.boundary_active_count >= BOUNDARY_TRIGGER_CONFIRM_FRAMES:
+        if spatial_consensus:
+            # 快通道：空间一致 → 持续0.3秒确认
+            active_signature = tuple(sorted(active_set))
+            if self.boundary_active_signature != active_signature:
+                self.boundary_active_since = now
+                self.boundary_active_signature = active_signature
+            self.boundary_slow_since = None
+            self.boundary_slow_sensor = None
+            if now - self.boundary_active_since >= BOUNDARY_TRIGGER_CONFIRM_SEC:
                 if active_set != self.confirmed_sensors:
-                    self.confirmed_sensors = active_set
+                    self.confirmed_sensors = set(active_set)
                     changed = True
                     self.get_logger().warn(
                         f"[Motor] 防跌落快触发：{sorted(active_set)}，"
                         f"mid=({self.mid_left},{self.mid_right}), back=({self.back_left},{self.back_right})")
+        elif num_active == 1:
+            # 慢通道：单传感器 → 持续0.5秒确认
+            sensor_name = next(iter(active_set))
+            if self.boundary_slow_sensor != sensor_name:
+                self.boundary_slow_since = now
+                self.boundary_slow_sensor = sensor_name
+            self.boundary_active_since = None
+            self.boundary_active_signature = None
+            if now - self.boundary_slow_since >= BOUNDARY_SLOW_PERSIST_SEC:
+                if sensor_name not in self.confirmed_sensors:
+                    self.confirmed_sensors.add(sensor_name)
+                    changed = True
+                    self.get_logger().warn(
+                        f"[Motor] 防跌落慢触发：{sensor_name} 持续"
+                        f"{BOUNDARY_SLOW_PERSIST_SEC:.1f}s")
         else:
-            # 无传感器触发 → 重置
-            self.boundary_active_count = 0
-            self.boundary_clear_count += 1
-            if self.boundary_clear_count >= BOUNDARY_CLEAR_CONFIRM_FRAMES:
+            # 无传感器触发 / 对角不匹配 → 重置
+            self.boundary_active_since = None
+            self.boundary_slow_since = None
+            self.boundary_active_signature = None
+            self.boundary_slow_sensor = None
+            if self.boundary_clear_since is None:
+                self.boundary_clear_since = now
+            if now - self.boundary_clear_since >= BOUNDARY_CLEAR_CONFIRM_SEC:
                 if self.confirmed_sensors:
                     self.confirmed_sensors.clear()
                     changed = True
@@ -2986,29 +3025,15 @@ def main(args=None):
             f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
         )
     finally:
-        # 退出时停止所有电机（原有清理逻辑）
         if motor_node:
             motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
-            for motor in motor_node.motor_ctrl.motors:
-                try:
-                    motor_node.motor_ctrl.motor_set_speed(motor["id"], 0.0)
-                    time.sleep(0.1)
-                    motor_node.motor_ctrl.motor_disable(motor["id"])
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 停止电机{motor['id']}失败：{str(e)}")
-                time.sleep(0.001)
-            if motor_node.motor_ctrl.bus and motor_node.motor_ctrl.bus is not None:
-                motor_node.get_logger().info("[ROSNode] 关闭CAN串口连接...")
-                try:
-                    motor_node.motor_ctrl.bus.shutdown()
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 关闭CAN串口失败：{str(e)}")
-            # try:
-            #     motor_node.sbus_remote.stop()
-            # except Exception as e:
-            #     motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
-        motor_node.destroy_node()
-        rclpy.shutdown()
+            try:
+                motor_node.motor_ctrl.destroy_node()
+            except Exception as e:
+                motor_node.get_logger().warn(f"[ROSNode] 电机驱动清理失败：{str(e)}")
+            motor_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
         print("[ROSNode] 电机控制节点退出完成")
 
 if __name__ == "__main__":

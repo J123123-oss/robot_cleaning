@@ -26,11 +26,11 @@ def _function(tree, name):
 
 class HeadingRecoveryGateContractTest(unittest.TestCase):
 
-    def test_stability_parameters_require_30_second_convergence(self):
+    def test_stability_parameters_require_15_second_convergence(self):
         source, _ = _source_tree()
 
-        self.assertIn("HEADING_STABILITY_SETTLE_WINDOW = 30.0", source)
-        self.assertIn("HEADING_STABILITY_SETTLE_RANGE = 1.0", source)
+        self.assertIn("HEADING_STABILITY_SETTLE_WINDOW = 15.0", source)
+        self.assertIn("HEADING_STABILITY_SETTLE_RANGE = 1.5", source)
         self.assertIn("AUTO_HEADING_GATE_TIMEOUT = 600.0", source)
 
     def test_heading_gate_requires_short_and_settle_windows(self):
@@ -48,8 +48,8 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         helper = ast.unparse(_function(tree, "_prepare_auto_cleaning_heading_gate"))
         timer = ast.unparse(_function(tree, "rtk_timer_callback"))
 
-        self.assertIn("INITIAL_HEADING_MIN = -100.0", source)
-        self.assertIn("INITIAL_HEADING_MAX = -80.0", source)
+        self.assertIn("INITIAL_HEADING_MIN = -180", source)
+        self.assertIn("INITIAL_HEADING_MAX = 180", source)
         self.assertIn("_auto_heading_gate_initial_direction_required", helper)
         self.assertIn("current_state == NavState.IDLE", helper)
         self.assertIn("not preserve_heading_history", helper)
@@ -70,8 +70,8 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         callback = ast.unparse(_function(tree, "heading_callback"))
         helper = ast.unparse(_function(tree, "_prepare_auto_cleaning_heading_gate"))
 
-        self.assertIn("HEADING_QUALITY_GAP_MAX = 3.0", source)
-        self.assertIn("HEADING_FIXED_CONFIRM_WINDOW = 1.0", source)
+        self.assertIn("HEADING_QUALITY_GAP_MAX = 15.0", source)
+        self.assertIn("HEADING_FIXED_CONFIRM_WINDOW = 8.0", source)
         self.assertIn("gap_elapsed > HEADING_QUALITY_GAP_MAX", callback)
         self.assertIn("self._heading_stability_history.clear()", callback)
         self.assertIn("self._auto_heading_gate_start_time = now", callback)
@@ -128,6 +128,16 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertIn("self.start_heading_recalibration", helper)
         self.assertIn("self.nav_context['nav_state'] = NavState.WAYPOINT_CALIB", helper)
 
+    def test_gate_release_handles_path_direction_before_first_segment(self):
+        _, tree = _source_tree()
+        initializer = ast.unparse(_function(tree, "__init__"))
+        helper = ast.unparse(_function(tree, "_start_auto_heading_gate_path_alignment"))
+
+        self.assertIn("self.stanley_path_direction = None", initializer)
+        self.assertIn("getattr", helper)
+        self.assertIn("stanley_path_direction", helper)
+        self.assertIn("self.calculate_bearing", helper)
+
     def test_initial_move_does_not_duplicate_heading_gate_inside_generator(self):
         _, tree = _source_tree()
         generator = ast.unparse(_function(tree, "multi_waypoint_nav_generator"))
@@ -135,6 +145,20 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertNotIn("_last_heading_stable", generator)
         self.assertNotIn("初始航向校验", generator)
         self.assertIn("current_nav_state = NavState.INITIAL_MOVE", generator)
+
+    def test_first_waypoint_arrival_stops_and_counts_fresh_rtk_samples(self):
+        _, tree = _source_tree()
+        initializer = ast.unparse(_function(tree, "__init__"))
+        callback = ast.unparse(_function(tree, "heading_callback"))
+        move = ast.unparse(_function(tree, "move_to_first_waypoint"))
+
+        self.assertIn("self.gps_update_sequence = 0", initializer)
+        self.assertIn("self.gps_update_sequence += 1", callback)
+        self.assertIn("last_arrival_gps_sequence", move)
+        self.assertIn("self.publish_stop_speed()", move)
+        self.assertIn("yield (0.0, 0.0)", move)
+        self.assertIn("initially_at_waypoint", move)
+        self.assertIn("停车确认后直接进行航点最终航向校准", move)
 
     def test_waypoint_attitude_change_restarts_auto_heading_gate(self):
         source, tree = _source_tree()
