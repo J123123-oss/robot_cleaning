@@ -438,7 +438,7 @@ def generate_launch_description():
         parameters=[
             {'gpio_chip': '/dev/gpiochip6'},
             {'gpio_lines': [9, 8, 7, 6]},
-            {'poll_interval': 0.1},
+            {'poll_interval': 0.01},
             {'gpio_use_sudo': False},
         ]
     )
