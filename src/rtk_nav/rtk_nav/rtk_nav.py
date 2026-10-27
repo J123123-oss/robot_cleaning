@@ -4066,12 +4066,6 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     return False
                 path_direction = current_bearing
-            elif t > 1.0:
-                self.nav_context["force_bearing_mode"] = True
-                self.nav_context["force_bearing_target"] = self.calculate_bearing(
-                    current_lat, current_lon, first_lat, first_lon
-                )
-                continue
             elif self.nav_context.get("bearing_mode_locked"):
                 path_direction = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
             else:
@@ -5040,12 +5034,6 @@ class RTKNavControlNode(Node):
                         yield (0.0, 0.0)
                         return
                     path_direction = current_bearing
-                elif t > 1.0:
-                    self.nav_context["force_bearing_mode"] = True
-                    self.nav_context["force_bearing_target"] = self.calculate_bearing(
-                        current_lat, current_lon, target_lat, target_lon
-                    )
-                    continue
                 elif self.nav_context.get("bearing_mode_locked"):
                     path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                 else:
