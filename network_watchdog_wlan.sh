@@ -10,10 +10,10 @@
 TARGET_IP="121.40.57.48"
 INTERFACE="wlan0"
 MAX_FAIL=3
-CHECK_INTERVAL=30
+CHECK_INTERVAL=10
 
 # 各级恢复的冷却计数（避免频繁核弹级恢复）
-L4_COOLDOWN=6       # 6 轮 × 30s = 3 分钟后才允许再次 L4
+L4_COOLDOWN=6       # 6 轮 × 10s = 1 分钟后才允许再次 L4
 l4_cooldown_remain=0
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }

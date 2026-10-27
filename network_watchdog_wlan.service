@@ -1,12 +1,12 @@
 [Unit]
 Description=Network Watchdog (wlan0 WiFi recovery)
-After=network.target
-Wants=network.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
 User=root
-ExecStart=/home/forlinx/robot_cleaning/network_watchdog_wlan.sh
+ExecStart=/bin/bash /home/forlinx/robot_cleaning/network_watchdog_wlan.sh
 Restart=always
 RestartSec=10
 
