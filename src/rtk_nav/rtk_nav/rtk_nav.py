@@ -341,7 +341,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 107.06  # RTK安装偏移角度（度），向右转为正
+        self.rtk_install_offset = 109.43  # RTK安装偏移角度（度），向右转为正
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
@@ -2873,14 +2873,21 @@ class RTKNavControlNode(Node):
         quality_loss_exceeded = has_rtk_quality_loss_exceeded(
             now, self._rtk_quality_loss_since
         )
+        orientation_quality_lost = (
+            active_nav
+            and position_data_valid
+            and position_status == 4
+            and orientation_status != 4
+        )
         if (
-            quality_loss_exceeded
+            (quality_loss_exceeded or orientation_quality_lost)
             and active_nav
             and not self._auto_heading_gate_pending
-            and not self.rtk_orientation_degraded
         ):
             self._prepare_auto_cleaning_heading_gate(
-                "RTK质量丢失", force=True, preserve_heading_history=True
+                "RTK定向非Fixed" if orientation_quality_lost else "RTK质量丢失",
+                force=True,
+                preserve_heading_history=True,
             )
 
         # AUTO门控期间机器人保持停车，只在此阶段采集稳定性样本。
@@ -3054,7 +3061,8 @@ class RTKNavControlNode(Node):
         quality_loss_debouncing = (
             active_nav
             and not self._auto_heading_gate_pending
-            and (not quality_loss_exceeded or self.rtk_orientation_degraded)
+            and not orientation_quality_lost
+            and not quality_loss_exceeded
         )
         if not self.rtk_solution_ready:
             self.set_rtk_error_bits(ERROR_RTK_NOT_FIXED)
@@ -3462,6 +3470,23 @@ class RTKNavControlNode(Node):
         cross = ap_dx * dy - ap_dy * dx
         lateral_error = cross / math.sqrt(len_sq)
         return lateral_error
+
+    def _speed_for_lateral_error_growth(self, base_speed: float,
+                                        lateral_error: float) -> float:
+        """横向误差连续增大时降速，给 Stanley 留出收敛时间。"""
+        if not math.isfinite(lateral_error):
+            return base_speed
+        abs_error = abs(lateral_error)
+        previous = self.nav_context.get("lateral_error_abs", abs_error)
+        if abs_error > previous + 0.03:
+            count = self.nav_context.get("lateral_error_growth_count", 0) + 1
+        else:
+            count = 0
+        self.nav_context["lateral_error_abs"] = abs_error
+        self.nav_context["lateral_error_growth_count"] = count
+        if count < 3:
+            return base_speed
+        return min(base_speed, LINEAR_SPEED_BASE * 0.5)
 
     def _get_projection_ratio(self, pos, path_start, path_end):
         """返回未clamp的投影比例 t：0=起点, 1=终点, >1=已越过终点"""
@@ -4020,6 +4045,10 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
+            lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
+            current_base_speed = self._speed_for_lateral_error_growth(
+                current_base_speed, lateral_error
+            )
             if self.nav_context.get("force_bearing_mode"):
                 current_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                 self.nav_context["force_bearing_target"] = current_bearing
@@ -4969,6 +4998,8 @@ class RTKNavControlNode(Node):
                     self.stanley_path_direction = self.calculate_path_bearing(
                         path_start_lon, path_start_lat, target_lon, target_lat
                     )
+                    self.nav_context["lateral_error_abs"] = 0.0
+                    self.nav_context["lateral_error_growth_count"] = 0
                     self.get_logger().info(
                         f"[Stanley] 航点{self.current_waypoint_idx}路径："
                         f"({path_start_lon:.6f}, {path_start_lat:.6f}) → ({target_lon:.6f}, {target_lat:.6f}), "
@@ -4985,6 +5016,12 @@ class RTKNavControlNode(Node):
 
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
+                lateral_error = self.calculate_lateral_error(
+                    current_pos, self.stanley_path_start, path_end
+                )
+                current_base_speed = self._speed_for_lateral_error_growth(
+                    current_base_speed, lateral_error
+                )
                 if self.nav_context.get("force_bearing_mode"):
                     # 实时算目标方位，偏差大则先原地旋转对准再走，偏差小直接跟
                     current_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
