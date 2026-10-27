@@ -3495,6 +3495,19 @@ class RTKNavControlNode(Node):
             self.nav_context["distance_increase_count"] = 0
         return False
 
+    def _reset_waypoint_tracking(self):
+        """切换目标后清除上一目标的 force_bearing 距离和计数状态。"""
+        self.nav_context["force_bearing_mode"] = False
+        self.nav_context["force_bearing_target"] = None
+        self.nav_context["force_bearing_recalib_count"] = 0
+        self.nav_context["force_bearing_min_distance"] = float("inf")
+        self.nav_context["distance_increase_count"] = 0
+        self.nav_context["angle_abnormal_count"] = 0
+        self.nav_context["waypoint_recalib_count"] = 0
+        self.nav_context["bearing_mode_locked"] = False
+        self.heading_abnormal_start_time = None
+        self.heading_timed_out = False
+
     def get_adaptive_stanley_k(self, velocity, distance_to_target):
         if distance_to_target < 1.3:
             return self.stanley_k_near_target
@@ -4535,6 +4548,7 @@ class RTKNavControlNode(Node):
                     if self.waypoints:
                         self.last_waypoint_cache = self.waypoints[0]
                     self.current_waypoint_idx = 1
+                    self._reset_waypoint_tracking()
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
                     self.stanley_path_start = None
@@ -4567,6 +4581,7 @@ class RTKNavControlNode(Node):
             # 但如果当前是航向校准阶段（is_angle_recalib），则不重置状态
             is_calib_state = self.nav_context.get("nav_state") == NavState.WAYPOINT_CALIB
             if self.current_waypoint_idx != last_waypoint_idx and not is_calib_state:
+                self._reset_waypoint_tracking()
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 self.stanley_path_start = None
