@@ -358,6 +358,7 @@ class RTKNavControlNode(Node):
         self.offset_calculated = False  # 偏移量是否已计算（避免重复计算）
 
         self.imu_initialized = False
+        self.raw_ins_heading = float("nan")
         self._waypoint_attitude_history = deque()  # (timestamp, angle_x, angle_y)
         self._waypoint_attitude_abnormal_count = 0
         self._heading_stability_history = deque()  # (timestamp, vehicle_heading_360)
@@ -2776,6 +2777,7 @@ class RTKNavControlNode(Node):
         )
 
         ins_heading_deg = msg.ins_heading
+        self.raw_ins_heading = float(ins_heading_deg)
         self.imu_yaw = ins_heading_deg  + self.rtk_install_offset # + x degree
         self.imu_yaw = math.fmod(self.imu_yaw + 180.0, 360.0) - 180.0
         self.imu_initialized = True
@@ -3596,6 +3598,14 @@ class RTKNavControlNode(Node):
         )
         now = time.monotonic()
         if now - self._last_stanley_log_time >= 1.0:
+            self.get_logger().info(
+                f"[航向诊断] raw_ins_heading={self.raw_ins_heading:+.3f}°, "
+                f"install_offset={self.rtk_install_offset:+.3f}°, "
+                f"imu_yaw={self.imu_yaw:+.3f}°, "
+                f"path_direction={path_direction:+.3f}°, "
+                f"heading_error={heading_error:+.3f}°, "
+                f"orientation_status={self.last_orientation_status}"
+            )
             self.get_logger().info(
                 f"stanley_correction={stanley_speed_diff:+.3f}, "
                 f"visual_angle_error_deg={self.visual_sample_heading_error_deg:+.3f}, "
