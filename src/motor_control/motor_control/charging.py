@@ -102,7 +102,7 @@ class Charging485Node(Node):
     def __init__(self):
         super().__init__('charging_485_node')
 
-        self.declare_parameter('serial_port', '/dev/ttyS4')
+        self.declare_parameter('serial_port', '/dev/battery_charging')
         self.declare_parameter('charge_baud_rate', 19200)
         self.declare_parameter('battery_baud_rate', 9600)
         self.declare_parameter('slave_addr', 0x02)
