@@ -13,14 +13,14 @@ def _function(name):
                 if isinstance(node, ast.FunctionDef) and node.name == name)
 
 
-def test_rtk_correction_is_limited_to_twenty_percent_of_wheel_speed():
+def test_rtk_correction_is_limited_to_fifteen_percent_of_wheel_speed():
     source = SOURCE.read_text(encoding="utf-8")
-    assert "RTK_MAX_CORRECTION_SPEED = MAX_WHEEL_SPEED_RPM * 0.20" in source
+    assert "RTK_MAX_CORRECTION_SPEED = MAX_WHEEL_SPEED_RPM * 0.15" in source
     helper = _function("combine_rtk_correction")
     namespace = {"math": __import__("math"), "Tuple": Tuple}
     exec(compile(ast.Module(body=[helper], type_ignores=[]), str(SOURCE), "exec"), namespace)
     combine = namespace["combine_rtk_correction"]
-    assert combine(45.0, 13.369015, 1.0) == (13.369015, 0.0, 13.369015)
+    assert combine(45.0, 10.026761, 1.0) == (10.026761, 0.0, 10.026761)
 
 
 def test_launch_has_no_visual_correction_or_camera_inputs():

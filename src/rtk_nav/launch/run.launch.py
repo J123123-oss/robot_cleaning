@@ -90,8 +90,8 @@ def generate_launch_description():
     # RTK/Stanley 纠偏速度上限（轮子输出轴 r/min）。
     declare_rtk_max_correction_arg = DeclareLaunchArgument(
         "rtk_max_correction",
-        default_value=TextSubstitution(text="13.369015"),
-        description="Maximum RTK correction: 20% of wheel output-shaft speed",
+        default_value=TextSubstitution(text="10.026761"),
+        description="Maximum RTK correction: 15% of wheel output-shaft speed",
     )
     declare_publish_debug_images_arg = DeclareLaunchArgument(
         "publish_debug_images",

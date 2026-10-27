@@ -68,7 +68,7 @@ TURN_SPEED_SLOW = 2.673803  # 航向误差较小时的转向基准速度（r/min
 MAX_CORRECTION = 13.369015  # 航向闭环附加纠偏量上限（r/min）。
 # RTK直线运行纠偏上限，单位为轮子输出轴 r/min。
 STRAIGHT_PID_SCALE = 2.0  # 2.0
-RTK_MAX_CORRECTION_SPEED = MAX_WHEEL_SPEED_RPM * 0.20  # RTK纠偏上限为车轮最高速度的20%。
+RTK_MAX_CORRECTION_SPEED = MAX_WHEEL_SPEED_RPM * 0.15  # RTK纠偏上限为车轮最高速度的15%。
 # 最终输出限幅不能超过 0.35 m/s 对应的轮子输出轴转速。
 RTK_OUTPUT_SPEED_LIMIT = MAX_WHEEL_SPEED_RPM  # 左右轮最终输出上限（r/min）。
 
