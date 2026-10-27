@@ -25,6 +25,36 @@ def crc16_modbus(data: bytes) -> bytes:
     return bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
 
+def bms_checksum(data: bytes) -> int:
+    """Return the two's-complement checksum used by the DD BMS protocol."""
+    return (-sum(data)) & 0xFFFF
+
+
+def parse_bms_response(data: bytes):
+    """Parse a C-compatible DD 03 BMS response into the published fields."""
+    if len(data) < 7 or data[0:3] != bytes((0xDD, 0x03, 0x00)):
+        return None
+    data_len = data[3]
+    frame_len = 7 + data_len
+    if data_len < 25 or len(data) < frame_len or data[frame_len - 1] != 0x77:
+        return None
+    checksum = (data[4 + data_len] << 8) | data[5 + data_len]
+    if bms_checksum(data[2:4 + data_len]) != checksum:
+        return None
+
+    raw_voltage = (data[4] << 8) | data[5]
+    raw_current = (data[6] << 8) | data[7]
+    if raw_current & 0x8000:
+        raw_current -= 0x10000
+    raw_temperature = (data[27] << 8) | data[28]
+    return {
+        'capacity_percent': float(data[23]),
+        'total_current': raw_current * 0.01,
+        'total_voltage': raw_voltage * 0.01,
+        'temperature': (raw_temperature - 2731) * 0.1,
+    }
+
+
 FAULT_CODE_MAP = {
     0x00: "无故障",  # 修复 KeyError:0
     0x01: "预留",
@@ -106,10 +136,7 @@ class Charging485Node(Node):
         self.last_battery_base_poll = 0.0
         self.last_battery_temp_poll = 0.0
 
-        self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 A1")
-        self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 B1")
-        # self.battery_base_cmd = bytes.fromhex(f"{self.battery_addr:02x} 04 00 00 00 03 B0 0B")
-        # self.battery_temp_cmd = bytes.fromhex(f"{self.battery_addr:02x} 03 00 50 00 01 84 1B")
+        self.battery_base_cmd = bytes.fromhex("DD A5 03 00 FF FD 77")
         self.volt_curr_pub = self.create_publisher(Float32MultiArray, 'charging_volt_curr', 10)
         self.fault_code_pub = self.create_publisher(Int16, 'charging_fault_code', 10)
         self.battery_pub = self.create_publisher(Float32MultiArray, '/battery_data', 10)
@@ -217,19 +244,15 @@ class Charging485Node(Node):
         self._process_battery_buffer()
 
     def _process_battery_buffer(self):
-        while len(self.battery_buffer) >= 3:
-            if self.battery_buffer[0] != self.battery_addr:
+        while len(self.battery_buffer) >= 4:
+            if self.battery_buffer[0] != 0xDD:
                 del self.battery_buffer[0]
                 continue
 
-            func_code = self.battery_buffer[1]
-            if func_code == 0x04:
-                frame_length = 11
-            elif func_code == 0x03:
-                frame_length = 7
-            else:
+            if self.battery_buffer[1:3] != bytes((0x03, 0x00)):
                 del self.battery_buffer[0]
                 continue
+            frame_length = 7 + self.battery_buffer[3]
 
             if len(self.battery_buffer) < frame_length:
                 return
@@ -237,51 +260,12 @@ class Charging485Node(Node):
             frame = bytes(self.battery_buffer[:frame_length])
             del self.battery_buffer[:frame_length]
 
-            if func_code == 0x04:
-                battery_data = self._parse_battery_base_response(frame)
-                if battery_data:
-                    self._publish_battery_data(battery_data)
-            else:
-                self._parse_battery_temp_response(frame)
+            battery_data = parse_bms_response(frame)
+            if battery_data:
+                self._publish_battery_data(battery_data)
 
     def _parse_battery_base_response(self, data: bytes):
-        if len(data) != 11 or data[0] != self.battery_addr or data[1] != 0x04 or data[2] != 0x06:
-            return None
-        if crc16_modbus(data[:-2]) != data[-2:]:
-            self.get_logger().warn("Battery base CRC check failed")
-            return None
-
-        capacity_raw = (data[3] << 8) | data[4]
-        current_raw = (data[5] << 8) | data[6]
-        voltage_raw = (data[7] << 8) | data[8]
-
-        if current_raw > 0x7FFF:
-            current_raw -= 0x10000
-
-        battery_data = {
-            'capacity_percent': capacity_raw * 0.01,
-            'total_current': current_raw * 0.01,
-            'total_voltage': voltage_raw * 0.01,
-            'temperature': self.latest_battery_temp,
-        }
-
-        if battery_data['total_voltage'] < 5.0 or battery_data['total_voltage'] > 60.0:
-            self.get_logger().warn(f"Battery voltage out of range: {battery_data['total_voltage']:.2f}V")
-            return None
-        return battery_data
-
-    def _parse_battery_temp_response(self, data: bytes):
-        if len(data) != 7 or data[0] != self.battery_addr or data[1] != 0x03 or data[2] != 0x02:
-            return None
-        if crc16_modbus(data[:-2]) != data[-2:]:
-            self.get_logger().warn("Battery temp CRC check failed")
-            return None
-
-        temp_raw = (data[3] << 8) | data[4]
-        if temp_raw & 0x8000:
-            temp_raw -= 0x10000
-        self.latest_battery_temp = temp_raw * 0.1
-        return self.latest_battery_temp
+        return parse_bms_response(data)
 
     def _publish_battery_data(self, battery_data):
         msg = Float32MultiArray()
@@ -327,12 +311,6 @@ class Charging485Node(Node):
             fault_msg.data = fault_code
             self.fault_code_pub.publish(fault_msg)
             self.last_charge_poll = now
-
-        if now - self.last_battery_temp_poll >= self.battery_temp_poll_interval:
-            if self._send_battery_cmd(self.battery_temp_cmd):
-                time.sleep(0.05)
-                self._read_battery_frames()
-            self.last_battery_temp_poll = now
 
         if now - self.last_battery_base_poll >= self.battery_base_poll_interval:
             if self._send_battery_cmd(self.battery_base_cmd):

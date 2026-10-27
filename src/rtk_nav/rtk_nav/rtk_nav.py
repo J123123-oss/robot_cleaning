@@ -193,15 +193,15 @@ ERROR_CALIB_TIMEOUT = 128    # 航向校准卡滞/超时及相关人工介入故
 # 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
 HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
-HEADING_STABILITY_SETTLE_WINDOW = 15.0  # 慢漂移收敛窗口（秒）原先30
-HEADING_STABILITY_SETTLE_RANGE = 1.5    # 收敛窗口内最大允许变化（度）原先1.0
+HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
+HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
 # 保留少量边界余量，避免滚动队列在窗口边界时先删掉首帧，导致窗口永远无法 ready。
 HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
 # 短时定向失锁可保留航向稳定资格；稳定的定位Fixed/定向Float可降速运行，
 # 未满足降级条件的质量丢失持续超过去抖时间后才进入暂停。
-HEADING_QUALITY_GAP_MAX = 15.0        # 可桥接的最长非 Fixed 间隔（秒）3.0
-HEADING_FIXED_CONFIRM_WINDOW = 8.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）1.0
-RTK_QUALITY_LOSS_DEBOUNCE = 8.0       # RTK非Fixed持续此时长后才暂停导航（秒）5.0
+HEADING_QUALITY_GAP_MAX = 3.0        # 可桥接的最长非 Fixed 间隔（秒）
+HEADING_FIXED_CONFIRM_WINDOW = 1.0     # 短时桥接恢复双 Fixed 后的停车确认时间（秒）
+RTK_QUALITY_LOSS_DEBOUNCE = 2.0     # RTK非Fixed持续此时长后才暂停导航（秒）
 RTK_FALLBACK_QUALITY_LOSS_DELAY = 0.3
 RTK_FALLBACK_SENSOR_MAX_AGE = 0.25
 RTK_FALLBACK_SPEED_SCALE = 0.20
@@ -341,7 +341,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = -180.0 #-90.0    #-90.0(old)  # RTK安装偏移角度,向右转+90度
+        self.rtk_install_offset = 107.06  # RTK安装偏移角度（度），向右转为正
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
