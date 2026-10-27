@@ -3970,7 +3970,21 @@ class RTKNavControlNode(Node):
             current_base_speed = self._speed_for_lateral_error_growth(
                 current_base_speed, lateral_error
             )
-            if self.nav_context.get("force_bearing_mode"):
+            # 首点最后30cm只确认位置，不再追逐实时目标方位，避免
+            # force_bearing 在目标附近随厘米级RTK噪声形成航向极限环。
+            near_first_waypoint = distance < 0.30
+            if near_first_waypoint and self.nav_context.get("force_bearing_mode"):
+                self.nav_context["force_bearing_mode"] = False
+                self.nav_context["force_bearing_target"] = None
+                self.nav_context["force_bearing_recalib_count"] = 0
+                self.nav_context["force_bearing_min_distance"] = float("inf")
+                self.nav_context["angle_abnormal_count"] = 0
+                self.nav_context["waypoint_recalib_count"] = 0
+                self.get_logger().info(
+                    f"[Stanley] 首点距离{distance:.2f}m，退出force_bearing，"
+                    "保持固定接入方向等待位置确认"
+                )
+            if self.nav_context.get("force_bearing_mode") and not near_first_waypoint:
                 current_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                 self.nav_context["force_bearing_target"] = current_bearing
                 bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
@@ -4035,7 +4049,7 @@ class RTKNavControlNode(Node):
             heading_err = self.normalize_angle(path_direction - self.imu_yaw)
             # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
             in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
-            if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
+            if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD and not near_first_waypoint:
                 if not in_bearing_mode and not self.boundary_correct_locked:
                     self.nav_context["angle_abnormal_count"] += 1
                     if self.heading_abnormal_start_time is None:
