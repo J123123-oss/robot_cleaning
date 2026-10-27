@@ -343,7 +343,7 @@ def generate_launch_description():
 
     ld.add_action(sensors_485_node)
     # ld.add_action(laser_node)
-    # ld.add_action(charging_node)
+    ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)
     ld.add_action(rtk_navigator)
     # # 若需要启用注释的节点，取消以下对应行的注释
