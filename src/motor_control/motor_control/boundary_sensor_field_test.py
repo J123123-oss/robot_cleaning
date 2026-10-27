@@ -17,7 +17,9 @@ from rcl_interfaces.msg import ParameterType
 from rclpy.node import Node
 from rclpy.parameter_client import AsyncParameterClient
 from rclpy.signals import SignalHandlerOptions
+from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, Float32, Float32MultiArray, Float64MultiArray, String, UInt8
+from custom_msgs.msg import WTRTK
 
 
 MAX_LINEAR_SPEED_MPS = 0.35
@@ -40,10 +42,11 @@ IMU_TIMEOUT_SEC = 0.35
 CONTROL_PERIOD_SEC = 0.05
 SENSOR_NAMES = ("mid_left", "mid_right", "back_left", "back_right")
 EMERGENCY_STOP_TIMEOUT_SEC = 3.0
+RTK_STATUS_MAX_AGE_SEC = 2.0
 
 
 class BoundaryTestNode(Node):
-    def __init__(self, use_heading_feedback=True):
+    def __init__(self, use_heading_feedback=True, record_rtk=False):
         super().__init__("boundary_sensor_field_test")
         self.io_raw = None
         self.io_time = None
@@ -69,6 +72,25 @@ class BoundaryTestNode(Node):
         self.imu_heading_time = None
         self.imu_heading_wall_time = None
         self.imu_heading_seq = 0
+        self.record_rtk_enabled = bool(record_rtk)
+        self.record_rtk_active = False
+        self.rtk_fix = None
+        self.rtk_fix_monotonic = None
+        self.rtk_wtrtk = None
+        self.rtk_wtrtk_monotonic = None
+        self.rtk_sample_rows = deque()
+        self.rtk_sample_seq = 0
+        self.rtk_fix_sample_count = 0
+        self.rtk_fixed_sample_count = 0
+        self.rtk_status_sample_count = 0
+        self.rtk_motion_phase = "READY"
+        self.rtk_motion_direction = ""
+        self.rtk_command_left_rpm = None
+        self.rtk_command_right_rpm = None
+        self.rtk_record_writer = None
+        self.rtk_record_file = None
+        self.rtk_record_metadata = {}
+        self.rtk_last_flush_monotonic = 0.0
         self.boundary_test_status = None
         self.rtk_parameter_client = (
             AsyncParameterClient(self, "/rtk_nav")
@@ -87,6 +109,11 @@ class BoundaryTestNode(Node):
         if use_heading_feedback:
             self.create_subscription(
                 Float32, "/imu_heading", self._imu_heading_callback, 10
+            )
+        if self.record_rtk_enabled:
+            self.create_subscription(NavSatFix, "/fix", self._rtk_fix_callback, 20)
+            self.create_subscription(
+                WTRTK, "/wtrtk_data", self._rtk_wtrtk_callback, 20
             )
         self.create_subscription(
             String, "/boundary_test/status", self._boundary_test_status_callback, 10
@@ -118,6 +145,165 @@ class BoundaryTestNode(Node):
         self.imu_heading_time = time.monotonic()
         self.imu_heading_wall_time = time.time()
         self.imu_heading_seq += 1
+
+    def _rtk_fix_callback(self, msg):
+        received_monotonic = time.monotonic()
+        received_wall_time = time.time()
+        self.rtk_fix = msg
+        self.rtk_fix_monotonic = received_monotonic
+        if not self.record_rtk_active:
+            return
+
+        wtrtk = self.rtk_wtrtk
+        wtrtk_age_sec = (
+            received_monotonic - self.rtk_wtrtk_monotonic
+            if self.rtk_wtrtk_monotonic is not None else None
+        )
+        status_fresh = (
+            wtrtk is not None
+            and wtrtk_age_sec is not None
+            and 0.0 <= wtrtk_age_sec <= RTK_STATUS_MAX_AGE_SEC
+        )
+        stamp = msg.header.stamp
+        self.rtk_sample_seq += 1
+        self.rtk_fix_sample_count += 1
+        position_fixed = bool(
+            status_fresh
+            and wtrtk.position_data_valid
+            and wtrtk.position_status == 4
+        )
+        if position_fixed:
+            self.rtk_fixed_sample_count += 1
+        self.rtk_sample_rows.append({
+            **self.rtk_record_metadata,
+            "event": "RTK_SAMPLE",
+            "phase": self.rtk_motion_phase,
+            "direction": self.rtk_motion_direction,
+            "sample_time": datetime.fromtimestamp(
+                received_wall_time
+            ).astimezone().isoformat(timespec="milliseconds"),
+            "io_raw_sample": (
+                f"0x{self.io_raw:02x}" if self.io_raw is not None else ""
+            ),
+            "triggered_mask_sample": (
+                f"0x{self.triggered_mask:02x}"
+                if self.triggered_mask is not None else ""
+            ),
+            "command_left_rpm": (
+                f"{self.rtk_command_left_rpm:.3f}"
+                if self.rtk_command_left_rpm is not None else ""
+            ),
+            "command_right_rpm": (
+                f"{self.rtk_command_right_rpm:.3f}"
+                if self.rtk_command_right_rpm is not None else ""
+            ),
+            "rtk_sample_index": self.rtk_sample_seq,
+            "rtk_fix_stamp_sec": stamp.sec,
+            "rtk_fix_stamp_nanosec": stamp.nanosec,
+            "rtk_status_stamp_sec": wtrtk.header.stamp.sec if wtrtk else "",
+            "rtk_status_stamp_nanosec": (
+                wtrtk.header.stamp.nanosec if wtrtk else ""
+            ),
+            "rtk_frame_id": msg.header.frame_id,
+            "rtk_latitude": f"{msg.latitude:.10f}",
+            "rtk_longitude": f"{msg.longitude:.10f}",
+            "rtk_altitude": f"{msg.altitude:.3f}",
+            "rtk_fix_status": msg.status.status,
+            "rtk_service": msg.status.service,
+            "rtk_covariance_type": msg.position_covariance_type,
+            "rtk_position_status": wtrtk.position_status if wtrtk else "",
+            "rtk_position_data_valid": (
+                wtrtk.position_data_valid if wtrtk else ""
+            ),
+            "rtk_orientation_status": wtrtk.fix_status if wtrtk else "",
+            "rtk_ins_heading_deg": (
+                f"{wtrtk.ins_heading:.3f}" if wtrtk else ""
+            ),
+            "rtk_ins_speed_kmh": (
+                f"{wtrtk.ins_speed:.3f}" if wtrtk else ""
+            ),
+            "rtk_gps_heading": wtrtk.gps_heading if wtrtk else "",
+            "rtk_wtrtk_age_ms": (
+                f"{wtrtk_age_sec * 1000.0:.1f}"
+                if wtrtk_age_sec is not None else ""
+            ),
+            "rtk_status_fresh": status_fresh,
+            "rtk_position_fixed": position_fixed,
+        })
+
+    def _rtk_wtrtk_callback(self, msg):
+        self.rtk_wtrtk = msg
+        self.rtk_wtrtk_monotonic = time.monotonic()
+        if not self.record_rtk_active:
+            return
+        if (
+            msg.position_data_valid
+            and msg.position_status == 4
+            and msg.fix_status == 4
+        ):
+            return
+
+        received_wall_time = time.time()
+        self.rtk_sample_seq += 1
+        self.rtk_status_sample_count += 1
+        self.rtk_sample_rows.append({
+            **self.rtk_record_metadata,
+            "event": "RTK_STATUS",
+            "phase": self.rtk_motion_phase,
+            "direction": self.rtk_motion_direction,
+            "sample_time": datetime.fromtimestamp(
+                received_wall_time
+            ).astimezone().isoformat(timespec="milliseconds"),
+            "io_raw_sample": (
+                f"0x{self.io_raw:02x}" if self.io_raw is not None else ""
+            ),
+            "triggered_mask_sample": (
+                f"0x{self.triggered_mask:02x}"
+                if self.triggered_mask is not None else ""
+            ),
+            "command_left_rpm": (
+                f"{self.rtk_command_left_rpm:.3f}"
+                if self.rtk_command_left_rpm is not None else ""
+            ),
+            "command_right_rpm": (
+                f"{self.rtk_command_right_rpm:.3f}"
+                if self.rtk_command_right_rpm is not None else ""
+            ),
+            "rtk_sample_index": self.rtk_sample_seq,
+            "rtk_status_stamp_sec": msg.header.stamp.sec,
+            "rtk_status_stamp_nanosec": msg.header.stamp.nanosec,
+            "rtk_frame_id": msg.header.frame_id,
+            "rtk_position_status": msg.position_status,
+            "rtk_position_data_valid": msg.position_data_valid,
+            "rtk_orientation_status": msg.fix_status,
+            "rtk_ins_heading_deg": f"{msg.ins_heading:.3f}",
+            "rtk_ins_speed_kmh": f"{msg.ins_speed:.3f}",
+            "rtk_gps_heading": msg.gps_heading,
+            "rtk_wtrtk_age_ms": "0.0",
+            "rtk_status_fresh": True,
+            "rtk_position_fixed": bool(
+                msg.position_data_valid and msg.position_status == 4
+            ),
+        })
+
+    def configure_rtk_recording(
+        self, writer, log_file, active=False, metadata=None
+    ):
+        self.rtk_record_writer = writer
+        self.rtk_record_file = log_file
+        self.rtk_record_metadata = dict(metadata or {})
+        self.record_rtk_active = bool(active and self.record_rtk_enabled)
+        self.rtk_last_flush_monotonic = time.monotonic()
+
+    def flush_rtk_samples(self):
+        if self.rtk_record_writer is None or not self.rtk_sample_rows:
+            return
+        while self.rtk_sample_rows:
+            self.rtk_record_writer.writerow(self.rtk_sample_rows.popleft())
+        now = time.monotonic()
+        if now - self.rtk_last_flush_monotonic >= 1.0:
+            self.rtk_record_file.flush()
+            self.rtk_last_flush_monotonic = now
 
     def _boundary_test_status_callback(self, msg):
         self.boundary_test_status = msg.data.strip().upper()
@@ -219,7 +405,15 @@ class BoundaryTestNode(Node):
 def spin_for(node, seconds):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline and rclpy.ok():
-        rclpy.spin_once(node, timeout_sec=min(0.05, max(0.0, deadline - time.monotonic())))
+        spin_node_once(
+            node,
+            timeout_sec=min(0.05, max(0.0, deadline - time.monotonic())),
+        )
+
+
+def spin_node_once(node, timeout_sec):
+    rclpy.spin_once(node, timeout_sec=timeout_sec)
+    node.flush_rtk_samples()
 
 
 def stop_and_wait_after_interrupt(node, stop_rpm, started):
@@ -244,7 +438,7 @@ def stop_and_wait_after_interrupt(node, stop_rpm, started):
             node.publish_test_control(False)
             next_stop_publish = now + 0.1
 
-        rclpy.spin_once(node, timeout_sec=0.02)
+        spin_node_once(node, timeout_sec=0.02)
         current_pair_seq = {
             motor_id: node.velocity_feedback_seq.get(motor_id, 0)
             for motor_id in (1, 2)
@@ -304,7 +498,7 @@ def stop_and_wait_after_interrupt(node, stop_rpm, started):
 def await_future(node, future, timeout_sec=3.0):
     deadline = time.monotonic() + timeout_sec
     while rclpy.ok() and not future.done() and time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
+        spin_node_once(node, timeout_sec=0.05)
     if not future.done():
         raise RuntimeError("读取 /rtk_nav 参数超时")
     return future.result()
@@ -420,7 +614,7 @@ def capture_target_heading(node, capture_sec=1.5):
     samples = []
     last_seq = node.imu_heading_seq
     while rclpy.ok() and time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
+        spin_node_once(node, timeout_sec=0.05)
         if node.imu_heading_seq != last_seq:
             last_seq = node.imu_heading_seq
             samples.append(node.imu_heading_deg)
@@ -452,7 +646,7 @@ def await_test_control_active(node, timeout_sec=3.0):
     node.publish_test_control(True)
     deadline = time.monotonic() + timeout_sec
     while rclpy.ok() and time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
+        spin_node_once(node, timeout_sec=0.05)
         if node.boundary_test_status == "ACTIVE":
             return
         if node.boundary_test_status and node.boundary_test_status != "STOPPED":
@@ -477,7 +671,7 @@ def hold_test_control(node, seconds):
         if now >= next_publish:
             node.publish_test_speed(0.0, 0.0, 0)
             next_publish = now + 0.1
-        rclpy.spin_once(node, timeout_sec=0.02)
+        spin_node_once(node, timeout_sec=0.02)
 
 
 def calculate_heading_command(args, direction, target_heading, current_heading):
@@ -521,6 +715,10 @@ def parse_args():
     parser.add_argument(
         "--mode", choices=("back-and-forth", "boundary-loop"),
         default="back-and-forth", help="运动模式（默认back-and-forth）",
+    )
+    parser.add_argument(
+        "--record-rtk", action="store_true",
+        help="边界绕行时把RTK原始位置、定位/定向状态写入当前CSV",
     )
     parser.add_argument("--round-trips", type=int, default=3, help="往返次数（默认3）")
     parser.add_argument(
@@ -583,6 +781,8 @@ def parse_args():
     parser.add_argument("--stop-rpm", type=float, default=1.0, help="轮子停稳阈值（绝对转速RPM）")
     parser.add_argument("--log-dir", default="~/robot_cleaning/test_logs", help="CSV日志目录")
     args = parser.parse_args()
+    if args.record_rtk and args.mode != "boundary-loop":
+        parser.error("--record-rtk 只适用于 --mode boundary-loop")
     if args.speed_scale is None:
         args.speed_scale = (
             DEFAULT_BOUNDARY_SPEED_SCALE
@@ -644,12 +844,50 @@ def require_runtime_ready(
         raise RuntimeError("启动前驱动轮还在转；请先让车停稳")
 
 
+def require_rtk_record_ready(node):
+    now = time.monotonic()
+    if (
+        node.rtk_fix is None
+        or node.rtk_fix_monotonic is None
+        or now - node.rtk_fix_monotonic > RTK_STATUS_MAX_AGE_SEC
+    ):
+        raise RuntimeError("RTK记录已启用，但 /fix 没有新鲜数据；未开始运动")
+    if (
+        node.rtk_wtrtk is None
+        or node.rtk_wtrtk_monotonic is None
+        or now - node.rtk_wtrtk_monotonic > RTK_STATUS_MAX_AGE_SEC
+    ):
+        raise RuntimeError(
+            "RTK记录已启用，但 /wtrtk_data 没有新鲜状态；未开始运动"
+        )
+    if (
+        node.rtk_fix.status.status != 4
+        or not node.rtk_wtrtk.position_data_valid
+        or node.rtk_wtrtk.position_status != 4
+        or not math.isfinite(node.rtk_fix.latitude)
+        or not math.isfinite(node.rtk_fix.longitude)
+        or node.rtk_fix.latitude == 0.0
+        or node.rtk_fix.longitude == 0.0
+    ):
+        raise RuntimeError(
+            "RTK记录已启用，但当前位置不是有效RTK固定解"
+            f"（/fix={node.rtk_fix.status.status}, "
+            f"position_status={node.rtk_wtrtk.position_status}, "
+            f"valid={node.rtk_wtrtk.position_data_valid}）；未开始运动"
+        )
+
+
 def wait_for_stop(
     node, args, direction, direction_mask, leg_timeout, target_heading,
     writer, common_row, log_file, abort_mask=0, initial_trigger=None,
     record_imu=True,
 ):
     leg_start = time.monotonic()
+    if initial_trigger and args.mode == "boundary-loop":
+        node.rtk_motion_phase = "EDGE_STOPPING"
+        node.rtk_motion_direction = "STOP"
+        node.rtk_command_left_rpm = 0.0
+        node.rtk_command_right_rpm = 0.0
     trigger_time = initial_trigger["monotonic"] if initial_trigger else None
     trigger_wall_time = initial_trigger["wall_time"] if initial_trigger else None
     raw_at_trigger = initial_trigger["raw"] if initial_trigger else None
@@ -691,7 +929,7 @@ def wait_for_stop(
     }
 
     while rclpy.ok():
-        rclpy.spin_once(node, timeout_sec=0.005)
+        spin_node_once(node, timeout_sec=0.005)
         now = time.monotonic()
         if node.boundary_test_status != "ACTIVE":
             node.publish_test_speed(0.0, 0.0, 0)
@@ -1005,6 +1243,10 @@ def run_boundary_motion_phase(
     left_speed, right_speed, direction_code = calculate_boundary_motion_command(
         args, motion
     )
+    node.rtk_motion_phase = phase
+    node.rtk_motion_direction = motion
+    node.rtk_command_left_rpm = left_speed
+    node.rtk_command_right_rpm = right_speed
     motion_start = time.monotonic()
     next_command_at = 0.0
     last_sample_at = 0.0
@@ -1074,7 +1316,7 @@ def run_boundary_motion_phase(
                 )
                 last_terminal_log = now
             next_command_at = now + CONTROL_PERIOD_SEC
-        rclpy.spin_once(node, timeout_sec=0.01)
+        spin_node_once(node, timeout_sec=0.01)
 
     node.publish_test_speed(0.0, 0.0, 0)
     return "INTERRUPTED", None, time.monotonic() - motion_start
@@ -1164,6 +1406,10 @@ def retreat_from_boundary(node, args, run_start, writer, log_file, common_row):
     left_speed, right_speed, direction_code = calculate_boundary_motion_command(
         args, "BACKWARD"
     )
+    node.rtk_motion_phase = "RETREAT_STRAIGHT"
+    node.rtk_motion_direction = "BACKWARD"
+    node.rtk_command_left_rpm = left_speed
+    node.rtk_command_right_rpm = right_speed
     next_command_at = 0.0
     last_sample_at = 0.0
     last_terminal_log = 0.0
@@ -1211,7 +1457,7 @@ def retreat_from_boundary(node, args, run_start, writer, log_file, common_row):
                 )
                 last_terminal_log = now
             next_command_at = now + CONTROL_PERIOD_SEC
-        rclpy.spin_once(node, timeout_sec=0.01)
+        spin_node_once(node, timeout_sec=0.01)
 
     node.publish_test_speed(0.0, 0.0, 0)
     elapsed = time.monotonic() - retreat_start
@@ -1528,7 +1774,10 @@ def main():
     # Let Python raise KeyboardInterrupt on Ctrl+C without rclpy first shutting
     # down the context; the finally block needs live ROS publishers to stop.
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    node = BoundaryTestNode(use_heading_feedback=args.mode == "back-and-forth")
+    node = BoundaryTestNode(
+        use_heading_feedback=args.mode == "back-and-forth",
+        record_rtk=args.record_rtk,
+    )
     log_file = None
     started = False
     control_requested = False
@@ -1581,11 +1830,26 @@ def main():
         "triggered_mask_sample", "sample_motor_id", "sample_actual_rpm",
         "sample_since_zero_can_send_ms", "sample_since_zero_topic_ms",
         "result", "io_raw_at_trigger",
+        "rtk_sample_index", "rtk_fix_stamp_sec", "rtk_fix_stamp_nanosec",
+        "rtk_status_stamp_sec", "rtk_status_stamp_nanosec",
+        "rtk_frame_id", "rtk_latitude", "rtk_longitude", "rtk_altitude",
+        "rtk_fix_status", "rtk_service", "rtk_covariance_type",
+        "rtk_position_status", "rtk_position_data_valid",
+        "rtk_orientation_status", "rtk_ins_heading_deg", "rtk_ins_speed_kmh",
+        "rtk_gps_heading", "rtk_wtrtk_age_ms", "rtk_status_fresh",
+        "rtk_position_fixed",
     ]
     writer = None
 
     try:
         require_runtime_ready(node)
+        if args.record_rtk:
+            require_rtk_record_ready(node)
+            print(
+                "RTK采集就绪：位置固定解；"
+                f"定向状态={node.rtk_wtrtk.fix_status}，"
+                f"原始INS航向={node.rtk_wtrtk.ins_heading:.2f}°。"
+            )
         rtk_max_correction = None
         rtk_correction_ratio = None
         if args.mode == "back-and-forth":
@@ -1615,7 +1879,13 @@ def main():
                 f"后退释放超时 {args.retreat_timeout_sec:.1f}s，"
                 f"前弧最短目标 {args.advance_sec:.2f}s"
             )
-            print("本模式不读取或使用 IMU 航向与 RTK 参数。")
+            if args.record_rtk:
+                print(
+                    "RTK记录已启用：只被动记录 /fix 原始坐标和 /wtrtk_data 状态；"
+                    "RTK不参与运动控制，失锁样本会保留并标记无效。"
+                )
+            else:
+                print("本模式不读取或使用 IMU 航向与 RTK 参数。")
         else:
             print(f"往返次数: {args.round_trips}，每段停顿: {args.pause_sec:.1f} 秒")
             print(
@@ -1630,7 +1900,10 @@ def main():
             )
         print(f"日志文件: {log_path}")
         if args.mode == "boundary-loop":
-            print("确认机器人在平整、安全、可控的测试场地；边界模式不需要 RTK 或 IMU。")
+            if args.record_rtk:
+                print("确认 RTK 已固定解、机器人在安全场地；记录点是RTK天线原始位置。")
+            else:
+                print("确认机器人在平整、安全、可控的测试场地；边界模式不需要 RTK 或 IMU。")
         else:
             print("确认机器人在平整、安全、可控的测试场地；GO 后会静止采集当前 IMU 航向作为目标。")
         if input("输入 GO 开始运动，其他输入取消：").strip() != "GO":
@@ -1642,6 +1915,28 @@ def main():
         writer = csv.DictWriter(log_file, fieldnames=fieldnames)
         writer.writeheader()
         log_file.flush()
+        if args.record_rtk:
+            node.configure_rtk_recording(
+                writer,
+                log_file,
+                active=True,
+                metadata={
+                    "run_timestamp": run_timestamp,
+                    "mode": args.mode,
+                    "run_time_sec": args.run_time_sec,
+                    "boundary_side": args.boundary_side,
+                    "retreat_sec": f"{args.retreat_sec:.3f}",
+                    "reverse_arc_sec": f"{args.reverse_arc_sec:.3f}",
+                    "forward_straight_sec": f"{args.forward_straight_sec:.3f}",
+                    "advance_sec": f"{args.advance_sec:.3f}",
+                    "arc_inner_speed_ratio": f"{args.arc_inner_speed_ratio:.3f}",
+                    "speed_scale": f"{args.speed_scale:.4f}",
+                    "target_speed_mps": f"{target_speed_mps:.4f}",
+                },
+            )
+            node.rtk_motion_phase = "STARTING"
+            spin_for(node, 0.5)
+            require_rtk_record_ready(node)
 
         if args.mode == "back-and-forth":
             target_heading, heading_sample_count, heading_spread = capture_target_heading(node)
@@ -1900,6 +2195,7 @@ def main():
         print(f"CSV 已写入: {log_path}")
     except KeyboardInterrupt:
         print("收到 Ctrl+C，正在执行并确认停机。")
+        node.flush_rtk_samples()
         if writer is not None:
             write_boundary_event(
                 writer, log_file,
@@ -1922,6 +2218,18 @@ def main():
                         "零速和解除测试控制请求已尝试发送。",
                         file=sys.stderr,
                     )
+            node.record_rtk_active = False
+            node.flush_rtk_samples()
+            if args.record_rtk and writer is not None:
+                nonfixed_count = (
+                    node.rtk_fix_sample_count - node.rtk_fixed_sample_count
+                )
+                print(
+                    f"RTK记录已写入同一CSV：坐标点 {node.rtk_fix_sample_count} 个，"
+                    f"位置固定解 {node.rtk_fixed_sample_count} 个，"
+                    f"非固定坐标点 {nonfixed_count} 个，"
+                    f"定位/定向质量状态行 {node.rtk_status_sample_count} 条。"
+                )
             if log_file is not None:
                 log_file.close()
             node.destroy_node()
