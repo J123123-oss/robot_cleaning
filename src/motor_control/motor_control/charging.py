@@ -105,7 +105,7 @@ class Charging485Node(Node):
         self.declare_parameter('serial_port', '/dev/ttyS4')
         self.declare_parameter('charge_baud_rate', 19200)
         self.declare_parameter('battery_baud_rate', 9600)
-        self.declare_parameter('slave_addr', 0x01)
+        self.declare_parameter('slave_addr', 0x02)
         self.declare_parameter('battery_addr', 0x0B)
         self.declare_parameter('timeout', 0.5)
         self.declare_parameter('battery_timeout', 0.2)

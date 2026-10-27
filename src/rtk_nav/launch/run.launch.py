@@ -460,7 +460,7 @@ def generate_launch_description():
         name='charging_485_node',
         parameters=[
             {'serial_port': '/dev/ttyACM0'},    # 替换为实际串口设备路径
-            {'slave_addr': 1},
+            {'slave_addr': 2},
             {'battery_addr': 11},
             {'timeout': 0.5}
         ]
