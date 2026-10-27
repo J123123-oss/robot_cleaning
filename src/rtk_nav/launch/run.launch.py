@@ -25,7 +25,7 @@ def generate_launch_description():
     # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="2"),
+        default_value=TextSubstitution(text="0"),
         description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
