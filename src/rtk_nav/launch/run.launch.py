@@ -90,13 +90,9 @@ def generate_launch_description():
     # RTK/Stanley 纠偏速度上限（轮子输出轴 r/min）。
     declare_rtk_max_correction_arg = DeclareLaunchArgument(
         "rtk_max_correction",
-        default_value=TextSubstitution(text="10.026761"),
-        description="Maximum RTK correction in wheel output-shaft r/min",
+        default_value=TextSubstitution(text="13.369015"),
+        description="Maximum RTK correction: 20% of wheel output-shaft speed",
     )
-    # 视觉纠偏比例，1.0 表示使用完整视觉纠偏量。
-    # 视觉航向误差增益：输入为度，输出为轮速纠偏 r/min。
-    # 视觉横向误差增益：输入为米，输出为轮速纠偏 r/min。
-    # 视觉纠偏对左右轮施加的最大速度偏置（轮子输出轴 r/min）。
     declare_publish_debug_images_arg = DeclareLaunchArgument(
         "publish_debug_images",
         default_value=TextSubstitution(text="true"),
