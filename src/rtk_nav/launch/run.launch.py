@@ -461,7 +461,7 @@ def generate_launch_description():
         parameters=[
             {'serial_port': '/dev/ttyACM0'},    # 替换为实际串口设备路径
             {'slave_addr': 2},
-            {'battery_addr': 11},
+            {'battery_addr': 1},
             {'timeout': 0.5}
         ]
     )
