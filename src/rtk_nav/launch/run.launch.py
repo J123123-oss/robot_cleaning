@@ -462,6 +462,7 @@ def generate_launch_description():
             {'serial_port': '/dev/battery_charging'},    # 替换为实际串口设备路径
             {'slave_addr': 2},
             {'battery_addr': 1},
+            {'battery_baud_rate': 9600},
             {'timeout': 0.5}
         ]
     )
