@@ -59,11 +59,6 @@ def generate_launch_description():
         for motor_id in range(1, 5)
     )
 
-    declare_visual_correction_arg = DeclareLaunchArgument(
-        "enable_visual_correction",
-        default_value=TextSubstitution(text="true"),
-        description="Enable visual correction",
-    )
     declare_imu_odom_fallback_arg = DeclareLaunchArgument(
         "enable_imu_odom_fallback",
         default_value=TextSubstitution(text="false"),
@@ -73,24 +68,6 @@ def generate_launch_description():
         ),
     )
 
-    declare_bypass_path_context_gate_arg = DeclareLaunchArgument(
-        "bypass_path_context_gate",
-        default_value=TextSubstitution(text="true"),
-        description="Bypass RTK path context gate for visual line testing",
-    )
-    declare_fallback_path_axis_arg = DeclareLaunchArgument(
-        "fallback_path_axis_image_deg",
-        default_value=TextSubstitution(text="-90.0"),
-        description=(
-            "Fallback motion axis in the image: 0 degrees right, "
-            "90 degrees down"
-        ),
-    )
-    declare_angle_reference_axis_arg = DeclareLaunchArgument(
-        "angle_reference_axis_image_deg",
-        default_value=TextSubstitution(text="-90.0"),
-        description="Camera image reference axis for grid-line angle correction",
-    )
 
     declare_stanley_k_path_arg = DeclareLaunchArgument(
         "stanley_k_path",
@@ -117,89 +94,9 @@ def generate_launch_description():
         description="Maximum RTK correction in wheel output-shaft r/min",
     )
     # 视觉纠偏比例，1.0 表示使用完整视觉纠偏量。
-    declare_visual_correction_ratio_arg = DeclareLaunchArgument(
-        "visual_correction_ratio",
-        default_value=TextSubstitution(text="1.0"),
-        description="Visual correction ratio applied to wheel output-shaft r/min",
-    )
     # 视觉航向误差增益：输入为度，输出为轮速纠偏 r/min。
-    declare_visual_heading_gain_arg = DeclareLaunchArgument(
-        "visual_heading_gain",
-        default_value=TextSubstitution(text="0.334225"),
-        description="Visual heading correction gain (r/min per degree)",
-    )
     # 视觉横向误差增益：输入为米，输出为轮速纠偏 r/min。
-    declare_visual_lateral_gain_arg = DeclareLaunchArgument(
-        "visual_lateral_gain",
-        default_value=TextSubstitution(text="16.711269"),
-        description="Visual lateral correction gain (r/min per meter)",
-    )
     # 视觉纠偏对左右轮施加的最大速度偏置（轮子输出轴 r/min）。
-    declare_visual_max_correction_arg = DeclareLaunchArgument(
-        "visual_max_correction",
-        default_value=TextSubstitution(text="3.342254"),
-        description="Maximum visual correction in wheel output-shaft r/min",
-    )
-    declare_visual_confidence_threshold_arg = DeclareLaunchArgument(
-        "visual_confidence_threshold",
-        default_value=TextSubstitution(text="0.75"),
-        description="Minimum visual confidence for correction",
-    )
-    declare_visual_timeout_arg = DeclareLaunchArgument(
-        "visual_timeout_sec",
-        default_value=TextSubstitution(text="0.5"),
-        description="Visual sample timeout in seconds",
-    )
-    declare_camera_serial_port_arg = DeclareLaunchArgument(
-        "camera_serial_port",
-        default_value=TextSubstitution(text="/dev/OpenMV_Cam_H7_Plus"),
-        description="OpenMV USB serial device",
-    )
-    declare_camera_serial_baud_arg = DeclareLaunchArgument(
-        "camera_serial_baud",
-        default_value=TextSubstitution(text="115200"),
-        description="OpenMV serial baudrate",
-    )
-    declare_camera_serial_timeout_arg = DeclareLaunchArgument(
-        "camera_serial_timeout",
-        default_value=TextSubstitution(text="0.2"),
-        description="OpenMV serial read timeout in seconds",
-    )
-    declare_camera_serial_no_data_timeout_arg = DeclareLaunchArgument(
-        "camera_serial_no_data_timeout",
-        default_value=TextSubstitution(text="5.0"),
-        description="Reconnect OpenMV after this many seconds without bytes",
-    )
-    declare_camera_serial_max_frame_arg = DeclareLaunchArgument(
-        "camera_serial_max_frame_bytes",
-        default_value=TextSubstitution(text="2097152"),
-        description="Maximum accepted OpenMV JPEG payload size",
-    )
-    declare_camera_image_rotation_arg = DeclareLaunchArgument(
-        "camera_image_rotation_deg",
-        default_value=TextSubstitution(text="0"),
-        description="Rotate OpenMV image before publishing: 0, 90, 180, or 270 degrees",
-    )
-    declare_detection_fps_arg = DeclareLaunchArgument(
-        "detection_fps",
-        default_value=TextSubstitution(text="30.0"),
-        description="Grid line detection timer FPS",
-    )
-    declare_line_tracking_enabled_arg = DeclareLaunchArgument(
-        "line_tracking_enabled",
-        default_value=TextSubstitution(text="true"),
-        description="Track one parallel line across frames",
-    )
-    declare_line_tracking_jump_arg = DeclareLaunchArgument(
-        "max_line_tracking_jump_px",
-        default_value=TextSubstitution(text="30.0"),
-        description="Maximum accepted line-normal jump in pixels",
-    )
-    declare_line_tracking_missed_arg = DeclareLaunchArgument(
-        "max_line_tracking_missed_frames",
-        default_value=TextSubstitution(text="2"),
-        description="Missed frames before constrained line reacquisition",
-    )
     declare_publish_debug_images_arg = DeclareLaunchArgument(
         "publish_debug_images",
         default_value=TextSubstitution(text="true"),
@@ -211,32 +108,6 @@ def generate_launch_description():
         description=(
             "Show full axis, line-count, and RTK diagnostics in the debug image"
         ),
-    )
-    declare_angle_line_gap_fill_arg = DeclareLaunchArgument(
-        "angle_line_gap_fill_px",
-        default_value=TextSubstitution(text="25.0"),
-        description=(
-            "Maximum gap to bridge between collinear grid-line segments"
-        ),
-    )
-    declare_angle_line_bridge_angle_arg = DeclareLaunchArgument(
-        "angle_line_bridge_angle_tolerance_deg",
-        default_value=TextSubstitution(text="5.0"),
-        description=(
-            "Maximum direction difference for bridging grid-line segments"
-        ),
-    )
-    declare_angle_line_axis_tolerance_arg = DeclareLaunchArgument(
-        "angle_line_axis_tolerance_deg",
-        default_value=TextSubstitution(text="25.0"),
-        description=(
-            "Maximum fine-grid angle difference from the camera reference axis"
-        ),
-    )
-    declare_angle_line_hough_gap_arg = DeclareLaunchArgument(
-        "angle_line_hough_gap_px",
-        default_value=TextSubstitution(text="2.0"),
-        description="Maximum small gap for fine-line Hough detection in pixels",
     )
     declare_coarse_line_min_length_arg = DeclareLaunchArgument(
         "coarse_line_min_length_px",
@@ -287,108 +158,6 @@ def generate_launch_description():
         "angle_average_center_band_ratio",
         default_value=TextSubstitution(text="0.8"),
         description="Image center-band ratio used for fine-line angle averaging",
-    )
-    declare_angle_line_min_length_arg = DeclareLaunchArgument(
-        "angle_line_min_length_px",
-        default_value=TextSubstitution(text="12.0"),
-        description="Minimum fine-line Hough segment length in pixels",
-    )
-    declare_angle_line_min_width_arg = DeclareLaunchArgument(
-        "angle_line_min_width_px",
-        default_value=TextSubstitution(text="1.0"),
-        description="Minimum estimated fine-line width in pixels",
-    )
-    declare_angle_line_max_width_arg = DeclareLaunchArgument(
-        "angle_line_max_width_px",
-        default_value=TextSubstitution(text="6.0"),
-        description=(
-            "Maximum estimated fine-line width; reject broad reflection bands"
-        ),
-    )
-    declare_angle_line_min_support_arg = DeclareLaunchArgument(
-        "angle_line_min_support",
-        default_value=TextSubstitution(text="0.20"),
-        description="Minimum white-mask support ratio for a fine-line segment",
-    )
-    declare_angle_line_hough_threshold_arg = DeclareLaunchArgument(
-        "angle_line_hough_threshold",
-        default_value=TextSubstitution(text="8"),
-        description="Hough accumulator threshold for fine-line detection",
-    )
-    declare_angle_line_min_merged_length_arg = DeclareLaunchArgument(
-        "angle_line_min_merged_length_px",
-        default_value=TextSubstitution(text="60.0"),
-        description="Minimum bridged fine-line length used for angle statistics",
-    )
-    declare_angle_line_overlay_thickness_arg = DeclareLaunchArgument(
-        "angle_line_overlay_thickness_px",
-        default_value=TextSubstitution(text="1"),
-        description="Fine-line debug overlay thickness in pixels",
-    )
-    declare_angle_line_overlay_outline_thickness_arg = DeclareLaunchArgument(
-        "angle_line_overlay_outline_thickness_px",
-        default_value=TextSubstitution(text="2"),
-        description="Fine-line debug overlay outline thickness in pixels",
-    )
-    declare_tracked_line_overlay_thickness_arg = DeclareLaunchArgument(
-        "tracked_line_overlay_thickness_px",
-        default_value=TextSubstitution(text="2"),
-        description="Tracked reference-line debug overlay thickness in pixels",
-    )
-    declare_enable_grid_line_stream_arg = DeclareLaunchArgument(
-        "enable_grid_line_stream",
-        default_value=TextSubstitution(text="true"),
-        description=(
-            "Start the host-side grid-line RTSP streamer; requires "
-            "enable_visual_correction and publish_debug_images:=true"
-        ),
-    )
-    declare_camera_angle_offset_arg = DeclareLaunchArgument(
-        "camera_angle_offset",
-        default_value=TextSubstitution(text="0.0"),
-        description="Outdoor camera installation angle correction in degrees",
-    )
-    declare_grid_line_stream_rtsp_url_arg = DeclareLaunchArgument(
-        "grid_line_stream_rtsp_url",
-        default_value=TextSubstitution(
-            text="rtsp://127.0.0.1:8554/live/grid_line"
-        ),
-        description="RTSP publish URL for the grid-line detection stream",
-    )
-    declare_grid_line_stream_fps_arg = DeclareLaunchArgument(
-        "grid_line_stream_fps",
-        default_value=TextSubstitution(text="10.0"),
-        description="Grid-line RTSP stream frame rate",
-    )
-    declare_grid_line_stream_bitrate_arg = DeclareLaunchArgument(
-        "grid_line_stream_bitrate",
-        default_value=TextSubstitution(text="800k"),
-        description="Grid-line RTSP H.264 target bitrate",
-    )
-    declare_grid_line_stream_preset_arg = DeclareLaunchArgument(
-        "grid_line_stream_preset",
-        default_value=TextSubstitution(text="veryfast"),
-        description="Grid-line RTSP H.264 encoder preset",
-    )
-    declare_grid_line_stream_reconnect_arg = DeclareLaunchArgument(
-        "grid_line_stream_reconnect_sec",
-        default_value=TextSubstitution(text="2.0"),
-        description="Grid-line RTSP reconnect delay in seconds",
-    )
-    declare_ffmpeg_path_arg = DeclareLaunchArgument(
-        "ffmpeg_path",
-        default_value=TextSubstitution(text="ffmpeg"),
-        description="FFmpeg executable used by the grid-line streamer",
-    )
-    declare_target_line_offset_arg = DeclareLaunchArgument(
-        "target_line_offset_m",
-        default_value=TextSubstitution(text="nan"),
-        description="Calibrated target parallel-line offset from camera center",
-    )
-    declare_target_line_tolerance_arg = DeclareLaunchArgument(
-        "target_line_match_tolerance_m",
-        default_value=TextSubstitution(text="0.5"),
-        description="Maximum target-line matching error in meters",
     )
     declare_reference_axis_offset_arg = DeclareLaunchArgument(
         "reference_axis_offset_px",
@@ -475,10 +244,6 @@ def generate_launch_description():
             {'rtk_path_file': rtk_path_file},
             {'loading_gps': loading_gps},
             {
-                'enable_visual_correction': ParameterValue(
-                    LaunchConfiguration("enable_visual_correction"),
-                    value_type=bool,
-                ),
                 'enable_imu_odom_fallback': ParameterValue(
                     LaunchConfiguration("enable_imu_odom_fallback"),
                     value_type=bool,
@@ -494,24 +259,6 @@ def generate_launch_description():
                 ),
                 'rtk_max_correction': ParameterValue(
                     LaunchConfiguration("rtk_max_correction"), value_type=float
-                ),
-                'visual_correction_ratio': ParameterValue(
-                    LaunchConfiguration("visual_correction_ratio"), value_type=float
-                ),
-                'visual_heading_gain': ParameterValue(
-                    LaunchConfiguration("visual_heading_gain"), value_type=float
-                ),
-                'visual_lateral_gain': ParameterValue(
-                    LaunchConfiguration("visual_lateral_gain"), value_type=float
-                ),
-                'visual_max_correction': ParameterValue(
-                    LaunchConfiguration("visual_max_correction"), value_type=float
-                ),
-                'visual_confidence_threshold': ParameterValue(
-                    LaunchConfiguration("visual_confidence_threshold"), value_type=float
-                ),
-                'visual_timeout_sec': ParameterValue(
-                    LaunchConfiguration("visual_timeout_sec"), value_type=float
                 ),
             },
         ]
@@ -540,222 +287,6 @@ def generate_launch_description():
             {'port': '/dev/WTRTK'},
             {'baud': 460800}
         ]
-    )
-
-    line_detector_node = Node(
-        package='rtk_nav',
-        executable='line_detector_node',
-        name='grid_line_detector',
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
-        parameters=[
-            {
-                'enable_visual_correction': ParameterValue(
-                    LaunchConfiguration('enable_visual_correction'),
-                    value_type=bool,
-                ),
-                'detection_fps': ParameterValue(
-                    LaunchConfiguration('detection_fps'), value_type=float
-                ),
-                'line_tracking_enabled': ParameterValue(
-                    LaunchConfiguration('line_tracking_enabled'), value_type=bool
-                ),
-                'max_line_tracking_jump_px': ParameterValue(
-                    LaunchConfiguration('max_line_tracking_jump_px'),
-                    value_type=float,
-                ),
-                'max_line_tracking_missed_frames': ParameterValue(
-                    LaunchConfiguration('max_line_tracking_missed_frames'),
-                    value_type=int,
-                ),
-                'publish_debug_images': ParameterValue(
-                    LaunchConfiguration('publish_debug_images'), value_type=bool
-                ),
-                'always_show_axis_debug': ParameterValue(
-                    LaunchConfiguration('always_show_axis_debug'), value_type=bool
-                ),
-                'angle_line_gap_fill_px': ParameterValue(
-                    LaunchConfiguration('angle_line_gap_fill_px'), value_type=float
-                ),
-                'angle_line_bridge_angle_tolerance_deg': ParameterValue(
-                    LaunchConfiguration('angle_line_bridge_angle_tolerance_deg'),
-                    value_type=float,
-                ),
-                'angle_line_axis_tolerance_deg': ParameterValue(
-                    LaunchConfiguration('angle_line_axis_tolerance_deg'),
-                    value_type=float,
-                ),
-                'coarse_line_min_length_px': ParameterValue(
-                    LaunchConfiguration('coarse_line_min_length_px'),
-                    value_type=float,
-                ),
-                'coarse_line_min_width_px': ParameterValue(
-                    LaunchConfiguration('coarse_line_min_width_px'),
-                    value_type=float,
-                ),
-                'coarse_line_min_support': ParameterValue(
-                    LaunchConfiguration('coarse_line_min_support'),
-                    value_type=float,
-                ),
-                'coarse_line_merge_gap_px': ParameterValue(
-                    LaunchConfiguration('coarse_line_merge_gap_px'),
-                    value_type=float,
-                ),
-                'coarse_line_gap_fill_px': ParameterValue(
-                    LaunchConfiguration('coarse_line_gap_fill_px'),
-                    value_type=float,
-                ),
-                'coarse_line_bridge_normal_gap_px': ParameterValue(
-                    LaunchConfiguration('coarse_line_bridge_normal_gap_px'),
-                    value_type=float,
-                ),
-                'coarse_line_bridge_angle_tolerance_deg': ParameterValue(
-                    LaunchConfiguration('coarse_line_bridge_angle_tolerance_deg'),
-                    value_type=float,
-                ),
-                'white_line_value_threshold': ParameterValue(
-                    LaunchConfiguration('white_line_value_threshold'),
-                    value_type=float,
-                ),
-                'white_line_saturation_max': ParameterValue(
-                    LaunchConfiguration('white_line_saturation_max'),
-                    value_type=float,
-                ),
-                'angle_average_center_band_ratio': ParameterValue(
-                    LaunchConfiguration('angle_average_center_band_ratio'),
-                    value_type=float,
-                ),
-                'angle_line_min_length_px': ParameterValue(
-                    LaunchConfiguration('angle_line_min_length_px'),
-                    value_type=float,
-                ),
-                'angle_line_min_width_px': ParameterValue(
-                    LaunchConfiguration('angle_line_min_width_px'),
-                    value_type=float,
-                ),
-                'angle_line_max_width_px': ParameterValue(
-                    LaunchConfiguration('angle_line_max_width_px'),
-                    value_type=float,
-                ),
-                'angle_line_min_support': ParameterValue(
-                    LaunchConfiguration('angle_line_min_support'),
-                    value_type=float,
-                ),
-                'angle_line_hough_threshold': ParameterValue(
-                    LaunchConfiguration('angle_line_hough_threshold'),
-                    value_type=int,
-                ),
-                'angle_line_hough_gap_px': ParameterValue(
-                    LaunchConfiguration('angle_line_hough_gap_px'),
-                    value_type=float,
-                ),
-                'angle_line_min_merged_length_px': ParameterValue(
-                    LaunchConfiguration('angle_line_min_merged_length_px'),
-                    value_type=float,
-                ),
-                'angle_line_overlay_thickness_px': ParameterValue(
-                    LaunchConfiguration('angle_line_overlay_thickness_px'),
-                    value_type=int,
-                ),
-                'angle_line_overlay_outline_thickness_px': ParameterValue(
-                    LaunchConfiguration('angle_line_overlay_outline_thickness_px'),
-                    value_type=int,
-                ),
-                'tracked_line_overlay_thickness_px': ParameterValue(
-                    LaunchConfiguration('tracked_line_overlay_thickness_px'),
-                    value_type=int,
-                ),
-                'bypass_path_context_gate': ParameterValue(
-                    LaunchConfiguration("bypass_path_context_gate"),
-                    value_type=bool,
-                ),
-                'fallback_path_axis_image_deg': ParameterValue(
-                    LaunchConfiguration("fallback_path_axis_image_deg"),
-                    value_type=float,
-                ),
-                'angle_reference_axis_image_deg': ParameterValue(
-                    LaunchConfiguration("angle_reference_axis_image_deg"),
-                    value_type=float,
-                ),
-                'camera_angle_offset': ParameterValue(
-                    LaunchConfiguration("camera_angle_offset"),
-                    value_type=float,
-                ),
-                'image_rotation_deg': ParameterValue(
-                    LaunchConfiguration('camera_image_rotation_deg'),
-                    value_type=int,
-                ),
-                'target_line_offset_m': ParameterValue(
-                    LaunchConfiguration("target_line_offset_m"),
-                    value_type=float,
-                ),
-                'target_line_match_tolerance_m': ParameterValue(
-                    LaunchConfiguration("target_line_match_tolerance_m"),
-                    value_type=float,
-                ),
-                'reference_axis_offset_px': ParameterValue(
-                    LaunchConfiguration("reference_axis_offset_px"),
-                    value_type=float,
-                ),
-            },
-        ],
-    )
-
-    openmv_serial_publisher_node = Node(
-        package='rtk_nav',
-        executable='openmv_serial_publisher_node',
-        name='openmv_serial_publisher',
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('enable_visual_correction')),
-        parameters=[
-            {
-                'topic': '/camera/color/image/compressed',
-                'serial_port': LaunchConfiguration('camera_serial_port'),
-                'baudrate': ParameterValue(
-                    LaunchConfiguration('camera_serial_baud'), value_type=int
-                ),
-                'read_timeout_sec': ParameterValue(
-                    LaunchConfiguration('camera_serial_timeout'), value_type=float
-                ),
-                'no_data_timeout_sec': ParameterValue(
-                    LaunchConfiguration('camera_serial_no_data_timeout'),
-                    value_type=float,
-                ),
-                'max_frame_bytes': ParameterValue(
-                    LaunchConfiguration('camera_serial_max_frame_bytes'),
-                    value_type=int,
-                ),
-                'image_rotation_deg': ParameterValue(
-                    LaunchConfiguration('camera_image_rotation_deg'),
-                    value_type=int,
-                ),
-            },
-        ],
-    )
-
-    grid_line_streamer_node = Node(
-        package='rtk_nav',
-        executable='grid_line_streamer',
-        name='grid_line_streamer',
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('enable_grid_line_stream')),
-        parameters=[
-            {
-                'image_topic': '/grid_line/detected_image',
-                'rtsp_url': LaunchConfiguration('grid_line_stream_rtsp_url'),
-                'fps': ParameterValue(
-                    LaunchConfiguration('grid_line_stream_fps'),
-                    value_type=float,
-                ),
-                'bitrate': LaunchConfiguration('grid_line_stream_bitrate'),
-                'preset': LaunchConfiguration('grid_line_stream_preset'),
-                'reconnect_sec': ParameterValue(
-                    LaunchConfiguration('grid_line_stream_reconnect_sec'),
-                    value_type=float,
-                ),
-                'ffmpeg_path': LaunchConfiguration('ffmpeg_path'),
-            },
-        ],
     )
 
     # ===================== 2. 配置MQTT桥接节点 (对应ROS1的 <node>) =====================
@@ -793,38 +324,13 @@ def generate_launch_description():
     ld.add_action(declare_profile_deceleration_arg)
     for declare_motor_direction_arg in declare_motor_direction_args:
         ld.add_action(declare_motor_direction_arg)
-    ld.add_action(declare_visual_correction_arg)
     ld.add_action(declare_imu_odom_fallback_arg)
-    ld.add_action(declare_bypass_path_context_gate_arg)
-    ld.add_action(declare_fallback_path_axis_arg)
-    ld.add_action(declare_angle_reference_axis_arg)
-    ld.add_action(declare_camera_angle_offset_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
     ld.add_action(declare_rtk_correction_ratio_arg)
     ld.add_action(declare_rtk_max_correction_arg)
-    ld.add_action(declare_visual_correction_ratio_arg)
-    ld.add_action(declare_visual_heading_gain_arg)
-    ld.add_action(declare_visual_lateral_gain_arg)
-    ld.add_action(declare_visual_max_correction_arg)
-    ld.add_action(declare_visual_confidence_threshold_arg)
-    ld.add_action(declare_visual_timeout_arg)
-    ld.add_action(declare_camera_serial_port_arg)
-    ld.add_action(declare_camera_serial_baud_arg)
-    ld.add_action(declare_camera_serial_timeout_arg)
-    ld.add_action(declare_camera_serial_no_data_timeout_arg)
-    ld.add_action(declare_camera_serial_max_frame_arg)
-    ld.add_action(declare_camera_image_rotation_arg)
-    ld.add_action(declare_detection_fps_arg)
-    ld.add_action(declare_line_tracking_enabled_arg)
-    ld.add_action(declare_line_tracking_jump_arg)
-    ld.add_action(declare_line_tracking_missed_arg)
     ld.add_action(declare_publish_debug_images_arg)
     ld.add_action(declare_always_show_axis_debug_arg)
-    ld.add_action(declare_angle_line_gap_fill_arg)
-    ld.add_action(declare_angle_line_bridge_angle_arg)
-    ld.add_action(declare_angle_line_axis_tolerance_arg)
-    ld.add_action(declare_angle_line_hough_gap_arg)
     ld.add_action(declare_coarse_line_min_length_arg)
     ld.add_action(declare_coarse_line_min_width_arg)
     ld.add_action(declare_coarse_line_min_support_arg)
@@ -835,24 +341,6 @@ def generate_launch_description():
     ld.add_action(declare_white_line_value_threshold_arg)
     ld.add_action(declare_white_line_saturation_max_arg)
     ld.add_action(declare_angle_average_center_band_ratio_arg)
-    ld.add_action(declare_angle_line_min_length_arg)
-    ld.add_action(declare_angle_line_min_width_arg)
-    ld.add_action(declare_angle_line_max_width_arg)
-    ld.add_action(declare_angle_line_min_support_arg)
-    ld.add_action(declare_angle_line_hough_threshold_arg)
-    ld.add_action(declare_angle_line_min_merged_length_arg)
-    ld.add_action(declare_angle_line_overlay_thickness_arg)
-    ld.add_action(declare_angle_line_overlay_outline_thickness_arg)
-    ld.add_action(declare_tracked_line_overlay_thickness_arg)
-    ld.add_action(declare_enable_grid_line_stream_arg)
-    ld.add_action(declare_grid_line_stream_rtsp_url_arg)
-    ld.add_action(declare_grid_line_stream_fps_arg)
-    ld.add_action(declare_grid_line_stream_bitrate_arg)
-    ld.add_action(declare_grid_line_stream_preset_arg)
-    ld.add_action(declare_grid_line_stream_reconnect_arg)
-    ld.add_action(declare_ffmpeg_path_arg)
-    ld.add_action(declare_target_line_offset_arg)
-    ld.add_action(declare_target_line_tolerance_arg)
     ld.add_action(declare_reference_axis_offset_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
@@ -864,8 +352,5 @@ def generate_launch_description():
     ld.add_action(rtk_navigator)
     # # 若需要启用注释的节点，取消以下对应行的注释
     ld.add_action(wtrtk_serial_driver_node)
-    # ld.add_action(line_detector_node)
-    # ld.add_action(openmv_serial_publisher_node)
-    # ld.add_action(grid_line_streamer_node)
 
     return ld

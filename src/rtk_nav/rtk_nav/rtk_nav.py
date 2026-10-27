@@ -68,7 +68,7 @@ TURN_SPEED_SLOW = 2.673803  # 航向误差较小时的转向基准速度（r/min
 MAX_CORRECTION = 13.369015  # 航向闭环附加纠偏量上限（r/min）。
 # RTK直线运行纠偏上限，单位为轮子输出轴 r/min。
 STRAIGHT_PID_SCALE = 2.0  # 2.0
-RTK_MAX_CORRECTION_SPEED = 10.026761  # RTK直线运行纠偏上限（r/min）。
+RTK_MAX_CORRECTION_SPEED = MAX_WHEEL_SPEED_RPM * 0.20  # RTK纠偏上限为车轮最高速度的20%。
 # 最终输出限幅不能超过 0.35 m/s 对应的轮子输出轴转速。
 RTK_OUTPUT_SPEED_LIMIT = MAX_WHEEL_SPEED_RPM  # 左右轮最终输出上限（r/min）。
 
@@ -117,43 +117,24 @@ SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 兼容旧名称：轮子输出轴 r/min -
 BUILTIN_LOADING_GPS = (0.0, 0.0, 0.0)
 
 
-def combine_stanley_and_visual_correction(
-    stanley_angle_deg: float,
-    visual_correction: float,
-    rtk_max_correction: float,
-    visual_max_correction: float,
+def combine_rtk_correction(
+    stanley_angle_deg: float, rtk_max_correction: float,
     rtk_correction_ratio: float = 1.0,
-    visual_correction_ratio: float = 1.0,
 ) -> Tuple[float, float, float]:
-    """把 Stanley 角度项和视觉速度纠偏合成为左右轮速度偏置。
-
-    两类纠偏均直接使用轮子输出轴 r/min，不依赖基础行驶速度或其缩放
-    比例。RTK 和视觉分别应用各自的上限与比例；左右轮最终输出的安全
-    限幅由调用方统一执行。
-    返回值依次为：RTK纠偏、视觉纠偏、两者合计纠偏。
-    """
+    """将 Stanley 航向/横向项限制为 RTK 单一轮速纠偏输出。"""
     try:
         stanley_angle_deg = float(stanley_angle_deg)
-        visual_correction = float(visual_correction)
         rtk_max_correction = float(rtk_max_correction)
-        visual_max_correction = float(visual_max_correction)
         rtk_correction_ratio = float(rtk_correction_ratio)
-        visual_correction_ratio = float(visual_correction_ratio)
     except (TypeError, ValueError, OverflowError):
         return 0.0, 0.0, 0.0
 
     if not math.isfinite(rtk_max_correction) or rtk_max_correction < 0.0:
         rtk_max_correction = 0.0
-    if not math.isfinite(visual_max_correction) or visual_max_correction < 0.0:
-        visual_max_correction = 0.0
     if not math.isfinite(stanley_angle_deg):
         stanley_angle_deg = 0.0
-    if not math.isfinite(visual_correction):
-        visual_correction = 0.0
     if not math.isfinite(rtk_correction_ratio) or rtk_correction_ratio < 0.0:
         rtk_correction_ratio = 0.0
-    if not math.isfinite(visual_correction_ratio) or visual_correction_ratio < 0.0:
-        visual_correction_ratio = 0.0
 
     stanley_angle_deg = max(-45.0, min(45.0, stanley_angle_deg))
     stanley_speed_correction = max(
@@ -163,17 +144,10 @@ def combine_stanley_and_visual_correction(
             stanley_angle_deg / 45.0 * rtk_max_correction * rtk_correction_ratio,
         ),
     )
-    visual_speed_correction = max(
-        -visual_max_correction,
-        min(
-            visual_max_correction,
-            visual_correction * visual_correction_ratio,
-        ),
-    )
-    total_correction = stanley_speed_correction + visual_speed_correction
+    total_correction = stanley_speed_correction
     return (
         stanley_speed_correction,
-        visual_speed_correction,
+        0.0,
         total_correction,
     )
 
@@ -461,12 +435,6 @@ class RTKNavControlNode(Node):
         # 声明RTK路径参数
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
-        self.declare_parameter("enable_visual_correction", True)
-        self.enable_visual_correction = (
-            self.get_parameter("enable_visual_correction")
-            .get_parameter_value()
-            .bool_value
-        )
         self.declare_parameter("enable_imu_odom_fallback", False)
         self.enable_imu_odom_fallback = bool(
             self.get_parameter("enable_imu_odom_fallback").value
@@ -479,50 +447,11 @@ class RTKNavControlNode(Node):
         self.stanley_k_near_target = max(
             0.0, float(self.get_parameter("stanley_k_near_target").value)
         )
-        # RTK 和视觉比例均作用于轮子输出轴 r/min 的纠偏项；允许大于 1 增强，负值按 0 处理。
-        # rtk_correction_ratio 和 visual_correction_ratio 为无量纲比例。
+        # RTK 纠偏比例和上限。
         self.declare_parameter("rtk_correction_ratio", 1.0)
-        self.declare_parameter("visual_correction_ratio", 1.0)
-        # rtk_max_correction 是 RTK/Stanley 对左右轮施加的最大速度偏置（r/min）。
         self.declare_parameter("rtk_max_correction", RTK_MAX_CORRECTION_SPEED)
-        self.rtk_correction_ratio = max(
-            0.0, float(self.get_parameter("rtk_correction_ratio").value)
-        )
-        self.visual_correction_ratio = max(
-            0.0, float(self.get_parameter("visual_correction_ratio").value)
-        )
-        self.rtk_max_correction = max(
-            0.0, float(self.get_parameter("rtk_max_correction").value)
-        )
-        # heading_gain 的输入是航向误差（度），输出是轮速纠偏（r/min）。
-        self.declare_parameter(
-            "visual_heading_gain", 0.334225
-        )
-        # lateral_gain 的输入是横向误差（m），输出是轮速纠偏（r/min）。
-        self.declare_parameter(
-            "visual_lateral_gain", 16.711269
-        )
-        # visual_max_correction 限制视觉纠偏对左右轮施加的最大速度偏置（r/min）。
-        self.declare_parameter(
-            "visual_max_correction", 3.342254
-        )
-        self.declare_parameter("visual_confidence_threshold", 0.75)
-        self.declare_parameter("visual_timeout_sec", 0.5)
-        self.visual_heading_gain = float(
-            self.get_parameter("visual_heading_gain").value
-        )
-        self.visual_lateral_gain = float(
-            self.get_parameter("visual_lateral_gain").value
-        )
-        self.visual_max_correction = max(
-            0.0, float(self.get_parameter("visual_max_correction").value)
-        )
-        self.visual_confidence_threshold = float(
-            self.get_parameter("visual_confidence_threshold").value
-        )
-        self.visual_timeout_sec = max(
-            0.0, float(self.get_parameter("visual_timeout_sec").value)
-        )
+        self.rtk_correction_ratio = max(0.0, float(self.get_parameter("rtk_correction_ratio").value))
+        self.rtk_max_correction = max(0.0, float(self.get_parameter("rtk_max_correction").value))
         self.path_dir = os.path.dirname(self.rtk_path_file)
         # self.rtk_path_file = self.declare_parameter(
         #     'rtk_path_file',
@@ -641,12 +570,6 @@ class RTKNavControlNode(Node):
         self.car_center_gps_pub = self.create_publisher(NavSatFix, "car_center_gps", 10)
         self.nav_context_pub = self.create_publisher(String, "/rtk/nav_context", 10)  # 调试用：nav_context状态快照
 
-        self.visual_sample_sub = self.create_subscription(
-            Float32MultiArray,
-            "/grid_line/visual_sample",
-            self.visual_sample_callback,
-            10,
-        )
 
         self.control_mode_sub = self.create_subscription(String, "/control/mode", self.mode_callback, 10)
         # self.gps_sub = self.create_subscription(NavSatFix, '/fix', self.gps_callback, 10)
@@ -3574,19 +3497,12 @@ class RTKNavControlNode(Node):
                     / max(real_velocity, STANLEY_MIN_SPEED_RPM * WHEEL_RPM_TO_MPS)
                 )
             )
-        visual_correction_raw = self.get_visual_steering_correction()
         total_steering = steering_correction - heading_error
         # if abs(heading_error) > 20.0:
         #     total_steering = heading_error * 0.5 + steering_correction * 0.5
-        stanley_speed_diff, visual_speed_diff, speed_diff = (
-            combine_stanley_and_visual_correction(
-                total_steering,
-                visual_correction_raw,
-                self.rtk_max_correction,
-                self.visual_max_correction,
+        stanley_speed_diff, _, speed_diff = combine_rtk_correction(
+                total_steering, self.rtk_max_correction,
                 self.rtk_correction_ratio,
-                self.visual_correction_ratio,
-            )
         )
         left_speed = -velocity + speed_diff
         right_speed = velocity + speed_diff
@@ -3608,11 +3524,6 @@ class RTKNavControlNode(Node):
             )
             self.get_logger().info(
                 f"stanley_correction={stanley_speed_diff:+.3f}, "
-                f"visual_angle_error_deg={self.visual_sample_heading_error_deg:+.3f}, "
-                f"visual_heading_correction={self._last_visual_heading_correction:+.3f}, "
-                f"visual_lateral_correction={self._last_visual_lateral_correction:+.3f}, "
-                f"visual_correction_raw={visual_correction_raw:+.3f}, "
-                f"visual_speed_correction={visual_speed_diff:+.3f}, "
                 f"correction={speed_diff:+.3f}, "
                 f"left_speed={left_speed:+.3f}, "
                 f"right_speed={right_speed:+.3f}"
@@ -5357,7 +5268,6 @@ class RTKNavControlNode(Node):
             "heading_short_ready": self._heading_short_ready,
             "heading_settle_ready": self._heading_settle_ready,
             "heading_quality_gap_elapsed": self._heading_quality_gap_elapsed,
-            "enable_visual_correction": self.enable_visual_correction,
             "auto_heading_gate_elapsed": (
                 time.monotonic() - self._auto_heading_gate_start_time
                 if self._auto_heading_gate_pending and self._auto_heading_gate_start_time is not None
@@ -6158,8 +6068,6 @@ class RTKNavControlNode(Node):
 
     def rtk_timer_callback(self):
         """10Hz定时器回调, 驱动多点导航逻辑"""
-        self.publish_visual_path_context()
-        self.publish_visual_path_reference()
         # 周期性发布 nav_context（每2s），便于 ros2 topic echo 调试
         context_interval = 0.1 if self._fallback_diagnostics_active() else 2.0
         if time.monotonic() - self._last_nav_context_publish >= context_interval:
