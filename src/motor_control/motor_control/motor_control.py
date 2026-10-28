@@ -1657,7 +1657,9 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
-        if self.total_current_fault and new_state not in ("HOLD", "ENABLE", "DISABLE"):
+        if self.total_current_fault and new_state not in (
+            "HOLD", "ENABLE", "DISABLE", "AUTO_CLEANING"
+        ):
             self.get_logger().warn(
                 f"[MotorProtection] 总电流故障已锁存，忽略状态切换请求：{new_state}"
             )
@@ -1708,7 +1710,7 @@ class MotorControlNode(Node):
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
-        if new_state in ("ENABLE", "DISABLE"):
+        if new_state in ("ENABLE", "DISABLE", "AUTO_CLEANING"):
             # 显式重新使能或失能作为人工确认，清除上一次的总电流故障锁存。
             self.total_current_fault = False
             self.total_current_fault_current = 0.0
