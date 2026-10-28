@@ -109,8 +109,8 @@ class Charging485Node(Node):
         self.declare_parameter('battery_addr', 0x01)
         self.declare_parameter('timeout', 0.5)
         self.declare_parameter('battery_timeout', 0.2)
-        self.declare_parameter('battery_base_poll_interval', 10.0)
-        self.declare_parameter('battery_temp_poll_interval', 20.0)
+        self.declare_parameter('battery_base_poll_interval', 1.0)
+        self.declare_parameter('battery_temp_poll_interval', 2.0)
         self.declare_parameter('charge_poll_interval', 5.0)
 
         self.serial_port = self.get_parameter('serial_port').value
