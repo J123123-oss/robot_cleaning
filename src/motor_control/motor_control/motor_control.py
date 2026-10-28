@@ -33,6 +33,7 @@ CanMotorDriver = importlib.import_module(
 ).CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
 from motor_control.charging import Charging485Node
+from motor_control.stall_protection import TotalCurrentMonitor
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -95,6 +96,10 @@ ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
+ERROR_TOTAL_OVERCURRENT = 256  # 电池总电流持续超限
+
+TOTAL_CURRENT_STALL_THRESHOLD = 4.0  # 总电流保护阈值（A）。
+TOTAL_CURRENT_STALL_DURATION = 5.0  # 总电流超过阈值的持续时间（s）。
 
 # PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
 MAX_CORRECTION = 5.347606  # 航向纠偏输出上限（r/min）。
@@ -292,6 +297,18 @@ class MotorControlNode(Node):
 
         self.battery_total_voltage = None  # 电池总电压
         self.battery_current = None  # 电池电流
+        self.declare_parameter(
+            "total_current_stall_threshold", TOTAL_CURRENT_STALL_THRESHOLD
+        )
+        self.declare_parameter(
+            "total_current_stall_duration", TOTAL_CURRENT_STALL_DURATION
+        )
+        self.total_current_monitor = TotalCurrentMonitor(
+            threshold=float(self.get_parameter("total_current_stall_threshold").value),
+            duration=float(self.get_parameter("total_current_stall_duration").value),
+        )
+        self.total_current_fault = False
+        self.total_current_fault_current = 0.0
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
         self.low_battery_warning = False
@@ -640,7 +657,49 @@ class MotorControlNode(Node):
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
             error |= ERROR_LOADING_TIMEOUT
+        if self.total_current_fault:
+            error |= ERROR_TOTAL_OVERCURRENT
         return error
+
+    def _has_active_motor_command(self) -> bool:
+        """Return whether any wheel or brush has a non-zero commanded speed."""
+        return any(
+            abs(float(speed)) > 0.1
+            for speed in (
+                self.current_left_speed,
+                self.current_right_speed,
+                self.brush_speed,
+            )
+        )
+
+    def _check_total_current_protection(self) -> None:
+        """Latch HOLD when battery output current stays above the safe limit."""
+        if self.battery_current is None or self.total_current_fault:
+            self.total_current_monitor.reset()
+            return
+        enabled = self._has_active_motor_command() and self.current_status not in (
+            "HOLD", "DISABLE"
+        )
+        triggered = self.total_current_monitor.update(
+            self.battery_current,
+            enabled=enabled,
+            now=time.monotonic(),
+        )
+        if not triggered:
+            return
+        self.total_current_fault = True
+        self.total_current_fault_current = abs(float(self.battery_current))
+        self.get_logger().error(
+            f"[MotorProtection] 电池总电流持续超过"
+            f"{self.total_current_monitor.threshold:.1f}A "
+            f"{self.total_current_monitor.duration:.1f}s，"
+            f"当前{self.total_current_fault_current:.2f}A，停车并进入HOLD，"
+            f"故障码=0x{ERROR_TOTAL_OVERCURRENT:02X}"
+        )
+        self.set_motors_speed(0.0, 0.0)
+        self.set_brush_speed(0.0)
+        self.switch_state("h")
+        self.publish_state()
 
 
     def imu_heading_callback(self, msg:Float32):
@@ -711,6 +770,15 @@ class MotorControlNode(Node):
             self.motor_ctrl.reconnect_can_bus()
         # AIMotor 驱动由当前控制节点主动轮询，并发布最新反馈话题。
         self.motor_ctrl.poll_feedback()
+        self._check_total_current_protection()
+        if self.total_current_fault:
+            # 故障锁存期间屏蔽所有控制源，直到显式 ENABLE/DISABLE 清除故障。
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
+            state_msg = String()
+            state_msg.data = str(self.current_status)
+            self.state_pub.publish(state_msg)
+            return
         if self.is_laser_timeout():
             now = time.time()
             if now - self.last_laser_timeout_log_time >= 10.0:
@@ -1589,6 +1657,11 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
+        if self.total_current_fault and new_state not in ("HOLD", "ENABLE", "DISABLE"):
+            self.get_logger().warn(
+                f"[MotorProtection] 总电流故障已锁存，忽略状态切换请求：{new_state}"
+            )
+            return
         # if self.current_control_mode == "REMOTE":
         #     self.get_logger().warn("[ROSNode] 当前为遥控器模式，禁止设置状态")
         #     return
@@ -1635,6 +1708,11 @@ class MotorControlNode(Node):
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
+        if new_state in ("ENABLE", "DISABLE"):
+            # 显式重新使能或失能作为人工确认，清除上一次的总电流故障锁存。
+            self.total_current_fault = False
+            self.total_current_fault_current = 0.0
+            self.total_current_monitor.reset()
 
         # 核心修复2：设置进出仓状态标记
         if new_state in ["START", "LOADING"]:
@@ -1867,6 +1945,8 @@ class MotorControlNode(Node):
                 "charging_i": self.charging_i,
                 "charging_fault": self.charging_fault,
                 "motor_fault": self.motor_fault_codes,
+                "total_current_fault": self.total_current_fault,
+                "total_current_fault_current": self.total_current_fault_current,
                 "dock_sensors": self.dock_sensors,
                 "resume_charge": self.charge_resume_count,
                 # "angle_x": self.angle_x,
