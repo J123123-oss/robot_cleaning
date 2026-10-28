@@ -315,7 +315,7 @@ class RTKNavControlNode(Node):
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
-        self.rtk_install_offset = 109.43  # RTK安装偏移角度（度），向右转为正
+        self.rtk_install_offset = 90.95  # RTK安装偏移角度（度），根据真北实测标定
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
         self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
@@ -530,6 +530,7 @@ class RTKNavControlNode(Node):
         self.rtk_error_code = 0
         self.last_rtk_timeout_log_time = 0.0
         self.last_heading_check_log_time = 0.0
+        self.last_heading_diagnostic_log_time = 0.0
         self.heading_abnormal_start_time = None  # 航向角异常开始时间，None表示当前正常
         self.heading_timed_out = False  # 航向角异常导致的超时标志
         self._last_heading_recovery_check = 0.0  # 上次航向恢复检查时间
@@ -2704,6 +2705,16 @@ class RTKNavControlNode(Node):
         self.imu_yaw = ins_heading_deg  + self.rtk_install_offset # + x degree
         self.imu_yaw = math.fmod(self.imu_yaw + 180.0, 360.0) - 180.0
         self.imu_initialized = True
+        if now - self.last_heading_diagnostic_log_time >= 1.0:
+            self.get_logger().info(
+                f"[航向诊断] raw={self.raw_ins_heading:.2f}, "
+                f"offset={self.rtk_install_offset:.2f}, "
+                f"yaw={self.imu_yaw:.2f}, "
+                f"pos={msg.position_status}, "
+                f"fix={msg.fix_status}, "
+                f"ins={msg.ins_flag}"
+            )
+            self.last_heading_diagnostic_log_time = now
         self._check_waypoint_attitude_change(msg, now)
         imu_msg= Float32()
         imu_msg.data = self.imu_yaw
