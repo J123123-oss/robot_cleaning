@@ -83,8 +83,46 @@ class MagneticNavigationNode(Node):
         if error is not None:
             msg = Float32(); msg.data = float(error); self.error_pub.publish(msg)
 
+def run_standalone():
+    """Poll the sensor without ROS, for bring-up and serial diagnostics."""
+    import argparse
+    import time
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--serial-port", default="/dev/magnetic_nav")
+    parser.add_argument("--baud-rate", type=int, default=115200)
+    parser.add_argument("--device-id", type=int, default=8)
+    args = parser.parse_args()
+    if serial is None:
+        print("pyserial 未安装，无法访问磁导航串口")
+        return 2
+    try:
+        stream = serial.Serial(args.serial_port, args.baud_rate, timeout=0.2)
+    except Exception as exc:
+        print(f"磁导航串口打开失败: {args.serial_port}: {exc}")
+        return 1
+    print(f"磁导航独立模式: {args.serial_port} @ {args.baud_rate}", flush=True)
+    try:
+        while True:
+            stream.reset_input_buffer(); stream.write(build_read_frame(args.device_id)); stream.flush()
+            register = decode_response(stream.read(7), args.device_id)
+            if register is None:
+                print("无有效响应", flush=True)
+            else:
+                print(f"register=0x{register:04x} mask=0x{register & 0xff:02x} error={calculate_magnetic_error(register & 0xff)}", flush=True)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        stream.close()
+
 def main(args=None):
-    import rclpy
+    try:
+        import rclpy
+    except ImportError:
+        return run_standalone()
     rclpy.init(args=args); node = MagneticNavigationNode()
     try: rclpy.spin(node)
     finally: node.destroy_node(); rclpy.shutdown()
+
+if __name__ == "__main__":
+    raise SystemExit(main())
