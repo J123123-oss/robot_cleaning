@@ -81,9 +81,16 @@ def _make_driver(module):
             "actual_position": 0.0,
             "actual_torque": 0.0,
             "actual_temperature": 0.0,
+            "actual_current": 0.0,
+            "actual_current_updated_monotonic": 0.0,
             "status_word": 0,
             "mode_display": 0,
             "fault_code": 0,
+            "manufacturer_fault_code": 0,
+            "fault_history_query_code": None,
+            "fault_history_query_monotonic": 0.0,
+            "fault_history_resolved_code": None,
+            "fault_history_pending_code": None,
             "send_errors": 0,
             "online": True,
         }
@@ -91,6 +98,7 @@ def _make_driver(module):
     ]
     driver.motor_fault_publisher = Mock()
     driver.motor_feedback_publisher = Mock()
+    driver._feedback_poll_requested = threading.Event()
     driver._feedback_log_last_time = {}
     driver._feedback_log_last_signature = {}
     driver.get_logger = Mock(return_value=Mock())
@@ -336,11 +344,13 @@ def test_mode_and_feedback_queries_use_documented_objects():
     assert frames[-1] == (0x601, bytes.fromhex("2f 60 60 00 03 00 00 00"))
 
     assert driver.motor_query_feedback(1)
-    assert [frame[1] for frame in frames[-4:]] == [
+    assert [frame[1] for frame in frames[-6:]] == [
         bytes.fromhex("40 41 60 00 00 00 00 00"),
         bytes.fromhex("40 64 60 00 00 00 00 00"),
         bytes.fromhex("40 6c 60 00 00 00 00 00"),
         bytes.fromhex("40 77 60 00 00 00 00 00"),
+        bytes.fromhex("40 78 60 00 00 00 00 00"),
+        bytes.fromhex("40 3f 60 00 00 00 00 00"),
     ]
 
 
@@ -384,6 +394,54 @@ def test_sdo_feedback_and_emcy_are_decoded():
         and "实际反馈脉冲数=-20000 Pul/s" in message
         for message in messages
     )
+
+
+def test_sdo_current_and_fault_objects_are_decoded_from_manual():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.can_initialized = True
+    driver.bus = object()
+    driver._sdo_read = Mock(return_value=True)
+
+    driver.parse_motor_feedback(
+        0x581, bytes.fromhex("4b 78 60 00 06 ff 00 00")
+    )
+    assert driver.motors[0]["actual_current"] == -2.5
+    assert driver.motors[0]["actual_current_updated_monotonic"] > 0.0
+
+    driver.parse_motor_feedback(
+        0x581, bytes.fromhex("4b 3f 60 00 12 23 00 00")
+    )
+    assert driver.motors[0]["fault_code"] == 0x2312
+    assert driver.motors[0]["fault_history_pending_code"] == 0x2312
+    assert driver._feedback_poll_requested.is_set()
+    driver._sdo_read.assert_not_called()
+
+    driver._process_pending_fault_history_queries()
+    driver._sdo_read.assert_called_once_with(1, 0x1003, 1)
+
+    driver.parse_motor_feedback(
+        0x581, bytes.fromhex("43 03 10 01 12 23 01 02")
+    )
+    assert driver.motors[0]["manufacturer_fault_code"] == 0x0201
+    assert driver.motor_fault_publisher.publish.call_count == 2
+
+
+def test_feedback_topic_appends_current_age_and_vendor_fault_code():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["actual_current"] = 1.25
+    driver.motors[0]["actual_current_updated_monotonic"] = module.time.monotonic()
+    driver.motors[0]["manufacturer_fault_code"] = 0x0201
+
+    driver.poll_feedback()
+
+    published = driver.motor_feedback_publisher.publish.call_args.args[0].data
+    assert len(published) == len(driver.motors) * 8
+    assert published[:5] == [1.0, 0.0, 0.0, 0.0, 0.0]
+    assert published[5] == 1.25
+    assert published[6] >= 0.0
+    assert published[7] == 0x0201
 
 
 def test_manual_fault_table_contains_all_documented_codes():
