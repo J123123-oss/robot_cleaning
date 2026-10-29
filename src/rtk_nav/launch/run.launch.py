@@ -59,6 +59,12 @@ def generate_launch_description():
         for motor_id in range(1, 5)
     )
 
+    declare_enable_magnetic_navigation_arg = DeclareLaunchArgument(
+        "enable_magnetic_navigation",
+        default_value=TextSubstitution(text="true"),
+        description="Use W200B magnetic correction in loading/unloading straight phases",
+    )
+
     declare_imu_odom_fallback_arg = DeclareLaunchArgument(
         "enable_imu_odom_fallback",
         default_value=TextSubstitution(text="false"),
@@ -173,6 +179,7 @@ def generate_launch_description():
             {'rtk_path_file': rtk_path_file},
             {'loading_gps': loading_gps},
             {
+                'enable_magnetic_navigation': ParameterValue(LaunchConfiguration('enable_magnetic_navigation'), value_type=bool),
                 'brush_motor_count': ParameterValue(
                     LaunchConfiguration('brush_motor_count'), value_type=int
                 ),
@@ -194,6 +201,17 @@ def generate_launch_description():
                 },
             },
         ]
+    )
+    magnetic_navigation_node = Node(
+        package='motor_control',
+        executable='magnetic_navigation',
+        name='magnetic_navigation',
+        output='screen',
+        parameters=[
+            {'serial_port': '/dev/magnetic_nav'},
+            {'baud_rate': 115200},
+            {'device_id': 8},
+        ],
     )
     sensors_485_node = Node(
         package='motor_control',  # 对应 ROS1 的 pkg，包名不变
@@ -320,6 +338,7 @@ def generate_launch_description():
     ld.add_action(declare_profile_deceleration_arg)
     for declare_motor_direction_arg in declare_motor_direction_args:
         ld.add_action(declare_motor_direction_arg)
+    ld.add_action(declare_enable_magnetic_navigation_arg)
     ld.add_action(declare_imu_odom_fallback_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)
@@ -342,6 +361,7 @@ def generate_launch_description():
     ld.add_action(motor_control_node)
 
     ld.add_action(sensors_485_node)
+    ld.add_action(magnetic_navigation_node)
     # ld.add_action(laser_node)
     ld.add_action(charging_node)
     # ld.add_action(wtrtk_parse_txt_node)

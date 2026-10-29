@@ -107,6 +107,13 @@ class CanMotorDriver(Node):
     VELOCITY_ACTUAL_INDEX = 0x606C
     # 6077h：实际转矩（Int16/设备标定值，RO）；当前按手册缩放系数解析。
     TORQUE_ACTUAL_INDEX = 0x6077
+    # 6078h：实际电流（Int16，RO），单位 0.01 A。
+    CURRENT_ACTUAL_INDEX = 0x6078
+    # 603Fh：当前 CiA402 故障码（Uint16，RO）。
+    FAULT_CODE_INDEX = 0x603F
+    # 1003h:01：最新历史故障（Uint32，RO），高 16 位厂家码、低 16 位 CiA402 码。
+    FAULT_HISTORY_INDEX = 0x1003
+    FAULT_HISTORY_LATEST_SUBINDEX = 0x01
     # 60FFh：目标速度（Int32，RW），单位 Pul/s；由上层输出轴 r/min 转换后写入。
     TARGET_VELOCITY_INDEX = 0x60FF
     # 6083h：速度模式加速度（Int32，RW），单位 Pul/s^2，在使能前写入。
@@ -314,9 +321,16 @@ class CanMotorDriver(Node):
                 "actual_position": 0.0,
                 "actual_torque": 0.0,
                 "actual_temperature": 0.0,
+                "actual_current": 0.0,
+                "actual_current_updated_monotonic": 0.0,
                 "status_word": 0,
                 "mode_display": 0,
                 "fault_code": 0,
+                "manufacturer_fault_code": 0,
+                "fault_history_query_code": None,
+                "fault_history_query_monotonic": 0.0,
+                "fault_history_resolved_code": None,
+                "fault_history_pending_code": None,
                 "send_errors": 0,
                 "online": True,
             }
@@ -419,6 +433,7 @@ class CanMotorDriver(Node):
 
     def get_feedback_snapshot(self):
         """返回供 ``motor_control`` 使用的电机反馈快照。"""
+        now = time.monotonic()
         with self._feedback_lock:
             return [
                 {
@@ -427,9 +442,25 @@ class CanMotorDriver(Node):
                     "actual_position": float(motor["actual_position"]),
                     "actual_torque": float(motor["actual_torque"]),
                     "actual_temperature": float(motor["actual_temperature"]),
+                    "actual_current": (
+                        float(motor["actual_current"])
+                        if motor["actual_current_updated_monotonic"] > 0.0
+                        else None
+                    ),
+                    "current_sample_age_sec": (
+                        max(
+                            0.0,
+                            now - motor["actual_current_updated_monotonic"],
+                        )
+                        if motor["actual_current_updated_monotonic"] > 0.0
+                        else -1.0
+                    ),
                     "status_word": int(motor["status_word"]),
                     "mode_display": int(motor["mode_display"]),
                     "fault_code": int(motor["fault_code"]),
+                    "manufacturer_fault_code": int(
+                        motor["manufacturer_fault_code"]
+                    ),
                     "online": bool(motor["online"]),
                 }
                 for motor in self.motors
@@ -896,6 +927,74 @@ class CanMotorDriver(Node):
         """使用控制字 0x0080 复位 CiA402 故障状态。"""
         return self._write_u16(motor_id, self.CONTROLWORD_INDEX, self.CONTROL_FAULT_RESET)
 
+    def _schedule_fault_history_query(self, motor_id: int, fault_code: int) -> None:
+        """Queue a fault-history SDO read for the feedback worker."""
+        if (
+            not getattr(self, "can_initialized", False)
+            or getattr(self, "bus", None) is None
+        ):
+            return
+
+        now = time.monotonic()
+        with self._feedback_lock:
+            motor = self._get_motor(motor_id)
+            if motor is None or motor["fault_code"] != fault_code:
+                return
+            if motor["fault_history_resolved_code"] == fault_code:
+                return
+            if (
+                motor["fault_history_query_code"] == fault_code
+                and now - motor["fault_history_query_monotonic"] < 2.0
+            ):
+                return
+            motor["fault_history_pending_code"] = fault_code
+
+        poll_requested = getattr(self, "_feedback_poll_requested", None)
+        if poll_requested is not None:
+            poll_requested.set()
+
+    def _request_fault_history(self, motor_id: int, fault_code: int) -> None:
+        """Send a throttled history read from the background feedback worker."""
+        now = time.monotonic()
+        with self._feedback_lock:
+            motor = self._get_motor(motor_id)
+            if (
+                motor is None
+                or motor["fault_code"] != fault_code
+                or motor["fault_history_resolved_code"] == fault_code
+            ):
+                return
+            if (
+                motor["fault_history_query_code"] == fault_code
+                and now - motor["fault_history_query_monotonic"] < 2.0
+            ):
+                return
+            motor["fault_history_query_code"] = fault_code
+            motor["fault_history_query_monotonic"] = now
+
+        if not self._sdo_read(
+            motor_id,
+            self.FAULT_HISTORY_INDEX,
+            self.FAULT_HISTORY_LATEST_SUBINDEX,
+        ):
+            with self._feedback_lock:
+                motor = self._get_motor(motor_id)
+                if motor is not None and motor["fault_history_query_code"] == fault_code:
+                    motor["fault_history_query_code"] = None
+
+    def _process_pending_fault_history_queries(self) -> None:
+        """Drain queued history reads outside the CAN receive thread."""
+        pending_queries = []
+        with self._feedback_lock:
+            for motor in self.motors:
+                fault_code = motor["fault_history_pending_code"]
+                if fault_code is None:
+                    continue
+                motor["fault_history_pending_code"] = None
+                pending_queries.append((motor["id"], fault_code))
+        for motor_id, fault_code in pending_queries:
+            self._request_fault_history(motor_id, fault_code)
+
     def parse_motor_fault(self, can_id: int, data: bytes):
         """解析 EMCY 帧并记录匹配的 AIMOTOR 故障条目。
 
@@ -924,7 +1023,13 @@ class CanMotorDriver(Node):
 
         emergency_code = int.from_bytes(data[0:2], "little", signed=False)
         error_register = data[2]
-        motor["fault_code"] = emergency_code
+        with self._feedback_lock:
+            previous_fault_code = motor["fault_code"]
+            if emergency_code != previous_fault_code:
+                motor["fault_code"] = emergency_code
+                motor["manufacturer_fault_code"] = 0
+                motor["fault_history_resolved_code"] = None
+                motor["fault_history_query_code"] = None
         matching_faults = tuple(
             fault for fault in self.AIMOTOR_FAULT_TABLE
             if fault[1] == emergency_code
@@ -969,16 +1074,20 @@ class CanMotorDriver(Node):
                     f"硬件报警灯：{led_pattern}，报警类型：{alarm_type}"
                 )
             logger.error(
-                "请通过 SDO 读取 200B:23（H0B-34）确认具体厂家故障码"
+                "正在查询 SDO 1003:01；响应高 16 位为厂家故障码，"
+                "低 16 位为 CiA402 故障码"
             )
 
         logger.error("======================================")
+        if emergency_code:
+            self._schedule_fault_history_query(motor_id, emergency_code)
         self.publish_motor_fault_codes()
 
     def publish_motor_fault_codes(self):
-        """按电机配置顺序为每个电机发布一个 EMCY 故障码。"""
+        """按电机配置顺序发布当前 CiA402 故障码。"""
         message = Float32MultiArray()
-        message.data = [float(motor["fault_code"]) for motor in self.motors]
+        with self._feedback_lock:
+            message.data = [float(motor["fault_code"]) for motor in self.motors]
         self.motor_fault_publisher.publish(message)
 
     def motor_set_mode(self, motor_id: int, mode: int) -> bool:
@@ -1154,7 +1263,7 @@ class CanMotorDriver(Node):
     def motor_query_feedback(
         self, motor_id: int, include_velocity: bool = True
     ) -> bool:
-        """通过 SDO 请求状态、位置、可选速度和转矩反馈。"""
+        """通过 SDO 请求运动反馈、实际电流及当前 CiA402 故障码。"""
         if not self._validate_motor_id(motor_id):
             return False
         results = [
@@ -1166,6 +1275,12 @@ class CanMotorDriver(Node):
                 self._sdo_read(motor_id, self.VELOCITY_ACTUAL_INDEX, 0)
             )
         results.append(self._sdo_read(motor_id, self.TORQUE_ACTUAL_INDEX, 0))
+        results.extend(
+            (
+                self._sdo_read(motor_id, self.CURRENT_ACTUAL_INDEX, 0),
+                self._sdo_read(motor_id, self.FAULT_CODE_INDEX, 0),
+            )
+        )
         return all(results)
 
     def motor_enable(self, motor_id: int) -> bool:
@@ -1328,6 +1443,7 @@ class CanMotorDriver(Node):
                 motor["id"], include_velocity=include_velocity
             ):
                 self.get_logger().warn(f"Failed to query motor {motor['id']} feedback")
+        self._process_pending_fault_history_queries()
 
     def _poll_drive_velocities(self):
         """以 20 Hz 请求左右轮速度，独立于控制节点的 ROS 定时器。"""
@@ -1413,8 +1529,21 @@ class CanMotorDriver(Node):
             and data[0] != self.SDO_READ_4_RESPONSE
         ):
             return
+        if index in (self.CURRENT_ACTUAL_INDEX, self.FAULT_CODE_INDEX):
+            if data[0] != self.SDO_READ_2_RESPONSE:
+                return
+        if (
+            index == self.FAULT_HISTORY_INDEX
+            and subindex == self.FAULT_HISTORY_LATEST_SUBINDEX
+            and data[0] != self.SDO_READ_4_RESPONSE
+        ):
+            return
         value = data[4:8]
         velocity_feedback = None
+        fault_code_changed = False
+        request_fault_history = None
+        history_mismatch = None
+        manufacturer_fault_changed = False
         with self._feedback_lock:
             motor = self._get_motor(motor_id)
             if motor is None:
@@ -1446,6 +1575,52 @@ class CanMotorDriver(Node):
             elif index == self.TORQUE_ACTUAL_INDEX:
                 torque_raw = int.from_bytes(value[:2], "little", signed=True)
                 motor["actual_torque"] = torque_raw / 10.0
+            elif index == self.CURRENT_ACTUAL_INDEX:
+                current_raw = int.from_bytes(value[:2], "little", signed=True)
+                motor["actual_current"] = current_raw / 100.0
+                motor["actual_current_updated_monotonic"] = time.monotonic()
+            elif index == self.FAULT_CODE_INDEX:
+                fault_code = int.from_bytes(value[:2], "little", signed=False)
+                if fault_code != motor["fault_code"]:
+                    motor["fault_code"] = fault_code
+                    fault_code_changed = True
+                    motor["manufacturer_fault_code"] = 0
+                    motor["fault_history_resolved_code"] = None
+                    motor["fault_history_query_code"] = None
+                    if fault_code:
+                        request_fault_history = fault_code
+                elif fault_code:
+                    # Retry an unanswered history query at a bounded rate.
+                    request_fault_history = fault_code
+            elif (
+                index == self.FAULT_HISTORY_INDEX
+                and subindex == self.FAULT_HISTORY_LATEST_SUBINDEX
+            ):
+                history_entry = int.from_bytes(value, "little", signed=False)
+                history_fault_code = history_entry & 0xFFFF
+                manufacturer_fault_code = (history_entry >> 16) & 0xFFFF
+                if history_fault_code == motor["fault_code"]:
+                    manufacturer_fault_changed = (
+                        motor["manufacturer_fault_code"]
+                        != manufacturer_fault_code
+                    )
+                    motor["manufacturer_fault_code"] = manufacturer_fault_code
+                    motor["fault_history_resolved_code"] = history_fault_code
+                else:
+                    history_mismatch = (
+                        history_fault_code,
+                        motor["fault_code"],
+                    )
+        if request_fault_history is not None:
+            self._schedule_fault_history_query(motor_id, request_fault_history)
+        if fault_code_changed or manufacturer_fault_changed:
+            self.publish_motor_fault_codes()
+        if history_mismatch is not None:
+            self.get_logger().warn(
+                f"AIMOTOR node {motor_id} fault history is stale: "
+                f"history=0x{history_mismatch[0]:04X}, "
+                f"current=0x{history_mismatch[1]:04X}; manufacturer code ignored"
+            )
         if velocity_feedback is not None:
             feedback_msg = Float32MultiArray()
             feedback_msg.data = [
@@ -1663,6 +1838,13 @@ class CanMotorDriver(Node):
                 motor["actual_velocity"],
                 motor["actual_torque"],
                 motor["actual_temperature"],
+                (
+                    motor["actual_current"]
+                    if motor["current_sample_age_sec"] >= 0.0
+                    else -1.0
+                ),
+                motor["current_sample_age_sec"],
+                float(motor["manufacturer_fault_code"]),
             )
         ]
         self.motor_feedback_publisher.publish(feedback_msg)

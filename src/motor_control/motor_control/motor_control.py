@@ -33,7 +33,7 @@ CanMotorDriver = importlib.import_module(
 ).CanMotorDriver
 from motor_control.remote_control import SBUSRemoteController
 from motor_control.charging import Charging485Node
-from motor_control.stall_protection import TotalCurrentMonitor
+from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMonitor
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -96,10 +96,14 @@ ERROR_LOW_BATTERY = 16
 ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
-ERROR_TOTAL_OVERCURRENT = 256  # 电池总电流持续超限
+ERROR_TOTAL_OVERCURRENT = 256  # 电池总电流或滚刷电流持续超限
 
 TOTAL_CURRENT_STALL_THRESHOLD = 4.0  # 总电流保护阈值（A）。
 TOTAL_CURRENT_STALL_DURATION = 5.0  # 总电流超过阈值的持续时间（s）。
+BRUSH_CURRENT_STALL_THRESHOLD = 4.0  # 单个滚刷电机电流保护阈值（A）。
+BRUSH_CURRENT_STALL_DURATION = 5.0  # 滚刷电流超过阈值的持续时间（s）。
+BRUSH_CURRENT_SAMPLE_MAX_AGE_SEC = 2.0  # 超过此年龄的电流样本不参与保护。
+BRUSH_CURRENT_ANOMALY_LOG_INTERVAL_SEC = 5.0  # 滚刷异常电流日志限频间隔。
 
 # PID 参数中的输出修正量与左右轮速度使用同一 r/min 单位。
 MAX_CORRECTION = 5.347606  # 航向纠偏输出上限（r/min）。
@@ -114,6 +118,100 @@ def brush_motor_ids_for_count(brush_motor_count: int) -> Tuple[int, ...]:
     if brush_motor_count == 1:
         return (3,)
     return (3, 4)
+
+
+def parse_motor_feedback_values(values, motor_count):
+    """解析旧版 5 字段或带电流的 8 字段 AIMOTOR 反馈。"""
+    try:
+        motor_count = int(motor_count)
+        numeric_values = [float(value) for value in values]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if motor_count <= 0 or len(numeric_values) not in (
+        motor_count * 5,
+        motor_count * 8,
+    ):
+        return None
+    if not all(math.isfinite(value) for value in numeric_values):
+        return None
+
+    fields_per_motor = len(numeric_values) // motor_count
+    feedback = []
+    for offset in range(0, len(numeric_values), fields_per_motor):
+        motor = {
+            "id": int(numeric_values[offset]),
+            "actual_position": numeric_values[offset + 1],
+            "actual_velocity": numeric_values[offset + 2],
+            "actual_torque": numeric_values[offset + 3],
+            "actual_temperature": numeric_values[offset + 4],
+            "actual_current": None,
+            "current_sample_age_sec": -1.0,
+            "manufacturer_fault_code": 0,
+        }
+        if fields_per_motor == 8:
+            current = numeric_values[offset + 5]
+            sample_age = numeric_values[offset + 6]
+            motor["actual_current"] = current if sample_age >= 0.0 else None
+            motor["current_sample_age_sec"] = sample_age
+            motor["manufacturer_fault_code"] = int(
+                numeric_values[offset + 7]
+            )
+        feedback.append(motor)
+    return feedback
+
+
+def build_motor_fault_details(
+    motor_feedback, motor_fault_codes, current_sample_max_age_sec
+):
+    """Build JSON-safe motor fault and fresh-current details for MQTT."""
+    fault_details = []
+    for index, motor in enumerate(motor_feedback):
+        try:
+            sample_age = float(motor.get("current_sample_age_sec", -1.0))
+            current = motor.get("actual_current")
+            current = None if current is None else float(current)
+        except (TypeError, ValueError, OverflowError):
+            sample_age = -1.0
+            current = None
+        current_is_fresh = (
+            math.isfinite(sample_age)
+            and 0.0 <= sample_age <= current_sample_max_age_sec
+            and current is not None
+            and math.isfinite(current)
+        )
+        if index < len(motor_fault_codes):
+            fault_code = int(motor_fault_codes[index])
+        else:
+            fault_code = int(motor.get("fault_code", 0))
+        fault_details.append(
+            {
+                "motor_id": int(motor.get("id", index + 1)),
+                "cia402_fault_code": fault_code,
+                "manufacturer_fault_code": int(
+                    motor.get("manufacturer_fault_code", 0)
+                ),
+                "actual_current": current if current_is_fresh else None,
+                "current_sample_age_sec": (
+                    sample_age if current_is_fresh else None
+                ),
+            }
+        )
+    return fault_details
+
+
+def build_motor_fault_payload(
+    motor_feedback, motor_fault_codes, current_sample_max_age_sec
+):
+    """Build the stable ``motor_fault`` array and its detailed companion."""
+    fault_codes = [int(code) for code in motor_fault_codes]
+    return {
+        "motor_fault": fault_codes,
+        "motor_fault_details": build_motor_fault_details(
+            motor_feedback,
+            fault_codes,
+            current_sample_max_age_sec,
+        ),
+    }
 
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
@@ -147,6 +245,15 @@ class MotorControlNode(Node):
         else:
             self.route_id = "default"
         self.get_logger().info(f"[ROSNode] 初始化route_id: {self.route_id}")
+
+        self.declare_parameter("enable_magnetic_navigation", True)
+        self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
+        self.magnetic_error = None
+        self.magnetic_valid = False
+        self.magnetic_last_error = 0.0
+        self.magnetic_last_time = 0.0
+        self.magnetic_kp = 5.0
+        self.magnetic_max_correction = 8.0
 
         # 声明进仓GPS参数，第三项直接表示后退进仓时的车头目标航向
         self.declare_parameter("loading_gps", [120.07062241027482, 30.321026884224207, 172.86])
@@ -307,8 +414,58 @@ class MotorControlNode(Node):
             threshold=float(self.get_parameter("total_current_stall_threshold").value),
             duration=float(self.get_parameter("total_current_stall_duration").value),
         )
+        self.declare_parameter(
+            "brush_current_stall_threshold", BRUSH_CURRENT_STALL_THRESHOLD
+        )
+        self.declare_parameter(
+            "brush_current_stall_duration", BRUSH_CURRENT_STALL_DURATION
+        )
+        self.declare_parameter(
+            "brush_current_sample_max_age_sec",
+            BRUSH_CURRENT_SAMPLE_MAX_AGE_SEC,
+        )
+        self.declare_parameter(
+            "brush_current_anomaly_log_interval_sec",
+            BRUSH_CURRENT_ANOMALY_LOG_INTERVAL_SEC,
+        )
+        brush_current_threshold = float(
+            self.get_parameter("brush_current_stall_threshold").value
+        )
+        brush_current_duration = float(
+            self.get_parameter("brush_current_stall_duration").value
+        )
+        self.brush_current_monitors = {
+            motor_id: CurrentStallMonitor(
+                threshold=brush_current_threshold,
+                duration=brush_current_duration,
+            )
+            for motor_id in self.brush_motor_ids
+        }
+        self.brush_current_sample_max_age_sec = float(
+            self.get_parameter("brush_current_sample_max_age_sec").value
+        )
+        self.brush_current_anomaly_log_interval_sec = float(
+            self.get_parameter("brush_current_anomaly_log_interval_sec").value
+        )
+        if (
+            not math.isfinite(self.brush_current_sample_max_age_sec)
+            or self.brush_current_sample_max_age_sec <= 0.0
+        ):
+            raise ValueError("brush_current_sample_max_age_sec must be finite and positive")
+        if (
+            not math.isfinite(self.brush_current_anomaly_log_interval_sec)
+            or self.brush_current_anomaly_log_interval_sec <= 0.0
+        ):
+            raise ValueError(
+                "brush_current_anomaly_log_interval_sec must be finite and positive"
+            )
+        self._brush_current_anomaly_last_log_time = {}
+        self.current_stall_fault = False
         self.total_current_fault = False
         self.total_current_fault_current = 0.0
+        self.current_stall_fault_source = None
+        self.current_stall_fault_motor_id = None
+        self.current_stall_fault_current = 0.0
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
         self.low_battery_warning = False
@@ -438,6 +595,8 @@ class MotorControlNode(Node):
             self.io_data_callback,
             10
         )
+        self.magnetic_error_sub = self.create_subscription(Float32, "/magnetic/error", self.magnetic_error_callback, 10)
+        self.magnetic_valid_sub = self.create_subscription(Bool, "/magnetic/valid", self.magnetic_valid_callback, 10)
         self.imu_heading_sub = self.create_subscription(
             Float32,
             "imu_heading",
@@ -477,6 +636,7 @@ class MotorControlNode(Node):
         # 电机反馈只保留最新一帧，避免状态节点处理积压的旧速度数据。
         self._motor_feedback_topic_lock = threading.RLock()
         self._motor_feedback_topic = []
+        self._motor_feedback_topic_received_monotonic = 0.0
         self.motor_feedback_subscription = self.create_subscription(
             Float32MultiArray,
             "motor_feedback",
@@ -657,7 +817,7 @@ class MotorControlNode(Node):
             error |= ERROR_LOW_BATTERY
         if self.loading_timeout_error:
             error |= ERROR_LOADING_TIMEOUT
-        if self.total_current_fault:
+        if self.current_stall_fault:
             error |= ERROR_TOTAL_OVERCURRENT
         return error
 
@@ -674,7 +834,7 @@ class MotorControlNode(Node):
 
     def _check_total_current_protection(self) -> None:
         """Latch HOLD when battery output current stays above the safe limit."""
-        if self.battery_current is None or self.total_current_fault:
+        if self.battery_current is None or self.current_stall_fault:
             self.total_current_monitor.reset()
             return
         enabled = self._has_active_motor_command() and self.current_status not in (
@@ -687,20 +847,158 @@ class MotorControlNode(Node):
         )
         if not triggered:
             return
-        self.total_current_fault = True
-        self.total_current_fault_current = abs(float(self.battery_current))
+        self._latch_current_stall_fault(
+            source="battery_total",
+            current=self.battery_current,
+        )
+
+    def _latch_current_stall_fault(
+        self, source: str, current: float, motor_id: Optional[int] = None
+    ) -> None:
+        """Stop and latch the shared over-current protection state."""
+        if self.current_stall_fault:
+            return
+        self.current_stall_fault = True
+        self.current_stall_fault_source = source
+        self.current_stall_fault_motor_id = motor_id
+        self.current_stall_fault_current = abs(float(current))
+        self.total_current_fault = source == "battery_total"
+        self.total_current_fault_current = (
+            self.current_stall_fault_current if self.total_current_fault else 0.0
+        )
+        if source == "battery_total":
+            detail = "电池总电流"
+            threshold = self.total_current_monitor.threshold
+            duration = self.total_current_monitor.duration
+        else:
+            detail = f"滚刷电机{motor_id}电流"
+            monitor = self.brush_current_monitors[motor_id]
+            threshold = monitor.threshold
+            duration = monitor.duration
         self.get_logger().error(
-            f"[MotorProtection] 电池总电流持续超过"
-            f"{self.total_current_monitor.threshold:.1f}A "
-            f"{self.total_current_monitor.duration:.1f}s，"
-            f"当前{self.total_current_fault_current:.2f}A，停车并进入HOLD，"
+            f"[MotorProtection] {detail}超过{threshold:.2f}A并持续"
+            f"{duration:.2f}s，"
+            f"当前{self.current_stall_fault_current:.2f}A，停车并进入HOLD，"
             f"故障码=0x{ERROR_TOTAL_OVERCURRENT:02X}"
         )
+        for monitor in self.brush_current_monitors.values():
+            monitor.reset()
+        self.total_current_monitor.reset()
         self.set_motors_speed(0.0, 0.0)
         self.set_brush_speed(0.0)
         self.switch_state("h")
         self.publish_state()
 
+    def _clear_current_stall_fault(self) -> None:
+        """Clear the latched current protection after an explicit recovery command."""
+        self.current_stall_fault = False
+        self.current_stall_fault_source = None
+        self.current_stall_fault_motor_id = None
+        self.current_stall_fault_current = 0.0
+        self.total_current_fault = False
+        self.total_current_fault_current = 0.0
+        self.total_current_monitor.reset()
+        for monitor in self.brush_current_monitors.values():
+            monitor.reset()
+        self._brush_current_anomaly_last_log_time.clear()
+
+    def _check_brush_current_protection(self) -> None:
+        """Monitor commanded brush motors using fresh AIMOTOR current samples."""
+        if self.current_stall_fault:
+            for monitor in self.brush_current_monitors.values():
+                monitor.reset()
+            return
+
+        feedback_by_id = {
+            int(motor["id"]): motor
+            for motor in self.get_motor_feedback_snapshot()
+            if "id" in motor
+        }
+        command_by_id = {}
+        for motor in self.motor_ctrl.motors:
+            try:
+                command_by_id[int(motor["id"])] = float(
+                    motor.get("velocity", self.brush_speed)
+                )
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+
+        now = time.monotonic()
+        for motor_id, monitor in self.brush_current_monitors.items():
+            feedback = feedback_by_id.get(motor_id, {})
+            try:
+                current = feedback.get("actual_current")
+                current = None if current is None else float(current)
+                sample_age = float(feedback.get("current_sample_age_sec", -1.0))
+            except (TypeError, ValueError, OverflowError):
+                current = None
+                sample_age = -1.0
+            sample_fresh = (
+                current is not None
+                and math.isfinite(current)
+                and math.isfinite(sample_age)
+                and 0.0 <= sample_age <= self.brush_current_sample_max_age_sec
+            )
+            enabled = abs(command_by_id.get(motor_id, 0.0)) > 0.1
+            triggered = monitor.update(
+                current if current is not None else 0.0,
+                enabled=enabled,
+                now=now,
+                sample_fresh=sample_fresh,
+            )
+
+            if (
+                enabled
+                and sample_fresh
+                and abs(current) > monitor.threshold
+            ):
+                last_log = self._brush_current_anomaly_last_log_time.get(
+                    motor_id, float("-inf")
+                )
+                if now - last_log >= self.brush_current_anomaly_log_interval_sec:
+                    self.get_logger().warn(
+                        f"[MotorProtection] 滚刷电流异常：电机{motor_id} "
+                        f"实际电流={current:+.2f}A，阈值={monitor.threshold:.2f}A，"
+                        f"持续={monitor.elapsed(now):.1f}s/"
+                        f"{monitor.duration:.1f}s"
+                    )
+                    self._brush_current_anomaly_last_log_time[motor_id] = now
+
+            if triggered:
+                self._latch_current_stall_fault(
+                    source="brush_motor",
+                    current=current,
+                    motor_id=motor_id,
+                )
+                return
+
+    def _check_current_protection(self) -> None:
+        """Check battery and brush current, sharing one latched stop path."""
+        self._check_total_current_protection()
+        if not self.current_stall_fault:
+            self._check_brush_current_protection()
+
+
+    def magnetic_error_callback(self, msg: Float32):
+        self.magnetic_error = float(msg.data)
+        self.magnetic_last_time = time.time()
+        self.magnetic_valid = True
+
+    def magnetic_valid_callback(self, msg: Bool):
+        self.magnetic_valid = bool(msg.data)
+        if not self.magnetic_valid:
+            self.magnetic_error = None
+
+    def get_magnetic_correction(self, reverse: bool = False) -> Optional[float]:
+        """Return bounded correction for the two straight loading/unloading phases."""
+        if not self.enable_magnetic_navigation or not self.magnetic_valid or self.magnetic_error is None:
+            return None
+        if time.time() - self.magnetic_last_time > 0.25:
+            return None
+        correction = self.magnetic_kp * self.magnetic_error
+        if reverse:
+            correction = -correction
+        return max(-self.magnetic_max_correction, min(self.magnetic_max_correction, correction))
 
     def imu_heading_callback(self, msg:Float32):
         """IMU航向回调 - 新增时间戳，过滤旧数据"""
@@ -770,9 +1068,9 @@ class MotorControlNode(Node):
             self.motor_ctrl.reconnect_can_bus()
         # AIMotor 驱动由当前控制节点主动轮询，并发布最新反馈话题。
         self.motor_ctrl.poll_feedback()
-        self._check_total_current_protection()
-        if self.total_current_fault:
-            # 故障锁存期间屏蔽所有控制源，直到显式 ENABLE/DISABLE 清除故障。
+        self._check_current_protection()
+        if self.current_stall_fault:
+            # 故障锁存期间屏蔽所有控制源，直到显式恢复命令清除故障。
             self.set_motors_speed(0.0, 0.0)
             self.set_brush_speed(0.0)
             state_msg = String()
@@ -1031,8 +1329,17 @@ class MotorControlNode(Node):
         if key == 'r':
             # 切换到RTK导航模式（进出仓状态下禁止切换）
             if not self.is_in_bin_process:
+                fault_cleared = False
+                if self.current_stall_fault:
+                    self._clear_current_stall_fault()
+                    fault_cleared = True
+                    self.get_logger().info(
+                        "[MotorProtection] 重新进入AUTO_CLEANING，清除电流保护锁存并恢复清扫"
+                    )
                 self.current_control_mode = "AUTO_CLEANING"
                 self.get_logger().info(f"[ROSNode] 控制模式切换：→ AUTO_CLEANING")
+                if fault_cleared:
+                    self.publish_state()
             else:
                 self.get_logger().warn("[ROSNode] 正在进出仓，禁止切换到RTK模式")
         elif key == 'n':
@@ -1478,7 +1785,9 @@ class MotorControlNode(Node):
             )
             return
 
+        previous_fault_codes = self.motor_fault_codes
         self.motor_fault_codes = [int(msg.data[i]) for i in range(motor_count)]
+        fault_codes_changed = self.motor_fault_codes != previous_fault_codes
         
         fault_codes = self.motor_fault_codes
         has_fault = False
@@ -1489,7 +1798,7 @@ class MotorControlNode(Node):
                 has_fault = True
                 motor_id = self.motor_ctrl.motors[i]["id"]
                 motor_name = motor_names.get(motor_id, f"电机{motor_id}")
-                fault_str += f"{motor_name}:0x{code:02X}; "
+                fault_str += f"{motor_name}:0x{code:04X}; "
         
         if has_fault:
             self.get_logger().warn(f"[MotorControl] 电机故障: {fault_str}")
@@ -1497,34 +1806,58 @@ class MotorControlNode(Node):
                 self.motor_ctrl.motor_clear_fault(motor["id"])
             self.get_logger().warn(f"发送清除故障指令！")
 
+        if fault_codes_changed:
+            self.publish_state()
+
     def motor_feedback_callback(self, msg: Float32MultiArray):
         """缓存 AIMotor 发布的最新反馈话题数据。"""
         values = list(msg.data)
         motor_count = len(self.motor_ctrl.motors)
-        if len(values) != motor_count * 5:
+        feedback = parse_motor_feedback_values(values, motor_count)
+        if feedback is None:
             self.get_logger().warn(
                 f"[Motor] 忽略格式错误的反馈话题：收到{len(values)}个值，"
-                f"期望{motor_count * 5}个值"
+                f"期望每台电机5或8个值，共{motor_count}台"
             )
             return
 
-        feedback = []
-        for offset in range(0, len(values), 5):
-            feedback.append({
-                "id": int(values[offset]),
-                "actual_position": float(values[offset + 1]),
-                "actual_velocity": float(values[offset + 2]),
-                "actual_torque": float(values[offset + 3]),
-                "actual_temperature": float(values[offset + 4]),
-            })
+        received_monotonic = time.monotonic()
         with self._motor_feedback_topic_lock:
+            previous_fault_details = [
+                (
+                    motor.get("id"),
+                    motor.get("manufacturer_fault_code", 0),
+                )
+                for motor in self._motor_feedback_topic
+            ]
             self._motor_feedback_topic = feedback
+            self._motor_feedback_topic_received_monotonic = received_monotonic
+        current_fault_details = [
+            (motor.get("id"), motor.get("manufacturer_fault_code", 0))
+            for motor in feedback
+        ]
+        if current_fault_details != previous_fault_details:
+            self.publish_state()
 
     def get_motor_feedback_snapshot(self):
         """返回最新话题反馈；话题尚未到达时回退到驱动快照。"""
         with self._motor_feedback_topic_lock:
             if self._motor_feedback_topic:
-                return [dict(motor) for motor in self._motor_feedback_topic]
+                feedback = [dict(motor) for motor in self._motor_feedback_topic]
+                age_since_receive = max(
+                    0.0,
+                    time.monotonic()
+                    - self._motor_feedback_topic_received_monotonic,
+                )
+                for motor in feedback:
+                    sample_age = float(
+                        motor.get("current_sample_age_sec", -1.0)
+                    )
+                    if sample_age >= 0.0:
+                        motor["current_sample_age_sec"] = (
+                            sample_age + age_since_receive
+                        )
+                return feedback
         return self.motor_ctrl.get_feedback_snapshot()
 
     def laser_callback(self, msg: UInt16MultiArray):
@@ -1657,11 +1990,11 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
-        if self.total_current_fault and new_state not in (
+        if self.current_stall_fault and new_state not in (
             "HOLD", "ENABLE", "DISABLE", "AUTO_CLEANING"
         ):
             self.get_logger().warn(
-                f"[MotorProtection] 总电流故障已锁存，忽略状态切换请求：{new_state}"
+                f"[MotorProtection] 电流保护故障已锁存，忽略状态切换请求：{new_state}"
             )
             return
         # if self.current_control_mode == "REMOTE":
@@ -1677,6 +2010,10 @@ class MotorControlNode(Node):
         # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式。
         # 出仓结算阶段的HOLD也必须继续处理，才能让人工HOLD真正终止流程。
         if new_state == self.current_status:
+            if self.current_stall_fault and new_state in (
+                "ENABLE", "DISABLE", "AUTO_CLEANING"
+            ):
+                self._clear_current_stall_fault()
             if new_state in ["HOLD", "DISABLE"] and (
                     self.current_control_mode == "AUTO_CLEANING" or self.is_in_bin_process):
                 self.get_logger().info(f"[ROSNode] 重复设置{new_state}，继续执行安全停止")
@@ -1711,10 +2048,8 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
         if new_state in ("ENABLE", "DISABLE", "AUTO_CLEANING"):
-            # 显式重新使能或失能作为人工确认，清除上一次的总电流故障锁存。
-            self.total_current_fault = False
-            self.total_current_fault_current = 0.0
-            self.total_current_monitor.reset()
+            # 恢复命令已在门控处确认并清除锁存。
+            self._clear_current_stall_fault()
 
         # 核心修复2：设置进出仓状态标记
         if new_state in ["START", "LOADING"]:
@@ -1946,7 +2281,15 @@ class MotorControlNode(Node):
                 "charging_v": self.charging_v,
                 "charging_i": self.charging_i,
                 "charging_fault": self.charging_fault,
-                "motor_fault": self.motor_fault_codes,
+                **build_motor_fault_payload(
+                    motor_feedback,
+                    self.motor_fault_codes,
+                    self.brush_current_sample_max_age_sec,
+                ),
+                "current_stall_fault": self.current_stall_fault,
+                "current_stall_fault_source": self.current_stall_fault_source,
+                "current_stall_fault_motor_id": self.current_stall_fault_motor_id,
+                "current_stall_fault_current": self.current_stall_fault_current,
                 "total_current_fault": self.total_current_fault,
                 "total_current_fault_current": self.total_current_fault_current,
                 "dock_sensors": self.dock_sensors,
@@ -2362,7 +2705,11 @@ class MotorControlNode(Node):
         # ========== 阶段1：后退出仓 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
             if current_time - self.unloading_start_time < self.unloading_forword_threshold:
-                correction = 0  # 直线纠偏待添加
+                correction = self.get_magnetic_correction(reverse=False)
+                if correction is None and self.enable_magnetic_navigation:
+                    self.set_motors_speed(0.0, 0.0)
+                    return
+                correction = correction or 0.0
                 left_speed = -self.motor_ctrl.BASE_SPEED + correction
                 right_speed = self.motor_ctrl.BASE_SPEED + correction
                 self.set_motors_speed(left_speed, right_speed)
@@ -2643,6 +2990,17 @@ class MotorControlNode(Node):
             elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = self.motor_ctrl.BASE_SPEED
+
+                # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
+                magnetic_correction = self.get_magnetic_correction(reverse=True)
+                if self.enable_magnetic_navigation:
+                    if magnetic_correction is None:
+                        self.set_motors_speed(0.0, 0.0)
+                        return
+                    left_speed = base_speed - magnetic_correction
+                    right_speed = -base_speed - magnetic_correction
+                    self.set_motors_speed(left_speed, right_speed)
+                    return
 
                 # ── 航向差速纠偏：后退时根据偏角修正左右轮差速 ──
                 if self.imu_yaw_deg is not None:
