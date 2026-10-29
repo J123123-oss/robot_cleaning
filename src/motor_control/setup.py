@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'pyserial'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='a2723406795@gmail.com',
@@ -32,6 +32,7 @@ setup(
             'sensors_485 = motor_control.sensors_485:main',
             'laser_distance = motor_control.laser_distance:main',
             'charging = motor_control.charging:main',
+            'magnetic_navigation = motor_control.magnetic_navigation:main',
             'manual_test = motor_control.manual_test:main',
 
         ],

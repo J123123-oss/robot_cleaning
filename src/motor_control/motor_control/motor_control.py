@@ -246,6 +246,15 @@ class MotorControlNode(Node):
             self.route_id = "default"
         self.get_logger().info(f"[ROSNode] 初始化route_id: {self.route_id}")
 
+        self.declare_parameter("enable_magnetic_navigation", True)
+        self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
+        self.magnetic_error = None
+        self.magnetic_valid = False
+        self.magnetic_last_error = 0.0
+        self.magnetic_last_time = 0.0
+        self.magnetic_kp = 5.0
+        self.magnetic_max_correction = 8.0
+
         # 声明进仓GPS参数，第三项直接表示后退进仓时的车头目标航向
         self.declare_parameter("loading_gps", [120.07062241027482, 30.321026884224207, 172.86])
         loading_gps = self.get_parameter("loading_gps").value
@@ -586,6 +595,8 @@ class MotorControlNode(Node):
             self.io_data_callback,
             10
         )
+        self.magnetic_error_sub = self.create_subscription(Float32, "/magnetic/error", self.magnetic_error_callback, 10)
+        self.magnetic_valid_sub = self.create_subscription(Bool, "/magnetic/valid", self.magnetic_valid_callback, 10)
         self.imu_heading_sub = self.create_subscription(
             Float32,
             "imu_heading",
@@ -967,6 +978,27 @@ class MotorControlNode(Node):
         if not self.current_stall_fault:
             self._check_brush_current_protection()
 
+
+    def magnetic_error_callback(self, msg: Float32):
+        self.magnetic_error = float(msg.data)
+        self.magnetic_last_time = time.time()
+        self.magnetic_valid = True
+
+    def magnetic_valid_callback(self, msg: Bool):
+        self.magnetic_valid = bool(msg.data)
+        if not self.magnetic_valid:
+            self.magnetic_error = None
+
+    def get_magnetic_correction(self, reverse: bool = False) -> Optional[float]:
+        """Return bounded correction for the two straight loading/unloading phases."""
+        if not self.enable_magnetic_navigation or not self.magnetic_valid or self.magnetic_error is None:
+            return None
+        if time.time() - self.magnetic_last_time > 0.25:
+            return None
+        correction = self.magnetic_kp * self.magnetic_error
+        if reverse:
+            correction = -correction
+        return max(-self.magnetic_max_correction, min(self.magnetic_max_correction, correction))
 
     def imu_heading_callback(self, msg:Float32):
         """IMU航向回调 - 新增时间戳，过滤旧数据"""
@@ -2673,7 +2705,11 @@ class MotorControlNode(Node):
         # ========== 阶段1：后退出仓 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
             if current_time - self.unloading_start_time < self.unloading_forword_threshold:
-                correction = 0  # 直线纠偏待添加
+                correction = self.get_magnetic_correction(reverse=False)
+                if correction is None and self.enable_magnetic_navigation:
+                    self.set_motors_speed(0.0, 0.0)
+                    return
+                correction = correction or 0.0
                 left_speed = -self.motor_ctrl.BASE_SPEED + correction
                 right_speed = self.motor_ctrl.BASE_SPEED + correction
                 self.set_motors_speed(left_speed, right_speed)
@@ -2954,6 +2990,17 @@ class MotorControlNode(Node):
             elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = self.motor_ctrl.BASE_SPEED
+
+                # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
+                magnetic_correction = self.get_magnetic_correction(reverse=True)
+                if self.enable_magnetic_navigation:
+                    if magnetic_correction is None:
+                        self.set_motors_speed(0.0, 0.0)
+                        return
+                    left_speed = base_speed - magnetic_correction
+                    right_speed = -base_speed - magnetic_correction
+                    self.set_motors_speed(left_speed, right_speed)
+                    return
 
                 # ── 航向差速纠偏：后退时根据偏角修正左右轮差速 ──
                 if self.imu_yaw_deg is not None:
