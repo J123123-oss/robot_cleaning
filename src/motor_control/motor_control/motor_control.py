@@ -2145,7 +2145,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(2.0, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
 
         elif new_state == "FORWARD":
@@ -2190,7 +2190,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(2.0, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为2秒")
 
             self.complete_state = False
