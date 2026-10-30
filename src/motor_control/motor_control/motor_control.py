@@ -245,6 +245,7 @@ class MotorControlNode(Node):
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
         self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
+        self._magnetic_unloading_request_pending = False
         self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
         self.magnetic_error = None
         self.magnetic_valid = False
@@ -2174,7 +2175,6 @@ class MotorControlNode(Node):
             self._cancel_bin_process_timers()
             self.unloading_phase = None  # 先置空，等待归位后再初始化
             self.magnetic_test_unloading_active = False
-        self._magnetic_unloading_request_pending = False
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_settle_start_time = None
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
