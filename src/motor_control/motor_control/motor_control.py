@@ -253,6 +253,7 @@ class MotorControlNode(Node):
         self.magnetic_valid = False
         self.magnetic_center_count = 0
         self.magnetic_tracking_ready = False
+        self.magnetic_center_ready_time = None
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
         self.magnetic_kp = 5.0
@@ -994,10 +995,13 @@ class MotorControlNode(Node):
         if center_only:
             self.magnetic_center_count += 1
             if self.magnetic_center_count >= 3:
+                if not self.magnetic_tracking_ready:
+                    self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
         else:
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
+            self.magnetic_center_ready_time = None
 
     def magnetic_error_data(self) -> str:
         bits = f"{self.magnetic_mask:08b}"
@@ -2660,6 +2664,12 @@ class MotorControlNode(Node):
                 return
             
             self.dock_sensors = cmd_obj.get("sensors", [])
+            if isinstance(self.dock_sensors, str) and len(self.dock_sensors) == 8:
+                try:
+                    self.magnetic_mask = int(self.dock_sensors[::-1], 2)
+                    self.magnetic_mask_callback(UInt16(data=self.magnetic_mask))
+                except ValueError:
+                    pass
             self.get_logger().info(f"[ROSNode] 解析到sensors：{self.dock_sensors}")
             if self.dock_sensors == None:
                 self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
@@ -3019,6 +3029,11 @@ class MotorControlNode(Node):
                 base_speed = self.motor_ctrl.BASE_SPEED
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
+                if (self.enable_magnetic_navigation and self.magnetic_tracking_ready
+                        and self.magnetic_center_ready_time is not None
+                        and current_time - self.magnetic_center_ready_time < 3.0):
+                    self.set_motors_speed(0.0, 0.0)
+                    return
                 if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
                     # 进仓后退前先低速原地搜索磁条中心，避免未知朝向时反向纠偏。
                     left_edge = self.magnetic_mask & 0x03
