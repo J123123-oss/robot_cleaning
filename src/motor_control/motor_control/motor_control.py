@@ -2285,8 +2285,7 @@ class MotorControlNode(Node):
                     )
                 },
                 "sensors_status":self.sensors_status,
-                "dock_sensors": self.dock_sensors,
-                "error_data": self.magnetic_error_data(),
+                "dock_sensors": self.magnetic_error_data(),
                 # AIMotor actual_velocity 为轮子输出轴 r/min，此处换算为平均线速度 m/s。
                 "velocity": (
                     abs(left_feedback["actual_velocity"])
