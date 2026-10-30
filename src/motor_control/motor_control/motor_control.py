@@ -257,6 +257,7 @@ class MotorControlNode(Node):
         self.magnetic_last_log_time = 0.0
         self.magnetic_search_direction = 1
         self.magnetic_search_last_switch_time = 0.0
+        self.magnetic_search_no_edge_since = None
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -3048,22 +3049,29 @@ class MotorControlNode(Node):
                     search_speed = 3.342254
                     if left_edge and not right_edge:
                         self.magnetic_search_direction = 1
+                        self.magnetic_search_no_edge_since = None
                         self.magnetic_search_last_switch_time = time.time()
                         self.get_logger().info(f"[LOADING][MagneticSearch] 左侧边缘 mask=0x{self.magnetic_mask:02X}，左转")
                         self.set_motors_speed(search_speed, search_speed)
                     elif right_edge and not left_edge:
                         self.magnetic_search_direction = -1
+                        self.magnetic_search_no_edge_since = None
                         self.magnetic_search_last_switch_time = time.time()
                         self.get_logger().info(f"[LOADING][MagneticSearch] 右侧边缘 mask=0x{self.magnetic_mask:02X}，右转")
                         self.set_motors_speed(-search_speed, -search_speed)
                     else:
                         now = time.time()
-                        if now - self.magnetic_search_last_switch_time >= self.magnetic_search_min_hold_sec:
-                            self.magnetic_search_direction *= -1
+                        if self.magnetic_search_no_edge_since is None:
+                            self.magnetic_search_no_edge_since = now
+                        no_edge_duration = now - self.magnetic_search_no_edge_since
+                        # 先持续左转；无边缘持续后只切换一次为持续右转。
+                        if (self.magnetic_search_direction > 0
+                                and no_edge_duration >= self.magnetic_search_min_hold_sec):
+                            self.magnetic_search_direction = -1
                             self.magnetic_search_last_switch_time = now
-                            turn = "左转" if self.magnetic_search_direction > 0 else "右转"
                             self.get_logger().warn(
-                                f"[LOADING][MagneticSearch] mask=0x{self.magnetic_mask:02X}，无边缘信号，反向{turn}重新判断"
+                                f"[LOADING][MagneticSearch] mask=0x{self.magnetic_mask:02X}，"
+                                f"左转后无边缘持续{no_edge_duration:.2f}s，切换持续右转重新识别"
                             )
                         turn_speed = search_speed * self.magnetic_search_direction
                         self.set_motors_speed(turn_speed, turn_speed)
