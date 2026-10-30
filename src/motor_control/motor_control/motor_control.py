@@ -2034,6 +2034,7 @@ class MotorControlNode(Node):
 
         if (new_state == "START"
                 and not self.magnetic_test_unloading_active
+                and not self._magnetic_unloading_request_pending
                 and self.battery_remaining is not None
                 and self.battery_remaining < self.cleaning_low_battery_threshold):
             self.low_battery_warning = True
@@ -2173,6 +2174,7 @@ class MotorControlNode(Node):
             self._cancel_bin_process_timers()
             self.unloading_phase = None  # 先置空，等待归位后再初始化
             self.magnetic_test_unloading_active = False
+        self._magnetic_unloading_request_pending = False
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_settle_start_time = None
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
@@ -2516,7 +2518,9 @@ class MotorControlNode(Node):
                 self.get_logger().warn(
                     f"[MQTT] {command}：直接执行UNLOADING_FORWARD"
                 )
+                self._magnetic_unloading_request_pending = True
                 self.switch_state("u")
+                self._magnetic_unloading_request_pending = False
                 self.magnetic_test_unloading_active = True
             elif command == "LOADING_SKIP_DOCK":
                 # 进仓跳过 dock 传感器门控检测，GPS 导航照常执行
