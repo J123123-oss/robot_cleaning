@@ -2706,7 +2706,7 @@ class RTKNavControlNode(Node):
         self.imu_yaw = math.fmod(self.imu_yaw + 180.0, 360.0) - 180.0
         self.imu_initialized = True
         if now - self.last_heading_diagnostic_log_time >= 1.0:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"[航向诊断] raw={self.raw_ins_heading:.2f}, "
                 f"offset={self.rtk_install_offset:.2f}, "
                 f"yaw={self.imu_yaw:.2f}, "
