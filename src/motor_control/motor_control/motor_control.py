@@ -11,7 +11,7 @@ import importlib
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16MultiArray, Int16, Bool
+from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16, UInt16MultiArray, Int16, Bool
 from geometry_msgs.msg import Vector3
 import traceback
 import json
@@ -249,6 +249,7 @@ class MotorControlNode(Node):
         self._magnetic_unloading_request_pending = False
         self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
         self.magnetic_error = None
+        self.magnetic_mask = 0
         self.magnetic_valid = False
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -597,6 +598,7 @@ class MotorControlNode(Node):
         )
         self.magnetic_error_sub = self.create_subscription(Float32, "/magnetic/error", self.magnetic_error_callback, 10)
         self.magnetic_valid_sub = self.create_subscription(Bool, "/magnetic/valid", self.magnetic_valid_callback, 10)
+        self.magnetic_mask_sub = self.create_subscription(UInt16, "/magnetic/mask", self.magnetic_mask_callback, 10)
         self.imu_heading_sub = self.create_subscription(
             Float32,
             "imu_heading",
@@ -983,6 +985,13 @@ class MotorControlNode(Node):
         self.magnetic_error = float(msg.data)
         self.magnetic_last_time = time.time()
         self.magnetic_valid = True
+
+    def magnetic_mask_callback(self, msg: UInt16):
+        self.magnetic_mask = int(msg.data) & 0xFF
+
+    def magnetic_error_data(self) -> str:
+        bits = f"{self.magnetic_mask:08b}"
+        return bits[::-1]
 
     def magnetic_valid_callback(self, msg: Bool):
         self.magnetic_valid = bool(msg.data)
@@ -2276,6 +2285,8 @@ class MotorControlNode(Node):
                     )
                 },
                 "sensors_status":self.sensors_status,
+                "dock_sensors": self.dock_sensors,
+                "error_data": self.magnetic_error_data(),
                 # AIMotor actual_velocity 为轮子输出轴 r/min，此处换算为平均线速度 m/s。
                 "velocity": (
                     abs(left_feedback["actual_velocity"])
