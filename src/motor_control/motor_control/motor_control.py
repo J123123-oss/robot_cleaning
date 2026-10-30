@@ -3019,10 +3019,20 @@ class MotorControlNode(Node):
                 base_speed = self.motor_ctrl.BASE_SPEED
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
-                magnetic_correction = (
-                    self.get_magnetic_correction(reverse=True)
-                    if self.magnetic_tracking_ready else 0.0
-                )
+                if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
+                    # 进仓后退前先低速原地搜索磁条中心，避免未知朝向时反向纠偏。
+                    left_edge = self.magnetic_mask & 0x03
+                    right_edge = self.magnetic_mask & 0xC0
+                    search_speed = 3.342254
+                    if left_edge and not right_edge:
+                        # 左侧触发变多表示车体偏右，继续向左搜索。
+                        self.set_motors_speed(search_speed, search_speed)
+                    elif right_edge and not left_edge:
+                        self.set_motors_speed(-search_speed, -search_speed)
+                    else:
+                        self.set_motors_speed(base_speed, -base_speed)
+                    return
+                magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
                     if magnetic_correction is None:
                         self.set_motors_speed(0.0, 0.0)
