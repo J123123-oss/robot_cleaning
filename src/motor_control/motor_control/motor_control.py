@@ -258,6 +258,8 @@ class MotorControlNode(Node):
         self.magnetic_search_direction = 1
         self.magnetic_search_last_switch_time = 0.0
         self.magnetic_search_no_edge_since = None
+        self.magnetic_search_motion_phase = "BACKWARD"
+        self.magnetic_search_motion_since = 0.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -3050,12 +3052,16 @@ class MotorControlNode(Node):
                     if left_edge and not right_edge:
                         self.magnetic_search_direction = 1
                         self.magnetic_search_no_edge_since = None
+                        self.magnetic_search_motion_phase = "BACKWARD"
+                        self.magnetic_search_motion_since = time.time()
                         self.magnetic_search_last_switch_time = time.time()
                         self.get_logger().info(f"[LOADING][MagneticSearch] 左侧边缘 mask=0x{self.magnetic_mask:02X}，左转")
                         self.set_motors_speed(search_speed, search_speed)
                     elif right_edge and not left_edge:
                         self.magnetic_search_direction = -1
                         self.magnetic_search_no_edge_since = None
+                        self.magnetic_search_motion_phase = "BACKWARD"
+                        self.magnetic_search_motion_since = time.time()
                         self.magnetic_search_last_switch_time = time.time()
                         self.get_logger().info(f"[LOADING][MagneticSearch] 右侧边缘 mask=0x{self.magnetic_mask:02X}，右转")
                         self.set_motors_speed(-search_speed, -search_speed)
@@ -3073,8 +3079,25 @@ class MotorControlNode(Node):
                                 f"[LOADING][MagneticSearch] mask=0x{self.magnetic_mask:02X}，"
                                 f"左转后无边缘持续{no_edge_duration:.2f}s，切换持续右转重新识别"
                             )
-                        turn_speed = search_speed * self.magnetic_search_direction
-                        self.set_motors_speed(turn_speed, turn_speed)
+                        if self.magnetic_search_motion_since <= 0.0:
+                            self.magnetic_search_motion_since = now
+                        if now - self.magnetic_search_motion_since >= 0.8:
+                            self.magnetic_search_motion_phase = (
+                                "FORWARD" if self.magnetic_search_motion_phase == "BACKWARD" else "BACKWARD"
+                            )
+                            self.magnetic_search_motion_since = now
+                            self.get_logger().info(
+                                f"[LOADING][MagneticSearch] 切换扫描动作={self.magnetic_search_motion_phase}"
+                            )
+                        scan_speed = max(3.342254, base_speed * 0.3)
+                        turn_bias = search_speed * self.magnetic_search_direction
+                        if self.magnetic_search_motion_phase == "BACKWARD":
+                            left_speed = scan_speed + turn_bias
+                            right_speed = -scan_speed + turn_bias
+                        else:
+                            left_speed = -scan_speed + turn_bias
+                            right_speed = scan_speed + turn_bias
+                        self.set_motors_speed(left_speed, right_speed)
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
