@@ -240,10 +240,12 @@ class MotorControlNode(Node):
 
         self.declare_parameter("enable_magnetic_navigation", True)
         self.declare_parameter("magnetic_test_loading_direct", False)
-        self.declare_parameter("magnetic_test_unloading_direct", False)
+        self.declare_parameter("magnetic_test_unloading_direct", True)
+        self.declare_parameter("cleaning_low_battery_threshold", UNLOADING_MIN_BATTERY)
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
         self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
+        self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
         self.magnetic_error = None
         self.magnetic_valid = False
         self.magnetic_last_error = 0.0
@@ -1747,7 +1749,7 @@ class MotorControlNode(Node):
         self.battery_current = round(msg.data[1], 2)  # 总电流（索引1）
         self.battery_total_voltage = round(msg.data[2], 2)  # 总电压（索引2）
         self.battery_temperatures = round(msg.data[3], 1) # 温度（索引3）
-        if self.battery_remaining >= UNLOADING_MIN_BATTERY:
+        if self.battery_remaining >= self.cleaning_low_battery_threshold:
             self.low_battery_warning = False
     def charging_volt_curr_cb(self, msg: Float32MultiArray):
         """订阅充电电压电流数据的回调函数"""
@@ -2030,7 +2032,10 @@ class MotorControlNode(Node):
             self.publish_state()
             return
 
-        if new_state == "START" and self.battery_remaining is not None and self.battery_remaining < UNLOADING_MIN_BATTERY:
+        if (new_state == "START"
+                and not self.magnetic_test_unloading_active
+                and self.battery_remaining is not None
+                and self.battery_remaining < self.cleaning_low_battery_threshold):
             self.low_battery_warning = True
             self.get_logger().warn(
                 f"[START] 电量{self.battery_remaining}%低于{UNLOADING_MIN_BATTERY}%，"
