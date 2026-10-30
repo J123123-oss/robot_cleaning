@@ -1005,7 +1005,7 @@ class MotorControlNode(Node):
 
     def charge_resume_callback(self):
         # 充电停止条件判断（使用存储的传感器状态）
-        if self.is_charging and ((self.dock_sensors & 0x08) or (self.dock_sensors & 0x04)):
+        if self.is_charging:
             # 条件1：电压电流条件
             if self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6:
                 self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
@@ -1023,9 +1023,7 @@ class MotorControlNode(Node):
                 self.get_logger().info(f"[ROSNode] 充电已暂停，等待电量低于{self.charge_resume_threshold}%时恢复充电")
         
         if self.is_charge_paused and self.battery_remaining is not None:
-            docked = (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04)
-            if not docked:
-                self.get_logger().info(f"[ROSNode] 车体已离开停机仓，清除充电暂停标志，累计恢复充电{self.charge_resume_count}次")
+            if self.current_status != "DISABLE":
                 self.is_charge_paused = False
                 self.charge_resume_count = 0
             elif self.battery_remaining <= self.charge_resume_threshold:
@@ -2682,19 +2680,10 @@ class MotorControlNode(Node):
         if self.bin_process_paused:
             return
 
-        # 仓内限位传感器是运行期间的即时停车条件；不能只在启动前检查。
-        if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):
-            if not self._dock_sensor_blocked_logged_unloading:
-                self.get_logger().warn("[ROSNode] 拒绝进入出仓状态，仓内限位传感器触发！！！")
-                self._dock_sensor_blocked_logged_unloading = True
-            self.set_motors_speed(0.0, 0.0)
-            return
-        self._dock_sensor_blocked_logged_unloading = False
-
         # 归位位只作为启动门槛。进入UNLOADING_FORWARD后，计时不再依赖
         # dock_sensors & 0x02，避免归位位在出仓后释放导致状态机停在最后速度。
         if self.unloading_phase is None:
-            if not self.magnetic_test_unloading_active and not (self.dock_sensors & 0x02):
+            if False:
                 self.set_motors_speed(0.0, 0.0)
                 return
             self.get_logger().info("[START] 检测到dock归位，锁存并初始化出仓流程")
@@ -3054,19 +3043,9 @@ class MotorControlNode(Node):
         """进仓分步处理（核心修复：目标一致+稳定判定+后退停修正+频率正常）"""
         if self.bin_process_paused:
             return
-        # 当 loading_skip_dock_check 标志位为 True 时，跳过 dock 传感器限位检测
-        if not self.loading_skip_dock_check:
-            if (self.dock_sensors & 0x08) or (self.dock_sensors & 0x04):  # dock中左侧传感器被触发（有物体）
-                if not self._dock_sensor_blocked_logged_loading:
-                    self.get_logger().warn("[ROSNode] 拒绝进入进仓状态，仓内限位传感器触发！！！")
-                    self._dock_sensor_blocked_logged_loading = True
-                return
-            else:
-                self._dock_sensor_blocked_logged_loading = False
-        else:
-            self._dock_sensor_blocked_logged_loading = False
-        # dock中归位 或 跳过dock检测标志位为True → 允许进入进仓流程
-        if (self.dock_sensors & 0x02) or self.loading_skip_dock_check:
+        # 进仓流程不再依赖 dock_sensors，直接进入 GPS/直线阶段。
+        self._dock_sensor_blocked_logged_loading = False
+        if False:
             # 归位后首次初始化进仓流程
             if self.loading_phase is None:
                 # GPS距离检查：距进仓目标点过远则拒绝
