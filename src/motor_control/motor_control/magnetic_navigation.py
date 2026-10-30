@@ -42,7 +42,7 @@ class MagneticNavigationNode(Node):
     def __init__(self):
         super().__init__("magnetic_navigation")
         self.declare_parameter("serial_port", "/dev/magnetic_nav")
-        self.declare_parameter("baud_rate", 115200)
+        self.declare_parameter("baud_rate", 9600)
         self.declare_parameter("device_id", 8)
         self.declare_parameter("poll_interval", 0.05)
         self.declare_parameter("read_timeout", 0.05)
@@ -89,7 +89,7 @@ def run_standalone():
     import time
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial-port", default="/dev/magnetic_nav")
-    parser.add_argument("--baud-rate", type=int, default=115200)
+    parser.add_argument("--baud-rate", type=int, default=9600)
     parser.add_argument("--device-id", type=int, default=8)
     args = parser.parse_args()
     if serial is None:
