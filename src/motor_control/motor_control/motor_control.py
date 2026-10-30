@@ -245,6 +245,7 @@ class MotorControlNode(Node):
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
         self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
+        self.magnetic_test_unloading_active = False
         self._magnetic_unloading_request_pending = False
         self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
         self.magnetic_error = None
