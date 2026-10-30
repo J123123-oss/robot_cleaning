@@ -254,6 +254,7 @@ class MotorControlNode(Node):
         self.magnetic_center_count = 0
         self.magnetic_tracking_ready = False
         self.magnetic_center_ready_time = None
+        self.magnetic_last_log_time = 0.0
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
         self.magnetic_kp = 5.0
@@ -998,7 +999,16 @@ class MotorControlNode(Node):
                 if not self.magnetic_tracking_ready:
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
+        now = time.time()
+        if now - self.magnetic_last_log_time >= 0.5:
+            self.get_logger().info(
+                f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
+                f"bits={self.magnetic_mask:08b} center_only={center_only} "
+                f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready}"
+            )
+            self.magnetic_last_log_time = now
         else:
+
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_center_ready_time = None
@@ -3034,11 +3044,13 @@ class MotorControlNode(Node):
                     right_edge = self.magnetic_mask & 0xC0
                     search_speed = 3.342254
                     if left_edge and not right_edge:
-                        # 左侧触发变多表示车体偏右，继续向左搜索。
+                        self.get_logger().info(f"[LOADING][MagneticSearch] 左侧边缘 mask=0x{self.magnetic_mask:02X}，左转")
                         self.set_motors_speed(search_speed, search_speed)
                     elif right_edge and not left_edge:
+                        self.get_logger().info(f"[LOADING][MagneticSearch] 右侧边缘 mask=0x{self.magnetic_mask:02X}，右转")
                         self.set_motors_speed(-search_speed, -search_speed)
                     else:
+                        self.get_logger().warn(f"[LOADING][MagneticSearch] mask=0x{self.magnetic_mask:02X}，无边缘信号，后退搜索")
                         self.set_motors_speed(base_speed, -base_speed)
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
