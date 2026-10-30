@@ -65,6 +65,9 @@ def generate_launch_description():
         description="Use W200B magnetic correction in loading/unloading straight phases",
     )
 
+    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="false"), description="LOADING直接进入后退磁导航测试")
+    declare_magnetic_test_unloading_arg = DeclareLaunchArgument("magnetic_test_unloading_direct", default_value=TextSubstitution(text="false"), description="允许MQTT MAGNETIC_UNLOADING_TEST直接出仓")
+
     declare_imu_odom_fallback_arg = DeclareLaunchArgument(
         "enable_imu_odom_fallback",
         default_value=TextSubstitution(text="false"),
@@ -180,6 +183,8 @@ def generate_launch_description():
             {'loading_gps': loading_gps},
             {
                 'enable_magnetic_navigation': ParameterValue(LaunchConfiguration('enable_magnetic_navigation'), value_type=bool),
+                'magnetic_test_loading_direct': ParameterValue(LaunchConfiguration('magnetic_test_loading_direct'), value_type=bool),
+                'magnetic_test_unloading_direct': ParameterValue(LaunchConfiguration('magnetic_test_unloading_direct'), value_type=bool),
                 'brush_motor_count': ParameterValue(
                     LaunchConfiguration('brush_motor_count'), value_type=int
                 ),
@@ -339,6 +344,8 @@ def generate_launch_description():
     for declare_motor_direction_arg in declare_motor_direction_args:
         ld.add_action(declare_motor_direction_arg)
     ld.add_action(declare_enable_magnetic_navigation_arg)
+    ld.add_action(declare_magnetic_test_loading_arg)
+    ld.add_action(declare_magnetic_test_unloading_arg)
     ld.add_action(declare_imu_odom_fallback_arg)
     ld.add_action(declare_stanley_k_path_arg)
     ld.add_action(declare_stanley_k_near_target_arg)

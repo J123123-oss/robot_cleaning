@@ -202,16 +202,8 @@ def build_motor_fault_details(
 def build_motor_fault_payload(
     motor_feedback, motor_fault_codes, current_sample_max_age_sec
 ):
-    """Build the stable ``motor_fault`` array and its detailed companion."""
-    fault_codes = [int(code) for code in motor_fault_codes]
-    return {
-        "motor_fault": fault_codes,
-        "motor_fault_details": build_motor_fault_details(
-            motor_feedback,
-            fault_codes,
-            current_sample_max_age_sec,
-        ),
-    }
+    """Build the compact motor fault array for MQTT status."""
+    return {"motor_fault": [int(code) for code in motor_fault_codes]}
 
 
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
@@ -247,7 +239,11 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 初始化route_id: {self.route_id}")
 
         self.declare_parameter("enable_magnetic_navigation", True)
+        self.declare_parameter("magnetic_test_loading_direct", False)
+        self.declare_parameter("magnetic_test_unloading_direct", False)
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
+        self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
+        self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
         self.magnetic_error = None
         self.magnetic_valid = False
         self.magnetic_last_error = 0.0
@@ -2173,6 +2169,7 @@ class MotorControlNode(Node):
             # 初始化出仓阶段（仅初始化，不启动定时器）
             self._cancel_bin_process_timers()
             self.unloading_phase = None  # 先置空，等待归位后再初始化
+            self.magnetic_test_unloading_active = False
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_settle_start_time = None
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
@@ -2185,7 +2182,10 @@ class MotorControlNode(Node):
             self._pos_recover_retry_count = 0  # 重置位置恢复重试计数
             self._nav_realign_done = False  # 重置近距离重对准标志
             # 初始化进仓阶段（仅初始化，不启动定时器）
-            self.loading_phase = None  # 先置空，等待归位后再初始化
+            self.loading_phase = "LOADING_DIRECT_BACKWARD" if self.magnetic_test_loading_direct else None
+            if self.magnetic_test_loading_direct:
+                self.loading_direct_start_time = time.time()
+                self.get_logger().warn("[LOADING] 测试开关：直接进入LOADING_DIRECT_BACKWARD")
             self.loading_start_time = None  # 暂不记录启动时间
             self.loading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
@@ -2286,13 +2286,6 @@ class MotorControlNode(Node):
                     self.motor_fault_codes,
                     self.brush_current_sample_max_age_sec,
                 ),
-                "current_stall_fault": self.current_stall_fault,
-                "current_stall_fault_source": self.current_stall_fault_source,
-                "current_stall_fault_motor_id": self.current_stall_fault_motor_id,
-                "current_stall_fault_current": self.current_stall_fault_current,
-                "total_current_fault": self.total_current_fault,
-                "total_current_fault_current": self.total_current_fault_current,
-                "dock_sensors": self.dock_sensors,
                 "resume_charge": self.charge_resume_count,
                 # "angle_x": self.angle_x,
                 # "angle_y": self.angle_y,
@@ -2511,6 +2504,17 @@ class MotorControlNode(Node):
                     self.handle_route_change(route_id)
                 else:
                     self.get_logger().warn("[ROSNode] CHANGE_ROUTE指令缺少route_id字段")
+            elif command in ("UNLOADING", "MAGNETIC_UNLOADING_TEST"):
+                if not self.magnetic_test_unloading_direct:
+                    self.get_logger().warn(
+                        f"[MQTT] {command}：磁导航出仓测试开关未开启，拒绝测试出仓"
+                    )
+                    return
+                self.get_logger().warn(
+                    f"[MQTT] {command}：直接执行UNLOADING_FORWARD"
+                )
+                self.switch_state("u")
+                self.magnetic_test_unloading_active = True
             elif command == "LOADING_SKIP_DOCK":
                 # 进仓跳过 dock 传感器门控检测，GPS 导航照常执行
                 self.loading_skip_dock_check = True
@@ -2690,7 +2694,7 @@ class MotorControlNode(Node):
         # 归位位只作为启动门槛。进入UNLOADING_FORWARD后，计时不再依赖
         # dock_sensors & 0x02，避免归位位在出仓后释放导致状态机停在最后速度。
         if self.unloading_phase is None:
-            if not (self.dock_sensors & 0x02):
+            if not self.magnetic_test_unloading_active and not (self.dock_sensors & 0x02):
                 self.set_motors_speed(0.0, 0.0)
                 return
             self.get_logger().info("[START] 检测到dock归位，锁存并初始化出仓流程")

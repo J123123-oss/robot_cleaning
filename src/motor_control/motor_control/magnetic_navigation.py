@@ -33,10 +33,11 @@ def decode_response(frame: bytes, device_id: int = 0x08) -> Optional[int]:
     return (frame[3] << 8) | frame[4]
 
 def calculate_magnetic_error(mask: int) -> Optional[float]:
-    active = [index for index in range(8) if mask & (1 << index)]
+    weights = {1: -3.0, 2: -1.0, 4: -0.5, 8: -0.2, 16: 0.2, 32: 0.5, 64: 1.0, 128: 3.0}
+    active = [weight for bit, weight in weights.items() if mask & bit]
     if not active:
         return None
-    return sum(index - 3.5 for index in active) / len(active)
+    return sum(active) / len(active)
 
 class MagneticNavigationNode(Node):
     def __init__(self):
