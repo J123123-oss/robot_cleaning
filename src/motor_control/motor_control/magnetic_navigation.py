@@ -26,7 +26,7 @@ def build_read_frame(device_id: int = 0x08) -> bytes:
     return body + bytes((crc & 0xFF, (crc >> 8) & 0xFF))
 
 def decode_response(frame: bytes, device_id: int = 0x08) -> Optional[int]:
-    if len(frame) != 7 or frame[0] != device_id or frame[1] != 0x03 or frame[2] != 0x02:
+    if len(frame) != 7 or frame[0] != device_id or frame[1] != 0x03 or frame[2] != 0x01:
         return None
     if crc16_modbus(frame[:-2]) != frame[-2] | (frame[-1] << 8):
         return None
@@ -74,7 +74,7 @@ class MagneticNavigationNode(Node):
         try:
             self.serial.reset_input_buffer(); self.serial.write(build_read_frame(self.device_id)); register = decode_response(self.serial.read(7), self.device_id)
         except (getattr(serial, "SerialException", OSError), OSError) as exc:
-            self.get_logger().error(f"磁导航读取失败: {exc}"); self._publish_invalid(); return
+            self.get_logger().info(f"磁导航读取失败: {exc}"); self._publish_invalid(); return
         if register is None:
             self._publish_invalid(); return
         mask = register & 0xFF; error = calculate_magnetic_error(mask)
