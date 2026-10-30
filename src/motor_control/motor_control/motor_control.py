@@ -689,7 +689,7 @@ class MotorControlNode(Node):
 
 
         self.status_list = [
-            "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START",
+            "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START", "UNLOADING",
             "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
@@ -2523,6 +2523,7 @@ class MotorControlNode(Node):
                 self.switch_state("u")
                 self._magnetic_unloading_request_pending = False
                 self.magnetic_test_unloading_active = True
+                self.current_status = "UNLOADING"
             elif command == "LOADING_SKIP_DOCK":
                 # 进仓跳过 dock 传感器门控检测，GPS 导航照常执行
                 self.loading_skip_dock_check = True
@@ -2683,7 +2684,7 @@ class MotorControlNode(Node):
         # timer 取消后可能仍有已排队回调；它不能在其他状态继续写速度。
         settling = self.unloading_phase == "UNLOADING_SETTLING"
         if not self.is_in_bin_process or (
-                self.current_status != "START" and not settling):
+                self.current_status not in ("START", "UNLOADING") and not settling):
             return
 
         # 如果流程被暂停，短路返回，等待恢复
