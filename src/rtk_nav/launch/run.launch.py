@@ -209,7 +209,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'serial_port': '/dev/magnetic_nav'},
-            {'baud_rate': 115200},
+            {'baud_rate': 9600},
             {'device_id': 8},
         ],
     )
