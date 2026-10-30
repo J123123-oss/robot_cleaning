@@ -251,6 +251,8 @@ class MotorControlNode(Node):
         self.magnetic_error = None
         self.magnetic_mask = 0
         self.magnetic_valid = False
+        self.magnetic_center_count = 0
+        self.magnetic_tracking_ready = False
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
         self.magnetic_kp = 5.0
@@ -988,6 +990,14 @@ class MotorControlNode(Node):
 
     def magnetic_mask_callback(self, msg: UInt16):
         self.magnetic_mask = int(msg.data) & 0xFF
+        center_only = self.magnetic_mask != 0 and (self.magnetic_mask & 0xC3) == 0
+        if center_only:
+            self.magnetic_center_count += 1
+            if self.magnetic_center_count >= 3:
+                self.magnetic_tracking_ready = True
+        else:
+            self.magnetic_center_count = 0
+            self.magnetic_tracking_ready = False
 
     def magnetic_error_data(self) -> str:
         bits = f"{self.magnetic_mask:08b}"
@@ -2719,7 +2729,10 @@ class MotorControlNode(Node):
         # ========== 阶段1：后退出仓 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
             if current_time - self.unloading_start_time < self.unloading_forword_threshold:
-                correction = self.get_magnetic_correction(reverse=False)
+                if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
+                    correction = 0.0
+                else:
+                    correction = self.get_magnetic_correction(reverse=False)
                 if correction is None and self.enable_magnetic_navigation:
                     self.set_motors_speed(0.0, 0.0)
                     return
@@ -3006,7 +3019,10 @@ class MotorControlNode(Node):
                 base_speed = self.motor_ctrl.BASE_SPEED
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
-                magnetic_correction = self.get_magnetic_correction(reverse=True)
+                magnetic_correction = (
+                    self.get_magnetic_correction(reverse=True)
+                    if self.magnetic_tracking_ready else 0.0
+                )
                 if self.enable_magnetic_navigation:
                     if magnetic_correction is None:
                         self.set_motors_speed(0.0, 0.0)
