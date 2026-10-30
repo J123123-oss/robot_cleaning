@@ -2664,12 +2664,6 @@ class MotorControlNode(Node):
                 return
             
             self.dock_sensors = cmd_obj.get("sensors", [])
-            if isinstance(self.dock_sensors, str) and len(self.dock_sensors) == 8:
-                try:
-                    self.magnetic_mask = int(self.dock_sensors[::-1], 2)
-                    self.magnetic_mask_callback(UInt16(data=self.magnetic_mask))
-                except ValueError:
-                    pass
             self.get_logger().info(f"[ROSNode] 解析到sensors：{self.dock_sensors}")
             if self.dock_sensors == None:
                 self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
