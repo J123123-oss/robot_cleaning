@@ -265,7 +265,8 @@ class MotorControlNode(Node):
         self.magnetic_search_reference_yaw = None
         self.magnetic_search_recover_target_yaw = None
         self.magnetic_search_recover_timeout = 8.0
-        self.magnetic_search_duration = 6.0
+        self.magnetic_search_duration = 4.0
+        self.magnetic_search_turn_speed = 5.0
         self.magnetic_search_failure_logged = False
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
@@ -3102,7 +3103,11 @@ class MotorControlNode(Node):
                             )
                     else:
                         scan_speed = max(3.342254, base_speed * 0.3)
-                        turn = search_speed = 3.342254
+                        turn = (
+                            self.magnetic_search_turn_speed
+                            if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
+                            else 3.342254
+                        )
                         sign = {
                             "RIGHT_SEARCH": 1.0,
                             "RIGHT_RECOVER": -1.0,
