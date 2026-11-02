@@ -1004,24 +1004,49 @@ class MotorControlNode(Node):
         self.magnetic_last_time = time.time()
         self.magnetic_valid = True
 
+    @staticmethod
+    def _magnetic_center_candidate(mask: int):
+        """判断磁条是否进入中心区域，允许边缘传感器同时保持有效。"""
+        center_bits = mask & 0x3C
+        if not center_bits:
+            return False, None
+
+        weights = {
+            0x01: -3.0,
+            0x02: -1.0,
+            0x04: -0.5,
+            0x08: -0.2,
+            0x10: 0.2,
+            0x20: 0.5,
+            0x40: 1.0,
+            0x80: 3.0,
+        }
+        active_weights = [weight for bit, weight in weights.items() if mask & bit]
+        if not active_weights:
+            return False, None
+
+        center_error = sum(active_weights) / len(active_weights)
+        return abs(center_error) <= 0.6, center_error
+
     def magnetic_mask_callback(self, msg: UInt16):
         self.magnetic_mask = int(msg.data) & 0xFF
-        center_only = self.magnetic_mask != 0 and (self.magnetic_mask & 0xC3) == 0
-        if center_only:
+        center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
+        if center_candidate:
             self.magnetic_center_count += 1
             if self.magnetic_center_count >= 3:
                 if not self.magnetic_tracking_ready:
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
         now = time.time()
-        if not center_only:
+        if not center_candidate:
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_center_ready_time = None
         if now - self.magnetic_last_log_time >= 0.5:
             self.get_logger().info(
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
-                f"bits={self.magnetic_mask:08b} center_only={center_only} "
+                f"bits={self.magnetic_mask:08b} center_candidate={center_candidate} "
+                f"error={center_error} "
                 f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready}"
             )
             self.magnetic_last_log_time = now
