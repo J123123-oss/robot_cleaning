@@ -262,6 +262,9 @@ class MotorControlNode(Node):
         self.magnetic_search_motion_since = 0.0
         self.magnetic_search_phase = "RIGHT_SEARCH"
         self.magnetic_search_phase_start = 0.0
+        self.magnetic_search_reference_yaw = None
+        self.magnetic_search_recover_target_yaw = None
+        self.magnetic_search_recover_timeout = 4.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -2224,6 +2227,8 @@ class MotorControlNode(Node):
             self.current_status = new_state
             self.magnetic_search_phase = "RIGHT_SEARCH"
             self.magnetic_search_phase_start = time.time()
+            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+            self.magnetic_search_recover_target_yaw = None
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_center_ready_time = None
@@ -3054,28 +3059,41 @@ class MotorControlNode(Node):
                     now = time.time()
                     if self.magnetic_search_phase_start <= 0.0:
                         self.magnetic_search_phase_start = now
+                    if self.magnetic_search_reference_yaw is None:
+                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
                     elapsed = now - self.magnetic_search_phase_start
                     phase = self.magnetic_search_phase
-                    if elapsed >= 3.0:
-                        if phase == "RIGHT_SEARCH":
-                            phase = "RIGHT_RECOVER"
-                        elif phase == "RIGHT_RECOVER":
-                            phase = "LEFT_SEARCH"
-                        elif phase == "LEFT_SEARCH":
-                            phase = "LEFT_RECOVER"
-                        else:
-                            phase = "STOP"
+                    yaw_error = None
+                    if self.imu_yaw_deg is not None and self.magnetic_search_recover_target_yaw is not None:
+                        yaw_error = self.get_heading_error(self.magnetic_search_recover_target_yaw)
+                    if phase in ("RIGHT_SEARCH", "LEFT_SEARCH") and elapsed >= 3.0:
+                        phase = "RIGHT_RECOVER" if phase == "RIGHT_SEARCH" else "LEFT_RECOVER"
+                        self.magnetic_search_recover_target_yaw = self.magnetic_search_reference_yaw
+                    elif phase in ("RIGHT_RECOVER", "LEFT_RECOVER"):
+                        recovered = yaw_error is not None and abs(yaw_error) <= 2.0
+                        if recovered or elapsed >= self.magnetic_search_recover_timeout:
+                            phase = "LEFT_SEARCH" if phase == "RIGHT_RECOVER" else "STOP"
+                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                            self.magnetic_search_recover_target_yaw = None
+                    if phase != self.magnetic_search_phase:
                         self.magnetic_search_phase = phase
                         self.magnetic_search_phase_start = now
-                        self.get_logger().info(f"[LOADING][MagneticSearch] 阶段切换={phase}")
+                        self.get_logger().info(
+                            f"[LOADING][MagneticSearch] 阶段切换={phase} "
+                            f"yaw={self.imu_yaw_deg} target={self.magnetic_search_recover_target_yaw} "
+                            f"error={yaw_error}"
+                        )
                     if phase == "STOP":
                         self.set_motors_speed(0.0, 0.0)
                     else:
                         scan_speed = max(3.342254, base_speed * 0.3)
                         turn = search_speed = 3.342254
-                        sign = 1.0 if phase in ("RIGHT_SEARCH", "RIGHT_RECOVER") else -1.0
-                        if phase in ("RIGHT_RECOVER", "LEFT_RECOVER"):
-                            sign = -sign
+                        sign = {
+                            "RIGHT_SEARCH": 1.0,
+                            "RIGHT_RECOVER": -1.0,
+                            "LEFT_SEARCH": -1.0,
+                            "LEFT_RECOVER": 1.0,
+                        }[phase]
                         self.set_motors_speed(scan_speed + sign * turn, -scan_speed + sign * turn)
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
@@ -3272,6 +3290,8 @@ class MotorControlNode(Node):
                             self.loading_direct_start_time = current_time
                             self.magnetic_search_phase = "RIGHT_SEARCH"
                             self.magnetic_search_phase_start = current_time
+                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                            self.magnetic_search_recover_target_yaw = None
                             self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                             self.yaw_stable_count = 0
                             self.set_motors_speed(0.0, 0.0)
