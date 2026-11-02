@@ -1072,6 +1072,9 @@ class MotorControlNode(Node):
             if self.magnetic_precise_count >= self.magnetic_precise_required:
                 if not self.magnetic_precise_ready:
                     self.magnetic_precise_ready_time = time.time()
+                    # 精准中心确认瞬间锁定车体航向，避免追逐进仓开始时的旧航向。
+                    if self.imu_yaw_deg is not None:
+                        self.magnetic_heading_target_yaw = self.imu_yaw_deg
                 self.magnetic_precise_ready = True
         else:
             self.magnetic_precise_count = 0
@@ -2329,7 +2332,7 @@ class MotorControlNode(Node):
             self.magnetic_precise_count = 0
             self.magnetic_precise_ready = False
             self.magnetic_precise_ready_time = None
-            self.magnetic_heading_target_yaw = self.imu_yaw_deg
+            self.magnetic_heading_target_yaw = None
             self.magnetic_center_ready_time = None
             self.loading_direct_start_time = None
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
