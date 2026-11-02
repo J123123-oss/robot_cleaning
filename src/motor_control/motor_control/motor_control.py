@@ -3111,10 +3111,12 @@ class MotorControlNode(Node):
                             )
                         elif not self.magnetic_search_failure_logged:
                             self.magnetic_search_failure_logged = True
-                            self.get_logger().error(
-                                f"[LOADING][MagneticSearch] 搜索失败：恢复原位后仍无有效磁导航信号，"
-                                f"mask=0x{self.magnetic_mask:02X}，保持停车"
+                            self.fail_loading_process(
+                                f"[LOADING][MagneticSearch] 搜索失败：每次搜索均已差速前进恢复原位，"
+                                f"但仍无有效磁导航信号，mask=0x{self.magnetic_mask:02X}，"
+                                "主动进入HOLD并上报进仓故障"
                             )
+                            return
                     else:
                         scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
