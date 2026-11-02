@@ -258,6 +258,11 @@ class MotorControlNode(Node):
         self.magnetic_tracking_ready = False
         self.magnetic_center_lost_count = 0
         self.magnetic_center_lost_limit = 5
+        self.magnetic_precise_count = 0
+        self.magnetic_precise_ready = False
+        self.magnetic_precise_ready_time = None
+        self.magnetic_precise_required = 3
+        self.magnetic_heading_target_yaw = None
         self.magnetic_center_ready_time = None
         self.magnetic_last_log_time = 0.0
         self.magnetic_search_direction = 1
@@ -1050,6 +1055,11 @@ class MotorControlNode(Node):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
+        precise_candidate = (
+            (self.magnetic_mask & 0x18) == 0x18
+            and center_error is not None
+            and abs(center_error) <= 0.3
+        )
         if center_candidate:
             self.magnetic_center_count += 1
             self.magnetic_center_lost_count = 0
@@ -1057,6 +1067,16 @@ class MotorControlNode(Node):
                 if not self.magnetic_tracking_ready:
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
+        if precise_candidate:
+            self.magnetic_precise_count += 1
+            if self.magnetic_precise_count >= self.magnetic_precise_required:
+                if not self.magnetic_precise_ready:
+                    self.magnetic_precise_ready_time = time.time()
+                self.magnetic_precise_ready = True
+        else:
+            self.magnetic_precise_count = 0
+            self.magnetic_precise_ready = False
+            self.magnetic_precise_ready_time = None
         now = time.time()
         if not center_candidate:
             if was_tracking_ready:
@@ -1078,6 +1098,9 @@ class MotorControlNode(Node):
                     self.magnetic_center_count = 0
                     self.magnetic_tracking_ready = False
                     self.magnetic_center_ready_time = None
+                    self.magnetic_precise_count = 0
+                    self.magnetic_precise_ready = False
+                    self.magnetic_precise_ready_time = None
             else:
                 self.magnetic_center_count = 0
                 self.magnetic_tracking_ready = False
@@ -1087,7 +1110,9 @@ class MotorControlNode(Node):
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
                 f"bits={self.magnetic_mask:08b} center_candidate={center_candidate} "
                 f"error={center_error} "
-                f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready}"
+                f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready} "
+                f"precise={self.magnetic_precise_count}/{self.magnetic_precise_required} "
+                f"precise_ready={self.magnetic_precise_ready}"
             )
             self.magnetic_last_log_time = now
 
@@ -2301,6 +2326,10 @@ class MotorControlNode(Node):
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_center_lost_count = 0
+            self.magnetic_precise_count = 0
+            self.magnetic_precise_ready = False
+            self.magnetic_precise_ready_time = None
+            self.magnetic_heading_target_yaw = self.imu_yaw_deg
             self.magnetic_center_ready_time = None
             self.loading_direct_start_time = None
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
@@ -3138,15 +3167,15 @@ class MotorControlNode(Node):
 
             # 磁导航模式下，直线进仓倒计时必须从首次稳定检测到中心点后开始。
             # 搜索阶段不消耗 loading_direct_timeout，避免搜索尚未完成就被超时退出。
-            if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
+            if self.enable_magnetic_navigation and not self.magnetic_precise_ready:
                 elapsed_time = 0.0
             else:
-                if self.enable_magnetic_navigation and self.magnetic_center_ready_time is not None:
+                if self.enable_magnetic_navigation and self.magnetic_precise_ready_time is not None:
                     if self.loading_direct_start_time is None or (
-                            self.loading_direct_start_time < self.magnetic_center_ready_time):
-                        self.loading_direct_start_time = self.magnetic_center_ready_time
+                            self.loading_direct_start_time < self.magnetic_precise_ready_time):
+                        self.loading_direct_start_time = self.magnetic_precise_ready_time
                         self.get_logger().info(
-                            "[LOADING] 已检测到稳定磁条中心，开始直线进仓倒计时"
+                            "[LOADING] 已精准对准磁条中心并通过航向检查，开始直线进仓倒计时"
                         )
                 if self.loading_direct_start_time is None:
                     self.loading_direct_start_time = current_time
@@ -3159,11 +3188,36 @@ class MotorControlNode(Node):
                 )
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
-                if (self.enable_magnetic_navigation and self.magnetic_tracking_ready
-                        and self.magnetic_center_ready_time is not None
-                        and current_time - self.magnetic_center_ready_time < 3.0):
-                    self.set_motors_speed(0.0, 0.0)
-                    return
+                if self.enable_magnetic_navigation and self.magnetic_tracking_ready:
+                    heading_error = None
+                    if (self.imu_yaw_deg is not None
+                            and self.magnetic_heading_target_yaw is not None):
+                        heading_error = self.get_heading_error(self.magnetic_heading_target_yaw)
+
+                    if not self.magnetic_precise_ready:
+                        # 中心区域内低速微调，直到中间两位连续有效。
+                        magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
+                        micro_speed = max(1.2, base_speed * 0.35)
+                        correction = max(-1.0, min(1.0, magnetic_correction * 0.25))
+                        left_speed = micro_speed - correction
+                        right_speed = -micro_speed - correction
+                        self.set_motors_speed(left_speed, right_speed)
+                        return
+
+                    if heading_error is not None and abs(heading_error) > 3.0:
+                        # 中间两位已锁定但航向偏差过大时，先做小幅航向修正。
+                        heading_correction = max(-1.0, min(1.0, heading_error * 0.04))
+                        micro_speed = max(1.2, base_speed * 0.35)
+                        self.set_motors_speed(
+                            micro_speed - heading_correction,
+                            -micro_speed - heading_correction,
+                        )
+                        return
+
+                    if (self.magnetic_precise_ready_time is not None
+                            and current_time - self.magnetic_precise_ready_time < 3.0):
+                        self.set_motors_speed(0.0, 0.0)
+                        return
                 if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
                     now = time.time()
                     if self.magnetic_search_phase_start <= 0.0:
@@ -3239,6 +3293,12 @@ class MotorControlNode(Node):
                         return
                     left_speed = base_speed - magnetic_correction
                     right_speed = -base_speed - magnetic_correction
+                    if (self.imu_yaw_deg is not None
+                            and self.magnetic_heading_target_yaw is not None):
+                        heading_error = self.get_heading_error(self.magnetic_heading_target_yaw)
+                        heading_correction = max(-1.0, min(1.0, heading_error * 0.04))
+                        left_speed -= heading_correction
+                        right_speed -= heading_correction
                     self.set_motors_speed(left_speed, right_speed)
                     return
 
