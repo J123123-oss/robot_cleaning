@@ -260,6 +260,8 @@ class MotorControlNode(Node):
         self.magnetic_search_no_edge_since = None
         self.magnetic_search_motion_phase = "BACKWARD"
         self.magnetic_search_motion_since = 0.0
+        self.magnetic_search_phase = "RIGHT_SEARCH"
+        self.magnetic_search_phase_start = 0.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -1006,6 +1008,10 @@ class MotorControlNode(Node):
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
         now = time.time()
+        if not center_only:
+            self.magnetic_center_count = 0
+            self.magnetic_tracking_ready = False
+            self.magnetic_center_ready_time = None
         if now - self.magnetic_last_log_time >= 0.5:
             self.get_logger().info(
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
@@ -1013,11 +1019,6 @@ class MotorControlNode(Node):
                 f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready}"
             )
             self.magnetic_last_log_time = now
-        else:
-
-            self.magnetic_center_count = 0
-            self.magnetic_tracking_ready = False
-            self.magnetic_center_ready_time = None
 
     def magnetic_error_data(self) -> str:
         bits = f"{self.magnetic_mask:08b}"
@@ -2221,6 +2222,11 @@ class MotorControlNode(Node):
             self.unloading_timer = self.create_timer(0.05, self.handle_unloading_step)
         elif new_state == "LOADING":
             self.current_status = new_state
+            self.magnetic_search_phase = "RIGHT_SEARCH"
+            self.magnetic_search_phase_start = time.time()
+            self.magnetic_center_count = 0
+            self.magnetic_tracking_ready = False
+            self.magnetic_center_ready_time = None
             self.loading_direct_start_time = None
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
             self._nav_sub_phase = "ALIGN"  # 重置导航子阶段
@@ -3045,59 +3051,32 @@ class MotorControlNode(Node):
                     self.set_motors_speed(0.0, 0.0)
                     return
                 if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
-                    # 进仓后退前先低速原地搜索磁条中心，避免未知朝向时反向纠偏。
-                    left_edge = self.magnetic_mask & 0x03
-                    right_edge = self.magnetic_mask & 0xC0
-                    search_speed = 3.342254
-                    if left_edge and not right_edge:
-                        self.magnetic_search_direction = 1
-                        self.magnetic_search_no_edge_since = None
-                        self.magnetic_search_motion_phase = "BACKWARD"
-                        self.magnetic_search_motion_since = time.time()
-                        self.magnetic_search_last_switch_time = time.time()
-                        self.get_logger().info(f"[LOADING][MagneticSearch] 左侧边缘 mask=0x{self.magnetic_mask:02X}，左转")
-                        self.set_motors_speed(search_speed, search_speed)
-                    elif right_edge and not left_edge:
-                        self.magnetic_search_direction = -1
-                        self.magnetic_search_no_edge_since = None
-                        self.magnetic_search_motion_phase = "BACKWARD"
-                        self.magnetic_search_motion_since = time.time()
-                        self.magnetic_search_last_switch_time = time.time()
-                        self.get_logger().info(f"[LOADING][MagneticSearch] 右侧边缘 mask=0x{self.magnetic_mask:02X}，右转")
-                        self.set_motors_speed(-search_speed, -search_speed)
-                    else:
-                        now = time.time()
-                        if self.magnetic_search_no_edge_since is None:
-                            self.magnetic_search_no_edge_since = now
-                        no_edge_duration = now - self.magnetic_search_no_edge_since
-                        # 先持续左转；无边缘持续后只切换一次为持续右转。
-                        if (self.magnetic_search_direction > 0
-                                and no_edge_duration >= self.magnetic_search_min_hold_sec):
-                            self.magnetic_search_direction = -1
-                            self.magnetic_search_last_switch_time = now
-                            self.get_logger().warn(
-                                f"[LOADING][MagneticSearch] mask=0x{self.magnetic_mask:02X}，"
-                                f"左转后无边缘持续{no_edge_duration:.2f}s，切换持续右转重新识别"
-                            )
-                        if self.magnetic_search_motion_since <= 0.0:
-                            self.magnetic_search_motion_since = now
-                        if now - self.magnetic_search_motion_since >= 0.8:
-                            self.magnetic_search_motion_phase = (
-                                "FORWARD" if self.magnetic_search_motion_phase == "BACKWARD" else "BACKWARD"
-                            )
-                            self.magnetic_search_motion_since = now
-                            self.get_logger().info(
-                                f"[LOADING][MagneticSearch] 切换扫描动作={self.magnetic_search_motion_phase}"
-                            )
-                        scan_speed = max(3.342254, base_speed * 0.3)
-                        turn_bias = search_speed * self.magnetic_search_direction
-                        if self.magnetic_search_motion_phase == "BACKWARD":
-                            left_speed = scan_speed + turn_bias
-                            right_speed = -scan_speed + turn_bias
+                    now = time.time()
+                    if self.magnetic_search_phase_start <= 0.0:
+                        self.magnetic_search_phase_start = now
+                    elapsed = now - self.magnetic_search_phase_start
+                    phase = self.magnetic_search_phase
+                    if elapsed >= 3.0:
+                        if phase == "RIGHT_SEARCH":
+                            phase = "RIGHT_RECOVER"
+                        elif phase == "RIGHT_RECOVER":
+                            phase = "LEFT_SEARCH"
+                        elif phase == "LEFT_SEARCH":
+                            phase = "LEFT_RECOVER"
                         else:
-                            left_speed = -scan_speed + turn_bias
-                            right_speed = scan_speed + turn_bias
-                        self.set_motors_speed(left_speed, right_speed)
+                            phase = "STOP"
+                        self.magnetic_search_phase = phase
+                        self.magnetic_search_phase_start = now
+                        self.get_logger().info(f"[LOADING][MagneticSearch] 阶段切换={phase}")
+                    if phase == "STOP":
+                        self.set_motors_speed(0.0, 0.0)
+                    else:
+                        scan_speed = max(3.342254, base_speed * 0.3)
+                        turn = search_speed = 3.342254
+                        sign = 1.0 if phase in ("RIGHT_SEARCH", "RIGHT_RECOVER") else -1.0
+                        if phase in ("RIGHT_RECOVER", "LEFT_RECOVER"):
+                            sign = -sign
+                        self.set_motors_speed(scan_speed + sign * turn, -scan_speed + sign * turn)
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
@@ -3291,6 +3270,8 @@ class MotorControlNode(Node):
                                         return
                             self.loading_phase = "LOADING_DIRECT_BACKWARD"
                             self.loading_direct_start_time = current_time
+                            self.magnetic_search_phase = "RIGHT_SEARCH"
+                            self.magnetic_search_phase_start = current_time
                             self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
                             self.yaw_stable_count = 0
                             self.set_motors_speed(0.0, 0.0)
