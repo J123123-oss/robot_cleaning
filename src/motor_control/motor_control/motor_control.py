@@ -256,6 +256,8 @@ class MotorControlNode(Node):
         self.magnetic_valid = False
         self.magnetic_center_count = 0
         self.magnetic_tracking_ready = False
+        self.magnetic_center_lost_count = 0
+        self.magnetic_center_lost_limit = 5
         self.magnetic_center_ready_time = None
         self.magnetic_last_log_time = 0.0
         self.magnetic_search_direction = 1
@@ -1032,7 +1034,7 @@ class MotorControlNode(Node):
             return False, None
 
         center_error = sum(active_weights) / len(active_weights)
-        return abs(center_error) <= 0.4, center_error
+        return abs(center_error) <= 0.6, center_error
 
     def _magnetic_search_phase_from_mask(self, mask: int) -> str:
         """按磁条位于传感器哪一侧选择朝中心搜索的方向。"""
@@ -1050,25 +1052,36 @@ class MotorControlNode(Node):
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
         if center_candidate:
             self.magnetic_center_count += 1
+            self.magnetic_center_lost_count = 0
             if self.magnetic_center_count >= 3:
                 if not self.magnetic_tracking_ready:
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
         now = time.time()
         if not center_candidate:
-            if was_tracking_ready and self.magnetic_mask:
-                # 中心锁定后再次丢线时，按当前边缘方向重新开始搜索，避免沿上一次方向继续扫出磁条。
-                self.magnetic_search_phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
-                self.magnetic_search_phase_start = now
-                self.magnetic_search_reference_yaw = self.imu_yaw_deg
-                self.magnetic_search_recover_target_yaw = None
-                self.get_logger().info(
-                    f"[LOADING][MagneticSearch] 中心丢失，按mask=0x{self.magnetic_mask:02X} "
-                    f"重新开始{self.magnetic_search_phase}"
-                )
-            self.magnetic_center_count = 0
-            self.magnetic_tracking_ready = False
-            self.magnetic_center_ready_time = None
+            if was_tracking_ready:
+                self.magnetic_center_lost_count += 1
+                if self.magnetic_center_lost_count < self.magnetic_center_lost_limit:
+                    # 短暂边缘抖动时保持磁导航，不立即切回搜索。
+                    center_candidate = True
+                else:
+                    if self.magnetic_mask:
+                        # 持续丢线后按当前边缘方向重新开始搜索，避免沿上一次方向继续扫出磁条。
+                        self.magnetic_search_phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
+                        self.magnetic_search_phase_start = now
+                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                        self.magnetic_search_recover_target_yaw = None
+                        self.get_logger().info(
+                            f"[LOADING][MagneticSearch] 中心持续丢失，按mask=0x{self.magnetic_mask:02X} "
+                            f"重新开始{self.magnetic_search_phase}"
+                        )
+                    self.magnetic_center_count = 0
+                    self.magnetic_tracking_ready = False
+                    self.magnetic_center_ready_time = None
+            else:
+                self.magnetic_center_count = 0
+                self.magnetic_tracking_ready = False
+                self.magnetic_center_ready_time = None
         if now - self.magnetic_last_log_time >= 0.5:
             self.get_logger().info(
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
@@ -2287,6 +2300,7 @@ class MotorControlNode(Node):
             self.magnetic_search_failure_logged = False
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
+            self.magnetic_center_lost_count = 0
             self.magnetic_center_ready_time = None
             self.loading_direct_start_time = None
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
@@ -3138,7 +3152,11 @@ class MotorControlNode(Node):
                     self.loading_direct_start_time = current_time
                 elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
-                base_speed = self.motor_ctrl.BASE_SPEED
+                base_speed = (
+                    max(3.342254, self.motor_ctrl.BASE_SPEED * 0.3)
+                    if self.enable_magnetic_navigation
+                    else self.motor_ctrl.BASE_SPEED
+                )
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
                 if (self.enable_magnetic_navigation and self.magnetic_tracking_ready
