@@ -3049,7 +3049,21 @@ class MotorControlNode(Node):
             if self.loading_direct_start_time is None:
                 self.loading_direct_start_time = current_time
 
-            elapsed_time = current_time - self.loading_direct_start_time
+            # 磁导航模式下，直线进仓倒计时必须从首次稳定检测到中心点后开始。
+            # 搜索阶段不消耗 loading_direct_timeout，避免搜索尚未完成就被超时退出。
+            if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
+                elapsed_time = 0.0
+            else:
+                if self.enable_magnetic_navigation and self.magnetic_center_ready_time is not None:
+                    if self.loading_direct_start_time is None or (
+                            self.loading_direct_start_time < self.magnetic_center_ready_time):
+                        self.loading_direct_start_time = self.magnetic_center_ready_time
+                        self.get_logger().info(
+                            "[LOADING] 已检测到稳定磁条中心，开始直线进仓倒计时"
+                        )
+                if self.loading_direct_start_time is None:
+                    self.loading_direct_start_time = current_time
+                elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = self.motor_ctrl.BASE_SPEED
 
