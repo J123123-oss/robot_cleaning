@@ -181,6 +181,7 @@ def generate_launch_description():
         parameters=[
             # 对应 ROS1 的 param，使用键值对形式配置参数
             {'rtk_path_file': rtk_path_file},
+            {'rtk_points_file': '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/rtk_points.md'},
             {'loading_gps': loading_gps},
             {
                 'enable_magnetic_navigation': ParameterValue(LaunchConfiguration('enable_magnetic_navigation'), value_type=bool),

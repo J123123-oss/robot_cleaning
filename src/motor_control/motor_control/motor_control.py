@@ -34,6 +34,7 @@ CanMotorDriver = importlib.import_module(
 from motor_control.remote_control import SBUSRemoteController
 from motor_control.charging import Charging485Node
 from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMonitor
+from motor_control.rtk_point_recorder import record_rtk_point
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -229,6 +230,8 @@ class MotorControlNode(Node):
 
         # 声明RTK路径参数，用于获取route_id
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
+        self.declare_parameter("rtk_points_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/rtk_points.md")
+        self.rtk_points_file = self.get_parameter("rtk_points_file").value
         rtk_path_file = self.get_parameter("rtk_path_file").value
         self.get_logger().info(f"[ROSNode] 获取到rtk_path_file参数: {rtk_path_file}")
         # 从路径中提取文件名作为route_id
@@ -2452,6 +2455,10 @@ class MotorControlNode(Node):
             command = cmd_obj.get("command", "").strip()
             self.get_logger().info(f"[ROSNode] 解析到command：{command}")
 
+            if command == "WAIT_RTK":
+                self._record_wait_rtk_point()
+                return
+
             # Web 遥控器 MANUAL 模式：仅允许 GET_STATUS 和 DISABLE_CAMERA_REMOTE
             if self.web_control_active and command not in ("GET_STATUS", "DISABLE_CAMERA_REMOTE"):
                 self.get_logger().warn(
@@ -2624,6 +2631,10 @@ class MotorControlNode(Node):
             self.get_logger().warn(f"[ROSNode] 消息不是有效JSON字典，尝试按字符串处理: {msg_data}, 错误: {e}")
             raw_command = msg_data.strip()
 
+            if raw_command == "WAIT_RTK":
+                self._record_wait_rtk_point()
+                return
+
             # Web 遥控器 MANUAL 模式：仅允许 GET_STATUS 和 DISABLE_CAMERA_REMOTE
             if self.web_control_active and raw_command not in ("GET_STATUS", "DISABLE_CAMERA_REMOTE"):
                 self.get_logger().warn(
@@ -2690,6 +2701,19 @@ class MotorControlNode(Node):
             self.get_logger().error(f"[ROSNode] 处理消息时发生未知错误: {msg_data}, 错误: {str(e)}, 堆栈信息: {traceback.format_exc()}")
             # 可选：如果需要打印完整堆栈，需先导入traceback模块（import traceback）
             self.publish_state()
+
+    def _record_wait_rtk_point(self):
+        """Record one current RTK point without changing motion state."""
+        if record_rtk_point(
+            self.rtk_points_file,
+            self.current_lon,
+            self.current_lat,
+            self.rtk_position_status,
+            self.rtk_orientation_status,
+        ):
+            self.get_logger().info(f"[RTK采点] 已记录到 {self.rtk_points_file}")
+        else:
+            self.get_logger().warn("[RTK采点] 当前经纬度无效，未记录")
     def dock_state_callback(self, msg):
         """处理来自MQTT的停靠传感器状态消息
 
