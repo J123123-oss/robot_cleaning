@@ -3109,7 +3109,15 @@ class MotorControlNode(Node):
                             "LEFT_SEARCH": -1.0,
                             "LEFT_RECOVER": 1.0,
                         }[phase]
-                        self.set_motors_speed(scan_speed + sign * turn, -scan_speed + sign * turn)
+                        if phase in ("RIGHT_RECOVER", "LEFT_RECOVER"):
+                            # 恢复原位时必须差速前进，抵消搜索造成的航向偏移，避免后退纠偏形成 S 线。
+                            left_speed = -scan_speed + sign * turn
+                            right_speed = scan_speed + sign * turn
+                        else:
+                            # 搜索阶段保持低速后退并叠加小幅转向。
+                            left_speed = scan_speed + sign * turn
+                            right_speed = -scan_speed + sign * turn
+                        self.set_motors_speed(left_speed, right_speed)
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
