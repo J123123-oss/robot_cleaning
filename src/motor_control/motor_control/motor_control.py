@@ -265,14 +265,17 @@ class MotorControlNode(Node):
         self.magnetic_search_reference_yaw = None
         self.magnetic_search_recover_target_yaw = None
         self.magnetic_search_recover_timeout = 8.0
-        self.magnetic_search_duration = 4.0
-        self.magnetic_search_turn_speed = 5.0
+        # 搜索动作使用原后退速度，缩短持续时间并降低差速转向，避免越过磁条。
+        self.magnetic_search_duration = 2.0
+        self.magnetic_search_turn_speed = 2.0
+        self.magnetic_search_recover_turn_speed = 1.0
         self.magnetic_search_failure_logged = False
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
-        self.magnetic_kp = 5.0
-        self.magnetic_max_correction = 8.0
+        # 进仓磁导航只做小幅纠偏，避免误差被放大成大角度转向。
+        self.magnetic_kp = 2.0
+        self.magnetic_max_correction = 4.0
 
         # 声明进仓GPS参数，第三项直接表示后退进仓时的车头目标航向
         self.declare_parameter("loading_gps", [120.07062241027482, 30.321026884224207, 172.86])
@@ -3143,11 +3146,12 @@ class MotorControlNode(Node):
                             )
                             return
                     else:
-                        scan_speed = max(3.342254, base_speed * 0.3)
+                        # 搜索/归位均沿用原后退进仓速度，转向只通过小差速叠加。
+                        scan_speed = base_speed
                         turn = (
                             self.magnetic_search_turn_speed
                             if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
-                            else 3.342254
+                            else self.magnetic_search_recover_turn_speed
                         )
                         sign = {
                             "RIGHT_SEARCH": 1.0,
