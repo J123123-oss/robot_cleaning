@@ -266,6 +266,7 @@ class MotorControlNode(Node):
         self.magnetic_search_recover_target_yaw = None
         self.magnetic_search_recover_timeout = 8.0
         self.magnetic_search_duration = 6.0
+        self.magnetic_search_failure_logged = False
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -2230,6 +2231,7 @@ class MotorControlNode(Node):
             self.magnetic_search_phase_start = time.time()
             self.magnetic_search_reference_yaw = self.imu_yaw_deg
             self.magnetic_search_recover_target_yaw = None
+            self.magnetic_search_failure_logged = False
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_center_ready_time = None
@@ -3076,6 +3078,7 @@ class MotorControlNode(Node):
                             phase = "LEFT_SEARCH" if phase == "RIGHT_RECOVER" else "STOP"
                             self.magnetic_search_reference_yaw = self.imu_yaw_deg
                             self.magnetic_search_recover_target_yaw = None
+                            self.magnetic_search_failure_logged = False
                     if phase != self.magnetic_search_phase:
                         self.magnetic_search_phase = phase
                         self.magnetic_search_phase_start = now
@@ -3086,6 +3089,17 @@ class MotorControlNode(Node):
                         )
                     if phase == "STOP":
                         self.set_motors_speed(0.0, 0.0)
+                        if self.magnetic_tracking_ready:
+                            self.get_logger().info(
+                                f"[LOADING][MagneticSearch] STOP阶段重新检测到中心线，"
+                                f"mask=0x{self.magnetic_mask:02X}，进入后退磁导航纠偏"
+                            )
+                        elif not self.magnetic_search_failure_logged:
+                            self.magnetic_search_failure_logged = True
+                            self.get_logger().error(
+                                f"[LOADING][MagneticSearch] 搜索失败：恢复原位后仍无有效磁导航信号，"
+                                f"mask=0x{self.magnetic_mask:02X}，保持停车"
+                            )
                     else:
                         scan_speed = max(3.342254, base_speed * 0.3)
                         turn = search_speed = 3.342254
