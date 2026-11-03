@@ -3195,6 +3195,14 @@ class MotorControlNode(Node):
                 if self.loading_direct_start_time is None:
                     self.loading_direct_start_time = current_time
                 elapsed_time = current_time - self.loading_direct_start_time
+
+                # 中心区域稳定后使用进仓航向辅助校正；航向未收敛前不消耗后退倒计时。
+                if (self.enable_magnetic_navigation
+                        and self.magnetic_heading_target_yaw is not None
+                        and self.imu_yaw_deg is not None
+                        and abs(self.get_heading_error(self.magnetic_heading_target_yaw)) > 3.0):
+                    elapsed_time = 0.0
+                    self.loading_direct_start_time = current_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = (
                     max(3.342254, self.motor_ctrl.BASE_SPEED * 0.3)
