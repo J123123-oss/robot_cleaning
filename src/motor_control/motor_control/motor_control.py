@@ -1065,11 +1065,8 @@ class MotorControlNode(Node):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
-        precise_candidate = (
-            (self.magnetic_mask & 0x18) == 0x18
-            and center_error is not None
-            and abs(center_error) <= 0.3
-        )
+        # 中心区域稳定即可进入进仓，取消“中间两位同时有效”的额外门槛。
+        precise_candidate = center_candidate
         if center_candidate:
             self.magnetic_center_count += 1
             self.magnetic_center_lost_count = 0
