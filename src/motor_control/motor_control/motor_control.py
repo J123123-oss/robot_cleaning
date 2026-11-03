@@ -3381,7 +3381,6 @@ class MotorControlNode(Node):
         self._dock_sensor_blocked_logged_loading = False
         if self.loading_phase is None:
             # 归位后首次初始化进仓流程
-            if self.loading_phase is None:
                 # GPS距离检查：距进仓目标点过远则拒绝
                 gps_dist = self.haversine_distance(
                     self.current_lon, self.current_lat,
@@ -3419,395 +3418,222 @@ class MotorControlNode(Node):
                     self.loading_start_time = time.time()
                     self.get_logger().info(f"[LOADING] 初始化完成，当前阶段：{self.loading_phase}")
         
-            # if self.loading_phase is None:
-            #     self.get_logger().warn("[ROSNode] 进仓阶段未初始化，停止定时器")
-            #     if self.loading_timer is not None:
-            #         self.loading_timer.cancel()
-            #         self.loading_timer = None
-            #     self.is_in_bin_process = False
-            #     self.bin_process_origin_mode = None
-            #     self.bin_process_paused = False
-            #     return
-            # IMU数据校验
-            # if self.imu_yaw_deg is None or (time.time() - self.last_imu_update_time) > self.imu_update_interval:
-            #     self.get_logger().warn("[LOADING] IMU数据过期/无效，跳过本次处理")
-            #     return
-            
-            try:
-                current_time = time.time()
-                # 新增：稳定达标计数器（类内变量，初始化在__init__里，下面会说）
-                if not hasattr(self, 'yaw_stable_count'):
-                    self.yaw_stable_count = 0
-                # 新增：后退阶段日志频率控制（1秒1次）
-                if not hasattr(self, 'last_backward_log_time'):
-                    self.last_backward_log_time = 0.0
-                # 前向对位阶段日志频率控制（3秒1次，减少刷屏）
-                if not hasattr(self, '_last_loading_fwd_log_time'):
-                    self._last_loading_fwd_log_time = 0.0
+        # if self.loading_phase is None:
+        #     self.get_logger().warn("[ROSNode] 进仓阶段未初始化，停止定时器")
+        #     if self.loading_timer is not None:
+        #         self.loading_timer.cancel()
+        #         self.loading_timer = None
+        #     self.is_in_bin_process = False
+        #     self.bin_process_origin_mode = None
+        #     self.bin_process_paused = False
+        #     return
+        # IMU数据校验
+        # if self.imu_yaw_deg is None or (time.time() - self.last_imu_update_time) > self.imu_update_interval:
+        #     self.get_logger().warn("[LOADING] IMU数据过期/无效，跳过本次处理")
+        #     return
+        
+        try:
+            current_time = time.time()
+            # 新增：稳定达标计数器（类内变量，初始化在__init__里，下面会说）
+            if not hasattr(self, 'yaw_stable_count'):
+                self.yaw_stable_count = 0
+            # 新增：后退阶段日志频率控制（1秒1次）
+            if not hasattr(self, 'last_backward_log_time'):
+                self.last_backward_log_time = 0.0
+            # 前向对位阶段日志频率控制（3秒1次，减少刷屏）
+            if not hasattr(self, '_last_loading_fwd_log_time'):
+                self._last_loading_fwd_log_time = 0.0
 
-                # ========== 阶段1：调整进仓角度（原地旋转，目标航向一致+稳定判定）==========
-                if self.loading_phase == "LOADING_TURN":
-                    correction = self.get_speed_correction(self.loading_turn_target_deg)
-                    yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
-                    # 差值小于0，左转；差值大于0，右转，保持方向正确
-                    turn_speed = 0.5 * (self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff))
-                    left_speed = turn_speed + correction
-                    right_speed = turn_speed + correction
-                    self.set_motors_speed(left_speed, right_speed)
-                    # 诊断日志：每1s打印一次IMU更新时间差，用于排查角度更新频率问题
-                    if not hasattr(self, '_last_turn_diag_time'):
-                        self._last_turn_diag_time = 0.0
-                    if current_time - self._last_turn_diag_time >= 1.0:
-                        imu_age = current_time - self.last_imu_update_time if self.last_imu_update_time > 0 else -1
-                        motor_feedback = self.get_motor_feedback_snapshot()
-                        actual_left = motor_feedback[0]["actual_velocity"]
-                        actual_right = motor_feedback[1]["actual_velocity"]
-                        self.get_logger().info(
-                            f"[LOADING] yaw_diff={yaw_diff:.1f}°, imu={self.imu_yaw_deg:.1f}°, "
-                            f"target={self.loading_turn_target_deg:.1f}°, "
-                            f"turn={turn_speed:.2f}, corr={correction:.2f}, "
-                            f"L={left_speed:.2f}, R={right_speed:.2f}, "
-                            f"motor_L={actual_left:.1f}, motor_R={actual_right:.1f}, "
-                            f"imu_age={imu_age:.2f}s")
-                        self._last_turn_diag_time = current_time
+            # ========== 阶段1：调整进仓角度（原地旋转，目标航向一致+稳定判定）==========
+            if self.loading_phase == "LOADING_TURN":
+                correction = self.get_speed_correction(self.loading_turn_target_deg)
+                yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
+                # 差值小于0，左转；差值大于0，右转，保持方向正确
+                turn_speed = 0.5 * (self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff))
+                left_speed = turn_speed + correction
+                right_speed = turn_speed + correction
+                self.set_motors_speed(left_speed, right_speed)
+                # 诊断日志：每1s打印一次IMU更新时间差，用于排查角度更新频率问题
+                if not hasattr(self, '_last_turn_diag_time'):
+                    self._last_turn_diag_time = 0.0
+                if current_time - self._last_turn_diag_time >= 1.0:
+                    imu_age = current_time - self.last_imu_update_time if self.last_imu_update_time > 0 else -1
+                    motor_feedback = self.get_motor_feedback_snapshot()
+                    actual_left = motor_feedback[0]["actual_velocity"]
+                    actual_right = motor_feedback[1]["actual_velocity"]
+                    self.get_logger().info(
+                        f"[LOADING] yaw_diff={yaw_diff:.1f}°, imu={self.imu_yaw_deg:.1f}°, "
+                        f"target={self.loading_turn_target_deg:.1f}°, "
+                        f"turn={turn_speed:.2f}, corr={correction:.2f}, "
+                        f"L={left_speed:.2f}, R={right_speed:.2f}, "
+                        f"motor_L={actual_left:.1f}, motor_R={actual_right:.1f}, "
+                        f"imu_age={imu_age:.2f}s")
+                    self._last_turn_diag_time = current_time
 
-                    # 稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
-                    if abs(yaw_diff) < self.yaw_diff_min:
-                        self.yaw_stable_count += 1
-                        if self.yaw_stable_count >= 3:
-                            self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标）")
-                            # 二次判距：检查GPS是否因原地旋转打滑漂移（天线已换算到车体中心）
-                            gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
-                            if gps_valid:
-                                gps_dist = self.haversine_distance(
-                                    self.current_lon, self.current_lat,
-                                    self.loading_gps[0], self.loading_gps[1])
-                                if gps_dist > self._pos_recover_gps_drift_limit + 1e-6:
-                                    if self._pos_recover_retry_count >= self._pos_recover_max_retries:
-                                        if gps_dist > self._pos_recover_abort_dist:
-                                            # 严重偏移：放弃进仓，停车并上报进仓超时故障
-                                            self.fail_loading_process(
-                                                f"[LOADING] 位置恢复已重试{self._pos_recover_retry_count}次，"
-                                                f"GPS偏移{gps_dist:.2f}m > {self._pos_recover_abort_dist}m，"
-                                                f"放弃进仓，上报进仓超时故障")
-                                            return
-                                        self.get_logger().warn(
+                # 稳定判定：连续3次误差<阈值，才判定完成（避免IMU抖动）
+                if abs(yaw_diff) < self.yaw_diff_min:
+                    self.yaw_stable_count += 1
+                    if self.yaw_stable_count >= 3:
+                        self.get_logger().info("[LOADING] 角度调整稳定完成（连续3次达标）")
+                        # 二次判距：检查GPS是否因原地旋转打滑漂移（天线已换算到车体中心）
+                        gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
+                        if gps_valid:
+                            gps_dist = self.haversine_distance(
+                                self.current_lon, self.current_lat,
+                                self.loading_gps[0], self.loading_gps[1])
+                            if gps_dist > self._pos_recover_gps_drift_limit + 1e-6:
+                                if self._pos_recover_retry_count >= self._pos_recover_max_retries:
+                                    if gps_dist > self._pos_recover_abort_dist:
+                                        # 严重偏移：放弃进仓，停车并上报进仓超时故障
+                                        self.fail_loading_process(
                                             f"[LOADING] 位置恢复已重试{self._pos_recover_retry_count}次，"
-                                            f"放弃恢复(gps={gps_dist:.2f}m <= "
-                                            f"{self._pos_recover_abort_dist}m)，直接后退进仓")
-                                        self._pos_recover_retry_count = 0
-                                    else:
-                                        self._pos_recover_retry_count += 1
-                                        self.get_logger().warn(
-                                            f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
-                                            f"{self._pos_recover_gps_drift_limit}m，"
-                                            f"进入位置恢复(第{self._pos_recover_retry_count}次)")
-                                        self.loading_phase = "LOADING_POS_RECOVER"
-                                        self._pos_recover_sub_phase = "ALIGN_BEARING"
-                                        self._pos_recover_start = current_time
-                                        self._pos_recover_align_count = 0
-                                        self.yaw_stable_count = 0
-                                        self.set_motors_speed(0.0, 0.0)
+                                            f"GPS偏移{gps_dist:.2f}m > {self._pos_recover_abort_dist}m，"
+                                            f"放弃进仓，上报进仓超时故障")
                                         return
-                            self.loading_phase = "LOADING_DIRECT_BACKWARD"
-                            self.loading_direct_start_time = current_time
-                            self.magnetic_search_phase = "RIGHT_SEARCH"
-                            self.magnetic_search_phase_start = current_time
-                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
-                            self.magnetic_search_recover_target_yaw = None
-                            self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
-                            self.yaw_stable_count = 0
+                                    self.get_logger().warn(
+                                        f"[LOADING] 位置恢复已重试{self._pos_recover_retry_count}次，"
+                                        f"放弃恢复(gps={gps_dist:.2f}m <= "
+                                        f"{self._pos_recover_abort_dist}m)，直接后退进仓")
+                                    self._pos_recover_retry_count = 0
+                                else:
+                                    self._pos_recover_retry_count += 1
+                                    self.get_logger().warn(
+                                        f"[LOADING] 转向完成但GPS漂移{gps_dist:.2f}m > "
+                                        f"{self._pos_recover_gps_drift_limit}m，"
+                                        f"进入位置恢复(第{self._pos_recover_retry_count}次)")
+                                    self.loading_phase = "LOADING_POS_RECOVER"
+                                    self._pos_recover_sub_phase = "ALIGN_BEARING"
+                                    self._pos_recover_start = current_time
+                                    self._pos_recover_align_count = 0
+                                    self.yaw_stable_count = 0
+                                    self.set_motors_speed(0.0, 0.0)
+                                    return
+                        self.loading_phase = "LOADING_DIRECT_BACKWARD"
+                        self.loading_direct_start_time = current_time
+                        self.magnetic_search_phase = "RIGHT_SEARCH"
+                        self.magnetic_search_phase_start = current_time
+                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                        self.magnetic_search_recover_target_yaw = None
+                        self.get_logger().info("[LOADING] 角度调整完成，进入后退进仓阶段")
+                        self.yaw_stable_count = 0
+                        self.set_motors_speed(0.0, 0.0)
+                        return
+                else:
+                    self.yaw_stable_count = 0
+
+                # 超时处理
+                if current_time - self.loading_start_time > self.loading_turn_time:
+                    self.fail_loading_process(
+                        f"[LOADING] 角度调整超时({self.loading_turn_time:.0f}s)，"
+                        f"当前误差{abs(yaw_diff):.1f}°，停车并上报进仓故障")
+                    return
+
+            # ========== 阶段1.5：位置恢复（转向后GPS漂移修正，分离旋转/平移）==========
+            elif self.loading_phase == "LOADING_POS_RECOVER":
+                # 超时保护
+                if current_time - self._pos_recover_start > self._pos_recover_timeout:
+                    self.fail_loading_process(
+                        f"[LOADING] 位置恢复超时({self._pos_recover_timeout:.0f}s)，"
+                        f"停车并上报进仓故障")
+                    return
+
+                # GPS无效 → 暂停等待
+                gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
+                if not gps_valid:
+                    if current_time - self._last_turn_log_time >= 3.0:
+                        self.get_logger().warn("[LOADING] 位置恢复：GPS无效，等待恢复")
+                        self._last_turn_log_time = current_time
+                    self.set_motors_speed(0.0, 0.0)
+                    return
+
+                # 计算当前位置到目标GPS的方位和距离
+                target_bearing = self.bearing_to_target(
+                    self.current_lon, self.current_lat,
+                    self.loading_gps[0], self.loading_gps[1])
+                bearing_error = self.get_heading_error(target_bearing)
+                gps_dist = self.haversine_distance(
+                    self.current_lon, self.current_lat,
+                    self.loading_gps[0], self.loading_gps[1])
+                base_speed = self.motor_ctrl.BASE_SPEED
+
+                # 到达目标点 → 回到角度调整阶段
+                if gps_dist <= self._pos_recover_gps_drift_limit:
+                    self.get_logger().info(
+                        f"[LOADING] 位置恢复完成(gps={gps_dist:.2f}m)，"
+                        f"重新进入角度调整")
+                    self.loading_phase = "LOADING_TURN"
+                    self.loading_start_time = current_time
+                    self.yaw_stable_count = 0
+                    self.set_motors_speed(0.0, 0.0)
+                    return
+
+                # ── 子阶段：ALIGN_BEARING（原地旋转对齐目标方位）──
+                if self._pos_recover_sub_phase == "ALIGN_BEARING":
+                    # 确定前进还是后退：目标在后方时对齐反向方位，准备后退
+                    if abs(bearing_error) > 90:
+                        self._pos_recover_use_backward = True
+                        align_error = self.get_heading_error(target_bearing + 180.0)
+                    else:
+                        self._pos_recover_use_backward = False
+                        align_error = bearing_error
+
+                    abs_align = abs(align_error)
+                    if abs_align < self.yaw_diff_min:
+                        self._pos_recover_align_count += 1
+                        if self._pos_recover_align_count >= 3:
+                            self.get_logger().info(
+                                f"[LOADING] 位置恢复：方位对齐完成(差{abs_align:.1f}°)，"
+                                f"开始{'后退' if self._pos_recover_use_backward else '前进'}直线移动")
+                            self._pos_recover_sub_phase = "MOVE_TO_TARGET"
+                            self._pos_recover_align_count = 0
                             self.set_motors_speed(0.0, 0.0)
                             return
                     else:
-                        self.yaw_stable_count = 0
-
-                    # 超时处理
-                    if current_time - self.loading_start_time > self.loading_turn_time:
-                        self.fail_loading_process(
-                            f"[LOADING] 角度调整超时({self.loading_turn_time:.0f}s)，"
-                            f"当前误差{abs(yaw_diff):.1f}°，停车并上报进仓故障")
-                        return
-
-                # ========== 阶段1.5：位置恢复（转向后GPS漂移修正，分离旋转/平移）==========
-                elif self.loading_phase == "LOADING_POS_RECOVER":
-                    # 超时保护
-                    if current_time - self._pos_recover_start > self._pos_recover_timeout:
-                        self.fail_loading_process(
-                            f"[LOADING] 位置恢复超时({self._pos_recover_timeout:.0f}s)，"
-                            f"停车并上报进仓故障")
-                        return
-
-                    # GPS无效 → 暂停等待
-                    gps_valid = not (self.current_lon == 0.0 and self.current_lat == 0.0)
-                    if not gps_valid:
-                        if current_time - self._last_turn_log_time >= 3.0:
-                            self.get_logger().warn("[LOADING] 位置恢复：GPS无效，等待恢复")
-                            self._last_turn_log_time = current_time
-                        self.set_motors_speed(0.0, 0.0)
-                        return
-
-                    # 计算当前位置到目标GPS的方位和距离
-                    target_bearing = self.bearing_to_target(
-                        self.current_lon, self.current_lat,
-                        self.loading_gps[0], self.loading_gps[1])
-                    bearing_error = self.get_heading_error(target_bearing)
-                    gps_dist = self.haversine_distance(
-                        self.current_lon, self.current_lat,
-                        self.loading_gps[0], self.loading_gps[1])
-                    base_speed = self.motor_ctrl.BASE_SPEED
-
-                    # 到达目标点 → 回到角度调整阶段
-                    if gps_dist <= self._pos_recover_gps_drift_limit:
-                        self.get_logger().info(
-                            f"[LOADING] 位置恢复完成(gps={gps_dist:.2f}m)，"
-                            f"重新进入角度调整")
-                        self.loading_phase = "LOADING_TURN"
-                        self.loading_start_time = current_time
-                        self.yaw_stable_count = 0
-                        self.set_motors_speed(0.0, 0.0)
-                        return
-
-                    # ── 子阶段：ALIGN_BEARING（原地旋转对齐目标方位）──
-                    if self._pos_recover_sub_phase == "ALIGN_BEARING":
-                        # 确定前进还是后退：目标在后方时对齐反向方位，准备后退
-                        if abs(bearing_error) > 90:
-                            self._pos_recover_use_backward = True
-                            align_error = self.get_heading_error(target_bearing + 180.0)
+                        self._pos_recover_align_count = 0
+                        # 原地旋转（纯旋转，不走）：差速双轮同向
+                        turn_speed = 0.5 * self.get_adaptive_turn_speed(abs_align)
+                        if align_error <= 0:
+                            left_speed = turn_speed
+                            right_speed = turn_speed
                         else:
-                            self._pos_recover_use_backward = False
-                            align_error = bearing_error
-
-                        abs_align = abs(align_error)
-                        if abs_align < self.yaw_diff_min:
-                            self._pos_recover_align_count += 1
-                            if self._pos_recover_align_count >= 3:
-                                self.get_logger().info(
-                                    f"[LOADING] 位置恢复：方位对齐完成(差{abs_align:.1f}°)，"
-                                    f"开始{'后退' if self._pos_recover_use_backward else '前进'}直线移动")
-                                self._pos_recover_sub_phase = "MOVE_TO_TARGET"
-                                self._pos_recover_align_count = 0
-                                self.set_motors_speed(0.0, 0.0)
-                                return
-                        else:
-                            self._pos_recover_align_count = 0
-                            # 原地旋转（纯旋转，不走）：差速双轮同向
-                            turn_speed = 0.5 * self.get_adaptive_turn_speed(abs_align)
-                            if align_error <= 0:
-                                left_speed = turn_speed
-                                right_speed = turn_speed
-                            else:
-                                left_speed = -turn_speed
-                                right_speed = -turn_speed
-                            self.set_motors_speed(left_speed, right_speed)
-
-                            if current_time - self._last_turn_log_time >= 2.0:
-                                self.get_logger().info(
-                                    f"[LOADING] 位置恢复：对齐方位中 - "
-                                    f"目标方位差{align_error:.1f}°，"
-                                    f"准备{'后退' if self._pos_recover_use_backward else '前进'}")
-                                self._last_turn_log_time = current_time
-
-                    # ── 子阶段：MOVE_TO_TARGET（直线移动到目标点，不转向）──
-                    elif self._pos_recover_sub_phase == "MOVE_TO_TARGET":
-                        move_speed = base_speed / 2.0
-                        if self._pos_recover_use_backward:
-                            # 后退：左正右负
-                            left_speed = move_speed
-                            right_speed = -move_speed
-                        else:
-                            # 前进：左负右正
-                            left_speed = -move_speed
-                            right_speed = move_speed
+                            left_speed = -turn_speed
+                            right_speed = -turn_speed
                         self.set_motors_speed(left_speed, right_speed)
 
                         if current_time - self._last_turn_log_time >= 2.0:
                             self.get_logger().info(
-                                f"[LOADING] 位置恢复：直线移动中 - "
-                                f"距目标{gps_dist:.2f}m，"
-                                f"{'后退' if self._pos_recover_use_backward else '前进'}中")
+                                f"[LOADING] 位置恢复：对齐方位中 - "
+                                f"目标方位差{align_error:.1f}°，"
+                                f"准备{'后退' if self._pos_recover_use_backward else '前进'}")
                             self._last_turn_log_time = current_time
 
-                # ========== 阶段3：进仓完成 ==========
-                elif self.loading_phase == "COMPLETE":
-                    self.finish_loading_process()
-                    return
-            except Exception as e:
-                self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
-                self.is_in_bin_process = False
-                self.yaw_stable_count = 0
+                # ── 子阶段：MOVE_TO_TARGET（直线移动到目标点，不转向）──
+                elif self._pos_recover_sub_phase == "MOVE_TO_TARGET":
+                    move_speed = base_speed / 2.0
+                    if self._pos_recover_use_backward:
+                        # 后退：左正右负
+                        left_speed = move_speed
+                        right_speed = -move_speed
+                    else:
+                        # 前进：左负右正
+                        left_speed = -move_speed
+                        right_speed = move_speed
+                    self.set_motors_speed(left_speed, right_speed)
 
-    def finish_loading_process(self):
-        self.get_logger().info("[LOADING] 进仓流程完成，电机停止")
-        self.set_motors_speed(0.0, 0.0)
-        if self.loading_timer is not None:
-            self.loading_timer.cancel()
-            self.loading_timer = None
-        self.nav_status = "IDLE"
-        self.is_in_bin_process = False
-        self.yaw_stable_count = 0
-        self.last_backward_log_time = 0.0
-        self.last_direct_loading_log_time = 0.0
-        self._last_loading_fwd_log_time = 0.0
-        self.loading_direct_start_time = None
-        self.loading_countdown_started = False
-        self.complete_state = True
-        self.switch_state('z')  # DISABLE状态，确保电机停止
+                    if current_time - self._last_turn_log_time >= 2.0:
+                        self.get_logger().info(
+                            f"[LOADING] 位置恢复：直线移动中 - "
+                            f"距目标{gps_dist:.2f}m，"
+                            f"{'后退' if self._pos_recover_use_backward else '前进'}中")
+                        self._last_turn_log_time = current_time
 
-    def set_motors_speed(self, left_speed: float, right_speed: float) -> None:
-        """设置左右轮速度；输入和发布的轮速单位均为输出轴 r/min。"""
-        # 上层所有轮速都以输出轴 r/min 表示，最终下发前统一限制在
-        # 0.35 m/s 对应的物理轮速范围内，避免任一控制路径绕过限幅。
-        left_speed = max(MIN_SPEED, min(MAX_SPEED, float(left_speed)))
-        right_speed = max(MIN_SPEED, min(MAX_SPEED, float(right_speed)))
-
-        # 保存当前速度值
-        self.current_left_speed = left_speed
-        self.current_right_speed = right_speed
-        
-        # 左电机（ID=1）
-        self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[0]["id"], left_speed)
-        # 右电机（ID=2）
-        self.motor_ctrl.motor_set_speed(self.motor_ctrl.motors[1]["id"], right_speed)
-
-        # 构造并发布速度消息
-        wheel_speed_msg = Vector3()
-        wheel_speed_msg.x = float(left_speed)    # 左轮输出轴速度（r/min）。
-        wheel_speed_msg.y = float(right_speed)   # 右轮输出轴速度（r/min）。
-        wheel_speed_msg.z = float(self.brush_speed)  # 滚刷输出轴速度（r/min）。
-        self.speed_pub.publish(wheel_speed_msg)
-
-    def publish_rc_channels(self) -> None:
-        remote_state = self.sbus_remote.get_remote_state()
-        raw_channels = remote_state.get("channel_raw", [])
-        norm_channels = remote_state.get("channel_normalized", [])
-        msg = Float32MultiArray()
-        msg.data = [1.0 if remote_state.get("is_connected", False) else 0.0]
-        msg.data.extend([float(v) for v in raw_channels[:16]])
-        msg.data.extend([float(v) for v in norm_channels[:16]])
-        self.rc_channels_pub.publish(msg)
-        
-    def set_brush_speed(self, brush_speed: float) -> None:
-        """按配置向一个或两个滚刷下发同一输入速度。
-
-        ``same``模式下3、4号使用相同速度；``opposite``模式下4号速度取反。
-        单滚刷模式只发送3号，保留原有单值调用接口。
-        """
-        try:
-            brush_speed = float(brush_speed)
-        except (TypeError, ValueError):
-            self.get_logger().warn(f"[ROSNode] 滚刷速度无效：{brush_speed!r}")
-            return
-
-        if not self.brush_motor_ids:
-            self.brush_speed = 0.0
-            return
-
-        brush_results = []
-        for motor_id in self.brush_motor_ids:
-            motor_speed = brush_speed
-            if motor_id == 4 and self.brush_direction_mode == "opposite":
-                motor_speed = -brush_speed
-            brush_results.append(
-                self.motor_ctrl.motor_set_speed(motor_id, motor_speed)
-            )
-
-        if all(brush_results):
-            self.brush_speed = brush_speed
-        else:
-            self.get_logger().warn(
-                f"[ROSNode] 滚刷速度下发失败：{brush_speed}，"
-                f"模式={self.brush_direction_mode}，电机={self.brush_motor_ids}"
-            )
-        
-    # -------------------------- 异步调用方式（推荐，非阻塞） --------------------------
-    def start_charge_async(self):
-        """异步调用开始充电服务"""
-        req = ChargeControl.Request()
-        
-        # 发送异步请求并设置回调
-        future = self.cli_start_charge.call_async(req)
-        future.add_done_callback(self._start_charge_callback)
-        return future
-
-    def _start_charge_callback(self, future):
-        """异步启动充电的回调函数"""
-        try:
-            resp = future.result()
-            if resp.success:
-                self.get_logger().info(f"异步启动充电成功: {resp.message}")
-                self.charge_resume_count += 1
-                self.is_charging = True  # 更新充电状态
-                self.is_charge_paused = False  # 充电成功启动，清除暂停标志
-                self.last_charging_fault = 0  # 重置故障码状态，避免假充判断错误
-            else:
-                self.get_logger().error(f"异步启动充电失败: {resp.message}")
-                self.is_charging = False  # 确保状态一致
+            # ========== 阶段3：进仓完成 ==========
+            elif self.loading_phase == "COMPLETE":
+                self.finish_loading_process()
+                return
         except Exception as e:
-            self.get_logger().error(f"异步启动充电异常: {str(e)}")
-            self.is_charging = False
+            self.get_logger().error(f"[LOADING] 执行异常：{str(e)}")
+            self.is_in_bin_process = False
+            self.yaw_stable_count = 0
 
-    def stop_charge_async(self):
-        """异步调用停止充电服务"""
-        req = ChargeControl.Request()
-        future = self.cli_stop_charge.call_async(req)
-        future.add_done_callback(self._stop_charge_callback)
-        return future
 
-    def _stop_charge_callback(self, future):
-        """异步停止充电的回调函数"""
-        try:
-            resp = future.result()
-            if resp.success:
-                self.get_logger().info(f"异步停止充电成功: {resp.message}")
-                self.is_charging = False  # 更新充电状态
-            else:
-                self.get_logger().error(f"异步停止充电失败: {resp.message}")
-                self.is_charging = True  # 更新充电状态
-
-        except Exception as e:
-            self.get_logger().error(f"异步停止充电异常: {str(e)}")
-            self.is_charging = True  # 更新充电状态
-            
-# -------------------------- 主函数入口 --------------------------
-def main(args=None):
-    rclpy.init(args=args)
-
-    # 创建电机控制节点
-    motor_node = MotorControlNode()
-    try:
-        rclpy.spin(motor_node)
-    except KeyboardInterrupt:
-        motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")
-    except Exception as e:
-        motor_node.get_logger().fatal(
-            f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
-        )
-    finally:
-        # 退出时停止所有电机（原有清理逻辑）
-        if motor_node:
-            motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
-            for motor in motor_node.motor_ctrl.motors:
-                try:
-                    motor_node.motor_ctrl.motor_set_speed(motor["id"], 0.0)
-                    time.sleep(0.1)
-                    motor_node.motor_ctrl.motor_disable(motor["id"])
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 停止电机{motor['id']}失败：{str(e)}")
-                time.sleep(0.001)
-            if motor_node.motor_ctrl.bus and motor_node.motor_ctrl.bus is not None:
-                motor_node.get_logger().info("[ROSNode] 关闭CAN串口连接...")
-                try:
-                    motor_node.motor_ctrl.bus.shutdown()
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 关闭CAN串口失败：{str(e)}")
-            # try:
-            #     motor_node.sbus_remote.stop()
-            # except Exception as e:
-            #     motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
-        motor_node.destroy_node()
-        rclpy.shutdown()
-        print("[ROSNode] 电机控制节点退出完成")
-
-if __name__ == "__main__":
-    main()
