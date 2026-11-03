@@ -1049,13 +1049,24 @@ class MotorControlNode(Node):
         return (mask & 0x18) == 0x18
 
     def _magnetic_search_phase_from_mask(self, mask: int) -> str:
-        """按磁条位于传感器哪一侧选择朝中心搜索的方向。"""
-        high_edge = bool(mask & 0xC0)
-        low_edge = bool(mask & 0x03)
-        if low_edge and not high_edge:
-            return "LEFT_SEARCH"
-        if high_edge and not low_edge:
-            return "RIGHT_SEARCH"
+        """按磁条误差方向选择朝中心搜索的方向，覆盖内侧传感器信号。"""
+        weights = {
+            0x01: -3.0,
+            0x02: -1.0,
+            0x04: -0.5,
+            0x08: -0.2,
+            0x10: 0.2,
+            0x20: 0.5,
+            0x40: 1.0,
+            0x80: 3.0,
+        }
+        active_weights = [weight for bit, weight in weights.items() if mask & bit]
+        if active_weights:
+            error = sum(active_weights) / len(active_weights)
+            if error < -0.15:
+                return "LEFT_SEARCH"
+            if error > 0.15:
+                return "RIGHT_SEARCH"
         return "RIGHT_SEARCH"
 
     def _magnetic_search_duration_from_mask(self, mask: int) -> float:
@@ -3226,7 +3237,8 @@ class MotorControlNode(Node):
                         # 中心区域内低速微调，直到中间两位连续有效。
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
                         micro_speed = max(1.2, base_speed * 0.35)
-                        correction = max(-1.0, min(1.0, magnetic_correction * 0.25))
+                        # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
+                        correction = max(-1.5, min(1.5, magnetic_correction * 0.6))
                         left_speed = micro_speed - correction
                         right_speed = -micro_speed - correction
                         self.set_motors_speed(left_speed, right_speed)
