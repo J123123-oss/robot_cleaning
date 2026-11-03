@@ -13,7 +13,7 @@ def generate_launch_description():
     # 全局路径配置
     rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
-    loading_gps = [110.64741424789473, 35.60594097811998, -90.0]
+    loading_gps = [120.06972100,30.32028289,171.80]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
@@ -65,7 +65,7 @@ def generate_launch_description():
         description="Use W200B magnetic correction in loading/unloading straight phases",
     )
 
-    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="true"), description="LOADING直接进入后退磁导航测试")
+    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="false"), description="LOADING直接进入后退磁导航测试")
     declare_magnetic_test_unloading_arg = DeclareLaunchArgument("magnetic_test_unloading_direct", default_value=TextSubstitution(text="true"), description="允许MQTT磁导航测试指令直接出仓")
     declare_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("cleaning_low_battery_threshold", default_value=TextSubstitution(text="90.0"), description="清扫/出仓低电量阈值(%)")
 
