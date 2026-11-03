@@ -3283,10 +3283,14 @@ class MotorControlNode(Node):
                             )
                             return
                     else:
-                        # 使用原后退进仓的低速比例，避免全速搜索时快速越过磁条。
-                        scan_speed = max(3.342254, base_speed * 0.3)
+                        # 外侧搜索降低后退分量、提高差速摆幅，增加横向扫过距离。
+                        if (phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
+                                and self.magnetic_search_active_duration >= 4.0):
+                            scan_speed = max(2.0, base_speed * 0.2)
+                        else:
+                            scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
-                            (3.0 if self.magnetic_search_active_duration >= 4.0
+                            (4.5 if self.magnetic_search_active_duration >= 4.0
                              else self.magnetic_search_turn_speed)
                             if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
                             else self.magnetic_search_recover_turn_speed
