@@ -368,6 +368,7 @@ class MotorControlNode(Node):
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
         self.loading_direct_start_time = None
+        self.loading_countdown_started = False
         self.loading_direct_timeout = 24.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
@@ -2347,6 +2348,7 @@ class MotorControlNode(Node):
             self.magnetic_heading_target_yaw = None
             self.magnetic_center_ready_time = None
             self.loading_direct_start_time = None
+            self.loading_countdown_started = False
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
             self._nav_sub_phase = "ALIGN"  # 重置导航子阶段
             self._pos_recover_retry_count = 0  # 重置位置恢复重试计数
@@ -3026,6 +3028,7 @@ class MotorControlNode(Node):
             self.loading_timer = None
         self.is_in_bin_process = False
         self.loading_phase = None
+        self.loading_countdown_started = False
         self._nav_sub_phase = None
         self.nav_status = "IDLE"
         # 不能直接设置完成状态DISABLE，设置为HOLD
@@ -3177,32 +3180,27 @@ class MotorControlNode(Node):
 
         if self.loading_phase == "LOADING_DIRECT_BACKWARD":
             current_time = time.time()
-            if self.loading_direct_start_time is None:
-                self.loading_direct_start_time = current_time
-
             # 磁导航模式下，直线进仓倒计时必须从首次稳定检测到中心点后开始。
             # 搜索阶段不消耗 loading_direct_timeout，避免搜索尚未完成就被超时退出。
             if self.enable_magnetic_navigation and not self.magnetic_precise_ready:
                 elapsed_time = 0.0
             else:
-                if self.enable_magnetic_navigation and self.magnetic_precise_ready_time is not None:
-                    if self.loading_direct_start_time is None or (
-                            self.loading_direct_start_time < self.magnetic_precise_ready_time):
-                        self.loading_direct_start_time = self.magnetic_precise_ready_time
-                        self.get_logger().info(
-                            "[LOADING] 已精准对准磁条中心并通过航向检查，开始直线进仓倒计时"
-                        )
-                if self.loading_direct_start_time is None:
-                    self.loading_direct_start_time = current_time
-                elapsed_time = current_time - self.loading_direct_start_time
-
-                # 中心区域稳定后使用进仓航向辅助校正；航向未收敛前不消耗后退倒计时。
+                heading_ready = True
                 if (self.enable_magnetic_navigation
                         and self.magnetic_heading_target_yaw is not None
-                        and self.imu_yaw_deg is not None
-                        and abs(self.get_heading_error(self.magnetic_heading_target_yaw)) > 3.0):
+                        and self.imu_yaw_deg is not None):
+                    heading_ready = abs(self.get_heading_error(
+                        self.magnetic_heading_target_yaw)) <= 3.0
+                if not self.loading_countdown_started:
+                    if heading_ready:
+                        self.loading_direct_start_time = current_time
+                        self.loading_countdown_started = True
+                        self.get_logger().info(
+                            "[LOADING] 中心稳定且进仓航向达标，开始一次性后退倒计时"
+                        )
                     elapsed_time = 0.0
-                    self.loading_direct_start_time = current_time
+                else:
+                    elapsed_time = current_time - self.loading_direct_start_time
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = (
                     max(3.342254, self.motor_ctrl.BASE_SPEED * 0.3)
@@ -3652,6 +3650,7 @@ class MotorControlNode(Node):
         self.last_direct_loading_log_time = 0.0
         self._last_loading_fwd_log_time = 0.0
         self.loading_direct_start_time = None
+        self.loading_countdown_started = False
         self.complete_state = True
         self.switch_state('z')  # DISABLE状态，确保电机停止
 
