@@ -1053,8 +1053,9 @@ class MotorControlNode(Node):
         return "RIGHT_SEARCH"
 
     def _magnetic_search_duration_from_mask(self, mask: int) -> float:
-        """外侧单点信号需要更大的摆幅，近边缘信号使用中等摆幅。"""
-        if mask in (0x80, 0x01):
+        """外侧信号需要更大的摆幅，避免一直贴在边缘。"""
+        if ((mask & 0xC0) and not (mask & 0x3C)) or (
+                (mask & 0x03) and not (mask & 0x3C)):
             return 4.0
         if mask in (0xC0, 0x03):
             return 3.0
@@ -3285,7 +3286,8 @@ class MotorControlNode(Node):
                         # 使用原后退进仓的低速比例，避免全速搜索时快速越过磁条。
                         scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
-                            self.magnetic_search_turn_speed
+                            (3.0 if self.magnetic_search_active_duration >= 4.0
+                             else self.magnetic_search_turn_speed)
                             if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
                             else self.magnetic_search_recover_turn_speed
                         )
