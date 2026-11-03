@@ -65,7 +65,7 @@ def generate_launch_description():
         description="Use W200B magnetic correction in loading/unloading straight phases",
     )
 
-    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="false"), description="LOADING直接进入后退磁导航测试")
+    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="true"), description="LOADING直接进入后退磁导航测试")
     declare_magnetic_test_unloading_arg = DeclareLaunchArgument("magnetic_test_unloading_direct", default_value=TextSubstitution(text="true"), description="允许MQTT磁导航测试指令直接出仓")
     declare_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("cleaning_low_battery_threshold", default_value=TextSubstitution(text="90.0"), description="清扫/出仓低电量阈值(%)")
 
