@@ -1021,7 +1021,7 @@ class MotorControlNode(Node):
 
     @staticmethod
     def _magnetic_center_candidate(mask: int):
-        """判断磁条是否进入中心区域，允许边缘传感器同时保持有效。"""
+        """判断磁条是否进入纠偏中心区域，允许边缘传感器同时保持有效。"""
         center_bits = mask & 0x3C
         if not center_bits:
             return False, None
@@ -1042,6 +1042,11 @@ class MotorControlNode(Node):
 
         center_error = sum(active_weights) / len(active_weights)
         return abs(center_error) <= 0.6, center_error
+
+    @staticmethod
+    def _magnetic_precise_candidate(mask: int) -> bool:
+        """精准居中必须同时触发两只中间传感器（bit3、bit4）。"""
+        return (mask & 0x18) == 0x18
 
     def _magnetic_search_phase_from_mask(self, mask: int) -> str:
         """按磁条位于传感器哪一侧选择朝中心搜索的方向。"""
@@ -1066,8 +1071,9 @@ class MotorControlNode(Node):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
-        # 中心区域稳定即可进入进仓，取消“中间两位同时有效”的额外门槛。
-        precise_candidate = center_candidate
+        # 中心区域用于持续纠偏；只有中间两位同时有效才算精准居中，
+        # 避免 mask=0x08/0x10 这类单侧信号提前触发后退倒计时。
+        precise_candidate = self._magnetic_precise_candidate(self.magnetic_mask)
         if center_candidate:
             self.magnetic_center_count += 1
             self.magnetic_center_lost_count = 0
@@ -1124,6 +1130,7 @@ class MotorControlNode(Node):
                 f"bits={self.magnetic_mask:08b} center_candidate={center_candidate} "
                 f"error={center_error} "
                 f"stable={self.magnetic_center_count}/3 ready={self.magnetic_tracking_ready} "
+                f"precise_candidate={precise_candidate} "
                 f"precise={self.magnetic_precise_count}/{self.magnetic_precise_required} "
                 f"precise_ready={self.magnetic_precise_ready}"
             )
