@@ -1056,7 +1056,7 @@ class MotorControlNode(Node):
         """外侧信号需要更大的摆幅，避免一直贴在边缘。"""
         if ((mask & 0xC0) and not (mask & 0x3C)) or (
                 (mask & 0x03) and not (mask & 0x3C)):
-            return 5.0
+            return 4.0
         if mask in (0xC0, 0x03):
             return 3.0
         return self.magnetic_search_duration
@@ -1082,9 +1082,8 @@ class MotorControlNode(Node):
             if self.magnetic_precise_count >= self.magnetic_precise_required:
                 if not self.magnetic_precise_ready:
                     self.magnetic_precise_ready_time = time.time()
-                    # 精准中心确认瞬间锁定车体航向，避免追逐进仓开始时的旧航向。
-                    if self.imu_yaw_deg is not None:
-                        self.magnetic_heading_target_yaw = self.imu_yaw_deg
+                    # 精准中心确认后，车头必须对准配置的进仓航向再开始后退。
+                    self.magnetic_heading_target_yaw = self.loading_turn_target_deg
                 self.magnetic_precise_ready = True
         else:
             self.magnetic_precise_count = 0
@@ -3290,7 +3289,7 @@ class MotorControlNode(Node):
                         else:
                             scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
-                            (6.0 if self.magnetic_search_active_duration >= 5.0
+                            (4.5 if self.magnetic_search_active_duration >= 4.0
                              else self.magnetic_search_turn_speed)
                             if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
                             else self.magnetic_search_recover_turn_speed
