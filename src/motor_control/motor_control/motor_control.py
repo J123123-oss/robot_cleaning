@@ -3381,7 +3381,7 @@ class MotorControlNode(Node):
             return
         # 进仓流程不再依赖 dock_sensors，直接进入 GPS/直线阶段。
         self._dock_sensor_blocked_logged_loading = False
-        if False:
+        if self.loading_phase is None:
             # 归位后首次初始化进仓流程
             if self.loading_phase is None:
                 # GPS距离检查：距进仓目标点过远则拒绝
