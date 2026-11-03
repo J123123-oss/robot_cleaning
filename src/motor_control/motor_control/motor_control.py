@@ -1045,8 +1045,10 @@ class MotorControlNode(Node):
 
     @staticmethod
     def _magnetic_precise_candidate(mask: int) -> bool:
-        """精准居中必须同时触发两只中间传感器（bit3、bit4）。"""
-        return (mask & 0x18) == 0x18
+        """精准居中判定，兼容宽线双点和窄线单点触发。"""
+        middle_pair = (mask & 0x18) == 0x18
+        narrow_line_center = mask in (0x08, 0x10)
+        return middle_pair or narrow_line_center
 
     def _magnetic_search_phase_from_mask(self, mask: int) -> str:
         """按磁条误差方向选择朝中心搜索的方向，覆盖内侧传感器信号。"""
@@ -1082,8 +1084,8 @@ class MotorControlNode(Node):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
-        # 中心区域用于持续纠偏；只有中间两位同时有效才算精准居中，
-        # 避免 mask=0x08/0x10 这类单侧信号提前触发后退倒计时。
+        # 中心区域用于持续纠偏；宽线要求中间两位同时有效，
+        # 窄线允许单独触发中间一位，避免中心信号因线宽不足永远无法成立。
         precise_candidate = self._magnetic_precise_candidate(self.magnetic_mask)
         if center_candidate:
             self.magnetic_center_count += 1
