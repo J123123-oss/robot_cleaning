@@ -1,12 +1,51 @@
 areas:
   # hangzhou001
-  - name: "hangzhou001"
-    calib_point_a: {lon: 120.07060303011394, lat: 30.32108150621311}
-    calib_point_b: {lon: 120.07048807179152, lat: 30.321067118192804}
-    calib_point_c: {lon: 120.07048957774144, lat: 30.32105113511352}
+  - name: "area-6-7-8"
+    calib_point_a: {lon: 120.19484825450083, lat: 29.744553624013726}
+    calib_point_b: {lon: 120.19568275394235, lat: 29.74451552025329}
+    calib_point_c: {lon: 120.19568331166575, lat: 29.74454603030296}
+    edge_distance_lon: 0.0
+    edge_distance_lat: 0.0
+  # hangzhou001
+  - name: "bridge-9-10"
+    calib_point_a: {lon: 120.19568342605389, lat: 29.744527774764467}
+    calib_point_b: {lon: 120.19569407280193, lat: 29.74452626390456}
+    calib_point_c: {lon: 120.19568342605389, lat: 29.744527774764467}
+    start_corner: "top_right"
+    edge_distance_lon: 0.0
+    edge_distance_lat: -0.3
+  # hangzhou001
+  - name: "area-14-11-12"
+    calib_point_a: {lon: 120.19569743950798, lat: 29.744568154479918}
+    calib_point_b: {lon: 120.1956934803931, lat: 29.744514515988772}
+    calib_point_c: {lon: 120.19570625199579, lat: 29.74451389991689}
+    edge_distance_lon: 0.3
+    edge_distance_lat: 0.3
+    start_corner: "bottom_left"
 
+  # hangzhou001
+  - name: "bridge-12-16"
+    calib_point_a: {lon: 120.19570625199579, lat: 29.74451389991689}
+    calib_point_b: {lon: 120.19570455089745, lat: 29.744489573033498}
+    calib_point_c: {lon: 120.19570625199579, lat: 29.74451389991689}
+    edge_distance_lon: 0.3
+    edge_distance_lat: 0.0
+  # hangzhou001
+  - name: "bridge-16-15"
+    calib_point_a: {lon: 120.19570455089745, lat: 29.744489573033498}
+    calib_point_b: {lon: 120.19569477637094, lat: 29.744490143124626}
+    calib_point_c: {lon: 120.19570455089745, lat: 29.744489573033498}
+    edge_distance_lon: 0.0
+    edge_distance_lat: 0.3
+  # hangzhou001
+  - name: "bridge-15-10"
+    calib_point_a: {lon: 120.19569477637094, lat: 29.744490143124626}
+    calib_point_b: {lon: 120.19569407280193, lat: 29.74452626390456}
+    calib_point_c: {lon: 120.19569477637094, lat: 29.744490143124626}
+    edge_distance_lon: [0.3, 0.3]  
+    edge_distance_lat: [0.0, 0.0] 
 default:
-  interval: 1.0
+  interval: 0.8
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.0
