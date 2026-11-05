@@ -233,6 +233,7 @@ class MotorControlNode(Node):
         self.declare_parameter("rtk_points_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/rtk_points.md")
         self.rtk_points_file = self.get_parameter("rtk_points_file").value
         rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.rtk_path_file = str(rtk_path_file or "")
         self.get_logger().info(f"[ROSNode] 获取到rtk_path_file参数: {rtk_path_file}")
         # 从路径中提取文件名作为route_id
         if rtk_path_file:
@@ -1735,7 +1736,13 @@ class MotorControlNode(Node):
         route_id = str(route_id).strip()
         if route_id.lower().endswith(".txt"):
             route_id = route_id[:-4]
-        path_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "rtk_nav", "rtk_nav", "cleaning_path"))
+        # 启动时 rtk_path_file 由 run.launch.py 传入，路径切换必须沿用其目录。
+        # 不能根据安装后的 motor_control/__file__ 推导源码目录。
+        configured_path = str(getattr(self, "rtk_path_file", "") or "").strip()
+        if configured_path:
+            path_dir = os.path.dirname(os.path.abspath(configured_path))
+        else:
+            path_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "rtk_nav", "rtk_nav", "cleaning_path"))
         candidates = [os.path.join(path_dir, f"{route_id}.txt")]
         if not route_id.startswith("route_") and route_id.startswith("route"):
             candidates.append(os.path.join(path_dir, f"route_{route_id[5:]}.txt"))
