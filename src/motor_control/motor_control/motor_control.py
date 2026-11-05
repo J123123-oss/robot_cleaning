@@ -244,6 +244,11 @@ class MotorControlNode(Node):
         self.declare_parameter("enable_magnetic_navigation", True)
         self.declare_parameter("magnetic_test_loading_direct", False)
         self.declare_parameter("magnetic_test_unloading_direct", True)
+        # 仅用于AUTO_CLEANING测试：清扫完成后是否自动进入LOADING。
+        self.declare_parameter("auto_cleaning_finish_to_loading", True)
+        self.auto_cleaning_finish_to_loading = bool(
+            self.get_parameter("auto_cleaning_finish_to_loading").value
+        )
         self.declare_parameter("cleaning_low_battery_threshold", UNLOADING_MIN_BATTERY)
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
@@ -1138,7 +1143,7 @@ class MotorControlNode(Node):
                 self.magnetic_tracking_ready = False
                 self.magnetic_center_ready_time = None
         if now - self.magnetic_last_log_time >= 0.5:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
                 f"bits={self.magnetic_mask:08b} center_candidate={center_candidate} "
                 f"error={center_error} "
@@ -1692,9 +1697,16 @@ class MotorControlNode(Node):
         self.nav_status = nav_status
         # self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
         if self.nav_status == "COMPLETED" and not self.is_in_bin_process:
-            self.get_logger().info(f"[RTKNavStatus] RTK导航完成，切换到LOADING状态")
-            self.current_control_mode = "NORMAL"  # 切换回普通模式
-            self.switch_state('l')
+            if self.auto_cleaning_finish_to_loading:
+                self.get_logger().info("[RTKNavStatus] RTK导航完成，切换到LOADING状态")
+                self.current_control_mode = "NORMAL"  # 切换回普通模式
+                self.switch_state('l')
+            else:
+                self.get_logger().info(
+                    "[RTKNavStatus] RTK导航完成，测试开关关闭，跳过LOADING并保持HOLD"
+                )
+                self.current_control_mode = "NORMAL"
+                self.switch_state('h')
 
     def rtk_error_callback(self, msg: Int16):
         self.rtk_error_code = msg.data & (
@@ -1719,10 +1731,18 @@ class MotorControlNode(Node):
 
     def handle_route_change(self, route_id: str):
         """处理路径切换指令"""
-        route_file = f"/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/{route_id}.txt"
+        # 优先使用部署环境中的路径目录；兼容 route1 与 route_1 这类历史命名。
+        route_id = str(route_id).strip()
+        if route_id.lower().endswith(".txt"):
+            route_id = route_id[:-4]
+        path_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "rtk_nav", "rtk_nav", "cleaning_path"))
+        candidates = [os.path.join(path_dir, f"{route_id}.txt")]
+        if not route_id.startswith("route_") and route_id.startswith("route"):
+            candidates.append(os.path.join(path_dir, f"route_{route_id[5:]}.txt"))
+        route_file = next((p for p in candidates if os.path.exists(p)), candidates[0])
 
         if not os.path.exists(route_file):
-            self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_file}")
+            self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_id}，已检查: {candidates}")
             return
         if self.current_status != "DISABLE":
             self.get_logger().warn(f"[ROSNode] 当前状态不是{self.current_status}，忽略路径切换指令")
@@ -2695,7 +2715,7 @@ class MotorControlNode(Node):
                     self.current_control_mode = "NORMAL"
                 key = [k for k, v in STATE_DICT.items() if v == command][0]
                 self.switch_state(key)
-            elif command == "CHANGE_ROUTE":
+            elif command in ("CHANGE_ROUTE", "CUSTOM"):
                 route_id = cmd_obj.get("route_id", "")
                 if route_id:
                     self.handle_route_change(route_id)
