@@ -3743,12 +3743,15 @@ class RTKNavControlNode(Node):
 
             # 根据修正后的误差计算转向方向
             min_positive_speed = 3.342254  # 最小转向速度（r/min）。
+            # 与Stanley控制器保持同一轮速约定：左右轮反向才是原地旋转。
+            # heading_error > 0 时需要增加当前航向，左轮反转、右轮正转；
+            # heading_error < 0 时反向旋转。
             if heading_error > 0:
                 left_speed = -max(turn_speed - correction, min_positive_speed)
-                right_speed = -max(turn_speed - correction, min_positive_speed)
+                right_speed = max(turn_speed + correction, min_positive_speed)
             else:
                 left_speed = max(turn_speed + correction, min_positive_speed)
-                right_speed = max(turn_speed + correction, min_positive_speed)
+                right_speed = -max(turn_speed - correction, min_positive_speed)
             yield (left_speed, right_speed)
 
         return False
