@@ -118,9 +118,10 @@ class WtrtkNtripConfigTests(unittest.TestCase):
         self.assertEqual(
             module.read_config(serial),
             {
-                "domain": "example.com",
-                "port": 8002,
-                "username": "user",
+                "serverDomain": "example.com",
+                "serverIp": "example.com",
+                "serverPort": "8002",
+                "account": "user",
                 "password": "pa,ss",
                 "mountpoint": "BOOT2",
             },
@@ -195,9 +196,10 @@ class WtrtkNtripConfigTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
                 {
-                    "domain": "example.com",
-                    "port": 8002,
-                    "username": "user",
+                    "serverDomain": "example.com",
+                    "serverIp": "example.com",
+                    "serverPort": "8002",
+                    "account": "user",
                     "password": "password",
                     "mountpoint": "BOOT2",
                 },
