@@ -292,8 +292,12 @@ class MotorControlNode(Node):
         self.magnetic_precise_count = 0
         self.magnetic_precise_ready = False
         self.magnetic_precise_ready_time = None
+        self.magnetic_precise_lost_count = 0
+        self.magnetic_precise_lost_limit = 3
         # 窄线中心信号可能只持续两个采样周期，连续两次即可锁定。
         self.magnetic_precise_required = 2
+        # 1cm磁条只能按加权位置误差判断中心，不能要求固定bit组合。
+        self.magnetic_precise_error_threshold = 0.4
         self.magnetic_heading_target_yaw = None
         self.magnetic_center_ready_time = None
         self.magnetic_centering_start_time = None
@@ -1080,12 +1084,13 @@ class MotorControlNode(Node):
         center_error = sum(active_weights) / len(active_weights)
         return abs(center_error) <= 0.6, center_error
 
-    @staticmethod
-    def _magnetic_precise_candidate(mask: int) -> bool:
-        """精准居中判定，兼容宽线双点和窄线单点触发。"""
-        middle_pair = (mask & 0x18) == 0x18
-        narrow_line_center = mask in (0x08, 0x10)
-        return middle_pair or narrow_line_center
+    def _magnetic_precise_candidate(self, mask: int, center_error: Optional[float]) -> bool:
+        """按加权位置误差判断精准中心，兼容1cm窄线的相邻位组合。"""
+        return (
+            center_error is not None
+            and bool(mask & 0x3C)
+            and abs(center_error) <= self.magnetic_precise_error_threshold
+        )
 
     def _magnetic_search_phase_from_mask(self, mask: int) -> str:
         """按磁条误差方向选择朝中心搜索的方向，覆盖内侧传感器信号。"""
@@ -1121,9 +1126,11 @@ class MotorControlNode(Node):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
-        # 中心区域用于持续纠偏；宽线要求中间两位同时有效，
-        # 窄线允许单独触发中间一位，避免中心信号因线宽不足永远无法成立。
-        precise_candidate = self._magnetic_precise_candidate(self.magnetic_mask)
+        # 中心区域用于持续纠偏；精准触发按加权位置误差判断，
+        # 兼容窄线在相邻传感器之间跳变的情况。
+        precise_candidate = self._magnetic_precise_candidate(
+            self.magnetic_mask, center_error
+        )
         if center_candidate:
             self.magnetic_center_count += 1
             self.magnetic_center_lost_count = 0
@@ -1132,6 +1139,7 @@ class MotorControlNode(Node):
                     self.magnetic_center_ready_time = time.time()
                 self.magnetic_tracking_ready = True
         if precise_candidate:
+            self.magnetic_precise_lost_count = 0
             self.magnetic_precise_count += 1
             if self.magnetic_precise_count >= self.magnetic_precise_required:
                 if not self.magnetic_precise_ready:
@@ -1139,6 +1147,13 @@ class MotorControlNode(Node):
                     # 精准中心确认后，车头必须对准配置的进仓航向再开始后退。
                     self.magnetic_heading_target_yaw = self.loading_turn_target_deg
                 self.magnetic_precise_ready = True
+        elif self.magnetic_precise_ready:
+            # 窄线跨过相邻采样位时保留短暂锁定，避免后退控制在0x0C/0x1C间反复切换。
+            self.magnetic_precise_lost_count += 1
+            if self.magnetic_precise_lost_count >= self.magnetic_precise_lost_limit:
+                self.magnetic_precise_count = 0
+                self.magnetic_precise_ready = False
+                self.magnetic_precise_ready_time = None
         else:
             self.magnetic_precise_count = 0
             self.magnetic_precise_ready = False
@@ -1170,6 +1185,7 @@ class MotorControlNode(Node):
                     self.magnetic_precise_count = 0
                     self.magnetic_precise_ready = False
                     self.magnetic_precise_ready_time = None
+                    self.magnetic_precise_lost_count = 0
             else:
                 self.magnetic_center_count = 0
                 self.magnetic_tracking_ready = False
@@ -2449,6 +2465,7 @@ class MotorControlNode(Node):
             self.magnetic_precise_count = 0
             self.magnetic_precise_ready = False
             self.magnetic_precise_ready_time = None
+            self.magnetic_precise_lost_count = 0
             self.magnetic_heading_target_yaw = None
             self.magnetic_center_ready_time = None
             self.magnetic_centering_start_time = None
