@@ -1238,9 +1238,15 @@ class MotorControlNode(Node):
                 if current_time - self.last_charge_stop_time >= 60.0:
                     if not self.is_charging:
                         if current_time - self.last_charge_resume_time >= 360.0:
-                            self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
-                            self.start_charge_async()
-                            self.last_charge_resume_time = current_time
+                            if self.charging_i > 1.0:
+                                self.get_logger().info(
+                                    f"[ROSNode] 检测到充电电流{self.charging_i:.2f}A>1.0A，已在充电，跳过启动充电"
+                                )
+                                self.is_charge_paused = False
+                            else:
+                                self.get_logger().info(f"[ROSNode] 电量{self.battery_remaining}%低于阈值{self.charge_resume_threshold}%，车体到位，恢复充电（第{self.charge_resume_count + 1}次）")
+                                self.start_charge_async()
+                                self.last_charge_resume_time = current_time
                     else:
                         self.get_logger().info("[ROSNode] 充电已在进行中，清除充电暂停标志")
                         self.is_charge_paused = False
@@ -2944,7 +2950,12 @@ class MotorControlNode(Node):
                 self.get_logger().info("[ROSNode] 车体到位")
                 if self.current_status == "DISABLE":
                     self.get_logger().info("[ROSNode] 电机非使能状态，允许充电")
-                    self.start_charge_async()
+                    if self.charging_i > 1.0:
+                        self.get_logger().info(
+                            f"[ROSNode] 检测到充电电流{self.charging_i:.2f}A>1.0A，已在充电，跳过启动充电"
+                        )
+                    else:
+                        self.start_charge_async()
                 # self.query_volt_curr_async()
                 # self.start_charge_sync()
             # 充电停止逻辑已移至 timer_callback 中统一处理
