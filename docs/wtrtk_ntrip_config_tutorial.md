@@ -9,16 +9,15 @@
 
 ## 1. 配置文件
 
-`--restore` 使用 JSON 文件。4GA 使用设备原生字段名，4GAC 使用工具统一字段名。
+`--restore` 使用 JSON 文件。4GA 可以直接使用旧 4GA 字段名，也可以使用工具的统一字段名。
 
-4GA 格式示例：
+统一格式示例：
 
 ```json
 {
-  "serverDomain": "cors.phibis.cn",
-  "serverIp": "cors.phibis.cn",
-  "serverPort": "8002",
-  "account": "WT5100001603",
+  "domain": "103.143.19.54",
+  "port": 8002,
+  "username": "WT5100001603",
   "password": "4559",
   "mountpoint": "Auto"
 }
@@ -52,18 +51,6 @@ python3 tools/wtrtk_ntrip_config_4ga.py \
 ## 4. 写入 4GAC
 
 4GAC 使用独立脚本和 `230400` 波特率：
-
-4GAC 格式示例：
-
-```json
-{
-  "domain": "103.143.19.54",
-  "port": 8002,
-  "username": "WT5100001603",
-  "password": "4559",
-  "mountpoint": "Auto"
-}
-```
 
 ```bash
 python3 tools/wtrtk_ntrip_config_4gac.py \

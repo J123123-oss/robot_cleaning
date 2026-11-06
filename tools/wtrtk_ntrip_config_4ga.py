@@ -205,10 +205,9 @@ def read_config(ser: serial.Serial) -> dict[str, str | int]:
         username, password = parse_cors_response(cors_line)
         mountpoint = parse_mountpoint_response(mountpoint_line)
         return {
-            "serverDomain": domain,
-            "serverIp": domain,
-            "serverPort": str(port),
-            "account": username,
+            "domain": domain,
+            "port": port,
+            "username": username,
             "password": password,
             "mountpoint": mountpoint,
         }
