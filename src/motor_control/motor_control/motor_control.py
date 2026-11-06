@@ -232,6 +232,7 @@ class MotorControlNode(Node):
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
         self.declare_parameter("rtk_points_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/rtk_points.md")
         self.rtk_points_file = self.get_parameter("rtk_points_file").value
+        self.rtk_point_seq = None
         rtk_path_file = self.get_parameter("rtk_path_file").value
         self.rtk_path_file = str(rtk_path_file or "")
         self.get_logger().info(f"[ROSNode] 获取到rtk_path_file参数: {rtk_path_file}")
@@ -2471,6 +2472,7 @@ class MotorControlNode(Node):
                 ),
                 "current_lon": self.current_lon if self.current_lon > 0.1 else None,
                 "current_lat": self.current_lat if self.current_lat > 0.1 else None,
+                "rtk_point_seq": self.rtk_point_seq,
                 "route_id": self.route_id if self.route_id is not None else "default",
                 "areas": self.cleaning_area,
                 "error": self.build_error_code(),
@@ -2584,7 +2586,8 @@ class MotorControlNode(Node):
             self.get_logger().info(f"[ROSNode] 解析到command：{command}")
 
             if command == "WAIT_RTK":
-                self._record_wait_rtk_point()
+                if self._record_wait_rtk_point():
+                    self.publish_state()
                 return
 
             # Web 遥控器 MANUAL 模式：仅允许 GET_STATUS 和 DISABLE_CAMERA_REMOTE
@@ -2760,7 +2763,8 @@ class MotorControlNode(Node):
             raw_command = msg_data.strip()
 
             if raw_command == "WAIT_RTK":
-                self._record_wait_rtk_point()
+                if self._record_wait_rtk_point():
+                    self.publish_state()
                 return
 
             # Web 遥控器 MANUAL 模式：仅允许 GET_STATUS 和 DISABLE_CAMERA_REMOTE
@@ -2832,16 +2836,20 @@ class MotorControlNode(Node):
 
     def _record_wait_rtk_point(self):
         """Record one current RTK point without changing motion state."""
-        if record_rtk_point(
+        seq = record_rtk_point(
             self.rtk_points_file,
             self.current_lon,
             self.current_lat,
             self.rtk_position_status,
             self.rtk_orientation_status,
-        ):
-            self.get_logger().info(f"[RTK采点] 已记录到 {self.rtk_points_file}")
+        )
+        if seq is not None:
+            self.rtk_point_seq = seq
+            self.get_logger().info(f"[RTK采点] 已记录序号 {seq} 到 {self.rtk_points_file}")
+            return True
         else:
             self.get_logger().warn("[RTK采点] 当前经纬度无效，未记录")
+            return False
     def dock_state_callback(self, msg):
         """处理来自MQTT的停靠传感器状态消息
 
