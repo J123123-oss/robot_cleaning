@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from types import ModuleType
 
-SCRIPT = Path(__file__).parents[1] / "tools" / "wtrtk_ntrip_config.py"
+SCRIPT = Path(__file__).parents[1] / "tools" / "wtrtk_ntrip_config_4ga.py"
 
 
 def load_module():
@@ -218,7 +218,7 @@ class WtrtkNtripConfigTests(unittest.TestCase):
         self.assertIsNone(args.username)
         self.assertIsNone(args.mountpoint)
 
-    def test_default_baud_matches_wtrtk_4gac_device(self):
+    def test_default_baud_matches_wtrtk_4ga_device(self):
         module = load_module()
         previous_argv = sys.argv
         sys.argv = [str(SCRIPT), "--backup", "backup.json"]
@@ -227,7 +227,7 @@ class WtrtkNtripConfigTests(unittest.TestCase):
         finally:
             sys.argv = previous_argv
 
-        self.assertEqual(args.baud, 230400)
+        self.assertEqual(args.baud, 460800)
 
     def test_configuration_still_requires_ntrip_arguments(self):
         module = load_module()
@@ -240,3 +240,28 @@ class WtrtkNtripConfigTests(unittest.TestCase):
             sys.argv = previous_argv
 
         self.assertEqual(exc_info.exception.code, 2)
+
+    def test_restore_accepts_legacy_4ga_field_names(self):
+        module = load_module()
+        previous_argv = sys.argv
+        sys.argv = [str(SCRIPT), "--restore", "legacy.json"]
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "legacy.json"
+                path.write_text(json.dumps({
+                    "serverDomain": "103.143.19.54",
+                    "serverIp": "103.143.19.54",
+                    "serverPort": "8002",
+                    "account": "WT5100001603",
+                    "password": "4559",
+                    "mountpoint": "Auto",
+                }), encoding="utf-8")
+                sys.argv = [str(SCRIPT), "--restore", str(path)]
+                args = module.parse_args()
+                with redirect_stdout(StringIO()):
+                    # main() is dry-run by default, so no serial device is opened.
+                    self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = previous_argv
+
+
