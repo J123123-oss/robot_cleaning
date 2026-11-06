@@ -2565,6 +2565,11 @@ class MotorControlNode(Node):
                     self.motor_fault_codes,
                     self.brush_current_sample_max_age_sec,
                 ),
+                "motor_current": build_motor_fault_details(
+                    motor_feedback,
+                    self.motor_fault_codes,
+                    self.brush_current_sample_max_age_sec,
+                ),
                 "resume_charge": self.charge_resume_count,
                 # "angle_x": self.angle_x,
                 # "angle_y": self.angle_y,
