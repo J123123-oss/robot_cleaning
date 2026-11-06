@@ -6,13 +6,13 @@ import re
 
 
 def record_rtk_point(path, lon, lat, position_status, orientation_status, timestamp=None):
-    """Append one point; return False when coordinates are invalid."""
+    """Append one point; return its sequence number, or None when invalid."""
     try:
         lon, lat = float(lon), float(lat)
     except (TypeError, ValueError):
-        return False
+        return None
     if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
-        return False
+        return None
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     text = target.read_text(encoding="utf-8") if target.exists() else ""
@@ -26,4 +26,4 @@ def record_rtk_point(path, lon, lat, position_status, orientation_status, timest
             f'  valid: {str(valid).lower()}\n  position_status: {int(position_status)}\n'
             f'  orientation_status: {int(orientation_status)}\n  time: "{stamp}"\n'
         )
-    return True
+    return seq
