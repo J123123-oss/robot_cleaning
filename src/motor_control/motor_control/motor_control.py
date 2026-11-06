@@ -292,9 +292,12 @@ class MotorControlNode(Node):
         self.magnetic_precise_count = 0
         self.magnetic_precise_ready = False
         self.magnetic_precise_ready_time = None
-        self.magnetic_precise_required = 3
+        # 窄线中心信号可能只持续两个采样周期，连续两次即可锁定。
+        self.magnetic_precise_required = 2
         self.magnetic_heading_target_yaw = None
         self.magnetic_center_ready_time = None
+        self.magnetic_centering_start_time = None
+        self.magnetic_centering_timeout = 3.0
         self.magnetic_last_log_time = 0.0
         self.magnetic_search_direction = 1
         self.magnetic_search_last_switch_time = 0.0
@@ -306,8 +309,8 @@ class MotorControlNode(Node):
         self.magnetic_search_reference_yaw = None
         self.magnetic_search_recover_target_yaw = None
         self.magnetic_search_recover_timeout = 8.0
-        # 搜索动作使用原后退速度，缩短持续时间并降低差速转向，避免越过磁条。
-        self.magnetic_search_duration = 2.0
+        # 无信号时增加后退扫线距离；中心附近锁定超时后会重新进入搜索。
+        self.magnetic_search_duration = 3.5
         self.magnetic_search_active_duration = self.magnetic_search_duration
         self.magnetic_search_turn_speed = 2.0
         self.magnetic_search_recover_turn_speed = 1.0
@@ -2448,6 +2451,7 @@ class MotorControlNode(Node):
             self.magnetic_precise_ready_time = None
             self.magnetic_heading_target_yaw = None
             self.magnetic_center_ready_time = None
+            self.magnetic_centering_start_time = None
             self.loading_direct_start_time = None
             self.loading_countdown_started = False
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
@@ -3329,7 +3333,35 @@ class MotorControlNode(Node):
                         heading_error = self.get_heading_error(self.magnetic_heading_target_yaw)
 
                     if not self.magnetic_precise_ready:
-                        # 中心区域内低速微调，直到中间两位连续有效。
+                        # 中心区域内低速微调，直到窄线中心信号稳定。
+                        if self.magnetic_centering_start_time is None:
+                            self.magnetic_centering_start_time = current_time
+                        elif (current_time - self.magnetic_centering_start_time
+                              >= self.magnetic_centering_timeout):
+                            # 找到磁条但持续无法锁定中心时，重新扩大搜索范围，
+                            # 防止微调阶段占满整个进仓超时窗口。
+                            self.get_logger().warn(
+                                f"[LOADING][MagneticSearch] 中心微调超时"
+                                f"({self.magnetic_centering_timeout:.1f}s)，"
+                                f"mask=0x{self.magnetic_mask:02X}，重新搜索")
+                            self.magnetic_tracking_ready = False
+                            self.magnetic_center_count = 0
+                            self.magnetic_center_lost_count = 0
+                            self.magnetic_precise_count = 0
+                            self.magnetic_precise_ready = False
+                            self.magnetic_precise_ready_time = None
+                            self.magnetic_centering_start_time = None
+                            self.magnetic_search_phase = (
+                                self._magnetic_search_phase_from_mask(self.magnetic_mask)
+                            )
+                            self.magnetic_search_active_duration = (
+                                self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                            )
+                            self.magnetic_search_phase_start = current_time
+                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                            self.magnetic_search_recover_target_yaw = None
+                            self.set_motors_speed(0.0, 0.0)
+                            return
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
                         micro_speed = max(1.2, base_speed * 0.35)
                         # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
@@ -3399,10 +3431,10 @@ class MotorControlNode(Node):
                             )
                             return
                     else:
-                        # 外侧搜索降低后退分量、提高差速摆幅，增加横向扫过距离。
-                        if (phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
-                                and self.magnetic_search_active_duration >= 5.0):
-                            scan_speed = max(1.5, base_speed * 0.15)
+                        # 搜索阶段增加后退分量，单次约产生6~8cm有效后退位移；
+                        # 恢复阶段仍使用较低速度，避免归位过冲。
+                        if phase in ("RIGHT_SEARCH", "LEFT_SEARCH"):
+                            scan_speed = max(4.5, base_speed * 0.45)
                         else:
                             scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
