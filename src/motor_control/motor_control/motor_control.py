@@ -224,6 +224,32 @@ def build_motor_fault_payload(
     return {"motor_fault": [int(code) for code in motor_fault_codes]}
 
 
+def build_motor_current_payload(
+    motor_feedback, current_sample_max_age_sec
+):
+    """Build a compact current array ordered by the motor feedback list."""
+    currents = []
+    for motor in motor_feedback:
+        try:
+            sample_age = float(motor.get("current_sample_age_sec", -1.0))
+            current = motor.get("actual_current")
+            current = None if current is None else float(current)
+        except (TypeError, ValueError, OverflowError):
+            sample_age = -1.0
+            current = None
+        if (
+            current is None
+            or not math.isfinite(current)
+            or not math.isfinite(sample_age)
+            or sample_age < 0.0
+            or sample_age > current_sample_max_age_sec
+        ):
+            currents.append(None)
+        else:
+            currents.append(current)
+    return currents
+
+
 # -------------------------- 电机控制节点（独立ROS2节点） --------------------------
 class MotorControlNode(Node):
     def __init__(self, node_name='motor_control_node'):
@@ -2582,9 +2608,8 @@ class MotorControlNode(Node):
                     self.motor_fault_codes,
                     self.brush_current_sample_max_age_sec,
                 ),
-                "motor_current": build_motor_fault_details(
+                "motor_current": build_motor_current_payload(
                     motor_feedback,
-                    self.motor_fault_codes,
                     self.brush_current_sample_max_age_sec,
                 ),
                 "resume_charge": self.charge_resume_count,
