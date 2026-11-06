@@ -76,6 +76,7 @@ RC_CH_MAX_VALUE = 1722
 
 LASER_DATA_TIMEOUT = 1.0
 UNLOADING_MIN_BATTERY = 90.0
+AUTO_CLEANING_LOW_BATTERY_THRESHOLD = 20.0
 UNLOADING_SETTLE_DURATION = 2.0
 
 # 进仓目标GPS坐标和最大允许距离（实际值从 launch 参数 loading_gps 读取）
@@ -98,6 +99,22 @@ ERROR_LOADING_TIMEOUT = 32  # 进仓导航超时
 ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 ERROR_TOTAL_OVERCURRENT = 256  # 电池总电流或滚刷电流持续超限
+ERROR_AUTO_CLEANING_LOW_BATTERY = 512  # 清扫中途低电量，已切换HOLD
+
+
+def should_pause_auto_cleaning_for_low_battery(
+    control_mode: str,
+    battery_remaining: Optional[float],
+    threshold: float,
+    already_paused: bool,
+) -> bool:
+    """判断是否应首次锁停自动清扫，避免低电量反复触发状态切换。"""
+    if already_paused or control_mode != "AUTO_CLEANING" or battery_remaining is None:
+        return False
+    try:
+        return math.isfinite(float(battery_remaining)) and float(battery_remaining) <= float(threshold)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 TOTAL_CURRENT_STALL_THRESHOLD = 4.0  # 总电流保护阈值（A）。
 TOTAL_CURRENT_STALL_DURATION = 5.0  # 总电流超过阈值的持续时间（s）。
@@ -252,12 +269,19 @@ class MotorControlNode(Node):
             self.get_parameter("auto_cleaning_finish_to_loading").value
         )
         self.declare_parameter("cleaning_low_battery_threshold", UNLOADING_MIN_BATTERY)
+        self.declare_parameter(
+            "auto_cleaning_low_battery_threshold",
+            AUTO_CLEANING_LOW_BATTERY_THRESHOLD,
+        )
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
         self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
         self.magnetic_test_unloading_active = False
         self._magnetic_unloading_request_pending = False
         self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
+        self.auto_cleaning_low_battery_threshold = float(
+            self.get_parameter("auto_cleaning_low_battery_threshold").value
+        )
         self.magnetic_error = None
         self.magnetic_mask = 0
         self.magnetic_valid = False
@@ -510,6 +534,7 @@ class MotorControlNode(Node):
         self.battery_remaining = None # 电池百分比
         self.battery_temperatures = [] # 电池温度，共3个
         self.low_battery_warning = False
+        self.auto_cleaning_low_battery_fault = False
         self.sensors_status = 0b0000  # 4个传感器状态位（初始全无障碍）
         # 防跌落边界触发状态
         self.confirmed_sensors = set()     # 已确认触发的传感器名（经debounce后）
@@ -857,6 +882,8 @@ class MotorControlNode(Node):
         )
         if self.low_battery_warning:
             error |= ERROR_LOW_BATTERY
+        if self.auto_cleaning_low_battery_fault:
+            error |= ERROR_AUTO_CLEANING_LOW_BATTERY
         if self.loading_timeout_error:
             error |= ERROR_LOADING_TIMEOUT
         if self.current_stall_fault:
@@ -1950,6 +1977,26 @@ class MotorControlNode(Node):
         self.battery_temperatures = round(msg.data[3], 1) # 温度（索引3）
         if self.battery_remaining >= self.cleaning_low_battery_threshold:
             self.low_battery_warning = False
+        if self.battery_remaining >= self.auto_cleaning_low_battery_threshold:
+            self.auto_cleaning_low_battery_fault = False
+        elif should_pause_auto_cleaning_for_low_battery(
+            self.current_control_mode,
+            self.battery_remaining,
+            self.auto_cleaning_low_battery_threshold,
+            self.auto_cleaning_low_battery_fault,
+        ):
+            self.auto_cleaning_low_battery_fault = True
+            self.rtk_left_speed = 0.0
+            self.rtk_right_speed = 0.0
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
+            self.get_logger().error(
+                f"[AUTO_CLEANING] 电量{self.battery_remaining:.1f}%低于清扫阈值"
+                f"{self.auto_cleaning_low_battery_threshold:.1f}%，切换HOLD，"
+                f"故障码=0x{ERROR_AUTO_CLEANING_LOW_BATTERY:02X}"
+            )
+            self.switch_state("h")
+            self.publish_state()
     def charging_volt_curr_cb(self, msg: Float32MultiArray):
         """订阅充电电压电流数据的回调函数"""
         if len(msg.data) < 2:

@@ -68,6 +68,7 @@ def generate_launch_description():
     declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="true"), description="LOADING直接进入后退磁导航测试")
     declare_magnetic_test_unloading_arg = DeclareLaunchArgument("magnetic_test_unloading_direct", default_value=TextSubstitution(text="true"), description="允许MQTT磁导航测试指令直接出仓")
     declare_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("cleaning_low_battery_threshold", default_value=TextSubstitution(text="90.0"), description="清扫/出仓低电量阈值(%)")
+    declare_auto_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("auto_cleaning_low_battery_threshold", default_value=TextSubstitution(text="20.0"), description="AUTO_CLEANING中途低电量暂停阈值(%)")
     declare_auto_cleaning_finish_to_loading_arg = DeclareLaunchArgument("auto_cleaning_finish_to_loading", default_value=TextSubstitution(text="false"), description="AUTO_CLEANING清扫完成后是否自动进入LOADING")
 
     declare_imu_odom_fallback_arg = DeclareLaunchArgument(
@@ -189,6 +190,7 @@ def generate_launch_description():
                 'magnetic_test_loading_direct': ParameterValue(LaunchConfiguration('magnetic_test_loading_direct'), value_type=bool),
                 'magnetic_test_unloading_direct': ParameterValue(LaunchConfiguration('magnetic_test_unloading_direct'), value_type=bool),
                 'cleaning_low_battery_threshold': ParameterValue(LaunchConfiguration('cleaning_low_battery_threshold'), value_type=float),
+                'auto_cleaning_low_battery_threshold': ParameterValue(LaunchConfiguration('auto_cleaning_low_battery_threshold'), value_type=float),
                 'auto_cleaning_finish_to_loading': ParameterValue(LaunchConfiguration('auto_cleaning_finish_to_loading'), value_type=bool),
                 'brush_motor_count': ParameterValue(
                     LaunchConfiguration('brush_motor_count'), value_type=int
@@ -352,6 +354,7 @@ def generate_launch_description():
     ld.add_action(declare_magnetic_test_loading_arg)
     ld.add_action(declare_magnetic_test_unloading_arg)
     ld.add_action(declare_cleaning_low_battery_threshold_arg)
+    ld.add_action(declare_auto_cleaning_low_battery_threshold_arg)
     ld.add_action(declare_auto_cleaning_finish_to_loading_arg)
     ld.add_action(declare_imu_odom_fallback_arg)
     ld.add_action(declare_stanley_k_path_arg)
