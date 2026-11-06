@@ -1,0 +1,17 @@
+areas:
+  # # hangzhou001
+  - name: "area-6-7-8"
+    calib_point_a: {lon: 120.06973436714118, lat: 30.3202570387155}
+    calib_point_b: {lon: 120.06963289779037, lat: 30.32024466213931}
+    calib_point_c: {lon: 120.06963892212973, lat: 30.320207170843084}
+    edge_distance_lon: 0.0
+    edge_distance_lat: 0.0
+
+default:
+  interval: 0.8
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.0
+  edge_distance_lat: 0.0
+  reverse_end_point: False
+  headless: False

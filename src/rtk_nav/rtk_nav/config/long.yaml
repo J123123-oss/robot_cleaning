@@ -1,0 +1,16 @@
+areas:
+  # hangzhou001
+  - name: "hangzhou001"
+    calib_point_a: {lon: 120.19484825450083, lat: 29.744553624013726}
+    calib_point_b: {lon: 120.19568275394235, lat: 29.74451552025329}
+    calib_point_c: {lon: 120.19568331166575, lat: 29.74454603030296}
+
+
+default:
+  interval: 0.8
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.0
+  edge_distance_lat: 0.0
+  reverse_end_point: True
+  headless: False
