@@ -1108,7 +1108,9 @@ class MotorControlNode(Node):
             return False, None
 
         center_error = sum(active_weights) / len(active_weights)
-        return abs(center_error) <= 0.6, center_error
+        # 0x04/0x20（误差±0.5）属于边缘信号，必须继续搜索中心；
+        # 0x0C/0x1C/0x18等组合才进入中心跟踪和直线后退。
+        return abs(center_error) <= 0.4, center_error
 
     def _magnetic_precise_candidate(self, mask: int, center_error: Optional[float]) -> bool:
         """按加权位置误差判断精准中心，兼容1cm窄线的相邻位组合。"""
