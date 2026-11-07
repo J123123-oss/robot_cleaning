@@ -2815,8 +2815,10 @@ class RTKNavControlNode(Node):
             and position_status == 4
             and orientation_status != 4
         )
+        # 定向非 Fixed 也必须服从统一的质量去抖；否则单帧 Float 会绕过
+        # RTK_QUALITY_LOSS_DEBOUNCE，造成导航立即进入航向门控。
         if (
-            (quality_loss_exceeded or orientation_quality_lost)
+            quality_loss_exceeded
             and active_nav
             and not self._auto_heading_gate_pending
         ):
@@ -6141,11 +6143,8 @@ class RTKNavControlNode(Node):
                         NavState.IDLE, NavState.PAUSE, NavState.COMPLETED
                     )
                     and not self._auto_heading_gate_pending
-                    and (
-                        self.rtk_orientation_degraded
-                        or not has_rtk_quality_loss_exceeded(
-                            time.monotonic(), self._rtk_quality_loss_since
-                        )
+                    and not has_rtk_quality_loss_exceeded(
+                        time.monotonic(), self._rtk_quality_loss_since
                     )
                 )
                 if not quality_loss_debouncing:

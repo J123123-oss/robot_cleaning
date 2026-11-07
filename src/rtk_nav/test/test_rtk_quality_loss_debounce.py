@@ -29,7 +29,7 @@ def _function(tree, name):
 class RtkQualityLossDebounceTest(unittest.TestCase):
 
     def test_stable_orientation_float_is_allowed_after_observation_window(self):
-        source, tree = _source_tree()
+        _, tree = _source_tree()
         helper = _function(tree, "is_orientation_float_heading_safe")
         namespace = {
             "List": List,
@@ -98,6 +98,15 @@ class RtkQualityLossDebounceTest(unittest.TestCase):
         self.assertIn("self._rtk_quality_loss_since", callback)
         self.assertIn("has_rtk_quality_loss_exceeded", callback)
         self.assertIn("RTK质量去抖", callback)
+
+    def test_orientation_loss_does_not_bypass_quality_debounce(self):
+        _, tree = _source_tree()
+        callback = ast.unparse(_function(tree, "heading_callback"))
+        timer = ast.unparse(_function(tree, "rtk_timer_callback"))
+
+        self.assertIn("quality_loss_exceeded", callback)
+        self.assertNotIn("quality_loss_exceeded or orientation_quality_lost", callback)
+        self.assertNotIn("not self.rtk_orientation_degraded", timer)
 
     def test_timer_keeps_navigation_running_during_quality_debounce(self):
         source, tree = _source_tree()
