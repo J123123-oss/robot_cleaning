@@ -3427,16 +3427,6 @@ class MotorControlNode(Node):
                         self.set_motors_speed(left_speed, right_speed)
                         return
 
-                    if heading_error is not None and abs(heading_error) > 3.0:
-                        # 中间两位已锁定但航向偏差过大时，先做小幅航向修正。
-                        heading_correction = max(-1.0, min(1.0, heading_error * 0.04))
-                        micro_speed = max(1.2, base_speed * 0.35)
-                        self.set_motors_speed(
-                            micro_speed - heading_correction,
-                            -micro_speed - heading_correction,
-                        )
-                        return
-
                     if (self.magnetic_precise_ready_time is not None
                             and current_time - self.magnetic_precise_ready_time < 3.0):
                         self.set_motors_speed(0.0, 0.0)
@@ -3575,7 +3565,9 @@ class MotorControlNode(Node):
                     if (self.imu_yaw_deg is not None
                             and self.magnetic_heading_target_yaw is not None):
                         heading_error = self.get_heading_error(self.magnetic_heading_target_yaw)
-                        heading_correction = max(-1.0, min(1.0, heading_error * 0.04))
+                        heading_correction = max(
+                            -2.5, min(2.5, heading_error * 0.20)
+                        )
                         left_speed -= heading_correction
                         right_speed -= heading_correction
                     self.set_motors_speed(left_speed, right_speed)
