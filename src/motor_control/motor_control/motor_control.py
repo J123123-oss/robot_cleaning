@@ -3508,19 +3508,8 @@ class MotorControlNode(Node):
                         heading_error = self.get_heading_error(self.magnetic_heading_target_yaw)
 
                     if not self.magnetic_precise_ready:
-                        # 中心区域内低速微调，直到窄线中心信号稳定。
-                        if self.magnetic_centering_start_time is None:
-                            self.magnetic_centering_start_time = current_time
-                        elif (current_time - self.magnetic_centering_start_time
-                              >= self.magnetic_centering_timeout):
-                            # 后退倒计时开始后不再因中心微调超时切换搜索。
-                            # 保持跟踪状态，重置微调计时并继续边后退边纠偏，
-                            # 避免车辆在磁条上反复停车摆动。
-                            self.get_logger().warn(
-                                f"[LOADING][MagneticSearch] 中心微调超时"
-                                f"({self.magnetic_centering_timeout:.1f}s)，"
-                                f"mask=0x{self.magnetic_mask:02X}，继续后退纠偏")
-                            self.magnetic_centering_start_time = current_time
+                        # 已进入直线后退后不再运行中心微调超时计时器；
+                        # 持续沿磁条后退并按当前误差纠偏，不停车、不重新搜索。
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
                         micro_speed = max(1.2, base_speed * 0.35)
                         # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
@@ -3531,10 +3520,9 @@ class MotorControlNode(Node):
                         self.loading_direct_motion_active = True
                         return
 
-                    if (self.magnetic_precise_ready_time is not None
-                            and current_time - self.magnetic_precise_ready_time < 3.0):
-                        self.set_motors_speed(0.0, 0.0)
-                        return
+                    # 后退倒计时期间不再因精准中心确认而停车等待。
+                    # 窄磁条会反复跨过相邻采样位，固定停车保护会造成数秒
+                    # 停顿；保持后退并继续使用磁误差和航向角做小幅纠偏。
                 if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
                     # 后退过程中只要仍有磁条信号，就保持后退计时并直接按误差纠偏。
                     # 不再切入独立 SEARCH/RECOVER 流程，避免把磁条末端前的正常
