@@ -45,6 +45,8 @@ class RobotStateKey(Enum):
     BACKWARD = "s"
     LEFT = "a"
     RIGHT = "d"
+    OFFSET_LEFT = "OFFSET_LEFT"
+    OFFSET_RIGHT = "OFFSET_RIGHT"
     LOADING = "l"
     START = "u"
     AUTO_CLEANING = "r"
@@ -808,7 +810,7 @@ class MotorControlNode(Node):
 
         self.status_list = [
             "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START", "UNLOADING",
-            "LEFT", "RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
+            "LEFT", "RIGHT", "OFFSET_LEFT", "OFFSET_RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
         self.current_status = self.status_list[0]
 
@@ -1593,6 +1595,15 @@ class MotorControlNode(Node):
             elif self.current_status == "RIGHT":
                 left_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
+                self.set_motors_speed(left_speed, right_speed)
+            elif self.current_status in ("OFFSET_LEFT", "OFFSET_RIGHT"):
+                base = self.mqtt_control_speed * self.manual_drive_speed_scale
+                inner = base * 0.55
+                left_speed, right_speed = (
+                    (-inner, base)
+                    if self.current_status == "OFFSET_LEFT"
+                    else (-base, inner)
+                )
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
@@ -2518,6 +2529,18 @@ class MotorControlNode(Node):
             if self.direction_timer:
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
+        elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
+            base = self.mqtt_control_speed * self.manual_drive_speed_scale
+            inner = base * 0.55
+            left_speed, right_speed = (
+                (-inner, base)
+                if new_state == "OFFSET_LEFT"
+                else (-base, inner)
+            )
+            self.set_motors_speed(left_speed, right_speed)
+            if self.direction_timer:
+                self.direction_timer.cancel()
+            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("h"))
         elif new_state == "START":
             # 使能电机
             self.motor_ctrl.initialize_motors()

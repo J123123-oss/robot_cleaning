@@ -89,7 +89,7 @@ class DockAlignmentCheck(Node):
         return False
 
     def run(self) -> dict:
-        direction = random.choice(("LEFT", "RIGHT"))
+        direction = random.choice(("OFFSET_LEFT", "OFFSET_RIGHT"))
         started = datetime.now().isoformat(timespec="seconds")
         self.phase = "UNLOADING"
         self.command("UNLOADING")
