@@ -1159,6 +1159,16 @@ class MotorControlNode(Node):
         precise_candidate = self._magnetic_precise_candidate(
             self.magnetic_mask, center_error
         )
+        # 窄磁条在相邻传感器之间跳变时，已建立的中心跟踪允许更宽的
+        # 暂态误差滞回；否则 0x70 这类组合会在单个采样周期内直接触发搜索。
+        if (
+            was_tracking_ready
+            and not center_candidate
+            and center_error is not None
+            and bool(self.magnetic_mask & 0x3C)
+            and abs(center_error) <= 0.6
+        ):
+            center_candidate = True
         if center_candidate:
             self.magnetic_center_count += 1
             self.magnetic_center_lost_count = 0
@@ -3534,8 +3544,7 @@ class MotorControlNode(Node):
                         else:
                             scan_speed = max(3.342254, base_speed * 0.3)
                         turn = (
-                            (4.5 if self.magnetic_search_active_duration >= 4.0
-                             else self.magnetic_search_turn_speed)
+                            self.magnetic_search_turn_speed
                             if phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
                             else self.magnetic_search_recover_turn_speed
                         )
