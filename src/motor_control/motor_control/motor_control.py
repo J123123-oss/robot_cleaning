@@ -353,6 +353,9 @@ class MotorControlNode(Node):
         self.magnetic_search_turn_speed = 2.0
         self.magnetic_search_recover_turn_speed = 1.0
         self.magnetic_search_failure_logged = False
+        self.magnetic_search_retry_count = 0
+        self.magnetic_search_retry_max = 1
+        self.magnetic_search_retry_backward_duration = 2.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -2527,6 +2530,7 @@ class MotorControlNode(Node):
             self.magnetic_search_reference_yaw = self.imu_yaw_deg
             self.magnetic_search_recover_target_yaw = None
             self.magnetic_search_failure_logged = False
+            self.magnetic_search_retry_count = 0
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_loading_zero_count = 0
@@ -3565,7 +3569,15 @@ class MotorControlNode(Node):
                     yaw_error = None
                     if self.imu_yaw_deg is not None and self.magnetic_search_recover_target_yaw is not None:
                         yaw_error = self.get_heading_error(self.magnetic_search_recover_target_yaw)
-                    if (phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
+                    if (phase == "BACKWARD_RETRY"
+                            and elapsed >= self.magnetic_search_retry_backward_duration):
+                        phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
+                        self.magnetic_search_active_duration = (
+                            self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                        )
+                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                        self.magnetic_search_recover_target_yaw = None
+                    elif (phase in ("RIGHT_SEARCH", "LEFT_SEARCH")
                             and elapsed >= self.magnetic_search_active_duration):
                         phase = "RIGHT_RECOVER" if phase == "RIGHT_SEARCH" else "LEFT_RECOVER"
                         self.magnetic_search_recover_target_yaw = self.magnetic_search_reference_yaw
@@ -3642,6 +3654,17 @@ class MotorControlNode(Node):
                             )
                             return
                         if not self.magnetic_search_failure_logged:
+                            if self.magnetic_search_retry_count < self.magnetic_search_retry_max:
+                                self.magnetic_search_retry_count += 1
+                                self.magnetic_search_phase = "BACKWARD_RETRY"
+                                self.magnetic_search_phase_start = current_time
+                                self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                                self.magnetic_search_recover_target_yaw = None
+                                self.get_logger().warn(
+                                    "[LOADING][MagneticSearch] 左右搜索均未找到目标，"
+                                    "已回正，直线后退2秒后重新尝试搜索"
+                                )
+                                return
                             self.magnetic_search_failure_logged = True
                             self.fail_loading_process(
                                 f"[LOADING][MagneticSearch] 搜索失败：每次搜索均已差速前进恢复原位，"
@@ -3652,6 +3675,11 @@ class MotorControlNode(Node):
                     else:
                         # 搜索阶段增加后退分量，单次约产生6~8cm有效后退位移；
                         # 恢复阶段仍使用较低速度，避免归位过冲。
+                        if phase == "BACKWARD_RETRY":
+                            retry_speed = max(2.5, base_speed * 0.25)
+                            self.set_motors_speed(retry_speed, -retry_speed)
+                            self.loading_direct_motion_active = True
+                            return
                         if phase in ("RIGHT_SEARCH", "LEFT_SEARCH"):
                             scan_speed = max(4.5, base_speed * 0.45)
                         else:
