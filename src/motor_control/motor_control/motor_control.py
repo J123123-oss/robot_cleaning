@@ -3418,15 +3418,13 @@ class MotorControlNode(Node):
                 self.finish_loading_process()
                 return
             if self.loading_countdown_started:
-                interval = (
-                    current_time - self.loading_direct_last_update_time
-                    if self.loading_direct_last_update_time is not None else 0.0
-                )
-                self.loading_direct_elapsed = advance_active_elapsed(
-                    self.loading_direct_elapsed,
-                    interval,
-                    self.loading_direct_motion_active,
-                )
+                # 倒计时按中心稳定时刻开始的实际墙钟时间累计。
+                # 纠偏、短暂停车和搜索期间不再扣除进仓时间，避免车辆
+                # 已经走完磁条距离却因有效运动时间不足而进入搜索失败。
+                if self.loading_direct_start_time is not None:
+                    self.loading_direct_elapsed = max(
+                        0.0, current_time - self.loading_direct_start_time
+                    )
                 self.loading_direct_last_update_time = current_time
             self.loading_direct_motion_active = False
             # 磁导航模式下，直线进仓倒计时必须从首次稳定检测到中心点后开始。
@@ -3438,6 +3436,7 @@ class MotorControlNode(Node):
                     # 磁条中心稳定后立即开始倒计时；航向角只用于倒计时期间的
                     # 小幅辅助纠偏，不能因为配置航向与当前车头差异过大而永远阻塞。
                     self.loading_countdown_started = True
+                    self.loading_direct_start_time = current_time
                     self.loading_direct_elapsed = 0.0
                     self.loading_direct_last_update_time = current_time
                     heading_error = None
