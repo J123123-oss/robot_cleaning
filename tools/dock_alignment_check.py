@@ -108,10 +108,16 @@ class DockAlignmentCheck(Node):
                 f"{self.args.state_timeout}s内未收到/robot_state；"
                 "请确认脚本与motor_control处于相同ROS_DOMAIN_ID和ROS网络"
             )
-        if self.status not in ("HOLD", "ENABLE"):
+        if self.status not in ("HOLD", "ENABLE", "DISABLE"):
             raise RuntimeError(
-                f"当前状态为{self.status}，UNLOADING只允许从HOLD或ENABLE发起；"
-                "脚本未下发运动指令"
+                f"当前状态为{self.status}，无法开始检测；脚本未下发运动指令"
+            )
+        # 每轮开始都显式使能。LOADING 完成后节点会切回 DISABLE，
+        # 连续多轮测试必须重新发送 ENABLE 才能再次执行 UNLOADING。
+        self.command("ENABLE")
+        if not self.wait_status("ENABLE", self.args.enable_timeout):
+            raise RuntimeError(
+                f"ENABLE未在{self.args.enable_timeout}s内生效，当前={self.status}"
             )
         self.phase = "UNLOADING"
         self.command("UNLOADING")
@@ -138,6 +144,7 @@ class DockAlignmentCheck(Node):
                 break
 
         self.command("HOLD")
+        self.wait_status("DISABLE", self.args.disable_timeout)
         before = self.samples[:-1] if end_sample else self.samples
         result = self._classify(before[-self.args.window:])
         return {
@@ -183,6 +190,10 @@ def main() -> int:
     parser.add_argument("--loading-timeout", type=float, default=60.0)
     parser.add_argument("--state-timeout", type=float, default=10.0,
                         help="等待机器人初始状态的超时时间")
+    parser.add_argument("--enable-timeout", type=float, default=10.0,
+                        help="等待电机进入ENABLE的超时时间")
+    parser.add_argument("--disable-timeout", type=float, default=15.0,
+                        help="等待进仓完成后回到DISABLE的超时时间")
     parser.add_argument("--end-bits", type=int, default=6)
     parser.add_argument("--window", type=int, default=20)
     parser.add_argument("--runs", type=int, default=1,
