@@ -3500,30 +3500,14 @@ class MotorControlNode(Node):
                             self.magnetic_centering_start_time = current_time
                         elif (current_time - self.magnetic_centering_start_time
                               >= self.magnetic_centering_timeout):
-                            # 找到磁条但持续无法锁定中心时，重新扩大搜索范围，
-                            # 防止微调阶段占满整个进仓超时窗口。
+                            # 后退倒计时开始后不再因中心微调超时切换搜索。
+                            # 保持跟踪状态，重置微调计时并继续边后退边纠偏，
+                            # 避免车辆在磁条上反复停车摆动。
                             self.get_logger().warn(
                                 f"[LOADING][MagneticSearch] 中心微调超时"
                                 f"({self.magnetic_centering_timeout:.1f}s)，"
-                                f"mask=0x{self.magnetic_mask:02X}，重新搜索")
-                            self.magnetic_tracking_ready = False
-                            self.magnetic_center_count = 0
-                            self.magnetic_center_lost_count = 0
-                            self.magnetic_precise_count = 0
-                            self.magnetic_precise_ready = False
-                            self.magnetic_precise_ready_time = None
-                            self.magnetic_centering_start_time = None
-                            self.magnetic_search_phase = (
-                                self._magnetic_search_phase_from_mask(self.magnetic_mask)
-                            )
-                            self.magnetic_search_active_duration = (
-                                self._magnetic_search_duration_from_mask(self.magnetic_mask)
-                            )
-                            self.magnetic_search_phase_start = current_time
-                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
-                            self.magnetic_search_recover_target_yaw = None
-                            # 后退倒计时不能因为窄磁条暂时只剩单点触发而暂停。
-                            # 保持倒计时运行，下面的降级跟线逻辑会继续后退并纠偏。
+                                f"mask=0x{self.magnetic_mask:02X}，继续后退纠偏")
+                            self.magnetic_centering_start_time = current_time
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
                         micro_speed = max(1.2, base_speed * 0.35)
                         # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
