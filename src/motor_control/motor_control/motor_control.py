@@ -2884,6 +2884,17 @@ class MotorControlNode(Node):
                 # MQTT 的 UNLOADING 始终只执行出仓流程，结束后保持 HOLD。
                 # 不能在 switch_state("u") 之前设置 hold 标志，因为 START
                 # 初始化会清空该标志，导致结算阶段误切 AUTO_CLEANING。
+                if self.is_in_bin_process and self.current_status in ("START", "UNLOADING"):
+                    # 重复的 UNLOADING 不能清除已有的独立出仓标志。
+                    # 之前第二次命令会被 switch_state 忽略，随后却走到
+                    # 清理分支把 unloading_command_hold 置回 False。
+                    self.magnetic_test_unloading_active = True
+                    self.unloading_command_hold = True
+                    self.get_logger().warn(
+                        f"[MQTT] {command}：出仓流程已在执行，保持独立UNLOADING，"
+                        "完成后停在HOLD"
+                    )
+                    return
                 self._magnetic_unloading_request_pending = True
                 self.switch_state("u")
                 self._magnetic_unloading_request_pending = False
