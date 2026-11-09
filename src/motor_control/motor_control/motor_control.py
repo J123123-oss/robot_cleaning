@@ -424,6 +424,7 @@ class MotorControlNode(Node):
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
         self.unloading_start_time = 0.0  # 出仓开始时间
         self.unloading_settle_start_time = None  # 出仓后停止结算开始时间
+        self.unloading_command_hold = False  # MQTT UNLOADING仅出仓并保持HOLD
         self.unloading_turn_target_deg = 0.0  # 出仓转向目标角
         self.unloading_timer: Optional[Timer] = None  # 出仓专用定时器
 
@@ -2294,6 +2295,7 @@ class MotorControlNode(Node):
         self.bin_process_paused = False
         self.unloading_phase = None
         self.unloading_settle_start_time = None
+        self.unloading_command_hold = False
         self.loading_phase = None
         self.get_logger().info(f"[ROSNode] 进/出仓流程被{reason}指令终止，定时器已关闭")
 
@@ -2494,6 +2496,7 @@ class MotorControlNode(Node):
             self._cancel_bin_process_timers()
             self.unloading_phase = None  # 先置空，等待归位后再初始化
             self.magnetic_test_unloading_active = False
+            self.unloading_command_hold = False
             self.unloading_start_time = None  # 暂不记录启动时间
             self.unloading_settle_start_time = None
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
@@ -2868,6 +2871,7 @@ class MotorControlNode(Node):
                     )
                     return
                 self.magnetic_test_unloading_active = True
+                self.unloading_command_hold = True
                 self._magnetic_unloading_request_pending = True
                 self.switch_state("u")
                 self._magnetic_unloading_request_pending = False
@@ -2878,6 +2882,7 @@ class MotorControlNode(Node):
                     self.current_status = "UNLOADING"
                 else:
                     self.magnetic_test_unloading_active = False
+                    self.unloading_command_hold = False
             elif command == "LOADING_SKIP_DOCK":
                 # 进仓跳过 dock 传感器门控检测，GPS 导航照常执行
                 self.loading_skip_dock_check = True
@@ -3122,6 +3127,25 @@ class MotorControlNode(Node):
             self.set_motors_speed(0.0, 0.0)
             settle_start = self.unloading_settle_start_time or current_time
             if current_time - settle_start < UNLOADING_SETTLE_DURATION:
+                return
+
+            if self.unloading_command_hold:
+                self.get_logger().info(
+                    "[UNLOADING] MQTT直接出仓测试完成，保持HOLD，不进入AUTO_CLEANING"
+                )
+                self._cancel_bin_process_timers()
+                self.is_in_bin_process = False
+                self.bin_process_origin_mode = None
+                self.bin_process_paused = False
+                self.unloading_phase = None
+                self.unloading_settle_start_time = None
+                self.magnetic_test_unloading_active = False
+                self.unloading_command_hold = False
+                self.current_control_mode = "NORMAL"
+                self.current_status = "HOLD"
+                state_msg = String()
+                state_msg.data = self.current_status
+                self.state_pub.publish(state_msg)
                 return
 
             self.get_logger().info("[START] 出仓结算完成，切换到AUTO_CLEANING")
