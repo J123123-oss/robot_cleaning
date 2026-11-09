@@ -55,7 +55,7 @@ class DockAlignmentCheck(Node):
             payload = json.loads(msg.data)
             self.status = payload.get("status")
         except json.JSONDecodeError:
-            self.get_logger().warning("忽略非JSON状态: %s", msg.data[:160])
+            self.get_logger().warning(f"忽略非JSON状态: {msg.data[:160]}")
 
     def _mask_cb(self, msg: UInt16) -> None:
         self.last_mask = int(msg.data) & 0xFF
@@ -73,7 +73,7 @@ class DockAlignmentCheck(Node):
         msg = String()
         msg.data = value
         self.command_pub.publish(msg)
-        self.get_logger().info("发送 %s", value)
+        self.get_logger().info(f"发送 {value}")
 
     def spin_for(self, duration: float) -> None:
         end = time.monotonic() + duration
@@ -161,15 +161,34 @@ def main() -> int:
     parser.add_argument("--loading-timeout", type=float, default=60.0)
     parser.add_argument("--end-bits", type=int, default=6)
     parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--runs", type=int, default=1,
+                        help="连续测试次数，每轮都会重新随机选择左右偏移方向")
     parser.add_argument("--output", type=Path, default=Path("dock_alignment_report.json"))
     args = parser.parse_args()
 
     rclpy.init()
     node = DockAlignmentCheck(args)
     try:
-        report = node.run()
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        reports = []
+        for run_index in range(max(1, args.runs)):
+            node.get_logger().info(
+                f"开始第 {run_index + 1}/{max(1, args.runs)} 轮检测"
+            )
+            report = node.run()
+            report["run_index"] = run_index + 1
+            reports.append(report)
+            if run_index + 1 < max(1, args.runs):
+                node.spin_for(args.settle_seconds)
+        output = reports[0] if len(reports) == 1 else {
+            "run_count": len(reports),
+            "runs": reports,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except KeyboardInterrupt:
         node.command("HOLD")
