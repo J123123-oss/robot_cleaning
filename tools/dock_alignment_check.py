@@ -49,12 +49,13 @@ class DockAlignmentCheck(Node):
         self.last_mask = 0
         self.samples: list[MaskSample] = []
         self.phase = "INIT"
+        self.last_state_time = 0.0
 
     def _state_cb(self, msg: String) -> None:
         try:
             payload = json.loads(msg.data)
             self.status = payload.get("status")
-            self.get_logger().info(f"当前机器人状态: {self.status}")
+            self.last_state_time = time.monotonic()
         except json.JSONDecodeError:
             self.get_logger().warning(f"忽略非JSON状态: {msg.data[:160]}")
 
@@ -141,9 +142,22 @@ class DockAlignmentCheck(Node):
         if not self.wait_status_transition(
             "UNLOADING", "HOLD", self.args.unloading_timeout
         ):
-            raise RuntimeError(f"UNLOADING未在{self.args.unloading_timeout}s内进入HOLD，当前={self.status}")
+            raise RuntimeError(
+                f"UNLOADING未观察到UNLOADING→HOLD完整状态迁移，"
+                f"超时={self.args.unloading_timeout}s，当前={self.status}"
+            )
 
         self.phase = "OFFSET"
+        # 独立UNLOADING完成后 motor_control 仍会锁定 bin process，
+        # 先经DISABLE释放流程，再重新ENABLE执行短时弧线偏移测试。
+        self.command("DISABLE")
+        if not self.wait_status("DISABLE", self.args.disable_timeout):
+            raise RuntimeError(f"出仓后未能进入DISABLE，当前={self.status}")
+        self.command("ENABLE")
+        if not self.wait_status("ENABLE", self.args.enable_timeout):
+            raise RuntimeError(
+                f"出仓后未能重新进入ENABLE，当前={self.status}"
+            )
         self.command(direction)
         if not self.wait_status(direction, self.args.offset_timeout):
             raise RuntimeError(f"{direction}未在{self.args.offset_timeout}s内生效，当前={self.status}")
@@ -169,8 +183,9 @@ class DockAlignmentCheck(Node):
             if self.status == "HOLD" and len(self.samples) > 3:
                 break
 
-        self.command("HOLD")
-        self.wait_status("DISABLE", self.args.disable_timeout)
+        if self.status != "DISABLE":
+            self.command("HOLD")
+            self.wait_status("HOLD", self.args.disable_timeout)
         before = self.samples[:-1] if end_sample else self.samples
         result = self._classify(before[-self.args.window:])
         return {
@@ -181,6 +196,7 @@ class DockAlignmentCheck(Node):
             "samples_before_end_marker": [asdict(s) for s in before[-self.args.window:]],
             "assessment": result,
             "final_status": self.status,
+            "end_marker_detected": end_sample is not None,
         }
 
     @staticmethod
