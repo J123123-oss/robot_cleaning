@@ -2867,14 +2867,17 @@ class MotorControlNode(Node):
                         f"[MQTT] {command}：磁导航出仓测试开关未开启，拒绝测试出仓"
                     )
                     return
-                self.get_logger().warn(
-                    f"[MQTT] {command}：直接执行UNLOADING_FORWARD"
-                )
+                self.magnetic_test_unloading_active = True
                 self._magnetic_unloading_request_pending = True
                 self.switch_state("u")
                 self._magnetic_unloading_request_pending = False
-                self.magnetic_test_unloading_active = True
-                self.current_status = "UNLOADING"
+                if self.current_status == "START":
+                    self.get_logger().warn(
+                        f"[MQTT] {command}：直接执行UNLOADING_FORWARD"
+                    )
+                    self.current_status = "UNLOADING"
+                else:
+                    self.magnetic_test_unloading_active = False
             elif command == "LOADING_SKIP_DOCK":
                 # 进仓跳过 dock 传感器门控检测，GPS 导航照常执行
                 self.loading_skip_dock_check = True
