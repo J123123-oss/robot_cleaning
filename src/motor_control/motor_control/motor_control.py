@@ -316,6 +316,9 @@ class MotorControlNode(Node):
         self.magnetic_center_count = 0
         self.magnetic_tracking_ready = False
         self.magnetic_center_lost_count = 0
+        self.magnetic_loading_zero_count = 0
+        self.magnetic_loading_zero_required = 3
+        self.magnetic_loading_complete_pending = False
         self.magnetic_center_lost_limit = 5
         self.magnetic_precise_count = 0
         self.magnetic_precise_ready = False
@@ -1159,6 +1162,17 @@ class MotorControlNode(Node):
     def magnetic_mask_callback(self, msg: UInt16):
         self.magnetic_mask = int(msg.data) & 0xFF
         was_tracking_ready = self.magnetic_tracking_ready
+        if (
+            self.current_status == "LOADING"
+            and self.loading_countdown_started
+            and was_tracking_ready
+            and self.magnetic_mask == 0
+        ):
+            self.magnetic_loading_zero_count += 1
+            if self.magnetic_loading_zero_count >= self.magnetic_loading_zero_required:
+                self.magnetic_loading_complete_pending = True
+        else:
+            self.magnetic_loading_zero_count = 0
         center_candidate, center_error = self._magnetic_center_candidate(self.magnetic_mask)
         # 中心区域用于持续纠偏；精准触发按加权位置误差判断，
         # 兼容窄线在相邻传感器之间跳变的情况。
@@ -2513,6 +2527,8 @@ class MotorControlNode(Node):
             self.magnetic_search_failure_logged = False
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
+            self.magnetic_loading_zero_count = 0
+            self.magnetic_loading_complete_pending = False
             self.magnetic_center_lost_count = 0
             self.magnetic_precise_count = 0
             self.magnetic_precise_ready = False
@@ -3400,6 +3416,14 @@ class MotorControlNode(Node):
 
         if self.loading_phase == "LOADING_DIRECT_BACKWARD":
             current_time = time.time()
+            if self.magnetic_loading_complete_pending:
+                self.get_logger().info(
+                    "[LOADING] 中心稳定后连续检测到磁传感器全部未触发，进入进仓完成"
+                )
+                self.loading_phase = "COMPLETE"
+                self.magnetic_loading_complete_pending = False
+                self.finish_loading_process()
+                return
             if self.loading_countdown_started:
                 interval = (
                     current_time - self.loading_direct_last_update_time
@@ -3962,6 +3986,8 @@ class MotorControlNode(Node):
         self._last_loading_fwd_log_time = 0.0
         self.loading_direct_start_time = None
         self.loading_countdown_started = False
+        self.magnetic_loading_zero_count = 0
+        self.magnetic_loading_complete_pending = False
         self.complete_state = True
         self.switch_state('z')  # DISABLE状态，确保电机停止
 
