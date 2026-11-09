@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Run one randomized dock alignment check through ROS2.
+
+Sequence: UNLOADING -> wait HOLD -> random LEFT/RIGHT for 2s -> HOLD ->
+LOADING -> capture the magnetic masks immediately before the first 6-bit
+end-marker. The report is JSON and is suitable for comparing runs.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import time
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String, UInt16
+
+
+WEIGHTS = {1: -3.0, 2: -1.0, 4: -0.5, 8: -0.2,
+           16: 0.2, 32: 0.5, 64: 1.0, 128: 3.0}
+
+
+def magnetic_error(mask: int) -> Optional[float]:
+    values = [weight for bit, weight in WEIGHTS.items() if mask & bit]
+    return sum(values) / len(values) if values else None
+
+
+@dataclass
+class MaskSample:
+    time: float
+    mask: int
+    error: Optional[float]
+    bit_count: int
+
+
+class DockAlignmentCheck(Node):
+    def __init__(self, args: argparse.Namespace):
+        super().__init__("dock_alignment_check")
+        self.args = args
+        self.command_pub = self.create_publisher(String, "robot_cmd", 10)
+        self.create_subscription(String, "robot_state", self._state_cb, 20)
+        self.create_subscription(UInt16, "/magnetic/mask", self._mask_cb, 50)
+        self.status: Optional[str] = None
+        self.last_mask = 0
+        self.samples: list[MaskSample] = []
+        self.phase = "INIT"
+
+    def _state_cb(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+            self.status = payload.get("status")
+        except json.JSONDecodeError:
+            self.get_logger().warning("忽略非JSON状态: %s", msg.data[:160])
+
+    def _mask_cb(self, msg: UInt16) -> None:
+        self.last_mask = int(msg.data) & 0xFF
+        if self.phase == "LOADING":
+            sample = MaskSample(
+                time=time.time(),
+                mask=self.last_mask,
+                error=magnetic_error(self.last_mask),
+                bit_count=self.last_mask.bit_count(),
+            )
+            self.samples.append(sample)
+            self.samples = self.samples[-self.args.window:]
+
+    def command(self, value: str) -> None:
+        msg = String()
+        msg.data = value
+        self.command_pub.publish(msg)
+        self.get_logger().info("发送 %s", value)
+
+    def spin_for(self, duration: float) -> None:
+        end = time.monotonic() + duration
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def wait_status(self, expected: str, timeout: float) -> bool:
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.status == expected:
+                return True
+        return False
+
+    def run(self) -> dict:
+        direction = random.choice(("LEFT", "RIGHT"))
+        started = datetime.now().isoformat(timespec="seconds")
+        self.phase = "UNLOADING"
+        self.command("UNLOADING")
+        if not self.wait_status("HOLD", self.args.unloading_timeout):
+            raise RuntimeError(f"UNLOADING未在{self.args.unloading_timeout}s内进入HOLD，当前={self.status}")
+
+        self.phase = "OFFSET"
+        self.command(direction)
+        self.spin_for(self.args.offset_seconds)
+        self.command("HOLD")
+        self.spin_for(self.args.settle_seconds)
+
+        self.phase = "LOADING"
+        self.samples.clear()
+        self.command("LOADING")
+        deadline = time.monotonic() + self.args.loading_timeout
+        end_sample: Optional[MaskSample] = None
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            if self.samples and self.samples[-1].bit_count >= self.args.end_bits:
+                end_sample = self.samples[-1]
+                break
+            if self.status == "HOLD" and len(self.samples) > 3:
+                break
+
+        self.command("HOLD")
+        before = self.samples[:-1] if end_sample else self.samples
+        result = self._classify(before[-self.args.window:])
+        return {
+            "started": started,
+            "offset_direction": direction,
+            "offset_seconds": self.args.offset_seconds,
+            "end_marker": asdict(end_sample) if end_sample else None,
+            "samples_before_end_marker": [asdict(s) for s in before[-self.args.window:]],
+            "assessment": result,
+            "final_status": self.status,
+        }
+
+    @staticmethod
+    def _classify(samples: list[MaskSample]) -> dict:
+        if not samples:
+            return {"result": "NO_DATA", "reason": "进仓结束前没有收到磁导航状态"}
+        errors = [s.error for s in samples if s.error is not None]
+        avg_error = sum(errors) / len(errors) if errors else None
+        edge_hits = sum(1 for s in samples if s.mask & 0xC3)
+        center_hits = sum(1 for s in samples if (s.mask & 0x3C) and not (s.mask & 0xC3))
+        if avg_error is None:
+            result = "NO_MAGNETIC_SIGNAL"
+        elif abs(avg_error) <= 0.4 and edge_hits <= max(1, len(samples) // 3):
+            result = "LIKELY_CENTERED"
+        elif abs(avg_error) <= 0.8:
+            result = "NEAR_CENTER_NEEDS_REVIEW"
+        else:
+            result = "OFF_CENTER"
+        return {
+            "result": result,
+            "average_error": avg_error,
+            "edge_hit_samples": edge_hits,
+            "center_hit_samples": center_hits,
+            "sample_count": len(samples),
+        }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--offset-seconds", type=float, default=2.0)
+    parser.add_argument("--settle-seconds", type=float, default=1.0)
+    parser.add_argument("--unloading-timeout", type=float, default=45.0)
+    parser.add_argument("--loading-timeout", type=float, default=60.0)
+    parser.add_argument("--end-bits", type=int, default=6)
+    parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--output", type=Path, default=Path("dock_alignment_report.json"))
+    args = parser.parse_args()
+
+    rclpy.init()
+    node = DockAlignmentCheck(args)
+    try:
+        report = node.run()
+        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    except KeyboardInterrupt:
+        node.command("HOLD")
+        return 130
+    except Exception as exc:
+        node.get_logger().error(str(exc))
+        node.command("HOLD")
+        return 1
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
