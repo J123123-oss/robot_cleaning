@@ -35,6 +35,7 @@ from motor_control.remote_control import SBUSRemoteController
 from motor_control.charging import Charging485Node
 from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMonitor
 from motor_control.rtk_point_recorder import record_rtk_point
+from motor_control.loading_timing import advance_active_elapsed
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -115,6 +116,7 @@ def should_pause_auto_cleaning_for_low_battery(
         return math.isfinite(float(battery_remaining)) and float(battery_remaining) <= float(threshold)
     except (TypeError, ValueError, OverflowError):
         return False
+
 
 TOTAL_CURRENT_STALL_THRESHOLD = 4.0  # 总电流保护阈值（A）。
 TOTAL_CURRENT_STALL_DURATION = 5.0  # 总电流超过阈值的持续时间（s）。
@@ -433,7 +435,10 @@ class MotorControlNode(Node):
         self.loading_backward_start_time = 0.0
         self.loading_direct_start_time = None
         self.loading_countdown_started = False
-        self.loading_direct_timeout = 15.0
+        self.loading_direct_elapsed = 0.0
+        self.loading_direct_last_update_time = None
+        self.loading_direct_motion_active = False
+        self.loading_direct_timeout = 24.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
         self.loading_skip_dock_check = False  # 跳过dock传感器门控检测（限位+归位），GPS导航照常执行
@@ -2515,6 +2520,9 @@ class MotorControlNode(Node):
             self.magnetic_centering_start_time = None
             self.loading_direct_start_time = None
             self.loading_countdown_started = False
+            self.loading_direct_elapsed = 0.0
+            self.loading_direct_last_update_time = None
+            self.loading_direct_motion_active = False
             self._loading_gps_rejected_logged = False  # 重置GPS拒绝去重标志
             self._nav_sub_phase = "ALIGN"  # 重置导航子阶段
             self._pos_recover_retry_count = 0  # 重置位置恢复重试计数
@@ -3211,6 +3219,9 @@ class MotorControlNode(Node):
         self.is_in_bin_process = False
         self.loading_phase = None
         self.loading_countdown_started = False
+        self.loading_direct_elapsed = 0.0
+        self.loading_direct_last_update_time = None
+        self.loading_direct_motion_active = False
         self._nav_sub_phase = None
         self.nav_status = "IDLE"
         # 不能直接设置完成状态DISABLE，设置为HOLD
@@ -3362,16 +3373,29 @@ class MotorControlNode(Node):
 
         if self.loading_phase == "LOADING_DIRECT_BACKWARD":
             current_time = time.time()
+            if self.loading_countdown_started:
+                interval = (
+                    current_time - self.loading_direct_last_update_time
+                    if self.loading_direct_last_update_time is not None else 0.0
+                )
+                self.loading_direct_elapsed = advance_active_elapsed(
+                    self.loading_direct_elapsed,
+                    interval,
+                    self.loading_direct_motion_active,
+                )
+                self.loading_direct_last_update_time = current_time
+            self.loading_direct_motion_active = False
             # 磁导航模式下，直线进仓倒计时必须从首次稳定检测到中心点后开始。
-            # 搜索阶段不消耗 loading_direct_timeout，避免搜索尚未完成就被超时退出。
+            # 只累计实际下发直线后退指令的时间；停车、搜索和中心微调均暂停。
             if self.enable_magnetic_navigation and not self.magnetic_precise_ready:
-                elapsed_time = 0.0
+                elapsed_time = self.loading_direct_elapsed
             else:
                 if not self.loading_countdown_started:
                     # 磁条中心稳定后立即开始倒计时；航向角只用于倒计时期间的
                     # 小幅辅助纠偏，不能因为配置航向与当前车头差异过大而永远阻塞。
-                    self.loading_direct_start_time = current_time
                     self.loading_countdown_started = True
+                    self.loading_direct_elapsed = 0.0
+                    self.loading_direct_last_update_time = current_time
                     heading_error = None
                     if (self.magnetic_heading_target_yaw is not None
                             and self.imu_yaw_deg is not None):
@@ -3383,7 +3407,7 @@ class MotorControlNode(Node):
                     )
                     elapsed_time = 0.0
                 else:
-                    elapsed_time = current_time - self.loading_direct_start_time
+                    elapsed_time = self.loading_direct_elapsed
             if elapsed_time < self.loading_direct_timeout:
                 base_speed = (
                     max(3.342254, self.motor_ctrl.BASE_SPEED * 0.3)
@@ -3435,6 +3459,7 @@ class MotorControlNode(Node):
                         left_speed = micro_speed - correction
                         right_speed = -micro_speed - correction
                         self.set_motors_speed(left_speed, right_speed)
+                        self.loading_direct_motion_active = True
                         return
 
                     if (self.magnetic_precise_ready_time is not None
@@ -3563,6 +3588,7 @@ class MotorControlNode(Node):
                             left_speed = scan_speed + sign * turn
                             right_speed = -scan_speed + sign * turn
                         self.set_motors_speed(left_speed, right_speed)
+                        self.loading_direct_motion_active = False
                     return
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
@@ -3580,6 +3606,7 @@ class MotorControlNode(Node):
                         left_speed -= heading_correction
                         right_speed -= heading_correction
                     self.set_motors_speed(left_speed, right_speed)
+                    self.loading_direct_motion_active = True
                     return
 
                 # ── 航向差速纠偏：后退时根据偏角修正左右轮差速 ──
@@ -3601,6 +3628,7 @@ class MotorControlNode(Node):
                     right_speed = -base_speed
 
                 self.set_motors_speed(left_speed, right_speed)
+                self.loading_direct_motion_active = True
 
                 if not hasattr(self, 'last_direct_loading_log_time'):
                     self.last_direct_loading_log_time = 0.0
@@ -3615,11 +3643,17 @@ class MotorControlNode(Node):
                     self.last_direct_loading_log_time = current_time
                 return
 
-            self.get_logger().warn("[LOADING] 兜底进仓24s超时，停止并按完成处理")
+            self.get_logger().warn(
+                f"[LOADING] 兜底进仓有效后退达到{self.loading_direct_timeout:.0f}s，"
+                "停止并按完成处理"
+            )
             self.set_motors_speed(0.0, 0.0)
             self.loading_phase = "COMPLETE"
             self.complete_state = True
             self.loading_direct_start_time = None
+            self.loading_direct_elapsed = 0.0
+            self.loading_direct_last_update_time = None
+            self.loading_direct_motion_active = False
             self.last_direct_loading_log_time = 0.0
             self.finish_loading_process()
             return
