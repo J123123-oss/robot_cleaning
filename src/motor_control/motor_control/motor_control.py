@@ -3662,7 +3662,8 @@ class MotorControlNode(Node):
                                 self.magnetic_search_recover_target_yaw = None
                                 self.get_logger().warn(
                                     "[LOADING][MagneticSearch] 左右搜索均未找到目标，"
-                                    "已回正，直线后退2秒后重新尝试搜索"
+                                    f"已回正，直线后退"
+                                    f"{self.magnetic_search_retry_backward_duration:.1f}秒后重新尝试搜索"
                                 )
                                 return
                             self.magnetic_search_failure_logged = True
@@ -3676,7 +3677,7 @@ class MotorControlNode(Node):
                         # 搜索阶段增加后退分量，单次约产生6~8cm有效后退位移；
                         # 恢复阶段仍使用较低速度，避免归位过冲。
                         if phase == "BACKWARD_RETRY":
-                            retry_speed = max(2.5, base_speed * 0.25)
+                            retry_speed = 13.0
                             self.set_motors_speed(retry_speed, -retry_speed)
                             self.loading_direct_motion_active = True
                             return
