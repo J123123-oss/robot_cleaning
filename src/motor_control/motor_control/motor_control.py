@@ -3409,11 +3409,9 @@ class MotorControlNode(Node):
                 else:
                     elapsed_time = self.loading_direct_elapsed
             if elapsed_time < self.loading_direct_timeout:
-                base_speed = (
-                    max(3.342254, self.motor_ctrl.BASE_SPEED * 0.3)
-                    if self.enable_magnetic_navigation
-                    else self.motor_ctrl.BASE_SPEED
-                )
+                # 磁导航直线进仓使用与出仓一致的基础轮速；搜索和中心微调
+                # 仍在各自分支单独限速，避免降低稳定跟线阶段的速度。
+                base_speed = self.motor_ctrl.BASE_SPEED
 
                 # 仅在该直线阶段使用磁导航；开关关闭时保留原航向角控制。
                 if self.enable_magnetic_navigation and self.magnetic_tracking_ready:
