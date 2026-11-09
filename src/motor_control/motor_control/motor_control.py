@@ -1107,7 +1107,8 @@ class MotorControlNode(Node):
     def _magnetic_center_candidate(mask: int):
         """判断磁条是否进入纠偏中心区域，允许边缘传感器同时保持有效。"""
         center_bits = mask & 0x3C
-        if not center_bits:
+        edge_bits = mask & 0xC3
+        if not center_bits and not mask:
             return False, None
 
         weights = {
@@ -1125,6 +1126,10 @@ class MotorControlNode(Node):
             return False, None
 
         center_error = sum(active_weights) / len(active_weights)
+        # 两侧最外缘传感器均未触发时，认为磁条已在可跟踪中心区域；
+        # 即使只有0x04/0x20等单点，也继续行走并按误差向几何中心修正。
+        if not edge_bits:
+            return True, center_error
         # 0x04/0x20（误差±0.5）属于边缘信号，必须继续搜索中心；
         # 0x0C/0x1C/0x18等组合才进入中心跟踪和直线后退。
         return abs(center_error) <= 0.4, center_error
