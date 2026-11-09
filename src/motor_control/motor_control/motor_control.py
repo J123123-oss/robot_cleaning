@@ -3357,19 +3357,20 @@ class MotorControlNode(Node):
             if self.enable_magnetic_navigation and not self.magnetic_precise_ready:
                 elapsed_time = 0.0
             else:
-                heading_ready = True
-                if (self.enable_magnetic_navigation
-                        and self.magnetic_heading_target_yaw is not None
-                        and self.imu_yaw_deg is not None):
-                    heading_ready = abs(self.get_heading_error(
-                        self.magnetic_heading_target_yaw)) <= 3.0
                 if not self.loading_countdown_started:
-                    if heading_ready:
-                        self.loading_direct_start_time = current_time
-                        self.loading_countdown_started = True
-                        self.get_logger().info(
-                            "[LOADING] 中心稳定且进仓航向达标，开始一次性后退倒计时"
-                        )
+                    # 磁条中心稳定后立即开始倒计时；航向角只用于倒计时期间的
+                    # 小幅辅助纠偏，不能因为配置航向与当前车头差异过大而永远阻塞。
+                    self.loading_direct_start_time = current_time
+                    self.loading_countdown_started = True
+                    heading_error = None
+                    if (self.magnetic_heading_target_yaw is not None
+                            and self.imu_yaw_deg is not None):
+                        heading_error = self.get_heading_error(
+                            self.magnetic_heading_target_yaw)
+                    self.get_logger().info(
+                        f"[LOADING] 中心稳定，开始一次性后退倒计时，"
+                        f"航向差={heading_error if heading_error is not None else 'None'}°"
+                    )
                     elapsed_time = 0.0
                 else:
                     elapsed_time = current_time - self.loading_direct_start_time
