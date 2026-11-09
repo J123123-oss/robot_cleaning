@@ -1200,19 +1200,22 @@ class MotorControlNode(Node):
                 center_candidate = True
             else:
                 if self.magnetic_mask:
-                    self.magnetic_search_phase = self._magnetic_search_phase_from_mask(
-                        self.magnetic_mask
-                    )
-                    self.magnetic_search_active_duration = (
-                        self._magnetic_search_duration_from_mask(self.magnetic_mask)
-                    )
-                    self.magnetic_search_phase_start = now
-                    self.magnetic_search_reference_yaw = self.imu_yaw_deg
-                    self.magnetic_search_recover_target_yaw = None
-                    self.get_logger().info(
-                        f"[LOADING][MagneticSearch] 边缘信号mask=0x{self.magnetic_mask:02X}，"
-                        f"立即开始{self.magnetic_search_phase}"
-                    )
+                    desired_phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
+                    # 同一边缘信号持续期间保持原搜索计时，不能每个采样周期重置，
+                    # 否则搜索永远无法走到 recover 阶段。
+                    if (self.magnetic_search_phase != desired_phase
+                            or self.magnetic_search_phase_start <= 0.0):
+                        self.magnetic_search_phase = desired_phase
+                        self.magnetic_search_active_duration = (
+                            self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                        )
+                        self.magnetic_search_phase_start = now
+                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                        self.magnetic_search_recover_target_yaw = None
+                        self.get_logger().info(
+                            f"[LOADING][MagneticSearch] 边缘信号mask=0x{self.magnetic_mask:02X}，"
+                            f"立即开始{self.magnetic_search_phase}"
+                        )
                 self.magnetic_center_count = 0
                 self.magnetic_center_lost_count = 0
                 self.magnetic_tracking_ready = False
