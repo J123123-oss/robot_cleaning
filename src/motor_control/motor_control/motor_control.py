@@ -1597,8 +1597,10 @@ class MotorControlNode(Node):
                 right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-                base = self.mqtt_control_speed * self.manual_drive_speed_scale
-                inner = base * 0.55
+                # Test offset should use the same low speed as unloading and
+                # only a small wheel-speed difference to limit heading change.
+                base = self.motor_ctrl.BASE_SPEED
+                inner = base * 0.85
                 left_speed, right_speed = (
                     (-inner, base)
                     if self.current_status == "OFFSET_LEFT"
@@ -2530,8 +2532,8 @@ class MotorControlNode(Node):
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-            base = self.mqtt_control_speed * self.manual_drive_speed_scale
-            inner = base * 0.55
+            base = self.motor_ctrl.BASE_SPEED
+            inner = base * 0.85
             left_speed, right_speed = (
                 (-inner, base)
                 if new_state == "OFFSET_LEFT"
