@@ -364,6 +364,7 @@ class MotorControlNode(Node):
         # 进仓磁导航只做小幅纠偏，避免误差被放大成大角度转向。
         self.magnetic_kp = 2.0
         self.magnetic_max_correction = 4.0
+        self.magnetic_loading_filtered_correction = 0.0
 
         # 声明进仓GPS参数，第三项直接表示后退进仓时的车头目标航向
         self.declare_parameter("loading_gps", [120.07062241027482, 30.321026884224207, 172.86])
@@ -1226,7 +1227,8 @@ class MotorControlNode(Node):
                 if not self.magnetic_precise_ready:
                     self.magnetic_precise_ready_time = time.time()
                     # 精准中心确认后，车头必须对准配置的进仓航向再开始后退。
-                    self.magnetic_heading_target_yaw = self.loading_turn_target_deg
+                    if self.magnetic_heading_target_yaw is None:
+                        self.magnetic_heading_target_yaw = self.imu_yaw_deg
                 self.magnetic_precise_ready = True
         elif self.magnetic_precise_ready:
             # 窄线跨过相邻采样位时保留短暂锁定，避免后退控制在0x0C/0x1C间反复切换。
@@ -2563,7 +2565,7 @@ class MotorControlNode(Node):
             self.magnetic_precise_ready = False
             self.magnetic_precise_ready_time = None
             self.magnetic_precise_lost_count = 0
-            self.magnetic_heading_target_yaw = None
+            self.magnetic_heading_target_yaw = self.imu_yaw_deg
             self.magnetic_center_ready_time = None
             self.magnetic_centering_start_time = None
             self.loading_direct_start_time = None
@@ -3514,9 +3516,21 @@ class MotorControlNode(Node):
                         micro_speed = max(1.8, base_speed * 0.5)
                         # 内侧单点信号需要更强横向位移，避免长期停留在0x04/0x06，
                         # 持续向中间传感器区域收敛。
-                        correction = max(-3.0, min(3.0, magnetic_correction))
-                        left_speed = micro_speed - correction
-                        right_speed = -micro_speed - correction
+                        # 窄磁条下单点/双点信号的误差会在相邻采样位之间跳变，
+                        # 过大的差速会把车体从磁条一侧直接甩到另一侧。
+                        correction = max(-1.8, min(1.8, magnetic_correction))
+                        if (self.imu_yaw_deg is not None
+                                and self.magnetic_heading_target_yaw is not None):
+                            heading_error = self.get_heading_error(
+                                self.magnetic_heading_target_yaw
+                            )
+                            heading_correction = max(
+                                -0.8, min(0.8, heading_error * 0.08)
+                            )
+                        else:
+                            heading_correction = 0.0
+                        left_speed = micro_speed - correction - heading_correction
+                        right_speed = -micro_speed - correction - heading_correction
                         self.set_motors_speed(left_speed, right_speed)
                         self.loading_direct_motion_active = True
                         return
@@ -3530,7 +3544,7 @@ class MotorControlNode(Node):
                     # 后退时间消耗在原地摆动/恢复上。
                     degraded_correction = self.get_magnetic_correction(reverse=True)
                     if self.magnetic_mask and degraded_correction is not None:
-                        correction = max(-2.5, min(2.5, degraded_correction))
+                        correction = max(-1.8, min(1.8, degraded_correction))
                         left_speed = base_speed - correction
                         right_speed = -base_speed - correction
                         if (self.imu_yaw_deg is not None
@@ -3630,7 +3644,8 @@ class MotorControlNode(Node):
                                 self.magnetic_precise_ready = True
                                 self.magnetic_precise_lost_count = 0
                                 self.magnetic_precise_ready_time = current_time
-                                self.magnetic_heading_target_yaw = self.loading_turn_target_deg
+                                if self.magnetic_heading_target_yaw is None:
+                                    self.magnetic_heading_target_yaw = self.imu_yaw_deg
                             else:
                                 self.magnetic_precise_count = 0
                                 self.magnetic_precise_ready = False
@@ -4224,3 +4239,4 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
