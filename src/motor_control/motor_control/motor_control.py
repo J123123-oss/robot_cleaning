@@ -355,7 +355,7 @@ class MotorControlNode(Node):
         self.magnetic_search_failure_logged = False
         self.magnetic_search_retry_count = 0
         self.magnetic_search_retry_max = 1
-        self.magnetic_search_retry_backward_duration = 2.0
+        self.magnetic_search_retry_backward_duration = 5.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
