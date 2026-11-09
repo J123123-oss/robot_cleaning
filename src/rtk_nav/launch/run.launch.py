@@ -13,7 +13,7 @@ def generate_launch_description():
     # 全局路径配置
     rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
-    loading_gps = [120.06972100,30.32028289,-74.9]
+    loading_gps = [120.06972100,30.32028289,-35.0]
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
