@@ -3511,9 +3511,10 @@ class MotorControlNode(Node):
                         # 已进入直线后退后不再运行中心微调超时计时器；
                         # 持续沿磁条后退并按当前误差纠偏，不停车、不重新搜索。
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
-                        micro_speed = max(1.2, base_speed * 0.35)
-                        # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
-                        correction = max(-1.5, min(1.5, magnetic_correction * 0.6))
+                        micro_speed = max(1.8, base_speed * 0.5)
+                        # 内侧单点信号需要更强横向位移，避免长期停留在0x04/0x06，
+                        # 持续向中间传感器区域收敛。
+                        correction = max(-3.0, min(3.0, magnetic_correction))
                         left_speed = micro_speed - correction
                         right_speed = -micro_speed - correction
                         self.set_motors_speed(left_speed, right_speed)
