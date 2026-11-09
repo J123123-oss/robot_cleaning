@@ -103,6 +103,9 @@ class DockAlignmentCheck(Node):
     def run(self) -> dict:
         direction = random.choice(("OFFSET_LEFT", "OFFSET_RIGHT"))
         started = datetime.now().isoformat(timespec="seconds")
+        # DISABLE/HOLD 状态下状态发布周期可能很长，先主动请求一次状态，
+        # 否则仅等待 /robot_state 会在 10 秒内拿不到任何消息。
+        self.command("GET_STATUS")
         if not self.wait_for_state_message(self.args.state_timeout):
             raise RuntimeError(
                 f"{self.args.state_timeout}s内未收到/robot_state；"
