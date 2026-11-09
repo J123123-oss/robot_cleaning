@@ -91,6 +91,20 @@ class DockAlignmentCheck(Node):
                 return True
         return False
 
+    def wait_status_transition(
+        self, active: str, terminal: str, timeout: float
+    ) -> bool:
+        """Wait for an active state first, then its terminal state."""
+        end = time.monotonic() + timeout
+        active_seen = False
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.status == active:
+                active_seen = True
+            elif active_seen and self.status == terminal:
+                return True
+        return False
+
     def wait_for_state_message(self, timeout: float) -> bool:
         """Ensure ROS discovery and the robot state subscription are active."""
         end = time.monotonic() + timeout
@@ -124,18 +138,27 @@ class DockAlignmentCheck(Node):
             )
         self.phase = "UNLOADING"
         self.command("UNLOADING")
-        if not self.wait_status("HOLD", self.args.unloading_timeout):
+        if not self.wait_status_transition(
+            "UNLOADING", "HOLD", self.args.unloading_timeout
+        ):
             raise RuntimeError(f"UNLOADING未在{self.args.unloading_timeout}s内进入HOLD，当前={self.status}")
 
         self.phase = "OFFSET"
         self.command(direction)
+        if not self.wait_status(direction, self.args.offset_timeout):
+            raise RuntimeError(f"{direction}未在{self.args.offset_timeout}s内生效，当前={self.status}")
         self.spin_for(self.args.offset_seconds)
         self.command("HOLD")
+        self.wait_status("HOLD", self.args.settle_seconds + 2.0)
         self.spin_for(self.args.settle_seconds)
 
         self.phase = "LOADING"
         self.samples.clear()
         self.command("LOADING")
+        if not self.wait_status("LOADING", self.args.loading_start_timeout):
+            raise RuntimeError(
+                f"LOADING未在{self.args.loading_start_timeout}s内生效，当前={self.status}"
+            )
         deadline = time.monotonic() + self.args.loading_timeout
         end_sample: Optional[MaskSample] = None
         while rclpy.ok() and time.monotonic() < deadline:
@@ -188,9 +211,11 @@ class DockAlignmentCheck(Node):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offset-seconds", type=float, default=2.0)
+    parser.add_argument("--offset-timeout", type=float, default=5.0)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--unloading-timeout", type=float, default=45.0)
     parser.add_argument("--loading-timeout", type=float, default=60.0)
+    parser.add_argument("--loading-start-timeout", type=float, default=10.0)
     parser.add_argument("--state-timeout", type=float, default=10.0,
                         help="等待机器人初始状态的超时时间")
     parser.add_argument("--enable-timeout", type=float, default=10.0,
