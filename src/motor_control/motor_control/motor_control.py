@@ -1168,7 +1168,17 @@ class MotorControlNode(Node):
         return self.magnetic_search_duration
 
     def magnetic_mask_callback(self, msg: UInt16):
-        self.magnetic_mask = int(msg.data) & 0xFF
+        raw_mask = int(msg.data) & 0xFF
+        if self.current_status == "LOADING" and self.loading_countdown_started:
+            if raw_mask == 0:
+                self.magnetic_loading_zero_count += 1
+                if self.magnetic_loading_zero_count < self.magnetic_loading_zero_required:
+                    # 窄磁条采样偶发全零时保留上次有效mask，避免瞬时丢线
+                    # 清除跟踪状态并触发停车/重新搜索。
+                    return
+            else:
+                self.magnetic_loading_zero_count = 0
+        self.magnetic_mask = raw_mask
         if self.magnetic_mask:
             self.magnetic_last_nonzero_mask = self.magnetic_mask
             self.magnetic_last_nonzero_time = time.time()
