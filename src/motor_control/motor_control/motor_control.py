@@ -445,7 +445,7 @@ class MotorControlNode(Node):
         self.loading_direct_elapsed = 0.0
         self.loading_direct_last_update_time = None
         self.loading_direct_motion_active = False
-        self.loading_direct_timeout = 15.0
+        self.loading_direct_timeout = 30.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
         self.loading_skip_dock_check = False  # 跳过dock传感器门控检测（限位+归位），GPS导航照常执行
