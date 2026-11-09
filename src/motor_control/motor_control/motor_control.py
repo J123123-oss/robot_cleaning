@@ -339,8 +339,8 @@ class MotorControlNode(Node):
         self.magnetic_search_reference_yaw = None
         self.magnetic_search_recover_target_yaw = None
         self.magnetic_search_recover_timeout = 8.0
-        # 无信号时增加后退扫线距离；中心附近锁定超时后会重新进入搜索。
-        self.magnetic_search_duration = 3.5
+        # 无信号时扩大左右摆幅，增加后退扫线距离。
+        self.magnetic_search_duration = 5.0
         self.magnetic_search_active_duration = self.magnetic_search_duration
         self.magnetic_search_turn_speed = 2.0
         self.magnetic_search_recover_turn_speed = 1.0
@@ -3472,12 +3472,62 @@ class MotorControlNode(Node):
                         )
                     if phase == "STOP":
                         self.set_motors_speed(0.0, 0.0)
-                        if self.magnetic_tracking_ready:
-                            self.get_logger().info(
-                                f"[LOADING][MagneticSearch] STOP阶段重新检测到中心线，"
-                                f"mask=0x{self.magnetic_mask:02X}，进入后退磁导航纠偏"
+                        stop_center_candidate, stop_center_error = (
+                            self._magnetic_center_candidate(self.magnetic_mask)
+                        )
+                        stop_precise_candidate = self._magnetic_precise_candidate(
+                            self.magnetic_mask, stop_center_error
+                        )
+                        if stop_center_candidate or stop_precise_candidate:
+                            # STOP阶段重新收到中心附近信号时，给稳定计数留出时间，
+                            # 不能因为tracking_ready尚未累计3次就直接报搜索失败。
+                            self.magnetic_tracking_ready = True
+                            self.magnetic_center_count = 3
+                            self.magnetic_center_lost_count = 0
+                            self.magnetic_search_failure_logged = False
+                            self.magnetic_search_phase = (
+                                self._magnetic_search_phase_from_mask(self.magnetic_mask)
                             )
-                        elif not self.magnetic_search_failure_logged:
+                            self.magnetic_search_active_duration = (
+                                self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                            )
+                            self.magnetic_search_phase_start = current_time
+                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                            self.magnetic_search_recover_target_yaw = None
+                            if stop_precise_candidate:
+                                self.magnetic_precise_count = self.magnetic_precise_required
+                                self.magnetic_precise_ready = True
+                                self.magnetic_precise_lost_count = 0
+                                self.magnetic_precise_ready_time = current_time
+                                self.magnetic_heading_target_yaw = self.loading_turn_target_deg
+                            else:
+                                self.magnetic_precise_count = 0
+                                self.magnetic_precise_ready = False
+                                self.magnetic_precise_ready_time = None
+                            self.get_logger().info(
+                                f"[LOADING][MagneticSearch] STOP阶段重新检测到中心附近信号，"
+                                f"mask=0x{self.magnetic_mask:02X} error={stop_center_error}，"
+                                "继续进仓纠偏"
+                            )
+                            return
+                        if self.magnetic_mask:
+                            # STOP阶段收到边缘信号时继续搜索，只有完全无信号才判定失败。
+                            self.magnetic_search_phase = self._magnetic_search_phase_from_mask(
+                                self.magnetic_mask
+                            )
+                            self.magnetic_search_active_duration = (
+                                self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                            )
+                            self.magnetic_search_phase_start = current_time
+                            self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                            self.magnetic_search_recover_target_yaw = None
+                            self.magnetic_search_failure_logged = False
+                            self.get_logger().info(
+                                f"[LOADING][MagneticSearch] STOP阶段收到边缘信号"
+                                f"mask=0x{self.magnetic_mask:02X}，继续搜索"
+                            )
+                            return
+                        if not self.magnetic_search_failure_logged:
                             self.magnetic_search_failure_logged = True
                             self.fail_loading_process(
                                 f"[LOADING][MagneticSearch] 搜索失败：每次搜索均已差速前进恢复原位，"
