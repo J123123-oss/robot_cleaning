@@ -71,7 +71,9 @@ class DockAlignmentCheck(Node):
 
     def command(self, value: str) -> None:
         msg = String()
-        msg.data = value
+        # motor_control 的 MQTT/ROS 指令入口按 JSON 解析 command 字段；
+        # 发送裸的 UNLOADING/LOADING 会被当成无效字符串拒绝。
+        msg.data = json.dumps({"command": value}, ensure_ascii=False)
         self.command_pub.publish(msg)
         self.get_logger().info(f"发送 {value}")
 
@@ -191,15 +193,18 @@ def main() -> int:
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except KeyboardInterrupt:
-        node.command("HOLD")
+        if rclpy.ok():
+            node.command("HOLD")
         return 130
     except Exception as exc:
         node.get_logger().error(str(exc))
-        node.command("HOLD")
+        if rclpy.ok():
+            node.command("HOLD")
         return 1
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
