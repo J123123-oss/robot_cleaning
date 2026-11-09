@@ -3499,8 +3499,8 @@ class MotorControlNode(Node):
                             self.magnetic_search_phase_start = current_time
                             self.magnetic_search_reference_yaw = self.imu_yaw_deg
                             self.magnetic_search_recover_target_yaw = None
-                            self.set_motors_speed(0.0, 0.0)
-                            return
+                            # 后退倒计时不能因为窄磁条暂时只剩单点触发而暂停。
+                            # 保持倒计时运行，下面的降级跟线逻辑会继续后退并纠偏。
                         magnetic_correction = self.get_magnetic_correction(reverse=True) or 0.0
                         micro_speed = max(1.2, base_speed * 0.35)
                         # 内侧单点信号仍需产生足够横向位移，才能推进到0x18精准中心。
@@ -3516,6 +3516,35 @@ class MotorControlNode(Node):
                         self.set_motors_speed(0.0, 0.0)
                         return
                 if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
+                    # 后退过程中只要仍有磁条信号，就保持后退计时并直接按误差纠偏。
+                    # 不再切入独立 SEARCH/RECOVER 流程，避免把磁条末端前的正常
+                    # 后退时间消耗在原地摆动/恢复上。
+                    degraded_correction = self.get_magnetic_correction(reverse=True)
+                    if self.magnetic_mask and degraded_correction is not None:
+                        correction = max(-2.5, min(2.5, degraded_correction))
+                        left_speed = base_speed - correction
+                        right_speed = -base_speed - correction
+                        if (self.imu_yaw_deg is not None
+                                and self.magnetic_heading_target_yaw is not None):
+                            heading_error = self.get_heading_error(
+                                self.magnetic_heading_target_yaw
+                            )
+                            heading_correction = max(
+                                -2.0, min(2.0, heading_error * 0.15)
+                            )
+                            left_speed -= heading_correction
+                            right_speed -= heading_correction
+                        self.set_motors_speed(left_speed, right_speed)
+                        self.loading_direct_motion_active = True
+                        if (current_time - getattr(
+                                self, "last_degraded_loading_log_time", 0.0) >= 2.0):
+                            self.get_logger().info(
+                                f"[LOADING] 后退中磁条偏离，保持计时并纠偏 "
+                                f"mask=0x{self.magnetic_mask:02X} "
+                                f"correction={correction:+.2f}"
+                            )
+                            self.last_degraded_loading_log_time = current_time
+                        return
                     now = time.time()
                     if self.magnetic_search_phase_start <= 0.0:
                         self.magnetic_search_phase_start = now
