@@ -356,6 +356,8 @@ class MotorControlNode(Node):
         self.magnetic_search_retry_count = 0
         self.magnetic_search_retry_max = 1
         self.magnetic_search_retry_backward_duration = 5.0
+        self.magnetic_last_nonzero_mask = 0
+        self.magnetic_last_nonzero_time = 0.0
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
@@ -1167,6 +1169,9 @@ class MotorControlNode(Node):
 
     def magnetic_mask_callback(self, msg: UInt16):
         self.magnetic_mask = int(msg.data) & 0xFF
+        if self.magnetic_mask:
+            self.magnetic_last_nonzero_mask = self.magnetic_mask
+            self.magnetic_last_nonzero_time = time.time()
         was_tracking_ready = self.magnetic_tracking_ready
         if (
             self.current_status == "LOADING"
@@ -2531,6 +2536,10 @@ class MotorControlNode(Node):
             self.magnetic_search_recover_target_yaw = None
             self.magnetic_search_failure_logged = False
             self.magnetic_search_retry_count = 0
+            self.magnetic_last_nonzero_mask = self.magnetic_mask
+            self.magnetic_last_nonzero_time = (
+                time.time() if self.magnetic_mask else 0.0
+            )
             self.magnetic_center_count = 0
             self.magnetic_tracking_ready = False
             self.magnetic_loading_zero_count = 0
@@ -3584,7 +3593,17 @@ class MotorControlNode(Node):
                     elif phase in ("RIGHT_RECOVER", "LEFT_RECOVER"):
                         recovered = yaw_error is not None and abs(yaw_error) <= 2.0
                         if recovered or elapsed >= self.magnetic_search_recover_timeout:
-                            phase = "LEFT_SEARCH" if phase == "RIGHT_RECOVER" else "STOP"
+                            recent_signal = (
+                                bool(self.magnetic_mask)
+                                or now - self.magnetic_last_nonzero_time <= 0.8
+                            )
+                            # 恢复阶段结束时若仍有磁条信号，继续后退搜索。
+                            # 不能因阶段切换瞬间的一个mask=0采样直接进入STOP。
+                            phase = (
+                                "LEFT_SEARCH"
+                                if phase == "RIGHT_RECOVER" or recent_signal
+                                else "STOP"
+                            )
                             self.magnetic_search_reference_yaw = self.imu_yaw_deg
                             self.magnetic_search_recover_target_yaw = None
                             self.magnetic_search_failure_logged = False
