@@ -3109,17 +3109,12 @@ class MotorControlNode(Node):
         # ========== 阶段1：后退出仓 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
             if current_time - self.unloading_start_time < self.unloading_forword_threshold:
-                if self.enable_magnetic_navigation and not self.magnetic_tracking_ready:
-                    correction = 0.0
-                else:
-                    correction = self.get_magnetic_correction(reverse=False)
-                if correction is None and self.enable_magnetic_navigation:
-                    self.set_motors_speed(0.0, 0.0)
-                    return
-                correction = correction or 0.0
-                left_speed = -self.motor_ctrl.BASE_SPEED + correction
-                right_speed = self.motor_ctrl.BASE_SPEED + correction
-                self.set_motors_speed(left_speed, right_speed)
+                # 出仓阶段只执行固定时长直行，不读取磁传感器，也不做磁导航纠偏。
+                # 左右轮采用相同幅值、相反符号的速度，保证底盘直线驶出。
+                self.set_motors_speed(
+                    -self.motor_ctrl.BASE_SPEED,
+                    self.motor_ctrl.BASE_SPEED,
+                )
             else:
                 self.set_motors_speed(0.0, 0.0)
                 self.get_logger().info("[START] 出仓运动完成")
