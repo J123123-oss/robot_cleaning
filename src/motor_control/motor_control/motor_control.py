@@ -421,7 +421,7 @@ class MotorControlNode(Node):
             )
 
         # UNLOADING parameters
-        self.unloading_forword_threshold = 25.0 # seconds
+        self.unloading_forword_threshold = 14.0 # seconds
         self.unloading_turn_start_time = None
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
@@ -442,7 +442,7 @@ class MotorControlNode(Node):
         self.loading_direct_elapsed = 0.0
         self.loading_direct_last_update_time = None
         self.loading_direct_motion_active = False
-        self.loading_direct_timeout = 24.0
+        self.loading_direct_timeout = 15.0
         self.loading_nav_start_time = 0.0  # LOADING_NAV_TO_GPS 阶段开始时间
         self.loading_nav_timeout = 120.0    # 导航到进仓点超时（秒）
         self.loading_skip_dock_check = False  # 跳过dock传感器门控检测（限位+归位），GPS导航照常执行
@@ -2881,17 +2881,15 @@ class MotorControlNode(Node):
                 else:
                     self.get_logger().warn("[ROSNode] CHANGE_ROUTE指令缺少route_id字段")
             elif command in ("UNLOADING", "MAGNETIC_UNLOADING_TEST"):
-                if not self.magnetic_test_unloading_direct:
-                    self.get_logger().warn(
-                        f"[MQTT] {command}：磁导航出仓测试开关未开启，拒绝测试出仓"
-                    )
-                    return
-                self.magnetic_test_unloading_active = True
-                self.unloading_command_hold = True
+                # MQTT 的 UNLOADING 始终只执行出仓流程，结束后保持 HOLD。
+                # 不能在 switch_state("u") 之前设置 hold 标志，因为 START
+                # 初始化会清空该标志，导致结算阶段误切 AUTO_CLEANING。
                 self._magnetic_unloading_request_pending = True
                 self.switch_state("u")
                 self._magnetic_unloading_request_pending = False
                 if self.current_status == "START":
+                    self.magnetic_test_unloading_active = True
+                    self.unloading_command_hold = True
                     self.get_logger().warn(
                         f"[MQTT] {command}：直接执行UNLOADING_FORWARD"
                     )
