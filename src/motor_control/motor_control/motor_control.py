@@ -1188,36 +1188,39 @@ class MotorControlNode(Node):
             self.magnetic_precise_ready_time = None
         now = time.time()
         if not center_candidate:
-            if was_tracking_ready:
+            # 只有完全无信号(mask=0)才做短暂保持；非零边缘信号必须立即进入
+            # 对应方向搜索，避免把0x70/0x04这类边缘信号当成中心微调。
+            keep_tracking = (
+                was_tracking_ready
+                and self.magnetic_mask == 0
+                and self.magnetic_center_lost_count < self.magnetic_center_lost_limit
+            )
+            if keep_tracking:
                 self.magnetic_center_lost_count += 1
-                if self.magnetic_center_lost_count < self.magnetic_center_lost_limit:
-                    # 短暂边缘抖动时保持磁导航，不立即切回搜索。
-                    center_candidate = True
-                else:
-                    if self.magnetic_mask:
-                        # 持续丢线后按当前边缘方向重新开始搜索，避免沿上一次方向继续扫出磁条。
-                        self.magnetic_search_phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
-                        self.magnetic_search_active_duration = (
-                            self._magnetic_search_duration_from_mask(self.magnetic_mask)
-                        )
-                        self.magnetic_search_phase_start = now
-                        self.magnetic_search_reference_yaw = self.imu_yaw_deg
-                        self.magnetic_search_recover_target_yaw = None
-                        self.get_logger().info(
-                            f"[LOADING][MagneticSearch] 中心持续丢失，按mask=0x{self.magnetic_mask:02X} "
-                            f"重新开始{self.magnetic_search_phase}"
-                        )
-                    self.magnetic_center_count = 0
-                    self.magnetic_tracking_ready = False
-                    self.magnetic_center_ready_time = None
-                    self.magnetic_precise_count = 0
-                    self.magnetic_precise_ready = False
-                    self.magnetic_precise_ready_time = None
-                    self.magnetic_precise_lost_count = 0
+                center_candidate = True
             else:
+                if self.magnetic_mask:
+                    self.magnetic_search_phase = self._magnetic_search_phase_from_mask(
+                        self.magnetic_mask
+                    )
+                    self.magnetic_search_active_duration = (
+                        self._magnetic_search_duration_from_mask(self.magnetic_mask)
+                    )
+                    self.magnetic_search_phase_start = now
+                    self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                    self.magnetic_search_recover_target_yaw = None
+                    self.get_logger().info(
+                        f"[LOADING][MagneticSearch] 边缘信号mask=0x{self.magnetic_mask:02X}，"
+                        f"立即开始{self.magnetic_search_phase}"
+                    )
                 self.magnetic_center_count = 0
+                self.magnetic_center_lost_count = 0
                 self.magnetic_tracking_ready = False
                 self.magnetic_center_ready_time = None
+                self.magnetic_precise_count = 0
+                self.magnetic_precise_ready = False
+                self.magnetic_precise_ready_time = None
+                self.magnetic_precise_lost_count = 0
         if now - self.magnetic_last_log_time >= 0.5:
             self.get_logger().debug(
                 f"[Magnetic] mask=0x{self.magnetic_mask:02X} "
