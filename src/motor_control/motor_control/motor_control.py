@@ -2677,7 +2677,8 @@ class MotorControlNode(Node):
 
         # 提高测试偏移的有效轮速和差速幅度，确保产生可观的横向位移。
         base = self.motor_ctrl.BASE_SPEED
-        inner = base * 0.70
+        # 回正阶段使用更小曲率，避免完全沿SHIFT轨迹倒放而回到原位。
+        inner = base * (0.70 if self.offset_phase == "SHIFT" else 0.90)
         left_speed, right_speed = (
             ((-inner, base) if self.offset_phase == "SHIFT"
              else (inner, -base))
