@@ -384,6 +384,9 @@ class MotorControlNode(Node):
         self.last_yaw_error = 0.0  # 上一次的航向误差
         # MQTT点按方向定时器
         self.direction_timer = None
+        self.offset_phase = None
+        self.offset_phase_start_time = 0.0
+        self.offset_phase_duration = 2.0
         self.brush_speed = 0.0  # 当前滚刷输出轴速度（r/min）。
         self.current_left_speed = 0.0  # 当前左轮输出轴速度（r/min）。
         self.current_right_speed = 0.0  # 当前右轮输出轴速度（r/min）。
@@ -1602,16 +1605,9 @@ class MotorControlNode(Node):
                 right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-                # Test offset should use the same low speed as unloading and
-                # only a small wheel-speed difference to limit heading change.
-                base = self.motor_ctrl.BASE_SPEED * 2.30
-                inner = base * 0.85
-                left_speed, right_speed = (
-                    (-inner, base)
-                    if self.current_status == "OFFSET_LEFT"
-                    else (-base, inner)
-                )
-                self.set_motors_speed(left_speed, right_speed)
+                # OFFSET 由独立的50ms阶段定时器执行，避免主循环覆盖
+                # SHIFT/RECENTER 两阶段的差速指令。
+                pass
             elif self.current_status in ["HOLD"]:
                 left_speed = 0.0
                 right_speed = 0.0
@@ -2547,17 +2543,13 @@ class MotorControlNode(Node):
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-            base = self.motor_ctrl.BASE_SPEED * 2.30
-            inner = base * 0.85
-            left_speed, right_speed = (
-                (-inner, base)
-                if new_state == "OFFSET_LEFT"
-                else (-base, inner)
-            )
-            self.set_motors_speed(left_speed, right_speed)
+            # 先以差速后退形成身位偏移，再用反向差速回正车头。
+            # 两个阶段各2秒，避免一直沿弧线斜行而没有有效横向位移。
+            self.offset_phase = "SHIFT"
+            self.offset_phase_start_time = time.time()
             if self.direction_timer:
                 self.direction_timer.cancel()
-            self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("h"))
+            self.direction_timer = self.create_timer(0.05, self.handle_offset_step)
         elif new_state == "START":
             # 使能电机
             self.motor_ctrl.initialize_motors()
@@ -2654,6 +2646,40 @@ class MotorControlNode(Node):
         if self.direction_timer:
             self.direction_timer.cancel()
             self.direction_timer = None
+
+    def handle_offset_step(self):
+        """执行测试用横向身位偏移，并在第二阶段反向差速回正。"""
+        if self.current_status not in ("OFFSET_LEFT", "OFFSET_RIGHT"):
+            if self.direction_timer is not None:
+                self.direction_timer.cancel()
+                self.direction_timer = None
+            return
+
+        elapsed = time.time() - self.offset_phase_start_time
+        if elapsed >= self.offset_phase_duration:
+            if self.offset_phase == "SHIFT":
+                self.offset_phase = "RECENTER"
+                self.offset_phase_start_time = time.time()
+                self.get_logger().info(
+                    f"[OFFSET] {self.current_status} 身位偏移完成，开始反向差速回正"
+                )
+                elapsed = 0.0
+            else:
+                self.set_motors_speed(0.0, 0.0)
+                self.switch_state("h")
+                return
+
+        base = self.motor_ctrl.BASE_SPEED * 2.30
+        inner = base * 0.85
+        left_speed, right_speed = (
+            ((inner, -base) if self.offset_phase == "SHIFT"
+             else (base, -inner))
+            if self.current_status == "OFFSET_LEFT"
+            else
+            ((-base, inner) if self.offset_phase == "SHIFT"
+             else (-inner, base))
+        )
+        self.set_motors_speed(left_speed, right_speed)
 
     def _publish_and_countdown(self):
         """进仓完成后的补发回调：发够3条后切回3000s低频定时器"""
