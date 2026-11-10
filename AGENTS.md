@@ -131,3 +131,10 @@ src/
 5. **路径文件格式**：航点文件为每行 `lon,lat,heading` 的纯文本，跨文件导航时按文件名数字前缀（如 `001_xxx.txt` → `002_xxx.txt`）自动切换。
 
 6. **REVIEW.md** 记录了详细的需求确认清单和排障顺序，接手项目时应先阅读。
+
+## 滚刷混合协议实现约定
+
+- `motor_driver_kinco.py` 实现步科滚刷协议适配，复用 AIMotor 驱动的 CAN 总线、线程和反馈接口；不得为滚刷创建第二个 CAN 接收线程。
+- `brush_use_kinco=false` 保持现有 AIMotor 行为；为 true 时仅 ID 3、4 使用步科协议，滚刷数量仍由 `brush_motor_count` 决定。
+- 上层速度统一使用输出轴 r/min。步科编码器分辨率、机械减速比、rps/s 加减速度独立配置，不复用 AIMotor 的脉冲速度或加减速单位。
+- 协议依据与现场配置说明放在 `docs/kinco_brush_driver.md`，离线协议测试放在 `src/motor_control/test/test_motor_driver_kinco.py`。

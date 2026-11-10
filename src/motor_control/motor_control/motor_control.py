@@ -406,6 +406,18 @@ class MotorControlNode(Node):
             brush_motor_count = 2
         self.brush_motor_count = brush_motor_count
         self.brush_motor_ids = list(brush_motor_ids_for_count(brush_motor_count))
+        self.declare_parameter("brush_use_kinco", False)
+        self.brush_use_kinco = bool(
+            self.get_parameter("brush_use_kinco").value
+        )
+        kinco_defaults = {
+            "kinco_encoder_resolution": 65536,
+            "kinco_reduction_ratio": 1.0,
+            "kinco_acceleration_rps2": 100.0,
+            "kinco_deceleration_rps2": 100.0,
+        }
+        for name, default in kinco_defaults.items():
+            self.declare_parameter(name, default)
 
         # 双滚刷共用一个上层速度值；opposite仅对4号滚刷取反。
         self.declare_parameter("brush_direction_mode", "same")
@@ -624,7 +636,16 @@ class MotorControlNode(Node):
             ).value
             for motor_id in motor_ids
         }
-        self.motor_ctrl = CanMotorDriver(
+        driver_class = CanMotorDriver
+        driver_options = {}
+        if self.brush_use_kinco:
+            driver_class = importlib.import_module(
+                "motor_control.motor_driver_kinco"
+            ).CanMotorDriver
+            driver_options = {
+                name: self.get_parameter(name).value for name in kinco_defaults
+            }
+        self.motor_ctrl = driver_class(
             node_name='can_motor_driver',
             channel='can0',
             interface='socketcan',
@@ -645,6 +666,7 @@ class MotorControlNode(Node):
             profile_acceleration=profile_acceleration,
             profile_deceleration=profile_deceleration,
             motor_directions=motor_directions,
+            **driver_options,
         )
         self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")

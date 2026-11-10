@@ -33,6 +33,24 @@ def generate_launch_description():
         default_value=TextSubstitution(text="same"),
         description="双滚刷方向模式：same或opposite",
     )
+    declare_brush_use_kinco_arg = DeclareLaunchArgument(
+        "brush_use_kinco",
+        default_value=TextSubstitution(text="false"),
+        description="滚刷3/4协议：false使用AIMotor，true使用步科iSMK",
+    )
+    kinco_parameters = (
+        ("kinco_encoder_resolution", "65536", int, "步科编码器每转计数，默认取手册示例，现场需确认"),
+        ("kinco_reduction_ratio", "1.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
+        ("kinco_acceleration_rps2", "100.0", float, "步科电机侧加速度，单位rps/s"),
+        ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
+    )
+    declare_kinco_args = tuple(
+        DeclareLaunchArgument(
+            name, default_value=TextSubstitution(text=default),
+            description=description,
+        )
+        for name, default, value_type, description in kinco_parameters
+    )
     # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
     declare_profile_acceleration_arg = DeclareLaunchArgument(
         "profile_acceleration",
@@ -198,6 +216,15 @@ def generate_launch_description():
                 'brush_direction_mode': LaunchConfiguration(
                     'brush_direction_mode'
                 ),
+                'brush_use_kinco': ParameterValue(
+                    LaunchConfiguration('brush_use_kinco'), value_type=bool
+                ),
+                **{
+                    name: ParameterValue(
+                        LaunchConfiguration(name), value_type=value_type
+                    )
+                    for name, default, value_type, description in kinco_parameters
+                },
                 'profile_acceleration': ParameterValue(
                     LaunchConfiguration('profile_acceleration'), value_type=int
                 ),
@@ -346,6 +373,9 @@ def generate_launch_description():
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_brush_motor_count_arg)
     ld.add_action(declare_brush_direction_mode_arg)
+    ld.add_action(declare_brush_use_kinco_arg)
+    for declare_kinco_arg in declare_kinco_args:
+        ld.add_action(declare_kinco_arg)
     ld.add_action(declare_profile_acceleration_arg)
     ld.add_action(declare_profile_deceleration_arg)
     for declare_motor_direction_arg in declare_motor_direction_args:
