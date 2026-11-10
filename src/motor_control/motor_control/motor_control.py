@@ -386,7 +386,7 @@ class MotorControlNode(Node):
         self.direction_timer = None
         self.offset_phase = None
         self.offset_phase_start_time = 0.0
-        self.offset_phase_duration = 5.0
+        self.offset_phase_duration = 3.5
         self.brush_speed = 0.0  # 当前滚刷输出轴速度（r/min）。
         self.current_left_speed = 0.0  # 当前左轮输出轴速度（r/min）。
         self.current_right_speed = 0.0  # 当前右轮输出轴速度（r/min）。
@@ -2676,8 +2676,8 @@ class MotorControlNode(Node):
                 return
 
         # 提高测试偏移的有效轮速和差速幅度，确保产生可观的横向位移。
-        base = self.motor_ctrl.BASE_SPEED * 3.5
-        inner = base * 0.45
+        base = self.motor_ctrl.BASE_SPEED * 3.0
+        inner = base * 0.55
         left_speed, right_speed = (
             ((inner, -base) if self.offset_phase == "SHIFT"
              else (base, -inner))
