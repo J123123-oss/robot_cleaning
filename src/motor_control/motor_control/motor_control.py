@@ -2494,7 +2494,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.5, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
 
         elif new_state == "FORWARD":
@@ -2551,7 +2551,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.5, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为2秒")
 
             self.complete_state = False
@@ -3543,7 +3543,7 @@ class MotorControlNode(Node):
                         # 持续向中间传感器区域收敛。
                         # 窄磁条下单点/双点信号的误差会在相邻采样位之间跳变，
                         # 过大的差速会把车体从磁条一侧直接甩到另一侧。
-                        correction = max(-1.8, min(1.8, magnetic_correction))
+                        correction = max(-2.2, min(2.2, magnetic_correction))
                         if (self.imu_yaw_deg is not None
                                 and self.magnetic_heading_target_yaw is not None):
                             heading_error = self.get_heading_error(
@@ -3569,7 +3569,7 @@ class MotorControlNode(Node):
                     # 后退时间消耗在原地摆动/恢复上。
                     degraded_correction = self.get_magnetic_correction(reverse=True)
                     if self.magnetic_mask and degraded_correction is not None:
-                        correction = max(-1.8, min(1.8, degraded_correction))
+                        correction = max(-2.2, min(2.2, degraded_correction))
                         left_speed = base_speed - correction
                         right_speed = -base_speed - correction
                         if (self.imu_yaw_deg is not None
@@ -4264,5 +4264,6 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
 
 
