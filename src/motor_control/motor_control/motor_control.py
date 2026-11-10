@@ -323,7 +323,7 @@ class MotorControlNode(Node):
         self.magnetic_loading_complete_pending = False
         self.magnetic_loading_end_count = 0
         self.magnetic_loading_end_count_required = 3
-        self.magnetic_loading_end_active_bits = 5
+        self.magnetic_loading_end_active_bits = 6
         self.magnetic_center_lost_limit = 5
         self.magnetic_precise_count = 0
         self.magnetic_precise_ready = False
@@ -1183,7 +1183,7 @@ class MotorControlNode(Node):
         if self.current_status == "LOADING" and self.loading_countdown_started:
             if raw_mask == 0:
                 # 后退阶段复用最近一次有效磁条状态，持续后退纠偏；
-                # 直到末端横向磁条至少5点触发才允许完成。
+                # 直到末端横向磁条连续3次、每次至少6点触发才允许完成。
                 raw_mask = self.magnetic_last_nonzero_mask
             else:
                 self.magnetic_loading_zero_count = 0
