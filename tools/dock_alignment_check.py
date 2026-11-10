@@ -46,6 +46,7 @@ class DockAlignmentCheck(Node):
         self.create_subscription(String, "robot_state", self._state_cb, 20)
         self.create_subscription(UInt16, "/magnetic/mask", self._mask_cb, 50)
         self.status: Optional[str] = None
+        self.error_code: Optional[int] = None
         self.last_mask = 0
         self.samples: list[MaskSample] = []
         self.phase = "INIT"
@@ -54,6 +55,7 @@ class DockAlignmentCheck(Node):
         try:
             payload = json.loads(msg.data)
             self.status = payload.get("status")
+            self.error_code = payload.get("error")
             self.get_logger().info(f"当前机器人状态: {self.status}")
         except json.JSONDecodeError:
             self.get_logger().warning(f"忽略非JSON状态: {msg.data[:160]}")
@@ -291,4 +293,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
