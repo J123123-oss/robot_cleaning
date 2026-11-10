@@ -25,6 +25,7 @@ node_modules/
 motor_start_log/
 tmp/
 outputs/
+logs/
 *.log
 
 # Local assistant/tool state
