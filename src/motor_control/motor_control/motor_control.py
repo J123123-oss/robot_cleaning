@@ -1599,7 +1599,7 @@ class MotorControlNode(Node):
             elif self.current_status in ("OFFSET_LEFT", "OFFSET_RIGHT"):
                 # Test offset should use the same low speed as unloading and
                 # only a small wheel-speed difference to limit heading change.
-                base = self.motor_ctrl.BASE_SPEED
+                base = self.motor_ctrl.BASE_SPEED * 2.30
                 inner = base * 0.85
                 left_speed, right_speed = (
                     (-inner, base)
@@ -2532,7 +2532,7 @@ class MotorControlNode(Node):
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-            base = self.motor_ctrl.BASE_SPEED
+            base = self.motor_ctrl.BASE_SPEED * 2.30
             inner = base * 0.85
             left_speed, right_speed = (
                 (-inner, base)
@@ -4264,6 +4264,8 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
+
 
 
 

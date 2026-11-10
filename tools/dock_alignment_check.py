@@ -231,7 +231,7 @@ class DockAlignmentCheck(Node):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--offset-seconds", type=float, default=2.0)
+    parser.add_argument("--offset-seconds", type=float, default=4.0)
     parser.add_argument("--offset-timeout", type=float, default=5.0)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--unloading-timeout", type=float, default=45.0)
@@ -293,6 +293,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
