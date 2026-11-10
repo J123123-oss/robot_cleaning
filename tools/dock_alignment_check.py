@@ -11,7 +11,7 @@ import argparse
 import json
 import random
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -188,10 +188,13 @@ class DockAlignmentCheck(Node):
             )
         deadline = time.monotonic() + self.args.loading_timeout
         end_sample: Optional[MaskSample] = None
+        before: list[MaskSample] = []
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.05)
             if self.samples and self.samples[-1].bit_count >= self.args.end_bits:
                 end_sample = self.samples[-1]
+                # 冻结末端前的窗口，后续等待DISABLE的采样不能污染偏差统计。
+                before = list(self.samples[:-1])
                 break
             if self.status == "HOLD" and len(self.samples) > 3:
                 break
@@ -199,18 +202,25 @@ class DockAlignmentCheck(Node):
         # 成功检测到末端横向磁条后，等待motor_control自行完成
         # LOADING→DISABLE；此时发送HOLD会打断正常完成流程。
         if end_sample is None:
+            before = list(self.samples)
             self.command("HOLD")
-        self.wait_status("DISABLE", self.args.disable_timeout)
-        before = self.samples[:-1] if end_sample else self.samples
+        completed = self.wait_status("DISABLE", self.args.disable_timeout)
+        if not completed and end_sample is not None:
+            self.command("HOLD")
+            self.wait_status("HOLD", 2.0)
         result = self._classify(before[-self.args.window:])
         return {
             "started": started,
             "offset_direction": direction,
-            "offset_seconds": self.args.offset_seconds,
-            "end_marker": asdict(end_sample) if end_sample else None,
-            "samples_before_end_marker": [asdict(s) for s in before[-self.args.window:]],
+            "loading_result": (
+                "COMPLETED" if completed and end_sample is not None
+                else "END_MARKER_UNCONFIRMED" if end_sample is not None
+                else "NOT_COMPLETED"
+            ),
+            "end_marker_detected": end_sample is not None,
             "assessment": result,
             "final_status": self.status,
+            "error_code": self.error_code,
         }
 
     @staticmethod
@@ -219,6 +229,7 @@ class DockAlignmentCheck(Node):
             return {"result": "NO_DATA", "reason": "进仓结束前没有收到磁导航状态"}
         errors = [s.error for s in samples if s.error is not None]
         avg_error = sum(errors) / len(errors) if errors else None
+        mean_abs_error = sum(abs(e) for e in errors) / len(errors) if errors else None
         edge_hits = sum(1 for s in samples if s.mask & 0xC3)
         center_hits = sum(1 for s in samples if (s.mask & 0x3C) and not (s.mask & 0xC3))
         if avg_error is None:
@@ -232,6 +243,7 @@ class DockAlignmentCheck(Node):
         return {
             "result": result,
             "average_error": avg_error,
+            "mean_absolute_error": mean_abs_error,
             "edge_hit_samples": edge_hits,
             "center_hit_samples": center_hits,
             "sample_count": len(samples),
