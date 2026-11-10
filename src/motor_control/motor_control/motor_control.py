@@ -3106,12 +3106,12 @@ class MotorControlNode(Node):
             if self.dock_sensors == None:
                 self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
                 return
-            # 在这里处理传感器数据
-            # 检测 0x08 或 0x04 脉冲上升沿（0→1）
-            dock_ok = (self.dock_sensors & 0x08) and not (self.dock_last_sensors & 0x08) or \
-                      (self.dock_sensors & 0x04) and not (self.dock_last_sensors & 0x04)
+'            # 进仓到位改用磁导航至少6位触发的上升沿，避免旧dock位脉冲误触发。
+            current_active_bits = int(self.dock_sensors & 0xFF).bit_count()
+            previous_active_bits = int(self.dock_last_sensors & 0xFF).bit_count()
+            dock_ok = current_active_bits >= 6 and previous_active_bits < 6
 
-            if dock_ok and not self.is_charging:
+            if dock_ok' and not self.is_charging:
             # if (self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and self.dock_last_sensors & 0x04 != 5) and not self.is_charging: #车体到位未充电
                 self.get_logger().info("[ROSNode] 车体到位")
                 if self.current_status == "DISABLE":
@@ -4264,6 +4264,7 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
 
 
 
