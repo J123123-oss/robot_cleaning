@@ -1188,6 +1188,11 @@ class MotorControlNode(Node):
         if self.magnetic_mask:
             self.magnetic_last_nonzero_mask = self.magnetic_mask
             self.magnetic_last_nonzero_time = time.time()
+        # 磁条搜索/中心判定只属于进仓流程。节点启动、DISABLE、ENABLE、
+        # 出仓或普通遥控阶段仍保留最新 mask 供状态上报，但不得更新搜索
+        # 阶段、中心稳定计数或触发纠偏，避免初始化时误打印并启动 RIGHT_SEARCH。
+        if self.current_status != "LOADING" or not self.is_in_bin_process:
+            return
         was_tracking_ready = self.magnetic_tracking_ready
         if (
             self.current_status == "LOADING"
