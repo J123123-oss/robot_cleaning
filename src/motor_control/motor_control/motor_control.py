@@ -357,7 +357,7 @@ class MotorControlNode(Node):
         self.magnetic_search_failure_logged = False
         self.magnetic_search_retry_count = 0
         self.magnetic_search_retry_max = 1
-        self.magnetic_search_retry_backward_duration = 5.0
+        self.magnetic_search_retry_backward_duration = 3.0
         self.magnetic_last_nonzero_mask = 0
         self.magnetic_last_nonzero_time = 0.0
         self.magnetic_search_min_hold_sec = 0.5
@@ -1597,8 +1597,10 @@ class MotorControlNode(Node):
                 right_speed = -self.mqtt_control_speed * MANUAL_TURN_SPEED_SCALE
                 self.set_motors_speed(left_speed, right_speed)
             elif self.current_status in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-                base = self.mqtt_control_speed * self.manual_drive_speed_scale
-                inner = base * 0.55
+                # Test offset should use the same low speed as unloading and
+                # only a small wheel-speed difference to limit heading change.
+                base = self.motor_ctrl.BASE_SPEED * 2.30
+                inner = base * 0.85
                 left_speed, right_speed = (
                     (-inner, base)
                     if self.current_status == "OFFSET_LEFT"
@@ -2401,7 +2403,7 @@ class MotorControlNode(Node):
 
         # 核心修改：正在进出仓时，仅响应HOLD指令，其余指令直接忽略并打印日志
         if self.is_in_bin_process:
-            if new_state not in ["HOLD", "DISABLE"]:
+            if new_state not in ["HOLD", "DISABLE", "OFFSET_LEFT", "OFFSET_RIGHT"]:
                 self.get_logger().warn(f"[ROSNode] 正在执行进\出仓流程，仅支持HOLD或DISABLE指令，忽略状态切换（{self.current_status}→{new_state}）")
                 return
             # 若是HOLD指令，正常执行，后续会重置进出仓标记
@@ -2502,7 +2504,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.5, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
 
         elif new_state == "FORWARD":
@@ -2540,8 +2542,8 @@ class MotorControlNode(Node):
                 self.direction_timer.cancel()
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
-            base = self.mqtt_control_speed * self.manual_drive_speed_scale
-            inner = base * 0.55
+            base = self.motor_ctrl.BASE_SPEED * 2.30
+            inner = base * 0.85
             left_speed, right_speed = (
                 (-inner, base)
                 if new_state == "OFFSET_LEFT"
@@ -2559,7 +2561,7 @@ class MotorControlNode(Node):
             # 恢复状态发布频率至5秒
             if self.state_publish_timer is not None:
                 self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(0.25, self.publish_state)
+                self.state_publish_timer = self.create_timer(0.5, self.publish_state)
                 self.get_logger().info("[ROSNode] 进入START状态，状态发布频率恢复为2秒")
 
             self.complete_state = False
@@ -3114,10 +3116,10 @@ class MotorControlNode(Node):
             if self.dock_sensors == None:
                 self.get_logger().info(f"[ROSNode] 解析到sensors为空，检查DOCK！！！")
                 return
-            # 在这里处理传感器数据
-            # 检测 0x08 或 0x04 脉冲上升沿（0→1）
-            dock_ok = (self.dock_sensors & 0x08) and not (self.dock_last_sensors & 0x08) or \
-                      (self.dock_sensors & 0x04) and not (self.dock_last_sensors & 0x04)
+            # Dock arrival uses a rising edge of at least six magnetic bits.
+            current_active_bits = int(self.dock_sensors & 0xFF).bit_count()
+            previous_active_bits = int(self.dock_last_sensors & 0xFF).bit_count()
+            dock_ok = current_active_bits >= 6 and previous_active_bits < 6
 
             if dock_ok and not self.is_charging:
             # if (self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and self.dock_last_sensors & 0x04 != 5) and not self.is_charging: #车体到位未充电
@@ -3551,7 +3553,7 @@ class MotorControlNode(Node):
                         # 持续向中间传感器区域收敛。
                         # 窄磁条下单点/双点信号的误差会在相邻采样位之间跳变，
                         # 过大的差速会把车体从磁条一侧直接甩到另一侧。
-                        correction = max(-1.8, min(1.8, magnetic_correction))
+                        correction = max(-2.2, min(2.2, magnetic_correction))
                         if (self.imu_yaw_deg is not None
                                 and self.magnetic_heading_target_yaw is not None):
                             heading_error = self.get_heading_error(
@@ -3577,7 +3579,7 @@ class MotorControlNode(Node):
                     # 后退时间消耗在原地摆动/恢复上。
                     degraded_correction = self.get_magnetic_correction(reverse=True)
                     if self.magnetic_mask and degraded_correction is not None:
-                        correction = max(-1.8, min(1.8, degraded_correction))
+                        correction = max(-2.2, min(2.2, degraded_correction))
                         left_speed = base_speed - correction
                         right_speed = -base_speed - correction
                         if (self.imu_yaw_deg is not None
@@ -3827,7 +3829,7 @@ class MotorControlNode(Node):
             self.loading_direct_last_update_time = None
             self.loading_direct_motion_active = False
             self.last_direct_loading_log_time = 0.0
-            self.finish_loading_process()
+            # fail_loading_process 已锁存故障并保持 HOLD，不能清除故障再切 DISABLE。
             return
 
         self._handle_loading_step_inner()
@@ -4272,4 +4274,17 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
 

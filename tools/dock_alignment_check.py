@@ -46,6 +46,7 @@ class DockAlignmentCheck(Node):
         self.create_subscription(String, "robot_state", self._state_cb, 20)
         self.create_subscription(UInt16, "/magnetic/mask", self._mask_cb, 50)
         self.status: Optional[str] = None
+        self.error_code: Optional[int] = None
         self.last_mask = 0
         self.samples: list[MaskSample] = []
         self.phase = "INIT"
@@ -54,8 +55,10 @@ class DockAlignmentCheck(Node):
         try:
             payload = json.loads(msg.data)
             self.status = payload.get("status")
+            self.error_code = payload.get("error")
+            self.get_logger().info(f"当前机器人状态: {self.status}")
         except json.JSONDecodeError:
-            self.get_logger().warning("忽略非JSON状态: %s", msg.data[:160])
+            self.get_logger().warning(f"忽略非JSON状态: {msg.data[:160]}")
 
     def _mask_cb(self, msg: UInt16) -> None:
         self.last_mask = int(msg.data) & 0xFF
@@ -71,9 +74,20 @@ class DockAlignmentCheck(Node):
 
     def command(self, value: str) -> None:
         msg = String()
-        msg.data = value
+        # motor_control 的 MQTT/ROS 指令入口按 JSON 解析 command 字段；
+        # 发送裸的 UNLOADING/LOADING 会被当成无效字符串拒绝。
+        msg.data = json.dumps({"command": value}, ensure_ascii=False)
         self.command_pub.publish(msg)
-        self.get_logger().info("发送 %s", value)
+        self.get_logger().info(f"发送 {value}")
+
+    def wait_for_command_connection(self, timeout: float) -> bool:
+        """Wait until motor_control is subscribed before publishing commands."""
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            if self.command_pub.get_subscription_count() > 0:
+                return True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return False
 
     def spin_for(self, duration: float) -> None:
         end = time.monotonic() + duration
@@ -88,23 +102,84 @@ class DockAlignmentCheck(Node):
                 return True
         return False
 
+    def wait_status_transition(
+        self, active: str, terminal: str, timeout: float
+    ) -> bool:
+        """Wait for an active state first, then its terminal state."""
+        end = time.monotonic() + timeout
+        active_seen = False
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.status == active:
+                active_seen = True
+            elif active_seen and self.status == terminal:
+                return True
+        return False
+
+    def wait_for_state_message(self, timeout: float) -> bool:
+        """Ensure ROS discovery and the robot state subscription are active."""
+        end = time.monotonic() + timeout
+        next_request = 0.0
+        while rclpy.ok() and time.monotonic() < end:
+            now = time.monotonic()
+            if now >= next_request:
+                self.command("GET_STATUS")
+                next_request = now + 1.0
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.status is not None:
+                return True
+        return False
+
     def run(self) -> dict:
         direction = random.choice(("OFFSET_LEFT", "OFFSET_RIGHT"))
         started = datetime.now().isoformat(timespec="seconds")
+        # DISABLE/HOLD 状态下状态发布周期可能很长，先主动请求一次状态，
+        # 否则仅等待 /robot_state 会在 10 秒内拿不到任何消息。
+        if not self.wait_for_command_connection(self.args.command_timeout):
+            raise RuntimeError(
+                f"{self.args.command_timeout}s内/robot_cmd没有订阅者；"
+                "请确认motor_control节点已启动且ROS_DOMAIN_ID一致"
+            )
+        self.command("GET_STATUS")
+        if not self.wait_for_state_message(self.args.state_timeout):
+            raise RuntimeError(
+                f"{self.args.state_timeout}s内未收到/robot_state；"
+                "请确认脚本与motor_control处于相同ROS_DOMAIN_ID和ROS网络"
+            )
+        if self.status not in ("HOLD", "ENABLE", "DISABLE"):
+            raise RuntimeError(
+                f"当前状态为{self.status}，无法开始检测；脚本未下发运动指令"
+            )
+        # 每轮开始都显式使能。LOADING 完成后节点会切回 DISABLE，
+        # 连续多轮测试必须重新发送 ENABLE 才能再次执行 UNLOADING。
+        self.command("ENABLE")
+        if not self.wait_status("ENABLE", self.args.enable_timeout):
+            raise RuntimeError(
+                f"ENABLE未在{self.args.enable_timeout}s内生效，当前={self.status}"
+            )
         self.phase = "UNLOADING"
         self.command("UNLOADING")
-        if not self.wait_status("HOLD", self.args.unloading_timeout):
+        if not self.wait_status_transition(
+            "UNLOADING", "HOLD", self.args.unloading_timeout
+        ):
             raise RuntimeError(f"UNLOADING未在{self.args.unloading_timeout}s内进入HOLD，当前={self.status}")
 
         self.phase = "OFFSET"
         self.command(direction)
+        if not self.wait_status(direction, self.args.offset_timeout):
+            raise RuntimeError(f"{direction}未在{self.args.offset_timeout}s内生效，当前={self.status}")
         self.spin_for(self.args.offset_seconds)
         self.command("HOLD")
+        self.wait_status("HOLD", self.args.settle_seconds + 2.0)
         self.spin_for(self.args.settle_seconds)
 
         self.phase = "LOADING"
         self.samples.clear()
         self.command("LOADING")
+        if not self.wait_status("LOADING", self.args.loading_start_timeout):
+            raise RuntimeError(
+                f"LOADING未在{self.args.loading_start_timeout}s内生效，当前={self.status}"
+            )
         deadline = time.monotonic() + self.args.loading_timeout
         end_sample: Optional[MaskSample] = None
         while rclpy.ok() and time.monotonic() < deadline:
@@ -116,6 +191,7 @@ class DockAlignmentCheck(Node):
                 break
 
         self.command("HOLD")
+        self.wait_status("DISABLE", self.args.disable_timeout)
         before = self.samples[:-1] if end_sample else self.samples
         result = self._classify(before[-self.args.window:])
         return {
@@ -155,34 +231,69 @@ class DockAlignmentCheck(Node):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--offset-seconds", type=float, default=2.0)
+    parser.add_argument("--offset-seconds", type=float, default=4.0)
+    parser.add_argument("--offset-timeout", type=float, default=5.0)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--unloading-timeout", type=float, default=45.0)
     parser.add_argument("--loading-timeout", type=float, default=60.0)
+    parser.add_argument("--loading-start-timeout", type=float, default=10.0)
+    parser.add_argument("--state-timeout", type=float, default=10.0,
+                        help="等待机器人初始状态的超时时间")
+    parser.add_argument("--command-timeout", type=float, default=10.0,
+                        help="等待/robot_cmd订阅者建立的超时时间")
+    parser.add_argument("--enable-timeout", type=float, default=10.0,
+                        help="等待电机进入ENABLE的超时时间")
+    parser.add_argument("--disable-timeout", type=float, default=15.0,
+                        help="等待进仓完成后回到DISABLE的超时时间")
     parser.add_argument("--end-bits", type=int, default=6)
     parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--runs", type=int, default=1,
+                        help="连续测试次数，每轮都会重新随机选择左右偏移方向")
     parser.add_argument("--output", type=Path, default=Path("dock_alignment_report.json"))
     args = parser.parse_args()
 
     rclpy.init()
     node = DockAlignmentCheck(args)
     try:
-        report = node.run()
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        reports = []
+        for run_index in range(max(1, args.runs)):
+            node.get_logger().info(
+                f"开始第 {run_index + 1}/{max(1, args.runs)} 轮检测"
+            )
+            report = node.run()
+            report["run_index"] = run_index + 1
+            reports.append(report)
+            if run_index + 1 < max(1, args.runs):
+                node.spin_for(args.settle_seconds)
+        output = reports[0] if len(reports) == 1 else {
+            "run_count": len(reports),
+            "runs": reports,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except KeyboardInterrupt:
-        node.command("HOLD")
+        if rclpy.ok():
+            node.command("HOLD")
         return 130
     except Exception as exc:
         node.get_logger().error(str(exc))
-        node.command("HOLD")
+        if rclpy.ok():
+            node.command("HOLD")
         return 1
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
 
