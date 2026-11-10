@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import signal
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -50,17 +49,12 @@ class DockAlignmentCheck(Node):
         self.last_mask = 0
         self.samples: list[MaskSample] = []
         self.phase = "INIT"
-        self.last_state_time = 0.0
-        self._shutdown_requested = False
-
-    def request_shutdown(self, _signum=None, _frame=None) -> None:
-        self._shutdown_requested = True
 
     def _state_cb(self, msg: String) -> None:
         try:
             payload = json.loads(msg.data)
             self.status = payload.get("status")
-            self.last_state_time = time.monotonic()
+            self.get_logger().info(f"当前机器人状态: {self.status}")
         except json.JSONDecodeError:
             self.get_logger().warning(f"忽略非JSON状态: {msg.data[:160]}")
 
@@ -84,14 +78,23 @@ class DockAlignmentCheck(Node):
         self.command_pub.publish(msg)
         self.get_logger().info(f"发送 {value}")
 
+    def wait_for_command_connection(self, timeout: float) -> bool:
+        """Wait until motor_control is subscribed before publishing commands."""
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            if self.command_pub.get_subscription_count() > 0:
+                return True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return False
+
     def spin_for(self, duration: float) -> None:
         end = time.monotonic() + duration
-        while rclpy.ok() and not self._shutdown_requested and time.monotonic() < end:
+        while rclpy.ok() and time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.05)
 
     def wait_status(self, expected: str, timeout: float) -> bool:
         end = time.monotonic() + timeout
-        while rclpy.ok() and not self._shutdown_requested and time.monotonic() < end:
+        while rclpy.ok() and time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
             if self.status == expected:
                 return True
@@ -103,7 +106,7 @@ class DockAlignmentCheck(Node):
         """Wait for an active state first, then its terminal state."""
         end = time.monotonic() + timeout
         active_seen = False
-        while rclpy.ok() and not self._shutdown_requested and time.monotonic() < end:
+        while rclpy.ok() and time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
             if self.status == active:
                 active_seen = True
@@ -114,7 +117,12 @@ class DockAlignmentCheck(Node):
     def wait_for_state_message(self, timeout: float) -> bool:
         """Ensure ROS discovery and the robot state subscription are active."""
         end = time.monotonic() + timeout
-        while rclpy.ok() and not self._shutdown_requested and time.monotonic() < end:
+        next_request = 0.0
+        while rclpy.ok() and time.monotonic() < end:
+            now = time.monotonic()
+            if now >= next_request:
+                self.command("GET_STATUS")
+                next_request = now + 1.0
             rclpy.spin_once(self, timeout_sec=0.1)
             if self.status is not None:
                 return True
@@ -125,6 +133,11 @@ class DockAlignmentCheck(Node):
         started = datetime.now().isoformat(timespec="seconds")
         # DISABLE/HOLD 状态下状态发布周期可能很长，先主动请求一次状态，
         # 否则仅等待 /robot_state 会在 10 秒内拿不到任何消息。
+        if not self.wait_for_command_connection(self.args.command_timeout):
+            raise RuntimeError(
+                f"{self.args.command_timeout}s内/robot_cmd没有订阅者；"
+                "请确认motor_control节点已启动且ROS_DOMAIN_ID一致"
+            )
         self.command("GET_STATUS")
         if not self.wait_for_state_message(self.args.state_timeout):
             raise RuntimeError(
@@ -147,22 +160,9 @@ class DockAlignmentCheck(Node):
         if not self.wait_status_transition(
             "UNLOADING", "HOLD", self.args.unloading_timeout
         ):
-            raise RuntimeError(
-                f"UNLOADING未观察到UNLOADING→HOLD完整状态迁移，"
-                f"超时={self.args.unloading_timeout}s，当前={self.status}"
-            )
+            raise RuntimeError(f"UNLOADING未在{self.args.unloading_timeout}s内进入HOLD，当前={self.status}")
 
         self.phase = "OFFSET"
-        # 独立UNLOADING完成后 motor_control 仍会锁定 bin process，
-        # 先经DISABLE释放流程，再重新ENABLE执行短时弧线偏移测试。
-        self.command("DISABLE")
-        if not self.wait_status("DISABLE", self.args.disable_timeout):
-            raise RuntimeError(f"出仓后未能进入DISABLE，当前={self.status}")
-        self.command("ENABLE")
-        if not self.wait_status("ENABLE", self.args.enable_timeout):
-            raise RuntimeError(
-                f"出仓后未能重新进入ENABLE，当前={self.status}"
-            )
         self.command(direction)
         if not self.wait_status(direction, self.args.offset_timeout):
             raise RuntimeError(f"{direction}未在{self.args.offset_timeout}s内生效，当前={self.status}")
@@ -180,7 +180,7 @@ class DockAlignmentCheck(Node):
             )
         deadline = time.monotonic() + self.args.loading_timeout
         end_sample: Optional[MaskSample] = None
-        while rclpy.ok() and not self._shutdown_requested and time.monotonic() < deadline:
+        while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.05)
             if self.samples and self.samples[-1].bit_count >= self.args.end_bits:
                 end_sample = self.samples[-1]
@@ -188,9 +188,8 @@ class DockAlignmentCheck(Node):
             if self.status == "HOLD" and len(self.samples) > 3:
                 break
 
-        if self.status != "DISABLE":
-            self.command("HOLD")
-            self.wait_status("HOLD", self.args.disable_timeout)
+        self.command("HOLD")
+        self.wait_status("DISABLE", self.args.disable_timeout)
         before = self.samples[:-1] if end_sample else self.samples
         result = self._classify(before[-self.args.window:])
         return {
@@ -201,7 +200,6 @@ class DockAlignmentCheck(Node):
             "samples_before_end_marker": [asdict(s) for s in before[-self.args.window:]],
             "assessment": result,
             "final_status": self.status,
-            "end_marker_detected": end_sample is not None,
         }
 
     @staticmethod
@@ -239,6 +237,8 @@ def main() -> int:
     parser.add_argument("--loading-start-timeout", type=float, default=10.0)
     parser.add_argument("--state-timeout", type=float, default=10.0,
                         help="等待机器人初始状态的超时时间")
+    parser.add_argument("--command-timeout", type=float, default=10.0,
+                        help="等待/robot_cmd订阅者建立的超时时间")
     parser.add_argument("--enable-timeout", type=float, default=10.0,
                         help="等待电机进入ENABLE的超时时间")
     parser.add_argument("--disable-timeout", type=float, default=15.0,
@@ -252,8 +252,6 @@ def main() -> int:
 
     rclpy.init()
     node = DockAlignmentCheck(args)
-    signal.signal(signal.SIGINT, node.request_shutdown)
-    signal.signal(signal.SIGTERM, node.request_shutdown)
     try:
         reports = []
         for run_index in range(max(1, args.runs)):
@@ -277,17 +275,15 @@ def main() -> int:
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except KeyboardInterrupt:
+        if rclpy.ok():
+            node.command("HOLD")
         return 130
     except Exception as exc:
         node.get_logger().error(str(exc))
+        if rclpy.ok():
+            node.command("HOLD")
         return 1
     finally:
-        if rclpy.ok():
-            try:
-                node.command("HOLD")
-                node.spin_for(0.2)
-            except Exception as exc:
-                node.get_logger().error(f"退出停车命令失败: {exc}")
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
