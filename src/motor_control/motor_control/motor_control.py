@@ -3819,7 +3819,7 @@ class MotorControlNode(Node):
             self.loading_direct_last_update_time = None
             self.loading_direct_motion_active = False
             self.last_direct_loading_log_time = 0.0
-            self.finish_loading_process()
+            # fail_loading_process 已锁存故障并保持 HOLD，不能清除故障再切 DISABLE。
             return
 
         self._handle_loading_step_inner()
@@ -4264,6 +4264,7 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
 
 
 
