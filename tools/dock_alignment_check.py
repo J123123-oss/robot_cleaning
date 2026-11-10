@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -250,6 +251,22 @@ class DockAlignmentCheck(Node):
         }
 
 
+def save_reports(path: Path, reports: list[dict]) -> dict:
+    """每轮结束立即落盘；原子替换保证中断写入时保留上一次完整结果。"""
+    output = reports[0] if len(reports) == 1 else {
+        "run_count": len(reports),
+        "runs": reports,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as report_file:
+        json.dump(output, report_file, ensure_ascii=False, indent=2)
+        report_file.flush()
+        os.fsync(report_file.fileno())
+    os.replace(temporary_path, path)
+    return output
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offset-seconds", type=float, default=4.0)
@@ -286,17 +303,13 @@ def main() -> int:
             report = node.run()
             report["run_index"] = run_index + 1
             reports.append(report)
+            # 必须先保存再进入下一轮，后续Ctrl+C不会丢失已完成轮次。
+            output = save_reports(args.output, reports)
+            node.get_logger().info(
+                f"第{run_index + 1}轮结果已保存：{args.output.resolve()}"
+            )
             if run_index + 1 < max(1, args.runs):
                 node.spin_for(args.settle_seconds)
-        output = reports[0] if len(reports) == 1 else {
-            "run_count": len(reports),
-            "runs": reports,
-        }
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(
-            json.dumps(output, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except KeyboardInterrupt:
