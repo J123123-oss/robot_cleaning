@@ -168,9 +168,15 @@ class DockAlignmentCheck(Node):
         self.command(direction)
         if not self.wait_status(direction, self.args.offset_timeout):
             raise RuntimeError(f"{direction}未在{self.args.offset_timeout}s内生效，当前={self.status}")
-        self.spin_for(self.args.offset_seconds)
-        self.command("HOLD")
-        self.wait_status("HOLD", self.args.settle_seconds + 2.0)
+        # OFFSET 由motor_control内部完成SHIFT→RECENTER并自动进入HOLD。
+        # 不能按固定 offset_seconds 提前发送HOLD，否则会在回正阶段开始前
+        # 打断动作，导致测试车体几乎原地不动。
+        if not self.wait_status("HOLD", self.args.offset_complete_timeout):
+            self.command("HOLD")
+            raise RuntimeError(
+                f"{direction}偏移流程未在{self.args.offset_complete_timeout}s内完成，"
+                f"当前={self.status}"
+            )
         self.spin_for(self.args.settle_seconds)
 
         self.phase = "LOADING"
@@ -233,6 +239,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offset-seconds", type=float, default=4.0)
     parser.add_argument("--offset-timeout", type=float, default=5.0)
+    parser.add_argument("--offset-complete-timeout", type=float, default=12.0,
+                        help="等待OFFSET内部SHIFT/RECENTER自动回到HOLD的超时时间")
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--unloading-timeout", type=float, default=45.0)
     parser.add_argument("--loading-timeout", type=float, default=60.0)
