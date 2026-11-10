@@ -2679,12 +2679,12 @@ class MotorControlNode(Node):
         base = self.motor_ctrl.BASE_SPEED
         inner = base * 0.70
         left_speed, right_speed = (
-            ((inner, -base) if self.offset_phase == "SHIFT"
-             else (base, -inner))
+            ((-inner, base) if self.offset_phase == "SHIFT"
+             else (inner, -base))
             if self.current_status == "OFFSET_LEFT"
             else
             ((-base, inner) if self.offset_phase == "SHIFT"
-             else (-inner, base))
+             else (base, -inner))
         )
         self.set_motors_speed(left_speed, right_speed)
 
