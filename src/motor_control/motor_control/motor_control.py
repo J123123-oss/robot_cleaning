@@ -2361,12 +2361,17 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
-        # DISABLE 是电机完全失能状态。必须先显式 ENABLE，才能进入运动、
-        # 进出仓或其它运行状态，避免残留指令绕过使能流程造成状态机混乱。
+        # 独立UNLOADING复用START的使能初始化，允许其从DISABLE发起；
+        # 普通START及其它运行命令仍须先显式ENABLE。
         # 允许重复 DISABLE 作为幂等安全操作，避免关机/异常清理路径报错。
-        if self.current_status == "DISABLE" and new_state not in ("DISABLE", "ENABLE"):
+        standalone_unloading = (
+            new_state == "START" and self._magnetic_unloading_request_pending
+        )
+        if (self.current_status == "DISABLE"
+                and new_state not in ("DISABLE", "ENABLE")
+                and not standalone_unloading):
             self.get_logger().warn(
-                f"[ROSNode] 当前为DISABLE，仅允许切换到ENABLE，"
+                f"[ROSNode] 当前为DISABLE，仅允许切换到ENABLE或独立UNLOADING，"
                 f"忽略状态切换请求：DISABLE→{new_state}"
             )
             self.publish_state()
@@ -3001,8 +3006,11 @@ class MotorControlNode(Node):
                     )
                     return
                 self._magnetic_unloading_request_pending = True
-                self.switch_state("u")
-                self._magnetic_unloading_request_pending = False
+                try:
+                    self.switch_state("u")
+                finally:
+                    # 即使初始化异常也不能留下放行标志，防止后续START绕过门控。
+                    self._magnetic_unloading_request_pending = False
                 if self.current_status == "START":
                     self.magnetic_test_unloading_active = True
                     self.unloading_command_hold = True
