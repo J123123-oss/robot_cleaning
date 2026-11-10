@@ -3111,7 +3111,7 @@ class MotorControlNode(Node):
             previous_active_bits = int(self.dock_last_sensors & 0xFF).bit_count()
             dock_ok = current_active_bits >= 6 and previous_active_bits < 6
 
-            # if (self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and self.dock_last_sensors & 0x04 != 5) and not self.is_charging: #车体到位未充电
+            if dock_ok and not self.is_charging:\n            # if (self.dock_sensors & 0x08 == 8 and self.dock_last_sensors & 0x08 != 8 and self.dock_last_sensors & 0x04 != 5) and not self.is_charging: #车体到位未充电
                 self.get_logger().info("[ROSNode] 车体到位")
                 if self.current_status == "DISABLE":
                     self.get_logger().info("[ROSNode] 电机非使能状态，允许充电")
@@ -4263,6 +4263,7 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
 
 
 
