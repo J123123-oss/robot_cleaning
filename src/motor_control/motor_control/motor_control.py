@@ -2358,6 +2358,16 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
+        # DISABLE 是电机完全失能状态。必须先显式 ENABLE，才能进入运动、
+        # 进出仓或其它运行状态，避免残留指令绕过使能流程造成状态机混乱。
+        # 允许重复 DISABLE 作为幂等安全操作，避免关机/异常清理路径报错。
+        if self.current_status == "DISABLE" and new_state not in ("DISABLE", "ENABLE"):
+            self.get_logger().warn(
+                f"[ROSNode] 当前为DISABLE，仅允许切换到ENABLE，"
+                f"忽略状态切换请求：DISABLE→{new_state}"
+            )
+            self.publish_state()
+            return
         if self.current_stall_fault and new_state not in (
             "HOLD", "ENABLE", "DISABLE", "AUTO_CLEANING"
         ):
