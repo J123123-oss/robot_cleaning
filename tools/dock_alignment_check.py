@@ -196,7 +196,10 @@ class DockAlignmentCheck(Node):
             if self.status == "HOLD" and len(self.samples) > 3:
                 break
 
-        self.command("HOLD")
+        # 成功检测到末端横向磁条后，等待motor_control自行完成
+        # LOADING→DISABLE；此时发送HOLD会打断正常完成流程。
+        if end_sample is None:
+            self.command("HOLD")
         self.wait_status("DISABLE", self.args.disable_timeout)
         before = self.samples[:-1] if end_sample else self.samples
         result = self._classify(before[-self.args.window:])
