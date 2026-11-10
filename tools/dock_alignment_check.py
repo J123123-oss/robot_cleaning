@@ -239,7 +239,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offset-seconds", type=float, default=4.0)
     parser.add_argument("--offset-timeout", type=float, default=5.0)
-    parser.add_argument("--offset-complete-timeout", type=float, default=12.0,
+    parser.add_argument("--offset-complete-timeout", type=float, default=15.0,
                         help="等待OFFSET内部SHIFT/RECENTER自动回到HOLD的超时时间")
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--unloading-timeout", type=float, default=45.0)

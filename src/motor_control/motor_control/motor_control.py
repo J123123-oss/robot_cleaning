@@ -386,7 +386,7 @@ class MotorControlNode(Node):
         self.direction_timer = None
         self.offset_phase = None
         self.offset_phase_start_time = 0.0
-        self.offset_phase_duration = 3.5
+        self.offset_phase_duration = 5.0
         self.brush_speed = 0.0  # 当前滚刷输出轴速度（r/min）。
         self.current_left_speed = 0.0  # 当前左轮输出轴速度（r/min）。
         self.current_right_speed = 0.0  # 当前右轮输出轴速度（r/min）。
@@ -2544,7 +2544,13 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(300.0, lambda: self.auto_stop("d"))
         elif new_state in ("OFFSET_LEFT", "OFFSET_RIGHT"):
             # 先以差速后退形成身位偏移，再用反向差速回正车头。
-            # 两个阶段各2秒，避免一直沿弧线斜行而没有有效横向位移。
+            # 进入测试偏移前清理可能残留的进出仓定时器，避免旧出仓
+            # 结算回调把OFFSET提前切回HOLD。
+            self._cancel_bin_process_timers()
+            self.is_in_bin_process = False
+            self.unloading_phase = None
+            self.loading_phase = None
+            # 两个阶段各5秒，避免一直沿弧线斜行而没有有效横向位移。
             self.offset_phase = "SHIFT"
             self.offset_phase_start_time = time.time()
             if self.direction_timer:
@@ -2670,8 +2676,8 @@ class MotorControlNode(Node):
                 return
 
         # 提高测试偏移的有效轮速和差速幅度，确保产生可观的横向位移。
-        base = self.motor_ctrl.BASE_SPEED * 3.0
-        inner = base * 0.55
+        base = self.motor_ctrl.BASE_SPEED * 3.5
+        inner = base * 0.45
         left_speed, right_speed = (
             ((inner, -base) if self.offset_phase == "SHIFT"
              else (base, -inner))
