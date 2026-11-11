@@ -1959,7 +1959,7 @@ class MotorControlNode(Node):
         self.get_logger().info(f"[ROSNode] 已发布区域跳转指令: skip_to_area -> {area_name}")
 
     def io_data_callback(self, msg: UInt8):
-        """实时更新传感器状态，并为手动控制执行边界保护。"""
+        """实时更新传感器状态，并为手动控制和进出仓执行边界保护。"""
         self.last_io_update_time = time.monotonic()
         # 传感器位解析必须在所有控制模式下执行，sensors_status不能沿用旧值。
         # 低电平有效，bit=0表示触发，与rtk_nav保持一致。
@@ -1975,9 +1975,9 @@ class MotorControlNode(Node):
             | (int(self.back_right) << 3)
         )
 
-        # 进出仓不在motor_control中判断防跌落；AUTO_CLEANING由rtk_nav的
-        # io_data_rtk_callback独占判断，避免两个节点同时改写自动导航运行状态。
-        if self.is_in_bin_process or self.current_control_mode == "AUTO_CLEANING":
+        # 仅自动清扫交由rtk_nav处理；进出仓即使从自动模式发起也必须
+        # 执行本节点的方向保护，不能因流程标记而跳过防跌落。
+        if self.current_control_mode == "AUTO_CLEANING" and not self.is_in_bin_process:
             self.confirmed_sensors.clear()
             self.blocked_directions.clear()
             return
@@ -4192,6 +4192,14 @@ class MotorControlNode(Node):
         # 0.35 m/s 对应的物理轮速范围内，避免任一控制路径绕过限幅。
         left_speed = max(MIN_SPEED, min(MAX_SPEED, float(left_speed)))
         right_speed = max(MIN_SPEED, min(MAX_SPEED, float(right_speed)))
+
+        # 进出仓定时器会持续写轮速，必须在最终下发处拦截被禁止的方向，
+        # 防止IO回调停车后又被下一帧恢复。安全退出方向仍可通行。
+        # 自动清扫继续由rtk_nav独占保护，避免叠加两套边界策略。
+        if ((self.is_in_bin_process or self.current_control_mode != "AUTO_CLEANING")
+                and self._wheel_command_blocked_by_sensors(left_speed, right_speed)):
+            left_speed = 0.0
+            right_speed = 0.0
 
         # 保存当前速度值
         self.current_left_speed = left_speed
