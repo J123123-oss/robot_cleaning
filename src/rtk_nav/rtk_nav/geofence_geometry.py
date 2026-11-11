@@ -168,6 +168,8 @@ def build_geofence_payload(
     """Build JSON-compatible fence metadata from legacy planner geometry."""
     areas = []
     for name, corners in zip(area_names, inner_corners_utm):
+        if abs(_signed_area(corners)) < 1e-6:
+            continue
         boundary = expand_convex_polygon(corners, expansion_radius_m)
         areas.append({
             "name": name,

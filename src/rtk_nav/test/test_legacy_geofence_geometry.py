@@ -65,3 +65,15 @@ def test_payload_bridge_corner_has_no_segment_join_gap():
     )
 
     assert point_allowed_by_payload((2.1, 0.9), payload)
+
+
+def test_payload_skips_zero_area_bridge_placeholder_regions():
+    payload = build_geofence_payload(
+        ["bridge_E1_E2", "E1"],
+        [[(0.0, 0.0), (0.0, 1.0), (0.0, 1.0), (0.0, 0.0)],
+         [(10.0, 0.0), (20.0, 0.0), (20.0, 5.0), (10.0, 5.0)]],
+        [],
+        (49, "S"),
+    )
+
+    assert [area["name"] for area in payload["areas"]] == ["E1"]
