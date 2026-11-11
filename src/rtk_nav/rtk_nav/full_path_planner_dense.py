@@ -14,6 +14,11 @@ import yaml
 import json
 import numpy as np
 
+try:
+    from .geofence_geometry import build_geofence_payload
+except ImportError:
+    from geofence_geometry import build_geofence_payload
+
 DEFAULT_DENSE_SPACING = 15.0
 
 
@@ -77,6 +82,8 @@ def generate_dense_from_utm(path_utm, spacing):
         
         dense.extend(seg_pts)
     return dense
+
+
 
 
 def calculate_heading_angles(path_latlon):
@@ -755,6 +762,7 @@ class MultiAreaCleaningPathPlanner(Node):
         area_names = []
         # 新增：存储每个区域的路径点索引范围，供绘图标注区域名称
         area_index_ranges = []
+        bridge_tracks = []
         
         try:
             # ---------------------- 循环生成每个区域的路径 ----------------------
@@ -859,6 +867,12 @@ class MultiAreaCleaningPathPlanner(Node):
                     if end_idx < len(merged_path_utm) and next_start_idx < len(merged_path_utm):
                         bridge_utm = [merged_path_utm[end_idx], merged_path_utm[next_start_idx]]
                         bridge_dense_utm = generate_dense_from_utm(bridge_utm, dense_spacing)
+                        bridge_tracks.append({
+                            "name": f"{area_name}_to_{area_index_ranges[area_idx + 1][2]}",
+                            "from_area": area_name,
+                            "to_area": area_index_ranges[area_idx + 1][2],
+                            "centerline_utm": bridge_dense_utm,
+                        })
                         for e, n in bridge_dense_utm[1:-1]:
                             lat, lon = get_latlon_from_utm(e, n, utm_zone[0], utm_zone[1])
                             dense_latlon.append((lon, lat))
@@ -889,8 +903,20 @@ class MultiAreaCleaningPathPlanner(Node):
                         current_area_name = area_name
                     # f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{hdg:.2f},{area_name}\n")
                     f.write(f"{global_idx+1},{lon:.8f},{lat:.8f},{hdg:.2f}\n")
+
+            fence_filename = os.path.join(save_dir, f"{file_prefix}.fence.json")
+            fence_payload = build_geofence_payload(
+                area_names,
+                all_inner_corners,
+                bridge_tracks,
+                utm_zone,
+                expansion_radius_m=0.2,
+            )
+            with open(fence_filename, "w", encoding="utf-8") as fence_file:
+                json.dump(fence_payload, fence_file, ensure_ascii=False, indent=2)
             
             self.get_logger().info(f"密集点路径文件已保存到：{dense_filename}，共{len(dense_latlon)}个点")
+            self.get_logger().info(f"电子围栏文件已保存到：{fence_filename}")
             
             # 生成合并的密集点用于绘图
             all_dense_utm = []

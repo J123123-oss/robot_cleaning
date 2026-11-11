@@ -29,6 +29,10 @@ from rtk_nav.imu_odom_fallback import (
     normalize_heading_error,
     position_residual_m,
 )
+from rtk_nav.geofence_geometry import (
+    load_geofence_payload,
+    point_allowed_by_payload,
+)
 
 # -------------------------- 全局配置与枚举 --------------------------
 # 新增：信号漂移过滤配置
@@ -99,6 +103,7 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "imu_odom_fallback_boundary_blocked",
     "imu_odom_fallback_recovery_mismatch",
     "imu_odom_fallback_manual_takeover",
+    "geofence_stop",
 })
 # 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
 # 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
@@ -262,6 +267,7 @@ class NavState:
     WAYPOINT_CALIB = "WAYPOINT_CALIB"
     COMPLETED = "COMPLETED"
     PAUSE = "PAUSE"  # RTK非固定解时暂停导航
+    FENCE_STOP = "FENCE_STOP"
 
 class BoundaryCorrectState:
     IDLE = "IDLE"
@@ -435,6 +441,11 @@ class RTKNavControlNode(Node):
         # 声明RTK路径参数
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.geofence_path = os.path.splitext(self.rtk_path_file)[0] + ".fence.json"
+        self.geofence_payload = None
+        self.geofence_outside_count = 0
+        self.geofence_confirm_frames = 3
+        self.geofence_latched = False
         self.declare_parameter("enable_imu_odom_fallback", False)
         self.enable_imu_odom_fallback = bool(
             self.get_parameter("enable_imu_odom_fallback").value
@@ -590,6 +601,7 @@ class RTKNavControlNode(Node):
         self.load_rtk_path()
         # 加载初始路径文件
         self.load_waypoints_from_file(self.rtk_path_file)
+        self.load_geofence_sidecar(self.geofence_path)
     
 
     # def load_waypoints_from_file(self, file_path: str) -> bool:
@@ -746,12 +758,74 @@ class RTKNavControlNode(Node):
             # 原有日志和返回逻辑
             self.get_logger().info(f"[RTKNav] 成功加载路径文件: {file_path}, 共 {len(self.waypoints)} 个航点（第一个航点已就绪）")
             self.rtk_path_file = file_path
+            self.geofence_path = os.path.splitext(file_path)[0] + ".fence.json"
+            self.load_geofence_sidecar(self.geofence_path)
             self.update_cleaning_area(force=True)
             return True
             
         except Exception as e:
             self.get_logger().error(f"[RTKNav] 加载路径文件失败: {e}")
             return False
+
+    def load_geofence_sidecar(self, path: str) -> bool:
+        """Load the legacy dense planner's fence sidecar for the active route."""
+        try:
+            self.geofence_payload = load_geofence_payload(path)
+            self.geofence_outside_count = 0
+            self.geofence_latched = False
+            self.get_logger().info(
+                f"[电子围栏] 已加载 {path}: "
+                f"areas={len(self.geofence_payload.get('areas', []))}, "
+                f"bridges={len(self.geofence_payload.get('bridges', []))}"
+            )
+            return True
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.geofence_payload = None
+            self.get_logger().error(f"[电子围栏] 加载失败，自动清扫将被锁定: {exc}")
+            return False
+
+    def check_geofence_position(self) -> bool:
+        """Check the current car-center position against the sidecar geometry."""
+        if self.geofence_payload is None:
+            return False
+        if not self.current_gps or len(self.current_gps) < 2:
+            return False
+        lon, lat = self.current_gps
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            return False
+        return point_allowed_by_payload(self.latlon_to_utm(lat, lon), self.geofence_payload)
+
+    def enforce_geofence(self) -> bool:
+        """Return True when navigation must remain stopped by the geofence."""
+        if self.geofence_latched:
+            self.publish_stop_speed()
+            return True
+        if self.geofence_payload is None:
+            self.trip_geofence_stop("sidecar_missing")
+            return True
+        if not self.rtk_solution_ready or not self.current_gps:
+            return False
+        if self.check_geofence_position():
+            self.geofence_outside_count = 0
+            return False
+        self.geofence_outside_count += 1
+        if self.geofence_outside_count >= self.geofence_confirm_frames:
+            self.trip_geofence_stop("outside_allowed_region")
+            return True
+        self.publish_stop_speed()
+        return True
+
+    def trip_geofence_stop(self, reason: str) -> None:
+        self.geofence_latched = True
+        self.nav_running = False
+        self.multi_waypoint_generator = None
+        self.nav_context["nav_state"] = NavState.PAUSE
+        self.nav_context["pause_reason"] = "geofence_stop"
+        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
+        self.publish_stop_speed()
+        self.publish_nav_state(NavState.PAUSE)
+        self.get_logger().error(f"[电子围栏] 已停车并锁定: {reason}")
+
     def update_boundary_parameter(self, params):
         """
         ROS2动态参数回调函数：监听参数修改, 实时更新 self.is_boundary_triggered
@@ -4286,6 +4360,12 @@ class RTKNavControlNode(Node):
             return False
 
         pause_reason = self.nav_context.get("pause_reason")
+        if pause_reason == "geofence_stop":
+            if not self.check_geofence_position():
+                self.get_logger().error("[电子围栏] 当前位置仍不在允许区域，拒绝复位")
+                return False
+            self.geofence_latched = False
+            self.geofence_outside_count = 0
         target_waypoint = self.waypoints[self.current_waypoint_idx]
 
         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
@@ -6107,6 +6187,8 @@ class RTKNavControlNode(Node):
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            if self.enforce_geofence():
+                return
             # 仅在RTK导航模式下上报导航错误码
             self.update_rtk_error_status(self.rtk_error_code, force=True)
             if (
