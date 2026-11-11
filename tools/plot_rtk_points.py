@@ -38,10 +38,8 @@ def render(points, background_image=None, reference_points=None):
     background = ""
     if background_image:
         encoded = base64.b64encode(Path(background_image).read_bytes()).decode("ascii")
-        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet">'
-               f'<image width="1" height="1" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,{encoded}"/></svg>')
-        svg_data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-        background = f'<div id="pdf-controls"><label><input id="pdf-visible" type="checkbox" checked>显示 PDF</label><label>透明度 <input id="pdf-opacity" type="range" min="0" max="1" step="0.05" value="0.45"></label><label>PDF缩放 <input id="pdf-scale" type="range" min="0.25" max="3" step="0.05" value="1"> <span id="pdf-scale-value">1.00x</span></label><label>旋转 <input id="pdf-rotation" type="range" min="-180" max="180" step="1" value="0"> <span id="pdf-angle">0°</span></label><label><input id="online-map" type="checkbox">显示在线地图</label></div><div id="pdf-data" data-image="data:image/svg+xml;base64,{svg_data}"></div>'
+        svg_data = encoded
+        background = f'<div id="pdf-controls"><label><input id="pdf-visible" type="checkbox" checked>显示底图</label><label>透明度 <input id="pdf-opacity" type="range" min="0" max="1" step="0.05" value="0.45"></label><label>底图缩放 <input id="pdf-scale" type="range" min="0.25" max="3" step="0.05" value="1"> <span id="pdf-scale-value">1.00x</span></label><label>旋转 <input id="pdf-rotation" type="range" min="-180" max="180" step="1" value="0"> <span id="pdf-angle">0°</span></label><label><input id="online-map" type="checkbox">显示在线地图</label></div><div id="pdf-data" data-image="data:image/png;base64,{svg_data}"></div>'
     else:
         background = ''
     if points:
@@ -58,7 +56,8 @@ const points={payload}; const referencePoints={reference_payload}; const map=L.m
 const onlineTiles=L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:22,attribution:'© OpenStreetMap'}});
 const onlineToggle=document.getElementById('online-map'); if(onlineToggle) onlineToggle.onchange=()=>onlineToggle.checked?onlineTiles.addTo(map):map.removeLayer(onlineTiles);
 const bounds=[]; const pdfBounds={json.dumps(bounds)}; let pdfOverlay=null;
-if(document.getElementById('pdf-data')){{const image=document.getElementById('pdf-data').dataset.image; pdfOverlay=L.imageOverlay(image,pdfBounds,{{opacity:.45,zIndex:1,interactive:false}}).addTo(map);}}
+if(document.getElementById('pdf-data')){{const image=document.getElementById('pdf-data').dataset.image; const anchor=L.latLngBounds(pdfBounds).getCenter(); pdfOverlay=L.marker(anchor,{{draggable:true,icon:L.divIcon({{className:'background-anchor',html:'<img id="background-image" src="'+image+'" style="position:absolute;max-width:none;transform-origin:center;pointer-events:none">',iconSize:[0,0],iconAnchor:[0,0]}}),zIndexOffset:-10000,opacity:.45}}).addTo(map);}}
+
 points.forEach(p=>{{const marker=L.circleMarker([Number(p.lat),Number(p.lon)],{{radius:6,color:p.valid?'#16803c':'#c62828',fillOpacity:.8,zIndexOffset:1000}});
 marker.bindPopup('<div class="popup"><b>seq '+p.seq+'</b><br>lon: '+p.lon+'<br>lat: '+p.lat+'<br>valid: '+p.valid+'<br>position_status: '+p.position+'<br>orientation_status: '+p.orientation+'<br>time: '+{json.dumps('')}+' '+p.time+'</div>'); marker.addTo(map); bounds.push([Number(p.lat),Number(p.lon)]);}});
 if(bounds.length) map.fitBounds(bounds,{{padding:[30,30]}});
@@ -66,7 +65,9 @@ referencePoints.forEach(p=>{{const marker=L.circleMarker([p.lat,p.lon],{{radius:
 const visible=document.getElementById('pdf-visible'); const opacity=document.getElementById('pdf-opacity'); const scale=document.getElementById('pdf-scale'); const rotation=document.getElementById('pdf-rotation');
 if(visible) visible.onchange=()=>{{if(visible.checked) pdfOverlay.addTo(map); else map.removeLayer(pdfOverlay);}};
 if(opacity) opacity.oninput=()=>pdfOverlay.setOpacity(Number(opacity.value));
-function updatePdfTransform(){{if(pdfOverlay?._image) pdfOverlay._image.style.transform=`scale(${{scale.value}}) rotate(${{rotation.value}}deg)`;}}
+const baseZoom=map.getZoom();
+function updatePdfTransform(){{const img=document.getElementById('background-image'); if(img){{img.style.width=(600*Math.pow(2,map.getZoom()-baseZoom)*Number(scale.value))+'px'; img.style.height='auto'; img.style.transform=`translate(-50%,-50%) rotate(${{rotation.value}}deg)`;}}}}
+map.on('zoomend',updatePdfTransform); updatePdfTransform();
 if(scale) scale.oninput=()=>{{document.getElementById('pdf-scale-value').textContent=Number(scale.value).toFixed(2)+'x'; updatePdfTransform();}};
 if(rotation) rotation.oninput=()=>{{document.getElementById('pdf-angle').textContent=rotation.value+'°'; updatePdfTransform();}};
 </script></body></html>'''
@@ -77,6 +78,7 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--background-pdf")
+    parser.add_argument("--background-image")
     parser.add_argument("--reference-point", action="append", default=[], metavar="NAME,LON,LAT")
     args = parser.parse_args()
     references = []
@@ -91,7 +93,7 @@ def main():
             background = Path(prefix + ".png")
             Path(args.output).write_text(render(load_points(args.input), background, references), encoding="utf-8")
         return
-    Path(args.output).write_text(render(load_points(args.input), reference_points=references), encoding="utf-8")
+    Path(args.output).write_text(render(load_points(args.input), args.background_image, references), encoding="utf-8")
 
 
 if __name__ == "__main__":
