@@ -943,7 +943,7 @@ class MultiAreaCleaningPathPlanner(Node):
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
                 save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm,
-                area_index_ranges, fence_payload.get("bridges", []),
+                area_index_ranges, fence_payload,
             )
         
         except ValueError as e:
@@ -964,7 +964,7 @@ class MultiAreaCleaningPathPlanner(Node):
         area_names,
         dense_utm=None,
         area_index_ranges=None,
-        fence_bridges=None,
+        fence_payload=None,
     ):
         """绘制区域路径、桥架围栏走廊和中心线可视化图。"""
         fig, ax = plt.subplots(figsize=(24, 20))
@@ -1008,11 +1008,41 @@ class MultiAreaCleaningPathPlanner(Node):
             ax.annotate(f'{i}-B-{area_name}', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
             ax.annotate(f'{i}-C-{area_name}', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
 
+        # 绘制电子围栏侧车文件中的清扫区域安全边界。
+        # 该边界已经包含 0.2 m 外扩，作为 PNG 中的主要安全区域底色。
+        fence_area_label_added = False
+        for area_index, area in enumerate((fence_payload or {}).get("areas", [])):
+            boundary = area.get("boundary_utm", [])
+            if len(boundary) < 3:
+                continue
+            boundary_e = [point[0] for point in boundary] + [boundary[0][0]]
+            boundary_n = [point[1] for point in boundary] + [boundary[0][1]]
+            color = hex_colors[area_index % len(hex_colors)]
+            ax.fill(
+                boundary_e,
+                boundary_n,
+                facecolor=color,
+                edgecolor=color,
+                alpha=0.18,
+                linewidth=2.2,
+                label="electronic fence area" if not fence_area_label_added else None,
+                zorder=0,
+            )
+            ax.plot(
+                boundary_e,
+                boundary_n,
+                color=color,
+                linewidth=2.2,
+                linestyle="-",
+                zorder=2,
+            )
+            fence_area_label_added = True
+
         # 绘制电子围栏侧车文件中的桥架走廊和中心线，确保图片展示的几何体
         # 与运行时实际使用的 corridors_utm / centerline_utm 完全一致。
         bridge_corridor_label_added = False
         bridge_centerline_label_added = False
-        for bridge in fence_bridges or []:
+        for bridge in (fence_payload or {}).get("bridges", []):
             bridge_name = bridge.get("name", "bridge")
             for corridor in bridge.get("corridors_utm", []):
                 if len(corridor) < 3:
@@ -1136,11 +1166,33 @@ class MultiAreaCleaningPathPlanner(Node):
             for point_index, point in enumerate(path_utm)
             if not point_allowed_by_payload(point, fence_payload)
         ]
+        bridge_violations = []
+        for bridge_index, bridge in enumerate(fence_payload.get("bridges", [])):
+            centerline = bridge.get("centerline_utm", [])
+            for segment_index, (start, end) in enumerate(
+                zip(centerline, centerline[1:])
+            ):
+                segment_length = math.hypot(
+                    end[0] - start[0], end[1] - start[1]
+                )
+                sample_count = max(1, int(math.ceil(segment_length / 0.5)))
+                for sample_index in range(sample_count + 1):
+                    ratio = sample_index / sample_count
+                    point = (
+                        start[0] + (end[0] - start[0]) * ratio,
+                        start[1] + (end[1] - start[1]) * ratio,
+                    )
+                    if not point_allowed_by_payload(point, fence_payload):
+                        bridge_violations.append(
+                            (bridge_index, segment_index, sample_index, point)
+                        )
 
-        if area_violations or path_violations:
+        if area_violations or path_violations or bridge_violations:
             self.get_logger().error(
                 "电子围栏校验失败："
-                f"区域越界点={len(area_violations)}，路径越界点={len(path_violations)}"
+                f"区域越界点={len(area_violations)}，"
+                f"路径越界点={len(path_violations)}，"
+                f"桥架越界点={len(bridge_violations)}"
             )
             if area_violations:
                 self.get_logger().error(
@@ -1153,11 +1205,19 @@ class MultiAreaCleaningPathPlanner(Node):
                     f"首个路径越界点：路径点{path_violations[0][0]} "
                     f"{path_violations[0][1]}"
                 )
+            if bridge_violations:
+                self.get_logger().error(
+                    f"首个桥架越界点：桥架{bridge_violations[0][0]} "
+                    f"线段{bridge_violations[0][1]} "
+                    f"采样点{bridge_violations[0][2]} {bridge_violations[0][3]}"
+                )
             raise ValueError("generated cleaning geometry is outside the electronic fence")
 
         self.get_logger().info(
             "电子围栏校验通过："
-            f"{len(inner_corners)} 个清扫区域，{len(path_utm)} 个路径点均在允许区域内"
+            f"{len(inner_corners)} 个清扫区域，"
+            f"{len(fence_payload.get('bridges', []))} 条桥架，"
+            f"{len(path_utm)} 个路径点均在允许区域内"
         )
 
 # ---------------------- 主函数 ----------------------
