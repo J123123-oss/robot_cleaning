@@ -34,6 +34,8 @@ from rtk_nav.geofence_geometry import (
     point_allowed_by_payload,
 )
 
+ERROR_GEOFENCE_OUTSIDE = 1024
+
 # -------------------------- 全局配置与枚举 --------------------------
 # 新增：信号漂移过滤配置
 GPS_SMOOTH_WINDOW = 5  # GPS经纬度滑动平均窗口大小（帧）
@@ -572,6 +574,10 @@ class RTKNavControlNode(Node):
             Vector3, "/rtk/visual_path_reference", 10
         )
         self.nav_state_pub = self.create_publisher(String, "/rtk/nav_state", 10)
+        self.keyboard_control_pub = self.create_publisher(String, "/keyboard/control", 10)
+        self.geofence_fault_pub = self.create_publisher(
+            Int16, "/rtk/geofence_fault_code", 10
+        )
         self._nav_state_seq = 0
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
         self.current_route_pub = self.create_publisher(String, "/rtk/current_route_id", 10)
@@ -816,6 +822,7 @@ class RTKNavControlNode(Node):
         return True
 
     def trip_geofence_stop(self, reason: str) -> None:
+        already_latched = self.geofence_latched
         self.geofence_latched = True
         self.nav_running = False
         self.multi_waypoint_generator = None
@@ -824,6 +831,16 @@ class RTKNavControlNode(Node):
         self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
         self.publish_stop_speed()
         self.publish_nav_state(NavState.PAUSE)
+        if not already_latched:
+            hold_msg = String()
+            hold_msg.data = "HOLD"
+            self.keyboard_control_pub.publish(hold_msg)
+            fault_msg = Int16()
+            fault_msg.data = ERROR_GEOFENCE_OUTSIDE
+            self.geofence_fault_pub.publish(fault_msg)
+            self.get_logger().error(
+                f"[电子围栏] 已请求HOLD并上报故障码: {ERROR_GEOFENCE_OUTSIDE}"
+            )
         self.get_logger().error(f"[电子围栏] 已停车并锁定: {reason}")
 
     def update_boundary_parameter(self, params):

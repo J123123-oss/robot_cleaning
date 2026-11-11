@@ -103,6 +103,7 @@ ERROR_HEADING_STABILITY_TIMEOUT = 64  # AUTO航向稳定门控超时
 ERROR_CALIB_TIMEOUT = 128  # 航向校准卡滞/超时（来自RTK）
 ERROR_TOTAL_OVERCURRENT = 256  # 电池总电流或滚刷电流持续超限
 ERROR_AUTO_CLEANING_LOW_BATTERY = 512  # 清扫中途低电量，已切换HOLD
+ERROR_GEOFENCE_OUTSIDE = 1024  # 电子围栏连续越界，已切换HOLD
 
 
 def should_pause_auto_cleaning_for_low_battery(
@@ -594,6 +595,7 @@ class MotorControlNode(Node):
             )
         self._brush_current_anomaly_last_log_time = {}
         self.current_stall_fault = False
+        self.geofence_fault_latched = False
         self.total_current_fault = False
         self.total_current_fault_current = 0.0
         self.current_stall_fault_source = None
@@ -720,6 +722,12 @@ class MotorControlNode(Node):
             "/rtk/error_status",
             self.rtk_error_callback,
             10
+        )
+        self.geofence_fault_sub = self.create_subscription(
+            Int16,
+            "/rtk/geofence_fault_code",
+            self.geofence_fault_callback,
+            10,
         )
         self.cleaning_area_sub = self.create_subscription(
             String,
@@ -966,6 +974,8 @@ class MotorControlNode(Node):
             error |= ERROR_LOADING_TIMEOUT
         if self.current_stall_fault:
             error |= ERROR_TOTAL_OVERCURRENT
+        if self.geofence_fault_latched:
+            error |= ERROR_GEOFENCE_OUTSIDE
         return error
 
     def _has_active_motor_command(self) -> bool:
@@ -1894,6 +1904,22 @@ class MotorControlNode(Node):
             | ERROR_HEADING_STABILITY_TIMEOUT
             | ERROR_CALIB_TIMEOUT
         )
+
+    def geofence_fault_callback(self, msg: Int16):
+        """Latch an RTK geofence fault and route the robot through HOLD."""
+        if int(msg.data) & ERROR_GEOFENCE_OUTSIDE:
+            was_latched = self.geofence_fault_latched
+            self.geofence_fault_latched = True
+            self.rtk_left_speed = 0.0
+            self.rtk_right_speed = 0.0
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
+            if not was_latched:
+                self.get_logger().error(
+                    f"[电子围栏] 收到越界故障码{ERROR_GEOFENCE_OUTSIDE}，切换HOLD"
+                )
+                self.switch_state("h")
+                self.publish_state()
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
