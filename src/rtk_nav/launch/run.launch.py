@@ -123,73 +123,6 @@ def generate_launch_description():
         default_value=TextSubstitution(text="10.026761"),
         description="Maximum RTK correction: 15% of wheel output-shaft speed",
     )
-    declare_publish_debug_images_arg = DeclareLaunchArgument(
-        "publish_debug_images",
-        default_value=TextSubstitution(text="true"),
-        description="Publish grid-line debug images",
-    )
-    declare_always_show_axis_debug_arg = DeclareLaunchArgument(
-        "always_show_axis_debug",
-        default_value=TextSubstitution(text="true"),
-        description=(
-            "Show full axis, line-count, and RTK diagnostics in the debug image"
-        ),
-    )
-    declare_coarse_line_min_length_arg = DeclareLaunchArgument(
-        "coarse_line_min_length_px",
-        default_value=TextSubstitution(text="30.0"),
-        description="Minimum coarse tracking-line Hough segment length in pixels",
-    )
-    declare_coarse_line_min_width_arg = DeclareLaunchArgument(
-        "coarse_line_min_width_px",
-        default_value=TextSubstitution(text="4.0"),
-        description="Minimum coarse tracking-line width metric in pixels",
-    )
-    declare_coarse_line_min_support_arg = DeclareLaunchArgument(
-        "coarse_line_min_support",
-        default_value=TextSubstitution(text="0.3"),
-        description="Minimum white-mask support for a coarse tracking line",
-    )
-    declare_coarse_line_merge_gap_arg = DeclareLaunchArgument(
-        "coarse_line_merge_gap_px",
-        default_value=TextSubstitution(text="30.0"),
-        description="Maximum normal gap for merging coarse line edges",
-    )
-    declare_coarse_line_gap_fill_arg = DeclareLaunchArgument(
-        "coarse_line_gap_fill_px",
-        default_value=TextSubstitution(text="80.0"),
-        description="Maximum along-line reflection gap to bridge for coarse tracking",
-    )
-    declare_coarse_line_bridge_normal_gap_arg = DeclareLaunchArgument(
-        "coarse_line_bridge_normal_gap_px",
-        default_value=TextSubstitution(text="10.0"),
-        description="Maximum normal gap between coarse line segments to bridge",
-    )
-    declare_coarse_line_bridge_angle_arg = DeclareLaunchArgument(
-        "coarse_line_bridge_angle_tolerance_deg",
-        default_value=TextSubstitution(text="3.0"),
-        description="Maximum direction difference for coarse line bridging",
-    )
-    declare_white_line_value_threshold_arg = DeclareLaunchArgument(
-        "white_line_value_threshold",
-        default_value=TextSubstitution(text="170.0"),
-        description="Minimum HSV value for a white grid line",
-    )
-    declare_white_line_saturation_max_arg = DeclareLaunchArgument(
-        "white_line_saturation_max",
-        default_value=TextSubstitution(text="100.0"),
-        description="Maximum HSV saturation for a white grid line",
-    )
-    declare_angle_average_center_band_ratio_arg = DeclareLaunchArgument(
-        "angle_average_center_band_ratio",
-        default_value=TextSubstitution(text="0.8"),
-        description="Image center-band ratio used for fine-line angle averaging",
-    )
-    declare_reference_axis_offset_arg = DeclareLaunchArgument(
-        "reference_axis_offset_px",
-        default_value=TextSubstitution(text="0.0"),
-        description="Fixed line measurement section offset along path axis",
-    )
 
     # 定义电机控制节点
     motor_control_node = Node(
@@ -391,19 +324,6 @@ def generate_launch_description():
     ld.add_action(declare_stanley_k_near_target_arg)
     ld.add_action(declare_rtk_correction_ratio_arg)
     ld.add_action(declare_rtk_max_correction_arg)
-    ld.add_action(declare_publish_debug_images_arg)
-    ld.add_action(declare_always_show_axis_debug_arg)
-    ld.add_action(declare_coarse_line_min_length_arg)
-    ld.add_action(declare_coarse_line_min_width_arg)
-    ld.add_action(declare_coarse_line_min_support_arg)
-    ld.add_action(declare_coarse_line_merge_gap_arg)
-    ld.add_action(declare_coarse_line_gap_fill_arg)
-    ld.add_action(declare_coarse_line_bridge_normal_gap_arg)
-    ld.add_action(declare_coarse_line_bridge_angle_arg)
-    ld.add_action(declare_white_line_value_threshold_arg)
-    ld.add_action(declare_white_line_saturation_max_arg)
-    ld.add_action(declare_angle_average_center_band_ratio_arg)
-    ld.add_action(declare_reference_axis_offset_arg)
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
