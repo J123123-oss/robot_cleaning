@@ -15,9 +15,17 @@ import json
 import numpy as np
 
 try:
-    from .geofence_geometry import build_geofence_payload
+    from .geofence_geometry import (
+        build_geofence_payload,
+        load_geofence_payload,
+        point_allowed_by_payload,
+    )
 except ImportError:
-    from geofence_geometry import build_geofence_payload
+    from geofence_geometry import (
+        build_geofence_payload,
+        load_geofence_payload,
+        point_allowed_by_payload,
+    )
 
 DEFAULT_DENSE_SPACING = 15.0
 
@@ -535,7 +543,6 @@ class MultiAreaCleaningPathPlanner(Node):
         self.declare_parameter('headless', True)
         self.declare_parameter('output_dir', '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/')
         self.declare_parameter('output_name', '')
-        self.declare_parameter('show_basemap', True)
         
         # 尝试从 YAML 配置文件加载
         config_file = self.get_parameter('config_file').value
@@ -915,6 +922,7 @@ class MultiAreaCleaningPathPlanner(Node):
             )
             with open(fence_filename, "w", encoding="utf-8") as fence_file:
                 json.dump(fence_payload, fence_file, ensure_ascii=False, indent=2)
+            fence_payload = load_geofence_payload(fence_filename)
             
             self.get_logger().info(f"密集点路径文件已保存到：{dense_filename}，共{len(dense_latlon)}个点")
             self.get_logger().info(f"电子围栏文件已保存到：{fence_filename}")
@@ -924,13 +932,18 @@ class MultiAreaCleaningPathPlanner(Node):
             for lon, lat in dense_latlon:
                 e, n, _, _ = get_utm_coords(lat, lon)
                 all_dense_utm.append((e, n))
+
+            self._validate_fence_geometry(
+                fence_payload,
+                all_inner_corners,
+                all_dense_utm,
+            )
             
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
                 save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm,
                 area_index_ranges, fence_payload.get("bridges", []),
-                show_basemap=bool(self.get_parameter('show_basemap').value),
             )
         
         except ValueError as e:
@@ -952,7 +965,6 @@ class MultiAreaCleaningPathPlanner(Node):
         dense_utm=None,
         area_index_ranges=None,
         fence_bridges=None,
-        show_basemap=True,
     ):
         """绘制区域路径、桥架围栏走廊和中心线可视化图。"""
         fig, ax = plt.subplots(figsize=(24, 20))
@@ -1064,11 +1076,6 @@ class MultiAreaCleaningPathPlanner(Node):
         ax.scatter(path_e[0], path_n[0], c='#2ca02c', s=150, marker='o', label='start', zorder=5)
         ax.scatter(path_e[-1], path_n[-1], c='#d62728', s=150, marker='x', label='end', zorder=5)
 
-        # 在 UTM 坐标轴下加载在线 OSM 底图。contextily 会将瓦片从
-        # Web Mercator 重投影到当前 UTM 坐标系，底图失败时不影响路线图输出。
-        if show_basemap:
-            self._add_utm_basemap(ax, utm_zone)
-        
         # 图表配置
         ax.set_xlabel(f'UTM E/m - {zone_num}{zone_letter}')
         ax.set_ylabel(f'UTM N/m - {zone_num}{zone_letter}')
@@ -1094,49 +1101,41 @@ class MultiAreaCleaningPathPlanner(Node):
             plt.pause(3)           # 显示3秒
             plt.close(fig)         # 自动关闭图片窗口
 
-    def _add_utm_basemap(self, ax, utm_zone):
-        """加载 OSM 底图并保持当前 UTM 坐标轴。"""
-        try:
-            import contextily as ctx
-        except ImportError:
-            self.get_logger().warning(
-                "未安装 contextily，跳过底图；可执行 `python -m pip install contextily`"
-            )
-            return
+    def _validate_fence_geometry(self, fence_payload, inner_corners, path_utm):
+        """Verify the generated cleaning regions and route are inside the sidecar fence."""
+        area_violations = []
+        for area_index, corners in enumerate(inner_corners):
+            for corner_index, point in enumerate(corners):
+                if not point_allowed_by_payload(point, fence_payload):
+                    area_violations.append((area_index, corner_index, point))
 
-        zone_num, zone_letter = utm_zone
-        zone_num = int(zone_num)
-        zone_letter = str(zone_letter).upper()
-        epsg = (32600 if zone_letter >= "N" else 32700) + zone_num
-        sources = (
-            ("Esri World Imagery", ctx.providers.Esri.WorldImagery),
-            ("OpenStreetMap", ctx.providers.OpenStreetMap.Mapnik),
+        path_violations = [
+            (point_index, point)
+            for point_index, point in enumerate(path_utm)
+            if not point_allowed_by_payload(point, fence_payload)
+        ]
+
+        if area_violations or path_violations:
+            self.get_logger().error(
+                "电子围栏校验失败："
+                f"区域越界点={len(area_violations)}，路径越界点={len(path_violations)}"
+            )
+            if area_violations:
+                self.get_logger().error(
+                    f"首个区域越界点：区域{area_violations[0][0]} "
+                    f"角点{area_violations[0][1]} {area_violations[0][2]}"
+                )
+            if path_violations:
+                self.get_logger().error(
+                    f"首个路径越界点：路径点{path_violations[0][0]} "
+                    f"{path_violations[0][1]}"
+                )
+            raise ValueError("generated cleaning geometry is outside the electronic fence")
+
+        self.get_logger().info(
+            "电子围栏校验通过："
+            f"{len(inner_corners)} 个清扫区域，{len(path_utm)} 个路径点均在允许区域内"
         )
-        errors = []
-        for source_name, source in sources:
-            try:
-                ctx.add_basemap(
-                    ax,
-                    source=source,
-                    crs=f"EPSG:{epsg}",
-                    alpha=0.55,
-                    attribution_size=6,
-                    reset_extent=False,
-                    zoom_adjust=-1,
-                    zorder=0,
-                )
-                self.get_logger().info(
-                    f"已加载 {source_name} 底图（UTM EPSG:{epsg}）"
-                )
-                return
-            except Exception as exc:
-                errors.append(f"{source_name}: {exc}")
-
-        if errors:
-            error_text = "；".join(errors)
-            self.get_logger().warning(
-                f"底图加载失败，继续输出无底图路线图：{error_text}"
-            )
 
 # ---------------------- 主函数 ----------------------
 def main(args=None):
