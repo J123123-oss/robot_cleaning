@@ -1105,9 +1105,23 @@ class MultiAreaCleaningPathPlanner(Node):
         """Verify the generated cleaning regions and route are inside the sidecar fence."""
         area_violations = []
         for area_index, corners in enumerate(inner_corners):
-            for corner_index, point in enumerate(corners):
-                if not point_allowed_by_payload(point, fence_payload):
-                    area_violations.append((area_index, corner_index, point))
+            if len(corners) < 2:
+                continue
+            for edge_index, (start, end) in enumerate(
+                zip(corners, corners[1:] + corners[:1])
+            ):
+                edge_length = math.hypot(end[0] - start[0], end[1] - start[1])
+                sample_count = max(1, int(math.ceil(edge_length / 0.5)))
+                for sample_index in range(sample_count + 1):
+                    ratio = sample_index / sample_count
+                    point = (
+                        start[0] + (end[0] - start[0]) * ratio,
+                        start[1] + (end[1] - start[1]) * ratio,
+                    )
+                    if not point_allowed_by_payload(point, fence_payload):
+                        area_violations.append(
+                            (area_index, edge_index, sample_index, point)
+                        )
 
         path_violations = [
             (point_index, point)
@@ -1123,7 +1137,8 @@ class MultiAreaCleaningPathPlanner(Node):
             if area_violations:
                 self.get_logger().error(
                     f"首个区域越界点：区域{area_violations[0][0]} "
-                    f"角点{area_violations[0][1]} {area_violations[0][2]}"
+                    f"边{area_violations[0][1]} "
+                    f"采样点{area_violations[0][2]} {area_violations[0][3]}"
                 )
             if path_violations:
                 self.get_logger().error(
