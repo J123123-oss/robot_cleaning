@@ -1107,6 +1107,14 @@ class MultiAreaCleaningPathPlanner(Node):
         for area_index, corners in enumerate(inner_corners):
             if len(corners) < 2:
                 continue
+            signed_area = sum(
+                point[0] * next_point[1] - next_point[0] * point[1]
+                for point, next_point in zip(corners, corners[1:] + corners[:1])
+            ) / 2.0
+            # A=C bridge placeholders have no cleaning area. Their safety
+            # geometry is validated through the bridge centerline/corridor.
+            if abs(signed_area) < 1e-6:
+                continue
             for edge_index, (start, end) in enumerate(
                 zip(corners, corners[1:] + corners[:1])
             ):
