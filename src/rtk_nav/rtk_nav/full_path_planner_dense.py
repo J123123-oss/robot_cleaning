@@ -535,6 +535,7 @@ class MultiAreaCleaningPathPlanner(Node):
         self.declare_parameter('headless', True)
         self.declare_parameter('output_dir', '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/')
         self.declare_parameter('output_name', '')
+        self.declare_parameter('show_basemap', True)
         
         # 尝试从 YAML 配置文件加载
         config_file = self.get_parameter('config_file').value
@@ -928,7 +929,8 @@ class MultiAreaCleaningPathPlanner(Node):
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
                 save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm,
-                area_index_ranges, fence_payload.get("bridges", [])
+                area_index_ranges, fence_payload.get("bridges", []),
+                show_basemap=bool(self.get_parameter('show_basemap').value),
             )
         
         except ValueError as e:
@@ -950,6 +952,7 @@ class MultiAreaCleaningPathPlanner(Node):
         dense_utm=None,
         area_index_ranges=None,
         fence_bridges=None,
+        show_basemap=True,
     ):
         """绘制区域路径、桥架围栏走廊和中心线可视化图。"""
         fig, ax = plt.subplots(figsize=(24, 20))
@@ -1060,6 +1063,11 @@ class MultiAreaCleaningPathPlanner(Node):
         # 标记全局起点和终点
         ax.scatter(path_e[0], path_n[0], c='#2ca02c', s=150, marker='o', label='start', zorder=5)
         ax.scatter(path_e[-1], path_n[-1], c='#d62728', s=150, marker='x', label='end', zorder=5)
+
+        # 在 UTM 坐标轴下加载在线 OSM 底图。contextily 会将瓦片从
+        # Web Mercator 重投影到当前 UTM 坐标系，底图失败时不影响路线图输出。
+        if show_basemap:
+            self._add_utm_basemap(ax, utm_zone)
         
         # 图表配置
         ax.set_xlabel(f'UTM E/m - {zone_num}{zone_letter}')
@@ -1085,6 +1093,34 @@ class MultiAreaCleaningPathPlanner(Node):
             plt.show(block=False)  # 非阻塞
             plt.pause(3)           # 显示3秒
             plt.close(fig)         # 自动关闭图片窗口
+
+    def _add_utm_basemap(self, ax, utm_zone):
+        """加载 OSM 底图并保持当前 UTM 坐标轴。"""
+        try:
+            import contextily as ctx
+        except ImportError:
+            self.get_logger().warning(
+                "未安装 contextily，跳过底图；可执行 `python -m pip install contextily`"
+            )
+            return
+
+        zone_num, zone_letter = utm_zone
+        zone_num = int(zone_num)
+        zone_letter = str(zone_letter).upper()
+        epsg = (32600 if zone_letter >= "N" else 32700) + zone_num
+        try:
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.OpenStreetMap.Mapnik,
+                crs=f"EPSG:{epsg}",
+                alpha=0.55,
+                attribution_size=6,
+                reset_extent=False,
+                zorder=0,
+            )
+            self.get_logger().info(f"已加载 OSM 底图（UTM EPSG:{epsg}）")
+        except Exception as exc:
+            self.get_logger().warning(f"底图加载失败，继续输出无底图路线图：{exc}")
 
 # ---------------------- 主函数 ----------------------
 def main(args=None):
