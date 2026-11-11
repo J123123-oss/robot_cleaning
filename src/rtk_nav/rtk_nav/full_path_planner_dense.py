@@ -927,7 +927,8 @@ class MultiAreaCleaningPathPlanner(Node):
             # ---------------------- 可视化所有区域路径 ----------------------
             self._plot_multi_area_path(
                 merged_path_utm, all_original_corners, all_inner_corners, utm_zone,
-                save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm, area_index_ranges
+                save_dir, file_prefix, all_calib_points_utm, area_names, all_dense_utm,
+                area_index_ranges, fence_payload.get("bridges", [])
             )
         
         except ValueError as e:
@@ -936,8 +937,21 @@ class MultiAreaCleaningPathPlanner(Node):
             self.get_logger().error(f"未知异常：{str(e)}")
 
     # ===== 核心修复+新增ABC标定点显示：_plot_multi_area_path 绘图函数 =====
-    def _plot_multi_area_path(self, merged_path_utm, all_orig_corners, all_inner_corners, utm_zone, save_dir, file_prefix, all_calib_points_utm, area_names, dense_utm=None, area_index_ranges=None):
-        """绘制所有区域的路径可视化图 - 修复matplotlib格式错误+NameError+阻塞问题 + 新增每个区域ABC标定点标注"""
+    def _plot_multi_area_path(
+        self,
+        merged_path_utm,
+        all_orig_corners,
+        all_inner_corners,
+        utm_zone,
+        save_dir,
+        file_prefix,
+        all_calib_points_utm,
+        area_names,
+        dense_utm=None,
+        area_index_ranges=None,
+        fence_bridges=None,
+    ):
+        """绘制区域路径、桥架围栏走廊和中心线可视化图。"""
         fig, ax = plt.subplots(figsize=(24, 20))
         # fig, ax = plt.subplots(figsize=(12, 10))
         zone_num, zone_letter = utm_zone
@@ -978,6 +992,52 @@ class MultiAreaCleaningPathPlanner(Node):
             ax.annotate(f'{i}-A-{area_name}', (a_e, a_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
             ax.annotate(f'{i}-B-{area_name}', (b_e, b_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
             ax.annotate(f'{i}-C-{area_name}', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
+
+        # 绘制电子围栏侧车文件中的桥架走廊和中心线，确保图片展示的几何体
+        # 与运行时实际使用的 corridors_utm / centerline_utm 完全一致。
+        bridge_corridor_label_added = False
+        bridge_centerline_label_added = False
+        for bridge in fence_bridges or []:
+            bridge_name = bridge.get("name", "bridge")
+            for corridor in bridge.get("corridors_utm", []):
+                if len(corridor) < 3:
+                    continue
+                corridor_e = [point[0] for point in corridor] + [corridor[0][0]]
+                corridor_n = [point[1] for point in corridor] + [corridor[0][1]]
+                ax.fill(
+                    corridor_e,
+                    corridor_n,
+                    color="#17becf",
+                    alpha=0.22,
+                    edgecolor="#17becf",
+                    linewidth=1.0,
+                    label="bridge corridor (±0.2 m)" if not bridge_corridor_label_added else None,
+                    zorder=1,
+                )
+                bridge_corridor_label_added = True
+
+            centerline = bridge.get("centerline_utm", [])
+            if len(centerline) >= 2:
+                centerline_e = [point[0] for point in centerline]
+                centerline_n = [point[1] for point in centerline]
+                ax.plot(
+                    centerline_e,
+                    centerline_n,
+                    color="#e377c2",
+                    linewidth=2.0,
+                    linestyle=":",
+                    label="bridge centerline" if not bridge_centerline_label_added else None,
+                    zorder=4,
+                )
+                bridge_centerline_label_added = True
+                ax.annotate(
+                    bridge_name,
+                    (centerline_e[len(centerline_e) // 2], centerline_n[len(centerline_n) // 2]),
+                    xytext=(5, 5),
+                    textcoords="offset points",
+                    fontsize=8,
+                    color="#9c2c82",
+                )
         
         # 绘制合并后的清扫路径
         path_e = [p[0] for p in merged_path_utm]
