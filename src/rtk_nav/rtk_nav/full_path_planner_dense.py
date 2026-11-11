@@ -1108,19 +1108,35 @@ class MultiAreaCleaningPathPlanner(Node):
         zone_num = int(zone_num)
         zone_letter = str(zone_letter).upper()
         epsg = (32600 if zone_letter >= "N" else 32700) + zone_num
-        try:
-            ctx.add_basemap(
-                ax,
-                source=ctx.providers.OpenStreetMap.Mapnik,
-                crs=f"EPSG:{epsg}",
-                alpha=0.55,
-                attribution_size=6,
-                reset_extent=False,
-                zorder=0,
+        sources = (
+            ("Esri World Imagery", ctx.providers.Esri.WorldImagery),
+            ("OpenStreetMap", ctx.providers.OpenStreetMap.Mapnik),
+        )
+        errors = []
+        for source_name, source in sources:
+            try:
+                ctx.add_basemap(
+                    ax,
+                    source=source,
+                    crs=f"EPSG:{epsg}",
+                    alpha=0.55,
+                    attribution_size=6,
+                    reset_extent=False,
+                    zoom_adjust=-1,
+                    zorder=0,
+                )
+                self.get_logger().info(
+                    f"已加载 {source_name} 底图（UTM EPSG:{epsg}）"
+                )
+                return
+            except Exception as exc:
+                errors.append(f"{source_name}: {exc}")
+
+        if errors:
+            error_text = "；".join(errors)
+            self.get_logger().warning(
+                f"底图加载失败，继续输出无底图路线图：{error_text}"
             )
-            self.get_logger().info(f"已加载 OSM 底图（UTM EPSG:{epsg}）")
-        except Exception as exc:
-            self.get_logger().warning(f"底图加载失败，继续输出无底图路线图：{exc}")
 
 # ---------------------- 主函数 ----------------------
 def main(args=None):
