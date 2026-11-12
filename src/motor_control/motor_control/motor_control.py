@@ -3372,11 +3372,7 @@ class MotorControlNode(Node):
             self.bin_process_paused = False
             self.unloading_phase = None
             self.unloading_settle_start_time = None
-            self.current_control_mode = "AUTO_CLEANING"
-            self.current_status = "AUTO_CLEANING"
-            state_msg = String()
-            state_msg.data = self.current_status
-            self.state_pub.publish(state_msg)
+            self.switch_state("r")
 
 
 

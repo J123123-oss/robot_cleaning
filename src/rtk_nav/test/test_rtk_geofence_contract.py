@@ -23,17 +23,15 @@ def test_rtk_geofence_stop_publishes_hold_and_next_fault_bit_once():
 
 def test_geofence_allows_initial_approach_to_first_waypoint():
     source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
-    assert 'nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)' in source
     assert "self.current_waypoint_idx == 0" in source
-    assert "Allow the dedicated" in source
+    assert "def move_to_first_waypoint" in source
 
 
 def test_missing_sidecar_is_checked_before_initial_approach_allowance():
     source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
     enforce_source = source[source.index("def enforce_geofence"):source.index("def trip_geofence_stop")]
-    initial_approach_guard = enforce_source.index("# The robot may start outside the work area.")
     missing_sidecar_guard = enforce_source.index("if self.geofence_payload is None:")
-    assert missing_sidecar_guard < initial_approach_guard
+    assert "self.check_geofence_position()" in enforce_source
 
 
 def test_geofence_recovery_readiness_is_published_for_manual_resume():
@@ -41,3 +39,17 @@ def test_geofence_recovery_readiness_is_published_for_manual_resume():
     assert '"/rtk/geofence_recovery_ready"' in source
     assert "def _update_geofence_recovery_ready" in source
     assert "self.publish_geofence_recovery_ready" in source
+
+
+def test_initial_move_does_not_bypass_geofence_position_check():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    enforce_source = source[source.index("def enforce_geofence"):source.index("def trip_geofence_stop")]
+    assert "Allow the dedicated" not in enforce_source
+    assert "self.check_geofence_position()" in enforce_source
+
+
+def test_route_sidecar_adds_loading_bridges_for_route_endpoints():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    assert "def _append_loading_bridges_to_geofence" in source
+    assert "loading_bridge" in source
+    assert "build_polyline_corridor" in source

@@ -30,6 +30,7 @@ from rtk_nav.imu_odom_fallback import (
     position_residual_m,
 )
 from rtk_nav.geofence_geometry import (
+    build_polyline_corridor,
     load_geofence_payload,
     point_allowed_by_payload,
 )
@@ -782,6 +783,7 @@ class RTKNavControlNode(Node):
         self.publish_geofence_recovery_ready(False)
         try:
             self.geofence_payload = load_geofence_payload(path)
+            self._append_loading_bridges_to_geofence()
             self.geofence_outside_count = 0
             self.geofence_latched = False
             self.get_logger().info(
@@ -794,6 +796,44 @@ class RTKNavControlNode(Node):
             self.geofence_payload = None
             self.get_logger().error(f"[电子围栏] 加载失败，自动清扫将被锁定: {exc}")
             return False
+
+    def _append_loading_bridges_to_geofence(self) -> None:
+        """Add narrow route-end/loading corridors to the loaded fence payload."""
+        if not self.geofence_payload or len(self.waypoints) < 1:
+            return
+        if self.loading_waypoint is None:
+            return
+        zone = self.geofence_payload.get("utm_zone")
+        if not isinstance(zone, (list, tuple)) or len(zone) != 2:
+            return
+        radius = float(self.geofence_payload.get("expansion_radius_m", 0.2))
+        first = self.waypoints[0]
+        last = self.waypoints[-1]
+        loading_e, loading_n, _, _ = self.latlon_to_utm(
+            self.loading_waypoint[1], self.loading_waypoint[0]
+        )
+        bridges = self.geofence_payload.setdefault("bridges", [])
+        first_e, first_n, _, _ = self.latlon_to_utm(first[1], first[0])
+        last_e, last_n, _, _ = self.latlon_to_utm(last[1], last[0])
+        endpoint_pairs = (
+            ("loading_to_route_start", [[loading_e, loading_n], [first_e, first_n]]),
+            ("route_end_to_loading", [[last_e, last_n], [loading_e, loading_n]]),
+        )
+        for name, centerline in endpoint_pairs:
+            if any(bridge.get("name") == name for bridge in bridges):
+                continue
+            if centerline[0] == centerline[1]:
+                continue
+            bridges.append({
+                "name": name,
+                "from_area": "route_endpoint",
+                "to_area": "route_endpoint",
+                "centerline_utm": centerline,
+                "corridors_utm": [
+                    [list(point) for point in corridor]
+                    for corridor in build_polyline_corridor(centerline, radius)
+                ],
+            })
 
     def publish_geofence_recovery_ready(self, ready: bool) -> None:
         """Publish whether a latched fence stop has been manually recovered."""
@@ -833,15 +873,6 @@ class RTKNavControlNode(Node):
         if self.geofence_payload is None:
             self.trip_geofence_stop("sidecar_missing")
             return True
-        # The robot may start outside the work area. Allow the dedicated
-        # initial approach to waypoint 0 only after the sidecar has loaded;
-        # the motor-control entry gate prevents AUTO when it is missing.
-        nav_state = self.nav_context.get("nav_state")
-        if (
-            self.current_waypoint_idx == 0
-            and nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)
-        ):
-            return False
         if not self.rtk_solution_ready or not self.current_gps:
             return False
         if self.check_geofence_position():

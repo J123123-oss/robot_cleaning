@@ -108,6 +108,13 @@ class NavPauseProtocolContractTest(unittest.TestCase):
             rtk_skip.index("self._apply_skip_to_area")
         )
 
+    def test_unloading_completion_enters_auto_through_state_gate(self):
+        source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        unloading = ast.unparse(_function(tree, "handle_unloading_step"))
+        self.assertIn("self.switch_state('r')", unloading)
+        self.assertNotIn("self.current_status = 'AUTO_CLEANING'", unloading)
+
 
 if __name__ == "__main__":
     unittest.main()
