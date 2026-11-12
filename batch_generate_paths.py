@@ -21,6 +21,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "src", "rtk_nav", "rtk_nav"))
 
 from full_path_planner_dense import (
+    build_geofence_payload,
     generate_cleaning_path_with_rotation_3points,
     calculate_heading_angles,
     generate_dense_from_utm,
@@ -206,6 +207,7 @@ def process_config(config_file, output_dir):
     area_path_counts = []
     area_names = []
     area_index_ranges = []
+    bridge_tracks = []
 
     for area in all_areas:
         i = area['index']
@@ -276,6 +278,12 @@ def process_config(config_file, output_dir):
             if end_idx < len(merged_path_utm) and next_start_idx < len(merged_path_utm):
                 bridge_utm = [merged_path_utm[end_idx], merged_path_utm[next_start_idx]]
                 bridge_dense_utm = generate_dense_from_utm(bridge_utm, dense_spacing)
+                bridge_tracks.append({
+                    "name": f"{area_name}_to_{area_index_ranges[area_idx + 1][2]}",
+                    "from_area": area_name,
+                    "to_area": area_index_ranges[area_idx + 1][2],
+                    "centerline_utm": bridge_dense_utm,
+                })
                 for e, n in bridge_dense_utm[1:-1]:
                     lat, lon = get_latlon_from_utm(e, n, utm_zone[0], utm_zone[1])
                     dense_latlon.append((lon, lat))
@@ -302,6 +310,18 @@ def process_config(config_file, output_dir):
                 current_area_name = area_name
             f.write(f"{global_idx + 1},{lon:.8f},{lat:.8f},{hdg:.2f}\n")
     print(f"  密集点路径文件已保存: {dense_filename}，共 {len(dense_latlon)} 个点")
+
+    fence_filename = os.path.join(output_dir, f"{basename}.fence.json")
+    fence_payload = build_geofence_payload(
+        area_names,
+        all_inner_corners,
+        bridge_tracks,
+        utm_zone,
+        expansion_radius_m=0.2,
+    )
+    with open(fence_filename, "w", encoding="utf-8") as fence_file:
+        json.dump(fence_payload, fence_file, ensure_ascii=False, indent=2)
+    print(f"  电子围栏文件已保存: {fence_filename}")
 
     # # 生成密集点UTM用于绘图
     # all_dense_utm = []

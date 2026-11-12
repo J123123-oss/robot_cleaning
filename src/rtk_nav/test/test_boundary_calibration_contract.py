@@ -283,3 +283,11 @@ def test_bridge_suppression_metadata_is_persisted_in_generated_path():
     assert "calibration_areas" not in config_source
     assert "max_duration_s" not in config_source
     assert "max_distance_m" not in config_source
+
+
+def test_batch_generator_exports_same_stem_geofence_sidecar():
+    batch_source = BATCH_PLANNER_PATH.read_text(encoding="utf-8")
+    assert "build_geofence_payload" in batch_source
+    assert "bridge_tracks" in batch_source
+    assert ".fence.json" in batch_source
+    assert "json.dump(fence_payload" in batch_source
