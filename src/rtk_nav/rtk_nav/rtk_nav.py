@@ -34,6 +34,7 @@ from rtk_nav.geofence_geometry import (
     load_geofence_payload,
     point_allowed_by_payload,
 )
+from rtk_nav.progress_store import load_progress, save_progress
 
 ERROR_GEOFENCE_OUTSIDE = 1024
 
@@ -468,6 +469,9 @@ class RTKNavControlNode(Node):
         self.rtk_correction_ratio = max(0.0, float(self.get_parameter("rtk_correction_ratio").value))
         self.rtk_max_correction = max(0.0, float(self.get_parameter("rtk_max_correction").value))
         self.path_dir = os.path.dirname(self.rtk_path_file)
+        self.progress_path = os.path.join(self.path_dir, ".rtk_nav_progress.json")
+        self.resume_progress_sub = None
+        self._last_progress_persist_time = 0.0
         # self.rtk_path_file = self.declare_parameter(
         #     'rtk_path_file',
         #     # "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/cleaning_path_20251121_173149.txt"
@@ -604,6 +608,9 @@ class RTKNavControlNode(Node):
         self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
         self.route_change_sub = self.create_subscription(String, "/rtk/route_change", self.route_change_callback, 10)
         self.skip_area_sub = self.create_subscription(String, "/rtk/skip_to_area", self.skip_to_area_callback, 10)
+        self.resume_progress_sub = self.create_subscription(
+            String, "/rtk/resume_progress", self.resume_progress_callback, 10
+        )
 
         # 定时器（10Hz驱动导航逻辑）
         self.rtk_nav_timer = self.create_timer(0.1, self.rtk_timer_callback)
@@ -613,6 +620,104 @@ class RTKNavControlNode(Node):
         # 加载初始路径文件
         self.load_waypoints_from_file(self.rtk_path_file)
         self.load_geofence_sidecar(self.geofence_path)
+
+    def _progress_route_id(self) -> str:
+        return os.path.splitext(os.path.basename(self.rtk_path_file))[0]
+
+    def _persist_progress(self) -> None:
+        """Persist the current route and target waypoint for explicit RESUME."""
+        if not self.rtk_path_file or not self.waypoints:
+            return
+        index = int(self.current_waypoint_idx)
+        target = (
+            self.waypoints[index]
+            if 0 <= index < len(self.waypoints)
+            else self.nav_context.get("target_waypoint")
+        )
+        payload = {
+            "version": 1,
+            "route_id": self._progress_route_id(),
+            "route_path": os.path.abspath(self.rtk_path_file),
+            "waypoint_idx": index,
+            "area": self.get_cleaning_area_for_waypoint(),
+            "nav_state": str(self.nav_context.get("nav_state", NavState.IDLE)),
+            "target_waypoint": list(target) if target is not None else None,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        try:
+            save_progress(self.progress_path, payload)
+        except (OSError, ValueError, TypeError) as exc:
+            self.get_logger().error(f"[RTK进度] 保存失败: {exc}")
+
+    def _clear_progress_snapshot(self) -> None:
+        try:
+            if os.path.exists(self.progress_path):
+                os.unlink(self.progress_path)
+                self.get_logger().info(f"[RTK进度] 已清除快照: {self.progress_path}")
+        except OSError as exc:
+            self.get_logger().error(f"[RTK进度] 清除快照失败: {exc}")
+
+    def resume_progress_callback(self, msg: String) -> None:
+        """Restore a saved route/waypoint without starting the motors."""
+        if (
+            self.current_control_mode == ControlMode.AUTO_CLEANING
+            or self.last_state == ControlMode.AUTO_CLEANING
+            or bool(getattr(self, "is_in_bin_process", False))
+        ):
+            self.get_logger().warn("[RTK进度] AUTO_CLEANING运行中拒绝RESUME")
+            return
+        if self.waiting_for_next_unloading:
+            self.get_logger().warn("[RTK进度] 当前路线已完成，拒绝恢复")
+            return
+        snapshot = load_progress(self.progress_path)
+        if snapshot is None:
+            self.get_logger().warn("[RTK进度] 没有可恢复的有效快照")
+            return
+        route_path = os.path.abspath(snapshot["route_path"])
+        if not os.path.isfile(route_path):
+            self.get_logger().error(f"[RTK进度] 路线文件不存在，拒绝恢复: {route_path}")
+            return
+        fence_path = os.path.splitext(route_path)[0] + ".fence.json"
+        if not os.path.isfile(fence_path):
+            self.get_logger().error(f"[RTK进度] 围栏文件不存在，拒绝恢复: {fence_path}")
+            return
+        if os.path.abspath(self.rtk_path_file) != route_path:
+            self.pending_next_path_file = None
+            self.waiting_for_next_unloading = False
+            self.cross_file_last_waypoint = None
+            self.rtk_path_file = route_path
+            if not self.load_waypoints_from_file(route_path):
+                self.get_logger().error("[RTK进度] 恢复路线加载失败")
+                return
+            self.publish_current_route_id()
+        index = int(snapshot["waypoint_idx"])
+        if not 0 <= index < len(self.waypoints):
+            self.get_logger().error(
+                f"[RTK进度] 航点索引越界，拒绝恢复: {index}/{len(self.waypoints)}"
+            )
+            return
+        self.current_waypoint_idx = index
+        self.last_waypoint_cache = self.waypoints[index - 1] if index > 0 else None
+        self.nav_context["target_waypoint"] = self.waypoints[index]
+        saved_state = snapshot.get("nav_state")
+        self.nav_context["nav_state"] = (
+            NavState.INITIAL_MOVE
+            if saved_state == NavState.INITIAL_MOVE and index == 0
+            else NavState.WAYPOINT_MOVE
+        )
+        self.nav_context["pre_pause_state"] = None
+        self.nav_context["pause_reason"] = None
+        self.nav_context["manual_intervention_seen"] = False
+        self.multi_waypoint_generator = None
+        self.nav_running = False
+        self.return_to_loading_added = False
+        self.publish_nav_state(self.nav_context["nav_state"])
+        self.update_cleaning_area(force=True)
+        self.get_logger().info(
+            f"[RTK进度] 已恢复路线{snapshot['route_id']}，从航点{index}/{len(self.waypoints)}继续；"
+            "等待ENABLE和AUTO_CLEANING"
+        )
+        self._persist_progress()
     
 
     # def load_waypoints_from_file(self, file_path: str) -> bool:
@@ -656,6 +761,8 @@ class RTKNavControlNode(Node):
     def load_waypoints_from_file(self, file_path: str) -> bool:
         """从文件加载航点数据（正确顺序：先区分场景，再执行缓存逻辑）"""
         try:
+            self.path_dir = os.path.dirname(os.path.abspath(file_path))
+            self.progress_path = os.path.join(self.path_dir, ".rtk_nav_progress.json")
             # ================== 第一步：先区分「首次加载」和「文件切换」==================
             # 定义首次加载的判断条件：程序启动后第一次加载文件（用一个标记位控制）
             if not hasattr(self, 'is_first_file_load'):
@@ -4371,6 +4478,8 @@ class RTKNavControlNode(Node):
         self.brush_stop_indices.clear()
         self.brush_active = False
         self.rtk_path_file = next_file
+        self.path_dir = os.path.dirname(self.rtk_path_file)
+        self.progress_path = os.path.join(self.path_dir, ".rtk_nav_progress.json")
 
         if self.load_waypoints_from_file(self.rtk_path_file):
             self.nav_context["nav_state"] = NavState.IDLE
@@ -4392,6 +4501,7 @@ class RTKNavControlNode(Node):
         self.publish_stop_speed()
         self.reset_nav_context()
         self.publish_nav_state(NavState.IDLE)
+        self._clear_progress_snapshot()
         self.get_logger().info("[ROSNode] 导航COMPLETED收尾完成，已清理上下文并发布IDLE")
         if has_pending_path:
             self.load_pending_path_after_task()
@@ -4619,6 +4729,7 @@ class RTKNavControlNode(Node):
                 self.current_waypoint_idx = 0
                 self.nav_context["target_waypoint"] = None
                 self.nav_context["calib_generator"] = None
+                self._persist_progress()
             else:
                 current_nav_state = self.nav_context["nav_state"]
         
@@ -4682,6 +4793,7 @@ class RTKNavControlNode(Node):
                     if self.waypoints:
                         self.last_waypoint_cache = self.waypoints[0]
                     self.current_waypoint_idx = 1
+                    self._persist_progress()
                     self._reset_waypoint_tracking()
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
@@ -4938,6 +5050,7 @@ class RTKNavControlNode(Node):
                         )
                         self._reset_boundary_cycle_tracking()
                         self.current_waypoint_idx += 1
+                        self._persist_progress()
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
                         self.stanley_path_start = None
@@ -5993,6 +6106,7 @@ class RTKNavControlNode(Node):
         self.heading_timed_out = False
         self.publish_nav_state(self.nav_context["nav_state"])
         self.load_waypoints_from_file(self.rtk_path_file)
+        self._clear_progress_snapshot()
         self.publish_current_route_id()
         
         # 同步滚刷状态到nav_context（加载路径后会更新brush_active）
@@ -6170,6 +6284,7 @@ class RTKNavControlNode(Node):
         self._reset_boundary_correction()
         self._reset_boundary_cycle_tracking()
         self.clear_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+        self._persist_progress()
 
         self.publish_nav_state(NavState.WAYPOINT_MOVE)
         self.publish_current_route_id()

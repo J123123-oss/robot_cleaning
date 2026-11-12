@@ -810,6 +810,7 @@ class MotorControlNode(Node):
         self.mode_pub = self.create_publisher(String, "/control/mode", 10)  # 当前控制模式
         self.route_change_pub = self.create_publisher(String, "/rtk/route_change", 10)  # 路径切换话题
         self.skip_area_pub = self.create_publisher(String, "/rtk/skip_to_area", 10)  # 区域跳转话题
+        self.resume_progress_pub = self.create_publisher(String, "/rtk/resume_progress", 10)
         self.robot_state_pub = self.create_publisher(String, "/robot_state", 10)  # robot mqtt msg
         self.dock_state_pub = self.create_publisher(String, "/dock_state", 10)  # dock mqtt msg
         self.rc_channels_pub = self.create_publisher(Float32MultiArray, "/rc_channels", 10)
@@ -2951,6 +2952,15 @@ class MotorControlNode(Node):
 
             command = cmd_obj.get("command", "").strip()
             self.get_logger().info(f"[ROSNode] 解析到command：{command}")
+
+            if command == "RESUME":
+                resume_msg = String()
+                resume_msg.data = "RESUME"
+                self.resume_progress_pub.publish(resume_msg)
+                self.get_logger().info(
+                    "[ROSNode] 已请求恢复RTK清扫进度；请先ENABLE，再切换AUTO_CLEANING"
+                )
+                return
 
             if command == "WAIT_RTK":
                 if self._record_wait_rtk_point():
