@@ -806,17 +806,18 @@ class RTKNavControlNode(Node):
         if self.geofence_latched:
             self.publish_stop_speed()
             return True
-        if self.geofence_payload is None:
-            self.trip_geofence_stop("sidecar_missing")
-            return True
         # The robot may start outside the work area. Allow the dedicated
-        # initial approach to waypoint 0; protection resumes after arrival.
+        # initial approach to waypoint 0 even before the sidecar is available;
+        # protection resumes as soon as initial approach completes.
         nav_state = self.nav_context.get("nav_state")
         if (
             self.current_waypoint_idx == 0
             and nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)
         ):
             return False
+        if self.geofence_payload is None:
+            self.trip_geofence_stop("sidecar_missing")
+            return True
         if not self.rtk_solution_ready or not self.current_gps:
             return False
         if self.check_geofence_position():
@@ -841,7 +842,7 @@ class RTKNavControlNode(Node):
         self.publish_nav_state(NavState.PAUSE)
         if not already_latched:
             hold_msg = String()
-            hold_msg.data = "HOLD"
+            hold_msg.data = "h"
             self.keyboard_control_pub.publish(hold_msg)
             fault_msg = Int16()
             fault_msg.data = ERROR_GEOFENCE_OUTSIDE
