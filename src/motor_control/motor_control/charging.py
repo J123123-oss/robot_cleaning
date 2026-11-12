@@ -25,6 +25,20 @@ def crc16_modbus(data: bytes) -> bytes:
     return bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
 
+def format_hex(data: bytes) -> str:
+    """Format a serial response as an uppercase hexadecimal byte string."""
+    return data.hex(' ').upper()
+
+
+def is_write_multiple_response(response: bytes, request: bytes) -> bool:
+    """Validate the 0x10 response for the start/stop charging command."""
+    return (
+        len(response) == 8
+        and response[:6] == request[:6]
+        and crc16_modbus(response[:6]) == response[6:]
+    )
+
+
 def bms_checksum(data: bytes) -> int:
     """Return the two's-complement checksum used by the DD BMS protocol."""
     return (-sum(data)) & 0xFFFF
@@ -262,9 +276,14 @@ class Charging485Node(Node):
             self.ser = None
             return b''
 
-    def _send_charge_cmd(self, cmd: list) -> bytes:
+    def _send_charge_cmd(self, cmd: list, read_size: int = 16) -> bytes:
         payload = bytes(cmd) + crc16_modbus(bytes(cmd))
-        return self._send_raw(payload, read_size=16, baudrate=self.charge_baud_rate, timeout=self.timeout)
+        return self._send_raw(
+            payload,
+            read_size=read_size,
+            baudrate=self.charge_baud_rate,
+            timeout=self.timeout,
+        )
 
     def _send_battery_cmd(self, payload: bytes):
         if not self._switch_baudrate(self.battery_baud_rate, timeout=self.battery_timeout):
@@ -396,13 +415,17 @@ class Charging485Node(Node):
                 *self.THREE_BYTE_ADDR,
                 0xB1,
             ]
-            resp = self._send_charge_cmd(cmd)
-            if resp and resp[:6] == bytes(cmd[:6]):
-                res.success = True
-                res.message = "Start charging command sent successfully"
-            else:
-                res.success = False
-                res.message = f"Start charging failed, resp={list(resp)}"
+            resp = b''
+            for attempt in range(3):
+                resp = self._send_charge_cmd(cmd, read_size=8)
+                if is_write_multiple_response(resp, bytes(cmd)):
+                    res.success = True
+                    res.message = f"Start charging command sent successfully, resp={format_hex(resp)}"
+                    return res
+                if attempt < 2:
+                    time.sleep(0.15)
+            res.success = False
+            res.message = f"Start charging failed, resp={format_hex(resp)}"
         except Exception as exc:
             res.success = False
             res.message = f"Start charging error: {exc}"
@@ -416,13 +439,17 @@ class Charging485Node(Node):
                 *self.THREE_BYTE_ADDR,
                 0xB2,
             ]
-            resp = self._send_charge_cmd(cmd)
-            if resp and resp[:6] == bytes(cmd[:6]):
-                res.success = True
-                res.message = "Stop charging command sent successfully"
-            else:
-                res.success = False
-                res.message = f"Stop charging failed, resp={list(resp)}"
+            resp = b''
+            for attempt in range(3):
+                resp = self._send_charge_cmd(cmd, read_size=8)
+                if is_write_multiple_response(resp, bytes(cmd)):
+                    res.success = True
+                    res.message = f"Stop charging command sent successfully, resp={format_hex(resp)}"
+                    return res
+                if attempt < 2:
+                    time.sleep(0.15)
+            res.success = False
+            res.message = f"Stop charging failed, resp={format_hex(resp)}"
         except Exception as exc:
             res.success = False
             res.message = f"Stop charging error: {exc}"

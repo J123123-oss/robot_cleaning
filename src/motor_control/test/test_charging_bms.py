@@ -17,7 +17,15 @@ sys.modules['std_srvs.srv'].Trigger = object
 sys.modules['custom_msgs.srv'].ChargeControl = object
 sys.modules['serial'].SerialException = Exception
 
-from charging import bms_checksum, parse_bms_response, smooth_soc_estimate, voltage_to_percentage
+from charging import (
+    bms_checksum,
+    crc16_modbus,
+    format_hex,
+    is_write_multiple_response,
+    parse_bms_response,
+    smooth_soc_estimate,
+    voltage_to_percentage,
+)
 
 
 def make_frame():
@@ -58,3 +66,12 @@ def test_smooth_soc_estimate_limits_runtime_voltage_jumps():
     assert smooth_soc_estimate(None, 80.0, 1.0, 30.0, 0.2) == 80.0
     assert smooth_soc_estimate(50.0, 100.0, 1.0, 30.0, 0.2) == 50.2
     assert smooth_soc_estimate(50.0, 100.0, 30.0, 30.0, 0.2) == 56.0
+
+
+def test_write_response_is_crc_checked_and_formatted_as_hex():
+    request = bytes.fromhex('02 10 30 01 00 02 04 10 03 64 B1')
+    response_body = request[:6]
+    response = response_body + crc16_modbus(response_body)
+    assert is_write_multiple_response(response, request)
+    assert format_hex(response) == '02 10 30 01 00 02 1F 3B'
+    assert not is_write_multiple_response(response[:-1] + b'\x00', request)
