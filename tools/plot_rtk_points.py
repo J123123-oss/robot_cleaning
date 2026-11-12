@@ -50,7 +50,7 @@ def render(points, background_image=None, reference_points=None):
         bounds = [[center[0] - 0.001, center[1] - 0.001], [center[0] + 0.001, center[1] + 0.001]]
     return f'''<!doctype html><html><head><meta charset="utf-8"><title>RTK points</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>html,body,#map{{height:100%;margin:0}} #map{{background:#d7d7d7}} #map .leaflet-image-layer{{transform-origin:50% 50%;}} #pdf-controls{{position:fixed;z-index:1000;top:10px;right:10px;background:#fff;padding:8px;border-radius:4px;box-shadow:0 1px 5px #555;font:13px sans-serif}} #pdf-controls label{{display:block;margin:3px}} .popup{{font:14px monospace;line-height:1.6}}</style></head><body><div id="map"></div>{background}
+<style>html,body,#map{{height:100%;margin:0}} #map{{background:#d7d7d7}} #map .leaflet-image-layer{{transform-origin:50% 50%;}} .seq-label{{background:#fff;border:1px solid #333;border-radius:3px;color:#111;font:bold 12px monospace;padding:1px 3px;white-space:nowrap;}} #pdf-controls{{position:fixed;z-index:1000;top:10px;right:10px;background:#fff;padding:8px;border-radius:4px;box-shadow:0 1px 5px #555;font:13px sans-serif}} #pdf-controls label{{display:block;margin:3px}} .popup{{font:14px monospace;line-height:1.6}}</style></head><body><div id="map"></div>{background}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 const points={payload}; const referencePoints={reference_payload}; const map=L.map('map').setView({json.dumps(center)},18);
 const onlineTiles=L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:22,attribution:'© OpenStreetMap'}});
@@ -58,7 +58,7 @@ const onlineToggle=document.getElementById('online-map'); if(onlineToggle) onlin
 const bounds=[]; const pdfBounds={json.dumps(bounds)}; let pdfOverlay=null;
 if(document.getElementById('pdf-data')){{const image=document.getElementById('pdf-data').dataset.image; const anchor=L.latLngBounds(pdfBounds).getCenter(); pdfOverlay=L.marker(anchor,{{draggable:true,icon:L.divIcon({{className:'background-anchor',html:'<img id="background-image" src="'+image+'" style="position:absolute;max-width:none;transform-origin:center;pointer-events:none">',iconSize:[0,0],iconAnchor:[0,0]}}),zIndexOffset:-10000,opacity:.45}}).addTo(map);}}
 
-points.forEach(p=>{{const marker=L.circleMarker([Number(p.lat),Number(p.lon)],{{radius:6,color:p.valid?'#16803c':'#c62828',fillOpacity:.8,zIndexOffset:1000}});
+points.forEach(p=>{{const marker=L.circleMarker([Number(p.lat),Number(p.lon)],{{radius:6,color:p.valid?'#16803c':'#c62828',fillOpacity:.8,zIndexOffset:1000}}); L.marker([Number(p.lat),Number(p.lon)],{{icon:L.divIcon({{className:'seq-label',html:'seq '+p.seq,iconSize:null,iconAnchor:[-8,8]}}),interactive:false,zIndexOffset:1500}}).addTo(map);
 marker.bindPopup('<div class="popup"><b>seq '+p.seq+'</b><br>lon: '+p.lon+'<br>lat: '+p.lat+'<br>valid: '+p.valid+'<br>position_status: '+p.position+'<br>orientation_status: '+p.orientation+'<br>time: '+{json.dumps('')}+' '+p.time+'</div>'); marker.addTo(map); bounds.push([Number(p.lat),Number(p.lon)]);}});
 if(bounds.length) map.fitBounds(bounds,{{padding:[30,30]}});
 referencePoints.forEach(p=>{{const marker=L.circleMarker([p.lat,p.lon],{{radius:8,color:'#00bcd4',fillColor:'#fff',fillOpacity:1,weight:3,zIndexOffset:2000}}).addTo(map); marker.bindPopup('<div class="popup"><b>参考点 '+p.name+'</b><br>lon: '+p.lon+'<br>lat: '+p.lat+'</div>');}});
