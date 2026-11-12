@@ -30,6 +30,46 @@ def bms_checksum(data: bytes) -> int:
     return (-sum(data)) & 0xFFFF
 
 
+def voltage_to_percentage(voltage: float) -> int:
+    """Estimate 13-series ternary lithium SOC from pack voltage."""
+    # Resting-voltage reference curve: 3.3 V/cell is 0%, 54.3 V is 100%.
+    voltage_table = (42.9, 44.2, 45.5, 46.8, 48.1, 48.75,
+                     49.4, 50.05, 50.7, 51.35, 52.65, 53.3, 54.3)
+    soc_table = (0.0, 5.0, 10.0, 20.0, 30.0, 40.0,
+                 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 100.0)
+
+    if voltage >= voltage_table[-1]:
+        return 100
+    if voltage <= voltage_table[0]:
+        return 0
+
+    for index in range(len(voltage_table) - 1):
+        v_low = voltage_table[index]
+        v_high = voltage_table[index + 1]
+        if v_low <= voltage <= v_high:
+            soc = soc_table[index] + (
+                (voltage - v_low) * (soc_table[index + 1] - soc_table[index])
+                / (v_high - v_low)
+            )
+            return int(round(soc))
+    return 0
+
+
+def smooth_soc_estimate(previous_soc, target_soc: float, elapsed: float,
+                        time_constant: float, max_rate: float) -> float:
+    """Move SOC toward the voltage estimate with filtering and rate limiting."""
+    if previous_soc is None:
+        return float(target_soc)
+    if elapsed <= 0.0:
+        return float(previous_soc)
+
+    alpha = min(1.0, elapsed / max(time_constant, 0.001))
+    filtered_delta = (target_soc - previous_soc) * alpha
+    max_delta = max(0.0, max_rate) * elapsed
+    filtered_delta = max(-max_delta, min(max_delta, filtered_delta))
+    return float(previous_soc + filtered_delta)
+
+
 def parse_bms_response(data: bytes):
     """Parse a C-compatible DD 03 BMS response into the published fields."""
     if len(data) < 7 or data[0:3] != bytes((0xDD, 0x03, 0x00)):
@@ -48,7 +88,7 @@ def parse_bms_response(data: bytes):
         raw_current -= 0x10000
     raw_temperature = (data[27] << 8) | data[28]
     return {
-        'capacity_percent': float(data[23]),
+        'capacity_percent': float(voltage_to_percentage(raw_voltage * 0.01)),
         'total_current': raw_current * 0.01,
         'total_voltage': raw_voltage * 0.01,
         'temperature': (raw_temperature - 2731) * 0.1,
@@ -112,6 +152,9 @@ class Charging485Node(Node):
         self.declare_parameter('battery_base_poll_interval', 1.0)
         self.declare_parameter('battery_temp_poll_interval', 2.0)
         self.declare_parameter('charge_poll_interval', 5.0)
+        self.declare_parameter('battery_internal_resistance', 0.0)
+        self.declare_parameter('battery_soc_filter_time_constant', 30.0)
+        self.declare_parameter('battery_soc_max_rate', 0.2)
 
         self.serial_port = self.get_parameter('serial_port').value
         self.charge_baud_rate = self.get_parameter('charge_baud_rate').value
@@ -123,6 +166,10 @@ class Charging485Node(Node):
         self.battery_base_poll_interval = self.get_parameter('battery_base_poll_interval').value
         self.battery_temp_poll_interval = self.get_parameter('battery_temp_poll_interval').value
         self.charge_poll_interval = self.get_parameter('charge_poll_interval').value
+        self.battery_internal_resistance = self.get_parameter('battery_internal_resistance').value
+        self.battery_soc_filter_time_constant = self.get_parameter(
+            'battery_soc_filter_time_constant').value
+        self.battery_soc_max_rate = self.get_parameter('battery_soc_max_rate').value
 
         self.THREE_BYTE_ADDR = [0x10, 0x03, 0x64]
 
@@ -135,6 +182,8 @@ class Charging485Node(Node):
         self.last_charge_poll = 0.0
         self.last_battery_base_poll = 0.0
         self.last_battery_temp_poll = 0.0
+        self.filtered_battery_soc = None
+        self.last_battery_soc_time = None
 
         self.battery_base_cmd = bytes.fromhex("DD A5 03 00 FF FD 77")
         self.volt_curr_pub = self.create_publisher(Float32MultiArray, 'charging_volt_curr', 10)
@@ -267,7 +316,26 @@ class Charging485Node(Node):
     def _parse_battery_base_response(self, data: bytes):
         return parse_bms_response(data)
 
+    def _estimate_battery_soc(self, battery_data):
+        now = time.monotonic()
+        corrected_voltage = (
+            battery_data['total_voltage']
+            - battery_data['total_current'] * self.battery_internal_resistance
+        )
+        target_soc = voltage_to_percentage(corrected_voltage)
+        elapsed = 0.0 if self.last_battery_soc_time is None else now - self.last_battery_soc_time
+        self.filtered_battery_soc = smooth_soc_estimate(
+            self.filtered_battery_soc,
+            target_soc,
+            elapsed,
+            self.battery_soc_filter_time_constant,
+            self.battery_soc_max_rate,
+        )
+        self.last_battery_soc_time = now
+        battery_data['capacity_percent'] = round(self.filtered_battery_soc, 1)
+
     def _publish_battery_data(self, battery_data):
+        self._estimate_battery_soc(battery_data)
         msg = Float32MultiArray()
         msg.data = [
             battery_data['capacity_percent'],

@@ -218,6 +218,9 @@ def generate_launch_description():
             {'slave_addr': 2},
             {'battery_addr': 1},
             {'battery_baud_rate': 9600},
+            {'battery_internal_resistance': 0.0},
+            {'battery_soc_filter_time_constant': 30.0},
+            {'battery_soc_max_rate': 0.2},
             {'timeout': 0.5}
         ]
     )
