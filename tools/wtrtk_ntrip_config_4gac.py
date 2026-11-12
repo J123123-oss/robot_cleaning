@@ -230,6 +230,7 @@ def configure(ser: serial.Serial | None, config: Config, dry_run: bool) -> None:
         send_at(ser, f"AT+MP={config.mountpoint}", ("+MP=",), dry_run)
         send_at(ser, "AT+SAVE", ("SAVE", "+SAVE", "OK"), dry_run)
         send_at(ser, "AT+NETRESET", ("+NETRESET", "NETRESET"), dry_run)
+        send_at(ser, "AT+RESET", ("+RESET", "RESET"), dry_run)
     finally:
         exit_config(ser, dry_run)
 

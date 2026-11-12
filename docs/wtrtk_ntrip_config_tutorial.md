@@ -51,7 +51,7 @@ python3 tools/wtrtk_ntrip_config_4ga.py \
 
 ## 4. 写入 4GAC
 
-4GAC 使用独立脚本和 `230400` 波特率：
+4GAC 使用独立脚本和 `230400` 波特率。写入完成后，工具依次发送 `AT+NETRESET` 和 `AT+RESET` 重启设备：
 
 4GAC 格式示例：
 
