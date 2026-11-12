@@ -230,7 +230,13 @@ def configure(ser: serial.Serial | None, config: Config, dry_run: bool) -> None:
         send_at(ser, f"AT+MP={config.mountpoint}", ("+MP=",), dry_run)
         send_at(ser, "AT+SAVE", ("SAVE", "+SAVE", "OK"), dry_run)
         send_at(ser, "AT+NETRESET", ("+NETRESET", "NETRESET"), dry_run)
-        send_at(ser, "AT+RESET", ("+RESET", "RESET"), dry_run)
+        try:
+            send_at(ser, "AT+RESET", ("+RESET", "RESET"), dry_run)
+        except RuntimeError as exc:
+            # RESET may reboot the modem before it can emit its acknowledgement.
+            if dry_run:
+                raise
+            print(f"警告：AT+RESET 未返回回显，继续退出配置模式：{exc}")
     finally:
         exit_config(ser, dry_run)
 
