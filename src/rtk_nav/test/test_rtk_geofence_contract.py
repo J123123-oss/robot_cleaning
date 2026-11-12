@@ -19,3 +19,10 @@ def test_rtk_geofence_stop_publishes_hold_and_next_fault_bit_once():
     assert 'hold_msg.data = "HOLD"' in source
     assert "fault_msg.data = ERROR_GEOFENCE_OUTSIDE" in source
     assert "already_latched" in source
+
+
+def test_geofence_allows_initial_approach_to_first_waypoint():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    assert 'nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)' in source
+    assert "self.current_waypoint_idx == 0" in source
+    assert "Allow the dedicated" in source

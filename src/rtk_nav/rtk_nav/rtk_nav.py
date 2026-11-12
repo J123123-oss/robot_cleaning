@@ -809,6 +809,14 @@ class RTKNavControlNode(Node):
         if self.geofence_payload is None:
             self.trip_geofence_stop("sidecar_missing")
             return True
+        # The robot may start outside the work area. Allow the dedicated
+        # initial approach to waypoint 0; protection resumes after arrival.
+        nav_state = self.nav_context.get("nav_state")
+        if (
+            self.current_waypoint_idx == 0
+            and nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)
+        ):
+            return False
         if not self.rtk_solution_ready or not self.current_gps:
             return False
         if self.check_geofence_position():
