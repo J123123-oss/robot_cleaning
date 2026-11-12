@@ -34,10 +34,10 @@ start_rtk_preview.bat rtk_points_006-E22-W24_with_pdf.html
 python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-pdf 图纸.pdf --pdf-format svg --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md"
 ```
 
-已有 SVG 或图片时，用 `--background-image`：
+已有 SVG 或图片时，用 `--background-image`；布置图 1112 的默认视图保存在 `rtk_calibration_1112.json`，用 `--calibration` 恢复：
 
 ```bash
-python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-image 布置图1112.svg --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-image 布置图1112.svg --calibration src/rtk_nav/rtk_nav/config/rtk_calibration_1112.json --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
 ```
 
 - `--input`：默认点位序列。
@@ -50,12 +50,13 @@ python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_11
 2. **精确标定**：左侧选择一条采点 → “在图纸上拾取” → 点击图上对应位置。至少选 2 个相距远、特征清晰的控制点，残差应小于 2 px。
 3. **交叉验证**：加第 3 个点，页面会先按旧标定预测再比较，误差小于 1 px 说明可信。
 4. **导出**：点“导出标定 JSON”，把文件放回 `src/rtk_nav/rtk_nav/config/`。
-5. **固化**：重新生成时加 `--calibration 标定.json`。需要默认镜像时，在 JSON 顶层加 `"image_mirror_y": true`（或 `image_mirror_x`）。
+5. **固化**：导出的 JSON 现在包含 `view`（缩放/旋转/镜像/平移），重新生成时加 `--calibration 标定.json`，页面会自动恢复旋转和平移。若 `control_points` 为空，只会恢复视图，点位仍是近似摆放。
 
 辅助功能：点“拾取坐标（估算经纬度）”，再点图纸任意位置，左下角显示该点的 `lat,lon` 与 UTM，可复制。已完成标定时用标定反算；未标定时用近似摆放估算（结果仅供参考）。
 
 ## 5. 常见问题
 
+- **标定不可信**：RMSE 超过 20 px 时页面会提示“控制点与图上位置不匹配”，并自动回退近似摆放，不会再用错误参数移动整页点位。删掉偏差大的控制点，换更远、位置明确的点重试。
 - **点位整体歪 90°、RMSE 很大**：底图镜像方向不对，先试垂直/水平镜像，再重新拾取。
 - **点位跑到图外**：选错点位序列，或该场地尚未标定（虚线为近似摆放）。
 - **缩放时底图翻转**：旧页面问题，重新生成即可；镜像已放在 Leaflet 不会改写的容器上。

@@ -424,6 +424,7 @@ const IMAGE = __IMAGE__;
 const INITIAL_PAIRS = __PAIRS__;
 const DEFAULT_VIEW = __DEFAULT_VIEW__;
 const IMAGE_W = IMAGE.width, IMAGE_H = IMAGE.height;
+const CALIBRATION_MAX_RMSE_PX = 20;
 const DEFAULT_HINT = '图纸标签只显示序号；下拉列表附带区域/标签和经纬度。';
 const map = L.map('map', {
   crs: L.CRS.Simple,
@@ -524,6 +525,7 @@ let pairs = INITIAL_PAIRS.map(pair => {
   }, pair);
 });
 let transform = null;
+let rawTransform = null;
 let picking = false;
 let coordPicking = false;
 let labelEntries = [];
@@ -798,10 +800,10 @@ function renderPairs() {
     info.innerHTML = '<b>' + escapeHtml(pair.name || pair.seq) + '</b>' +
       '<small>px ' + Number(pair.px).toFixed(1) + ', ' + Number(pair.py).toFixed(1) + '</small>';
     const right = document.createElement('div');
-    if (transform) {
-      const residual = transform.residuals[index];
+    if (rawTransform) {
+      const residual = rawTransform.residuals[index];
       const value = document.createElement('span');
-      value.className = 'res' + (residual > 2 ? ' bad' : '');
+      value.className = 'res' + (residual > 2 || !transform ? ' bad' : '');
       value.textContent = residual.toFixed(2) + ' px';
       right.appendChild(value);
     }
@@ -842,6 +844,11 @@ function updateStatus() {
     statusEl.textContent = '比例 ' + transform.pixelsPerMeter.toFixed(2) + ' px/m' +
       ' · 旋转 ' + transform.rotation.toFixed(1) + '°' +
       ' · RMSE ' + transform.rmse.toFixed(2) + ' px';
+  } else if (rawTransform) {
+    bannerEl.className = 'error';
+    bannerEl.textContent = '标定不可信：RMSE ' + rawTransform.rmse.toFixed(1) +
+      ' px，控制点与图上位置不匹配，已回退近似摆放。请删除偏差大的点后重试。';
+    statusEl.textContent = '标定不可信 · 已回退近似摆放';
   } else if (pairs.length >= 2) {
     bannerEl.className = 'error';
     bannerEl.textContent = '控制点无法求解（可能重合或像素/经纬度顺序有误），请删除后重试。';
@@ -930,7 +937,8 @@ function applyImageTransform() {
     'deg) scale(' + scaleX + ',' + scaleY + ')';
 }
 function refresh() {
-  transform = pairs.length >= 2 ? fitSimilarity(pairs) : null;
+  rawTransform = pairs.length >= 2 ? fitSimilarity(pairs) : null;
+  transform = rawTransform && rawTransform.rmse <= CALIBRATION_MAX_RMSE_PX ? rawTransform : null;
   renderPoints();
   renderCalibrationPoints();
   renderPairs();
@@ -1014,7 +1022,15 @@ exportBtn.onclick = () => {
       utm_e: Number(pair.utm_e),
       utm_n: Number(pair.utm_n),
       utm_zone: pair.utm_zone
-    }))
+    })),
+    view: {
+      scale: Number(view.scale.toFixed(3)),
+      rotation: Number(view.rotation.toFixed(2)),
+      mirrorX: view.mirrorX,
+      mirrorY: view.mirrorY,
+      offsetX: Number(view.offsetX.toFixed(1)),
+      offsetY: Number(view.offsetY.toFixed(1))
+    }
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
   const link = document.createElement('a');
@@ -1145,7 +1161,9 @@ function setCoordPicking(value) {
 }
 function updateCoordState() {
   coordPickBtn.disabled = !(transform || approx);
-  coordPickBtn.title = transform ? '' : (approx ? '未标定，将使用近似摆放估算' : '没有可用的坐标基准');
+  coordPickBtn.title = transform ? ''
+    : (rawTransform ? '标定不可信，使用近似摆放估算'
+      : (approx ? '未标定，将使用近似摆放估算' : '没有可用的坐标基准'));
   if (!transform && !approx && coordPicking) setCoordPicking(false);
 }
 coordPickBtn.onclick = () => setCoordPicking(!coordPicking);
@@ -1326,9 +1344,23 @@ def main():
     parser.add_argument("--view-mirror-y", action="store_true", help="flip the background image vertically")
     args = parser.parse_args()
     calibration_meta = load_calibration_metadata(args.calibration) if args.calibration else {}
+    saved_view = calibration_meta.get("view") if isinstance(calibration_meta.get("view"), dict) else {}
+
+    def view_number(key, default):
+        try:
+            return float(saved_view.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
     default_view = {
-        "mirrorX": args.view_mirror_x or bool(calibration_meta.get("image_mirror_x")),
-        "mirrorY": args.view_mirror_y or bool(calibration_meta.get("image_mirror_y")),
+        "scale": view_number("scale", 1.0),
+        "rotation": view_number("rotation", 0.0),
+        "offsetX": view_number("offsetX", 0.0),
+        "offsetY": view_number("offsetY", 0.0),
+        "mirrorX": (args.view_mirror_x or bool(saved_view.get("mirrorX"))
+                    or bool(calibration_meta.get("image_mirror_x"))),
+        "mirrorY": (args.view_mirror_y or bool(saved_view.get("mirrorY"))
+                    or bool(calibration_meta.get("image_mirror_y"))),
     }
     points = load_points(args.input)
     references = []
