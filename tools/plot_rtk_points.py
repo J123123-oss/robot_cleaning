@@ -19,7 +19,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-RECORD_RE = re.compile(r"- seq:\s*(?P<seq>\d+)\s+(?P<body>.*?)(?=\n- seq:|\Z)", re.DOTALL)
+RECORD_RE = re.compile(
+    r"^[ \t]*- seq:\s*(?P<seq>\d+)\s+(?P<body>.*?)(?=^[ \t]*- seq:|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
 FIELD_RE = re.compile(
     r"point:\s*\{lon:\s*(?P<lon>[-+0-9.eE]+),\s*lat:\s*(?P<lat>[-+0-9.eE]+)\}.*?"
     r"valid:\s*(?P<valid>true|false).*?position_status:\s*(?P<position>[-+0-9]+).*?"
