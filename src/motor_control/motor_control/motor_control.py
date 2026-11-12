@@ -613,11 +613,9 @@ class MotorControlNode(Node):
         self.boundary_active_count = 0
         self.boundary_clear_count = 0
 
-        self.dock_sensors = 0  #停机仓传感器状态
         self._dock_sensor_blocked_logged_unloading = False
         self._dock_sensor_blocked_logged_loading = False
         self._loading_gps_rejected_logged = False  # GPS距离检查拒绝去重
-        self.dock_last_sensors = 0
         self._charge_start_pending = False
         self._charge_start_last_attempt = 0.0
         self._charge_start_retry_interval = 30.0
@@ -883,17 +881,6 @@ class MotorControlNode(Node):
             self.status_callback,
             10
         )
-        # 由于我们现在让 MQTT-ROS 桥把 MQTT 的 robot/ID/status 主题直接发布为 ROS 话题
-        # /mqtt_status，dock_state_callback 应订阅那个新话题而不是 robot_cmd 或 robot_state。
-        # 这样就可以避免收到节点自身发布的 robot_state，并能正确解析外部MQTT状态中的
-        # sensors 字段。
-        self.mqtt_status_subscription = self.create_subscription(
-            String,
-            "mqtt_status",
-            self.dock_state_callback,
-            10
-        )
-
         # 1. 创建服务客户端（与charging.py中的服务名对应）
         # 充电控制服务客户端（自定义服务类型）
         self.cli_start_charge = self.create_client(ChargeControl, 'start_charging')
@@ -3247,37 +3234,6 @@ class MotorControlNode(Node):
         else:
             self.get_logger().warn("[RTK采点] 当前经纬度无效，未记录")
             return False
-    @staticmethod
-    def _parse_dock_sensor_mask(value) -> Optional[int]:
-        """将MQTT的dock_sensors字段统一转换为8位传感器掩码。"""
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return int(value) & 0xFF
-        if isinstance(value, int):
-            return value & 0xFF
-        if isinstance(value, float) and value.is_integer():
-            return int(value) & 0xFF
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return None
-            try:
-                if text.lower().startswith("0x"):
-                    return int(text, 16) & 0xFF
-                if len(text) == 8 and set(text) <= {"0", "1"}:
-                    return int(text, 2) & 0xFF
-                return int(text, 10) & 0xFF
-            except ValueError:
-                return None
-        if isinstance(value, (list, tuple)):
-            mask = 0
-            for index, item in enumerate(value[:8]):
-                if bool(item):
-                    mask |= 1 << index
-            return mask
-        return None
-
     def _request_charge_if_docked(self, source: str) -> bool:
         """在DISABLE且检测到末端磁条时，以节流方式请求开始充电。"""
         if self.current_status != "DISABLE":
@@ -3318,74 +3274,6 @@ class MotorControlNode(Node):
             self.get_logger().error(f"[充电] 启动充电请求发送失败：{exc}")
             return False
         return True
-
-    def dock_state_callback(self, msg):
-        """处理来自MQTT的停靠传感器状态消息
-
-        原来这个回调订阅了 /robot_state（本节点自身状态），导致收到自己的发布消息
-        并提示 "未找到sensors字段"。现在我们通过桥接节点把 MQTT topic
-        robot/<ID>/status 转发到 ROS topic /mqtt_status 并在此处订阅，因此 msg.data
-        可以是本机回环的 JSON 状态，其中包含 dock_sensors 字段，
-        也兼容旧版dock从机发送的 sensors 字段。
-        """
-        # self.get_logger().info(f"[ROSNode] 收到机器人状态消息: {msg.data}")
-        # 修复问题3：正确的ROS2消息类型校验
-        if not isinstance(msg, String):
-            self.get_logger().error(f"[ROSNode] 无效消息类型：{type(msg)}，仅支持std_msgs/String")
-            return
-
-        # 确保msg.data是字符串类型，避免后续处理异常
-        msg_data = msg.data.strip() if isinstance(msg.data, str) else ""
-        if not msg_data:
-            self.get_logger().warn("[ROSNode] 空消息，跳过处理")
-            return
-
-        try:
-            cmd_obj = json.loads(msg_data)
-
-            # 修复问题1：先校验cmd_obj是否是字典类型，再查找传感器字段
-            if not isinstance(cmd_obj, dict):
-                self.get_logger().warn(f"[ROSNode] 消息不是JSON字典格式：{msg_data}，跳过字典解析")
-                raise json.JSONDecodeError("Not a JSON dict", msg_data, 0)  # 主动抛错，进入下方字符串处理逻辑
-
-            # 当前主机状态上报使用dock_sensors；兼容旧版dock从机的sensors字段。
-            raw_sensors = cmd_obj.get("dock_sensors", cmd_obj.get("sensors"))
-            if raw_sensors is None:
-                return
-
-            parsed_mask = self._parse_dock_sensor_mask(raw_sensors)
-            if parsed_mask is None:
-                self.get_logger().warn(
-                    f"[ROSNode] dock_sensors格式无法解析：{raw_sensors!r}"
-                )
-                return
-            self.dock_sensors = parsed_mask
-            self.get_logger().info(
-                f"[ROSNode] 解析到dock_sensors：0x{self.dock_sensors:02X}"
-            )
-            # 采用电平触发，同时保留上升沿信息；重启后高电平不再依赖
-            # “上一帧低电平”才能启动充电。
-            current_active_bits = int(self.dock_sensors & 0xFF).bit_count()
-            previous_active_bits = int(self.dock_last_sensors & 0xFF).bit_count()
-            dock_level = current_active_bits >= 6
-            dock_rising = dock_level and previous_active_bits < 6
-            if dock_level:
-                self.get_logger().info(
-                    f"[ROSNode] 车体到位：当前{current_active_bits}位触发"
-                    f"{'（上升沿）' if dock_rising else '（保持高电平）'}"
-                )
-                self._request_charge_if_docked(
-                    "MQTT dock_sensors上升沿" if dock_rising else "MQTT dock_sensors电平"
-                )
-            # 充电停止逻辑已移至 timer_callback 中统一处理
-
-            self.dock_last_sensors = self.dock_sensors
-        except json.JSONDecodeError as e:
-            self.get_logger().warn(f"[ROSNode] 消息不是有效JSON字典，尝试按字符串处理: {msg_data}, 错误: {e}")
-            # 处理字符串形式的传感器数据
-        except Exception as e:
-            self.get_logger().error(f"[ROSNode] 处理消息时发生未知错误: {msg_data}, 错误: {str(e)}, 堆栈信息: {traceback.format_exc()}")
-            self.publish_state()
 
     def get_adaptive_turn_speed(self, yaw_error_abs: float) -> float:
         """
