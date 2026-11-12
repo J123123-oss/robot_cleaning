@@ -4,7 +4,7 @@
 
 ## 0. 从零到对准速查
 
-1. 准备底图：PDF 直接用（工具内置 pypdfium2 转图），或放 PNG/JPEG。
+1. 准备底图：PDF 直接用（工具内置 pypdfium2 转 PNG、PyMuPDF 转 SVG），或放 PNG/JPEG/SVG。
 2. 准备点位：确认 `rtk_points.md` 或派生点位文件，混合场地先拆分。
 3. 生成页面：`--input` + `--output` + `--background-pdf/--background-image`，可加 `--dataset` 序列。
 4. 打开页面：双击启动 bat，或 `http://localhost:8766/页面名`。
@@ -16,8 +16,8 @@
 ## 1. 启动入口
 
 - 双击仓库根目录的 `启动RTK图纸预览.bat`：自动在 8766 端口启动本地 HTTP 服务并打开 `rtk_points_006-E22-W24_with_pdf.html`。
-- 双击 `启动RTK布置图1112预览.bat`：打开更换底图后的 `rtk_points_006-E22-W24_布置图1112.html`。
-- 也可以给 `启动RTK图纸预览.bat` 传入页面名：`启动RTK图纸预览.bat rtk_points_006-E22-W24_布置图1112.html`。
+- 双击 `启动RTK布置图1112预览.bat`：打开 SVG 底图的 `rtk_points_006-E22-W24_layout1112.html`。
+- 两个中文名 bat 只是入口，实际逻辑在 `start_rtk_preview.bat`；也可直接运行 `start_rtk_preview.bat 页面名`。页面名使用 ASCII，避免 cmd 编码问题。
 - 手动启动：
 
 ```bash
@@ -52,11 +52,25 @@ python -m http.server 8766 --bind 127.0.0.1
 
 ## 3. 更换底图的完整步骤
 
-1. 把新图纸放到仓库根目录或 `tmp/pdfs/`。PDF 无需安装 poppler：工具内置 `pypdfium2`，按 150 dpi 渲染首页。可直接用 `--background-pdf` 一步生成页面：
+1. 把新图纸放到仓库根目录或 `tmp/pdfs/`。PDF 无需安装 poppler：工具内置 `pypdfium2`，默认按 150 dpi 渲染首页。可直接用 `--background-pdf` 一步生成页面：
 
 ```bash
-python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md --output rtk_points_预览.html --background-pdf 图纸.pdf
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md --output rtk_points_预览.html --background-pdf 图纸.pdf --pdf-dpi 150
 ```
+
+放大查看需要更清晰时，有两种方式：
+
+```bash
+# 方式一：提高位图 DPI（A3 约 4961×3508，A0 约 14043×9933）
+python tools/plot_rtk_points.py ... --background-pdf 图纸.pdf --pdf-dpi 300
+
+# 方式二：转 SVG 矢量底图，任意放大都清晰
+python tools/plot_rtk_points.py ... --background-pdf 图纸.pdf --pdf-format svg --pdf-dpi 150
+```
+
+SVG 方式需要 `pymupdf`（`pip install pymupdf`）。`--pdf-dpi` 在 SVG 模式下只决定坐标单位（默认 150 dpi 与 PNG 模式的像素尺度一致），不影响矢量清晰度。纯矢量 PDF（无嵌入位图）效果最好；扫描件转 SVG 不会变清晰。
+
+`--background-image` 也可以直接传 `.svg` 文件。
 
 若想先单独转成 PNG 再检查，也可以：
 
@@ -93,17 +107,18 @@ python tools/plot_rtk_points.py ^
 
 ### 3.1 布置图 1112 页面
 
-- 底图：`布置图1112.pdf`（A3，150 dpi → 2481×1754），已转为 `tmp/pdfs/布置图1112-base.png`。
-- 页面：`rtk_points_006-E22-W24_布置图1112.html`，替换底图后的新界面，尚未标定，打开后按第 5 节拾取控制点。
+- 底图：`布置图1112.pdf`（A3，纯矢量，无嵌入位图），页面使用 **SVG 矢量底图**（`--pdf-format svg`），放大后线条和文字仍清晰。
+- 页面：`rtk_points_006-E22-W24_layout1112.html`（约 3.8 MB，含内嵌 SVG），尚未标定，打开后按第 5 节拾取控制点。
 - 原已对准页面 `rtk_points_006-E22-W24_with_pdf.html` 保持不动，两者共用同一套点位序列与标定逻辑，但标定 JSON 不能混用（像素坐标随底图变化）。
+- SVG 模式的控制点坐标单位仍是 150 dpi 下的像素，与同 DPI 的 PNG 页面基本一致；但换底图后仍应重新拾取。
 
-生成命令（不带 `--calibration`，先做近似摆放）：
+生成命令（SVG 矢量底图，不带 `--calibration`，先做近似摆放）：
 
 ```bash
 python tools/plot_rtk_points.py ^
   --input src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md ^
-  --output rtk_points_006-E22-W24_布置图1112.html ^
-  --background-image tmp/pdfs/布置图1112-base.png ^
+  --output rtk_points_006-E22-W24_layout1112.html ^
+  --background-pdf 布置图1112.pdf --pdf-format svg ^
   --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" ^
   --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
 ```
@@ -159,6 +174,7 @@ python tools/plot_rtk_points.py ^
 - **控制点残差大**：检查是否点错特征、`px/py` 是否被缩放过的截图坐标、经纬度是否取错点。
 - **标定 JSON 里 `py` 与点击值不同**：006 标定保存了 `source_py`，`py` 是垂直镜像后的值，属正常。
 - **页面卡在“加载中”**：确认通过 `http://localhost:8766` 访问且能联网加载 Leaflet。
+- **SVG 底图页面偏大或缩放卡顿**：SVG 会内嵌为文本，复杂 CAD 图可能到几 MB；可退回 `--pdf-dpi 300` 的位图，或先用 pypdf 检查 PDF 是否含嵌入位图（扫描件转 SVG 不会更清晰）。
 
 ## 7. 参考命令
 

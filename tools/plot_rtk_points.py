@@ -228,7 +228,29 @@ def load_calibration(path):
     return controls
 
 
+def _svg_size(path):
+    head = Path(path).read_text(encoding="utf-8", errors="ignore")[:4096]
+    tag = re.search(r"<svg\b[^>]*>", head)
+    if not tag:
+        raise ValueError(f"无法解析 SVG 尺寸: {path}")
+    attrs = dict(re.findall(r'(width|height|viewBox)\s*=\s*"([^"]*)"', tag.group(0)))
+    def number(value):
+        match = re.match(r"[-+0-9.eE]+", value.strip())
+        if not match:
+            raise ValueError(f"无法解析 SVG 尺寸: {path}")
+        return float(match.group(0))
+    if "width" in attrs and "height" in attrs:
+        return round(number(attrs["width"])), round(number(attrs["height"]))
+    if "viewBox" in attrs:
+        parts = attrs["viewBox"].replace(",", " ").split()
+        if len(parts) == 4:
+            return round(float(parts[2])), round(float(parts[3]))
+    raise ValueError(f"无法解析 SVG 尺寸: {path}")
+
+
 def image_size(path):
+    if Path(path).suffix.lower() == ".svg":
+        return _svg_size(path)
     with open(path, "rb") as handle:
         head = handle.read(32)
     if head[:8] == b"\x89PNG\r\n\x1a\n":
@@ -256,6 +278,8 @@ def image_size(path):
 
 
 def image_content_bbox(path, size):
+    if Path(path).suffix.lower() == ".svg":
+        return [0, 0, size[0], size[1]]
     try:
         from PIL import Image, ImageChops
         with Image.open(path) as image:
@@ -1076,6 +1100,32 @@ def pdf_to_png(pdf_path, output_path, dpi=150):
         document.close()
 
 
+def pdf_to_svg(pdf_path, output_path, dpi=150):
+    """Export the first PDF page to a vector SVG scaled to dpi pixels per inch."""
+    try:
+        import pymupdf
+    except ImportError as error:
+        raise RuntimeError("转换 PDF 为 SVG 需要 PyMuPDF：pip install pymupdf") from error
+    document = pymupdf.open(str(pdf_path))
+    try:
+        page = document[0]
+        svg = page.get_svg_image()
+        width = round(page.rect.width / 72 * dpi)
+        height = round(page.rect.height / 72 * dpi)
+        root = re.search(r"<svg\b[^>]*>", svg)
+        if root:
+            tag = root.group(0)
+            if 'width="' in tag and 'height="' in tag:
+                tag = re.sub(r'\bwidth="[^"]*"', f'width="{width}"', tag, count=1)
+                tag = re.sub(r'\bheight="[^"]*"', f'height="{height}"', tag, count=1)
+            else:
+                tag = tag.replace("<svg", f'<svg width="{width}" height="{height}"', 1)
+            svg = svg[:root.start()] + tag + svg[root.end():]
+    finally:
+        document.close()
+    Path(output_path).write_text(svg, encoding="utf-8")
+
+
 def image_data_uri(path):
     mime = mimetypes.guess_type(str(path))[0] or "image/png"
     encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
@@ -1138,6 +1188,10 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--background-pdf")
+    parser.add_argument("--pdf-dpi", type=int, default=150,
+                        help="PDF 渲染 DPI，默认 150；放大查看可提高到 300")
+    parser.add_argument("--pdf-format", choices=("png", "svg"), default="png",
+                        help="PDF 底图格式：png 位图（默认）或 svg 矢量，svg 放大不模糊")
     parser.add_argument("--background-image")
     parser.add_argument("--reference-point", action="append", default=[], metavar="NAME,LON,LAT")
     parser.add_argument("--control-point", action="append", default=[], metavar="NAME,PX,PY,LON,LAT")
@@ -1171,8 +1225,12 @@ def main():
     print(f"点位: {len(points)}")
     if args.background_pdf:
         with tempfile.TemporaryDirectory() as temp_dir:
-            image = Path(temp_dir) / "page.png"
-            pdf_to_png(args.background_pdf, image)
+            suffix = ".svg" if args.pdf_format == "svg" else ".png"
+            image = Path(temp_dir) / ("page" + suffix)
+            if args.pdf_format == "svg":
+                pdf_to_svg(args.background_pdf, image, args.pdf_dpi)
+            else:
+                pdf_to_png(args.background_pdf, image, args.pdf_dpi)
             output = render_sheet(points, image, controls, default_view, datasets)
             Path(args.output).write_text(output, encoding="utf-8")
         return
