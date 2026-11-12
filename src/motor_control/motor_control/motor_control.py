@@ -2409,17 +2409,13 @@ class MotorControlNode(Node):
         if new_state not in self.status_list:
             self.get_logger().warn(f"[ROSNode] 无效状态切换请求：{new_state}")
             return
-        # 独立UNLOADING复用START的使能初始化，允许其从DISABLE发起；
-        # 普通START及其它运行命令仍须先显式ENABLE。
+        # START和独立UNLOADING都包含电机初始化流程，允许从DISABLE直接发起；
+        # 其它运动状态仍须先显式ENABLE。
         # 允许重复 DISABLE 作为幂等安全操作，避免关机/异常清理路径报错。
-        standalone_unloading = (
-            new_state == "START" and self._magnetic_unloading_request_pending
-        )
         if (self.current_status == "DISABLE"
-                and new_state not in ("DISABLE", "ENABLE")
-                and not standalone_unloading):
+                and new_state not in ("DISABLE", "ENABLE", "START")):
             self.get_logger().warn(
-                f"[ROSNode] 当前为DISABLE，仅允许切换到ENABLE或独立UNLOADING，"
+                f"[ROSNode] 当前为DISABLE，仅允许切换到ENABLE、START或独立UNLOADING，"
                 f"忽略状态切换请求：DISABLE→{new_state}"
             )
             self.publish_state()
