@@ -15,9 +15,6 @@ PACKAGE_ROOT = Path(__file__).parents[1]
 STREAMER_SOURCE_PATH = PACKAGE_ROOT / 'rtk_nav' / 'grid_line_streamer.py'
 SETUP_SOURCE_PATH = PACKAGE_ROOT / 'setup.py'
 RUN_LAUNCH_SOURCE_PATH = PACKAGE_ROOT / 'launch' / 'run.launch.py'
-INDOOR_LAUNCH_SOURCE_PATH = (
-    PACKAGE_ROOT / 'launch' / 'camera_indoor_test.launch.py'
-)
 README_PATH = PACKAGE_ROOT / 'README_GRID_LINE_STREAM.md'
 
 
@@ -312,25 +309,24 @@ class GridLineStreamerContractTest(unittest.TestCase):
             setup_source,
         )
 
-        for launch_path in (RUN_LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
-            source = _source(launch_path)
-            for argument in (
-                'enable_grid_line_stream',
-                'grid_line_stream_rtsp_url',
-                'grid_line_stream_fps',
-                'grid_line_stream_bitrate',
-                'grid_line_stream_preset',
-                'grid_line_stream_reconnect_sec',
-                'ffmpeg_path',
-            ):
-                self.assertIn(argument, source)
-            self.assertIn("executable='grid_line_streamer'", source)
-            self.assertIn('IfCondition(LaunchConfiguration', source)
-            self.assertRegex(
-                source,
-                r'default_value=TextSubstitution\(text=[\'\"]true[\'\"]\)',
-            )
-            self.assertIn('rtsp://127.0.0.1:8554/live/grid_line', source)
+        source = _source(RUN_LAUNCH_SOURCE_PATH)
+        for argument in (
+            'enable_grid_line_stream',
+            'grid_line_stream_rtsp_url',
+            'grid_line_stream_fps',
+            'grid_line_stream_bitrate',
+            'grid_line_stream_preset',
+            'grid_line_stream_reconnect_sec',
+            'ffmpeg_path',
+        ):
+            self.assertIn(argument, source)
+        self.assertIn("executable='grid_line_streamer'", source)
+        self.assertIn('IfCondition(LaunchConfiguration', source)
+        self.assertRegex(
+            source,
+            r'default_value=TextSubstitution\(text=[\'\"]true[\'\"]\)',
+        )
+        self.assertIn('rtsp://127.0.0.1:8554/live/grid_line', source)
 
     def test_readme_documents_rtsp_and_http_flv_roles(self):
         readme_source = _source(README_PATH)

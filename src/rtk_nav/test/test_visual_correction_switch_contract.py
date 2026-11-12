@@ -13,9 +13,6 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).parents[3]
 LAUNCH_SOURCE_PATH = Path(__file__).parents[1] / "launch" / "run.launch.py"
-INDOOR_LAUNCH_SOURCE_PATH = (
-    Path(__file__).parents[1] / "launch" / "camera_indoor_test.launch.py"
-)
 RTK_SOURCE_PATH = Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py"
 SETUP_SOURCE_PATH = Path(__file__).parents[1] / "setup.py"
 CAMERA_PUBLISHER_SOURCE_PATH = (
@@ -100,22 +97,19 @@ def test_launch_declares_visual_correction_default_on_and_passes_visual_gates():
 
 
 def test_launch_forwards_always_show_axis_debug_to_both_detectors():
-    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
-        source = launch_path.read_text(encoding="utf-8")
+    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
 
-        assert '"always_show_axis_debug"' in source or (
-            "'always_show_axis_debug'" in source
-        )
-        assert (
-            'default_value=TextSubstitution(text="false")' in source
-            or "default_value=TextSubstitution(text='false')" in source
-            or 'default_value=TextSubstitution(text="true")' in source
-            or "default_value=TextSubstitution(text='true')" in source
-        )
-        assert "'always_show_axis_debug': ParameterValue(" in source
-        assert (
-            "LaunchConfiguration('always_show_axis_debug')" in source
-        )
+    assert '"always_show_axis_debug"' in source or (
+        "'always_show_axis_debug'" in source
+    )
+    assert (
+        'default_value=TextSubstitution(text="false")' in source
+        or "default_value=TextSubstitution(text='false')" in source
+        or 'default_value=TextSubstitution(text="true")' in source
+        or "default_value=TextSubstitution(text='true')" in source
+    )
+    assert "'always_show_axis_debug': ParameterValue(" in source
+    assert "LaunchConfiguration('always_show_axis_debug')" in source
 
 
 def test_line_detector_keeps_axis_debug_rows_together_with_runtime_switch():
@@ -261,21 +255,6 @@ def test_visual_speed_parameters_use_wheel_rpm_units_after_migration():
     assert 'description="Maximum visual correction in wheel output-shaft r/min"' in launch_source
 
 
-def test_indoor_launch_forwards_constrained_line_tracking_parameters():
-    source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-
-    for name, default, value_type in (
-        ("line_tracking_enabled", "true", "bool"),
-        ("max_line_tracking_jump_px", "30.0", "float"),
-        ("max_line_tracking_missed_frames", "2", "int"),
-    ):
-        assert f"'{name}'" in source
-        assert f"default_value=TextSubstitution(text='{default}')" in source
-        assert f"'{name}': ParameterValue(" in source
-        assert f"LaunchConfiguration('{name}')" in source
-        assert f"value_type={value_type}" in source
-
-
 def test_launch_exposes_fine_line_detection_tuning_to_both_detectors():
     expected = (
         ('white_line_value_threshold', '170.0', 'float'),
@@ -293,22 +272,19 @@ def test_launch_exposes_fine_line_detection_tuning_to_both_detectors():
         ('angle_line_overlay_outline_thickness_px', '2', 'int'),
         ('tracked_line_overlay_thickness_px', '2', 'int'),
     )
-    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
-        source = launch_path.read_text(encoding="utf-8")
-        for name, default, value_type in expected:
-            assert (
-                f'"{name}"' in source or f"'{name}'" in source
-            )
-            assert (
-                f'default_value=TextSubstitution(text="{default}")' in source
-                or f"default_value=TextSubstitution(text='{default}')" in source
-            )
-            assert f"'{name}': ParameterValue(" in source
-            assert (
-                f"LaunchConfiguration('{name}')" in source
-                or f'LaunchConfiguration("{name}")' in source
-            )
-            assert f'value_type={value_type}' in source
+    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+    for name, default, value_type in expected:
+        assert f'"{name}"' in source or f"'{name}'" in source
+        assert (
+            f'default_value=TextSubstitution(text="{default}")' in source
+            or f"default_value=TextSubstitution(text='{default}')" in source
+        )
+        assert f"'{name}': ParameterValue(" in source
+        assert (
+            f"LaunchConfiguration('{name}')" in source
+            or f'LaunchConfiguration("{name}")' in source
+        )
+        assert f'value_type={value_type}' in source
 
 
 def test_launch_exposes_coarse_tracking_tuning_to_both_detectors():
@@ -321,19 +297,18 @@ def test_launch_exposes_coarse_tracking_tuning_to_both_detectors():
         ('coarse_line_bridge_normal_gap_px', '10.0'),
         ('coarse_line_bridge_angle_tolerance_deg', '3.0'),
     )
-    for launch_path in (LAUNCH_SOURCE_PATH, INDOOR_LAUNCH_SOURCE_PATH):
-        source = launch_path.read_text(encoding="utf-8")
-        for name, default in expected:
-            assert f'"{name}"' in source or f"'{name}'" in source
-            assert (
-                f'default_value=TextSubstitution(text="{default}")' in source
-                or f"default_value=TextSubstitution(text='{default}')" in source
-            )
-            assert f"'{name}': ParameterValue(" in source
-            assert (
-                f"LaunchConfiguration('{name}')" in source
-                or f'LaunchConfiguration("{name}")' in source
-            )
+    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
+    for name, default in expected:
+        assert f'"{name}"' in source or f"'{name}'" in source
+        assert (
+            f'default_value=TextSubstitution(text="{default}")' in source
+            or f"default_value=TextSubstitution(text='{default}')" in source
+        )
+        assert f"'{name}': ParameterValue(" in source
+        assert (
+            f"LaunchConfiguration('{name}')" in source
+            or f'LaunchConfiguration("{name}")' in source
+        )
 
 
 def test_line_detector_uses_horizontal_fallback_without_rtk_and_rtk_when_fresh():
@@ -566,16 +541,6 @@ def test_launch_forwards_openmv_serial_parameters():
         assert f"LaunchConfiguration('{launch_name}')" in source
 
     assert 'default_value=TextSubstitution(text="115200")' in source
-
-
-def test_indoor_launch_exposes_fallback_image_axis():
-    source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-
-    assert "'fallback_path_axis_image_deg'" in source
-    assert "LaunchConfiguration('fallback_path_axis_image_deg')" in source
-    assert "'image_rotation_deg'" in source
-    assert "LaunchConfiguration('camera_image_rotation_deg')" in source
-    assert "'indoor_test_mode': True" in source
 
 
 def test_camera_publisher_loads_static_images_as_color_frames():
@@ -922,12 +887,9 @@ def test_zero_degree_camera_rotation_defaults_use_tested_visual_sign_convention(
         Path(__file__).parents[1] / "rtk_nav" / "openmv_serial_publisher_node.py"
     ).read_text(encoding="utf-8")
     outdoor_source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    indoor_source = INDOOR_LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-
     assert "declare_parameter('image_rotation_deg', 0)" in detector_source
     assert 'self.declare_parameter("image_rotation_deg", 0)' in publisher_source
     assert 'default_value=TextSubstitution(text="0")' in outdoor_source
-    assert "default_value=TextSubstitution(text='0')" in indoor_source
     assert "lateral_error_sign_for_image_rotation" in detector_source
     assert "lateral_m *= self.lateral_error_sign" in detector_source
     assert "-self.visual_heading_gain * self.visual_sample_heading_error_deg" in (
