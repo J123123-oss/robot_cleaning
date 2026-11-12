@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 set "PORT=8766"
 set "PAGE=%~1"
-if "%PAGE%"=="" set "PAGE=rtk_points_006-E22-W24_with_pdf.html"
+if "%PAGE%"=="" set "PAGE=rtk_points_006-E22-W24_layout1112.html"
 
 if not exist "%PAGE%" (
     echo [错误] 找不到页面文件：%PAGE%
