@@ -2,9 +2,22 @@
 
 本教程说明如何用 `tools/plot_rtk_points.py` 生成“现场 RTK 点位 + CAD 底图”的对齐页面，以及更换底图或点位后如何一步步完成对准。
 
+## 0. 从零到对准速查
+
+1. 准备底图：PDF 直接用（工具内置 pypdfium2 转图），或放 PNG/JPEG。
+2. 准备点位：确认 `rtk_points.md` 或派生点位文件，混合场地先拆分。
+3. 生成页面：`--input` + `--output` + `--background-pdf/--background-image`，可加 `--dataset` 序列。
+4. 打开页面：双击启动 bat，或 `http://localhost:8766/页面名`。
+5. 初判方向：先用镜像 / 旋转180° / 旋转滑动条让点位大致贴合。
+6. 精确标定：选 2 个远距离点拾取 → 查看 RMSE → 第 3 点交叉验证。
+7. 导出 `rtk_calibration.json`，放回配置目录。
+8. 重新生成页面并固化默认视图（必要时补 `image_mirror_x/y`）。
+
 ## 1. 启动入口
 
 - 双击仓库根目录的 `启动RTK图纸预览.bat`：自动在 8766 端口启动本地 HTTP 服务并打开 `rtk_points_006-E22-W24_with_pdf.html`。
+- 双击 `启动RTK布置图1112预览.bat`：打开更换底图后的 `rtk_points_006-E22-W24_布置图1112.html`。
+- 也可以给 `启动RTK图纸预览.bat` 传入页面名：`启动RTK图纸预览.bat rtk_points_006-E22-W24_布置图1112.html`。
 - 手动启动：
 
 ```bash
@@ -39,13 +52,17 @@ python -m http.server 8766 --bind 127.0.0.1
 
 ## 3. 更换底图的完整步骤
 
-1. 把新图纸放到 `tmp/pdfs/`，PDF 先转 PNG：
+1. 把新图纸放到仓库根目录或 `tmp/pdfs/`。PDF 无需安装 poppler：工具内置 `pypdfium2`，按 150 dpi 渲染首页。可直接用 `--background-pdf` 一步生成页面：
 
 ```bash
-pdftoppm -f 1 -singlefile -png -r 150 图纸.pdf tmp/pdfs/新底图
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md --output rtk_points_预览.html --background-pdf 图纸.pdf
 ```
 
-Windows 需安装 poppler 并把 `pdftoppm` 加入 PATH；也可以直接准备 PNG/JPEG。
+若想先单独转成 PNG 再检查，也可以：
+
+```bash
+python -c "import pypdfium2 as pdfium; pdfium.PdfDocument('图纸.pdf')[0].render(scale=150/72).to_pil().save('tmp/pdfs/新底图.png')"
+```
 
 2. 记录底图分辨率。控制点的 `px/py` 都是**该分辨率下的整图像素坐标**，换图或改分辨率后必须重新拾取，不能沿用旧值。
 
@@ -73,6 +90,25 @@ python tools/plot_rtk_points.py ^
 ```
 
 `--dataset LABEL=PATH` 可重复，页面左侧“点位序列”下拉框会列出所有序列，默认选中 `--input`。切换序列只换点位，不改变标定。
+
+### 3.1 布置图 1112 页面
+
+- 底图：`布置图1112.pdf`（A3，150 dpi → 2481×1754），已转为 `tmp/pdfs/布置图1112-base.png`。
+- 页面：`rtk_points_006-E22-W24_布置图1112.html`，替换底图后的新界面，尚未标定，打开后按第 5 节拾取控制点。
+- 原已对准页面 `rtk_points_006-E22-W24_with_pdf.html` 保持不动，两者共用同一套点位序列与标定逻辑，但标定 JSON 不能混用（像素坐标随底图变化）。
+
+生成命令（不带 `--calibration`，先做近似摆放）：
+
+```bash
+python tools/plot_rtk_points.py ^
+  --input src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md ^
+  --output rtk_points_006-E22-W24_布置图1112.html ^
+  --background-image tmp/pdfs/布置图1112-base.png ^
+  --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" ^
+  --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
+```
+
+完成标定并导出 JSON 后，把 `rtk_calibration_006-E22-W24.json` 换成新底图的标定文件再重新生成即可固化。
 
 ## 4. 更换点位数据的步骤
 

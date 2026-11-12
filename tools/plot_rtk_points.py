@@ -15,7 +15,6 @@ import math
 import mimetypes
 import re
 import struct
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1064,6 +1063,19 @@ referencePoints.forEach(p=>{const marker=L.circleMarker([p.lat,p.lon],{radius:8,
 </script></body></html>"""
 
 
+def pdf_to_png(pdf_path, output_path, dpi=150):
+    """Render the first PDF page to PNG with pypdfium2 (no poppler needed)."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as error:
+        raise RuntimeError("转换 PDF 需要 pypdfium2：pip install pypdfium2") from error
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
+        document[0].render(scale=dpi / 72).to_pil().save(str(output_path))
+    finally:
+        document.close()
+
+
 def image_data_uri(path):
     mime = mimetypes.guess_type(str(path))[0] or "image/png"
     encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
@@ -1159,10 +1171,8 @@ def main():
     print(f"点位: {len(points)}")
     if args.background_pdf:
         with tempfile.TemporaryDirectory() as temp_dir:
-            prefix = str(Path(temp_dir) / "page")
-            subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-png", "-r", "150",
-                            args.background_pdf, prefix], check=True)
-            image = Path(prefix + ".png")
+            image = Path(temp_dir) / "page.png"
+            pdf_to_png(args.background_pdf, image)
             output = render_sheet(points, image, controls, default_view, datasets)
             Path(args.output).write_text(output, encoding="utf-8")
         return
