@@ -448,6 +448,7 @@ class RTKNavControlNode(Node):
         self.geofence_outside_count = 0
         self.geofence_confirm_frames = 3
         self.geofence_latched = False
+        self.geofence_recovery_ready = False
         self.declare_parameter("enable_imu_odom_fallback", False)
         self.enable_imu_odom_fallback = bool(
             self.get_parameter("enable_imu_odom_fallback").value
@@ -577,6 +578,9 @@ class RTKNavControlNode(Node):
         self.keyboard_control_pub = self.create_publisher(String, "/keyboard/control", 10)
         self.geofence_fault_pub = self.create_publisher(
             Int16, "/rtk/geofence_fault_code", 10
+        )
+        self.geofence_recovery_pub = self.create_publisher(
+            Bool, "/rtk/geofence_recovery_ready", 10
         )
         self._nav_state_seq = 0
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
@@ -775,6 +779,7 @@ class RTKNavControlNode(Node):
 
     def load_geofence_sidecar(self, path: str) -> bool:
         """Load the legacy dense planner's fence sidecar for the active route."""
+        self.publish_geofence_recovery_ready(False)
         try:
             self.geofence_payload = load_geofence_payload(path)
             self.geofence_outside_count = 0
@@ -789,6 +794,25 @@ class RTKNavControlNode(Node):
             self.geofence_payload = None
             self.get_logger().error(f"[电子围栏] 加载失败，自动清扫将被锁定: {exc}")
             return False
+
+    def publish_geofence_recovery_ready(self, ready: bool) -> None:
+        """Publish whether a latched fence stop has been manually recovered."""
+        ready = bool(ready)
+        if ready == self.geofence_recovery_ready:
+            return
+        self.geofence_recovery_ready = ready
+        msg = Bool()
+        msg.data = ready
+        self.geofence_recovery_pub.publish(msg)
+
+    def _update_geofence_recovery_ready(self) -> None:
+        """Report inside-fence readiness while the robot remains in HOLD."""
+        ready = bool(
+            self.geofence_latched
+            and self.geofence_payload is not None
+            and self.check_geofence_position()
+        )
+        self.publish_geofence_recovery_ready(ready)
 
     def check_geofence_position(self) -> bool:
         """Check the current car-center position against the sidecar geometry."""
@@ -806,18 +830,18 @@ class RTKNavControlNode(Node):
         if self.geofence_latched:
             self.publish_stop_speed()
             return True
+        if self.geofence_payload is None:
+            self.trip_geofence_stop("sidecar_missing")
+            return True
         # The robot may start outside the work area. Allow the dedicated
-        # initial approach to waypoint 0 even before the sidecar is available;
-        # protection resumes as soon as initial approach completes.
+        # initial approach to waypoint 0 only after the sidecar has loaded;
+        # the motor-control entry gate prevents AUTO when it is missing.
         nav_state = self.nav_context.get("nav_state")
         if (
             self.current_waypoint_idx == 0
             and nav_state in (NavState.IDLE, NavState.INITIAL_MOVE)
         ):
             return False
-        if self.geofence_payload is None:
-            self.trip_geofence_stop("sidecar_missing")
-            return True
         if not self.rtk_solution_ready or not self.current_gps:
             return False
         if self.check_geofence_position():
@@ -833,6 +857,7 @@ class RTKNavControlNode(Node):
     def trip_geofence_stop(self, reason: str) -> None:
         already_latched = self.geofence_latched
         self.geofence_latched = True
+        self.publish_geofence_recovery_ready(False)
         self.nav_running = False
         self.multi_waypoint_generator = None
         self.nav_context["nav_state"] = NavState.PAUSE
@@ -4392,6 +4417,7 @@ class RTKNavControlNode(Node):
                 return False
             self.geofence_latched = False
             self.geofence_outside_count = 0
+            self.publish_geofence_recovery_ready(False)
         target_waypoint = self.waypoints[self.current_waypoint_idx]
 
         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
@@ -6210,6 +6236,11 @@ class RTKNavControlNode(Node):
         if self.ultrasonic_suppression_active:
             # 即使暂时没有新的 IO 帧，也由10Hz定时器检查状态/RTK/区域变化。
             self._is_ultrasonic_suppression_allowed()
+        if (
+            self.geofence_latched
+            and self.current_control_mode != ControlMode.AUTO_CLEANING
+        ):
+            self._update_geofence_recovery_ready()
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:

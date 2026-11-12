@@ -48,6 +48,8 @@ class NavPauseProtocolContractTest(unittest.TestCase):
         self.assertIn("self.set_motors_speed(0.0, 0.0)", callback)
         self.assertIn("self.switch_state('h')", callback)
         self.assertIn("if self._rtk_auto_pause", timer)
+        self.assertIn("self.nav_status = 'PAUSE'", callback)
+        self.assertNotIn("self.nav_status = 'HOLD'", callback)
 
     def test_heading_gate_timeout_is_latched_manual_hold_with_error_64(self):
         rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")

@@ -19,3 +19,25 @@ def test_geofence_fault_bit_follows_existing_bitmask():
     ).read_text(encoding="utf-8")
     assert "ERROR_AUTO_CLEANING_LOW_BATTERY = 512" in source
     assert "ERROR_GEOFENCE_OUTSIDE = 1024" in source
+
+
+def test_auto_entry_is_gated_by_fence_and_recovery_readiness():
+    source = (
+        Path(__file__).parents[1] / "motor_control" / "motor_control.py"
+    ).read_text(encoding="utf-8")
+    assert "def geofence_recovery_ready_callback" in source
+    assert "self.geofence_recovery_ready" in source
+    assert "def _check_auto_cleaning_entry" in source
+    assert "self._check_auto_cleaning_entry" in source
+    switch_source = source[source.index("def switch_state"):source.index("def _check_auto_cleaning_entry")]
+    assert switch_source.index("self._check_auto_cleaning_entry") < switch_source.index(
+        "self.current_status = new_state"
+    )
+
+
+def test_geofence_fault_keeps_nav_status_pause():
+    source = (
+        Path(__file__).parents[1] / "motor_control" / "motor_control.py"
+    ).read_text(encoding="utf-8")
+    callback = source[source.index("def geofence_fault_callback"):source.index("def cleaning_area_callback")]
+    assert 'self.nav_status = "PAUSE"' in callback

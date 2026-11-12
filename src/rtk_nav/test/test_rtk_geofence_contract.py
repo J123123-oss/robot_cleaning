@@ -28,9 +28,16 @@ def test_geofence_allows_initial_approach_to_first_waypoint():
     assert "Allow the dedicated" in source
 
 
-def test_initial_approach_is_checked_before_missing_sidecar_lock():
+def test_missing_sidecar_is_checked_before_initial_approach_allowance():
     source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
     enforce_source = source[source.index("def enforce_geofence"):source.index("def trip_geofence_stop")]
     initial_approach_guard = enforce_source.index("# The robot may start outside the work area.")
     missing_sidecar_guard = enforce_source.index("if self.geofence_payload is None:")
-    assert initial_approach_guard < missing_sidecar_guard
+    assert missing_sidecar_guard < initial_approach_guard
+
+
+def test_geofence_recovery_readiness_is_published_for_manual_resume():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    assert '"/rtk/geofence_recovery_ready"' in source
+    assert "def _update_geofence_recovery_ready" in source
+    assert "self.publish_geofence_recovery_ready" in source

@@ -596,6 +596,7 @@ class MotorControlNode(Node):
         self._brush_current_anomaly_last_log_time = {}
         self.current_stall_fault = False
         self.geofence_fault_latched = False
+        self.geofence_recovery_ready = False
         self.total_current_fault = False
         self.total_current_fault_current = 0.0
         self.current_stall_fault_source = None
@@ -727,6 +728,12 @@ class MotorControlNode(Node):
             Int16,
             "/rtk/geofence_fault_code",
             self.geofence_fault_callback,
+            10,
+        )
+        self.geofence_recovery_sub = self.create_subscription(
+            Bool,
+            "/rtk/geofence_recovery_ready",
+            self.geofence_recovery_ready_callback,
             10,
         )
         self.cleaning_area_sub = self.create_subscription(
@@ -1875,7 +1882,7 @@ class MotorControlNode(Node):
 
             self._rtk_auto_pause = False
             if self.current_control_mode == "AUTO_CLEANING":
-                self.nav_status = "HOLD"
+                self.nav_status = "PAUSE"
                 self.get_logger().warn(
                     f"[RTKNavStatus] 人工介入暂停: {pause_reason or 'unknown'}，"
                     "切换到底盘HOLD")
@@ -1910,6 +1917,8 @@ class MotorControlNode(Node):
         if int(msg.data) & ERROR_GEOFENCE_OUTSIDE:
             was_latched = self.geofence_fault_latched
             self.geofence_fault_latched = True
+            self.nav_status = "PAUSE"
+            self.geofence_recovery_ready = False
             self.rtk_left_speed = 0.0
             self.rtk_right_speed = 0.0
             self.set_motors_speed(0.0, 0.0)
@@ -1920,6 +1929,14 @@ class MotorControlNode(Node):
                 )
                 self.switch_state("h")
                 self.publish_state()
+
+    def geofence_recovery_ready_callback(self, msg: Bool):
+        """Track RTK confirmation that a latched fence stop is back inside."""
+        self.geofence_recovery_ready = bool(msg.data)
+        if self.geofence_recovery_ready:
+            self.get_logger().info(
+                "[电子围栏] RTK确认当前位置已回到允许区域，下一次AUTO可恢复"
+            )
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
@@ -1960,7 +1977,11 @@ class MotorControlNode(Node):
             return
         route_msg = String()
         route_msg.data = route_file
+        self.rtk_path_file = route_file
         self.route_id = route_id
+        self.geofence_fault_latched = False
+        self.geofence_recovery_ready = False
+        self.nav_status = "IDLE"
         self.route_change_pub.publish(route_msg)
         self.get_logger().info(f"[ROSNode] 已发布路径切换指令: {route_id} -> {route_file}")
 
@@ -2427,6 +2448,8 @@ class MotorControlNode(Node):
                 f"[MotorProtection] 电流保护故障已锁存，忽略状态切换请求：{new_state}"
             )
             return
+        if new_state == "AUTO_CLEANING" and not self._check_auto_cleaning_entry():
+            return
         # if self.current_control_mode == "REMOTE":
         #     self.get_logger().warn("[ROSNode] 当前为遥控器模式，禁止设置状态")
         #     return
@@ -2693,6 +2716,47 @@ class MotorControlNode(Node):
         state_msg = String()
         state_msg.data = self.current_status
         self.state_pub.publish(state_msg)
+
+    def _check_auto_cleaning_entry(self) -> bool:
+        """Gate AUTO_CLEANING on the route fence and manual fence recovery."""
+        configured_path = str(getattr(self, "rtk_path_file", "") or "").strip()
+        fence_path = (
+            os.path.splitext(configured_path)[0] + ".fence.json"
+            if configured_path
+            else ""
+        )
+        if not fence_path or not os.path.isfile(fence_path):
+            self._reject_auto_cleaning_entry(
+                f"缺少当前路线围栏文件: {fence_path or '<empty path>'}"
+            )
+            return False
+        if self.geofence_fault_latched:
+            if not self.geofence_recovery_ready:
+                self._reject_auto_cleaning_entry(
+                    "电子围栏故障已锁存，等待人工移回允许区域"
+                )
+                return False
+            self.geofence_fault_latched = False
+            self.geofence_recovery_ready = False
+            self.get_logger().info(
+                "[电子围栏] 已确认人工移回允许区域，清除1024锁存并允许AUTO"
+            )
+        return True
+
+    def _reject_auto_cleaning_entry(self, reason: str) -> None:
+        """Keep the state machine at HOLD/PAUSE when AUTO entry is unsafe."""
+        self.nav_status = "PAUSE"
+        self.geofence_fault_latched = True
+        self.geofence_recovery_ready = False
+        self.rtk_left_speed = 0.0
+        self.rtk_right_speed = 0.0
+        self.set_motors_speed(0.0, 0.0)
+        self.set_brush_speed(0.0)
+        self.get_logger().error(f"[电子围栏] 拒绝进入AUTO_CLEANING: {reason}")
+        if self.current_status != "HOLD":
+            self.switch_state("h")
+        self.publish_state()
+
     def auto_stop(self, key):
         """方向键点按后自动停止，并重置对应标记"""
         self.switch_state("h")
