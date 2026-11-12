@@ -47,7 +47,7 @@ python3 tools/wtrtk_ntrip_config_4ga.py \
   --apply
 ```
 
-4GA 固件对 `AT+CORS=` 和 `AT+NETRESET` 可能不返回回显。工具会记录警告并继续执行 `AT+MP`、`AT+SAVE` 和退出配置模式；这不代表已经通过网络完成 NTRIP 鉴权，仍需观察设备定位状态。
+4GA 固件对 `AT+CORS=` 和 `AT+NETRESET` 可能不返回回显。工具会记录警告并继续执行 `AT+MP`、`AT+SAVE`、`AT+RESET` 和退出配置模式；这不代表已经通过网络完成 NTRIP 鉴权，仍需观察设备定位状态。
 
 ## 4. 写入 4GAC
 

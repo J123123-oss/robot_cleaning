@@ -248,6 +248,12 @@ def configure(ser: serial.Serial | None, config: Config, dry_run: bool) -> None:
             if dry_run:
                 raise
             print(f"警告：AT+NETRESET 未返回回显，继续退出配置模式：{exc}")
+        try:
+            send_at(ser, "AT+RESET", ("+RESET", "RESET"), dry_run)
+        except RuntimeError as exc:
+            if dry_run:
+                raise
+            print(f"警告：AT+RESET 未返回回显，继续退出配置模式：{exc}")
     finally:
         exit_config(ser, dry_run)
 

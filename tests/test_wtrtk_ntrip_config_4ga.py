@@ -152,6 +152,7 @@ class WtrtkNtripConfigTests(unittest.TestCase):
             b"+MP=BOOT2\r\n",
             b"OK\r\n",
             b"+NETRESET\r\n",
+            b"+RESET\r\n",
             b"+EXIT\r\n",
         )
         config = module.Config("example.com", 8002, "user", "password", "BOOT2")
@@ -167,6 +168,7 @@ class WtrtkNtripConfigTests(unittest.TestCase):
                 b"AT+MP=BOOT2\r\n",
                 b"AT+SAVE\r\n",
                 b"AT+NETRESET\r\n",
+                b"AT+RESET\r\n",
                 b"AT+EXIT\r\n",
             ],
         )
