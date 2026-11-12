@@ -351,6 +351,12 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 #view-controls button{margin:0;padding:4px 6px;font-size:12px}
 #view-controls button.active{background:#1565c0;border-color:#1565c0;color:#fff}
 #view-controls .vc-hint{font-size:11px;color:#627d98;margin-top:6px}
+#coord-panel{position:fixed;z-index:1200;left:356px;bottom:16px;width:330px;box-sizing:border-box;background:#fff;border:1px solid #d9e2ec;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.25);padding:10px 12px;font:12px/1.6 "Microsoft YaHei",system-ui,sans-serif;color:#102a43;display:none}
+#coord-panel.visible{display:block}
+#coord-panel .coord-head{display:flex;align-items:center;justify-content:space-between;font-weight:700;margin-bottom:4px}
+#coord-panel .coord-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#coord-panel .coord-value{font:700 13px monospace}
+#coord-panel .coord-hint{font-size:11px;color:#627d98;margin-top:4px}
 .dataset-row{display:block;font-size:12px;color:#334e68;margin:0 0 8px}
 #dataset-select{width:100%;margin-top:4px;font:12px monospace;box-sizing:border-box}
 </style></head><body>
@@ -371,11 +377,18 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 <button id="pick-btn">在图纸上拾取所选点位</button>
 <button id="export-btn">导出标定 JSON</button>
 <button id="locate-btn">定位到点位</button>
+<button id="coord-pick-btn">拾取坐标（估算经纬度）</button>
 <button id="clear-btn">清空标定</button>
 <div class="hint" id="pick-hint">图纸标签只显示序号；下拉列表附带区域/标签和经纬度。</div>
 </aside>
 <button id="sidebar-reopen" type="button" aria-controls="sidebar" title="展开标定菜单">显示标定</button>
 <div id="map"></div>
+<div id="coord-panel">
+  <div class="coord-head"><span>点坐标（估算）</span><button id="coord-close" type="button">×</button></div>
+  <div class="coord-row"><span class="coord-value" id="coord-value">—</span><button id="coord-copy" type="button">复制</button></div>
+  <div class="coord-hint" id="coord-utm"></div>
+  <div class="coord-hint">由当前标定反算，精度取决于控制点。</div>
+</div>
 <div id="view-controls">
   <div class="vc-header">
     <div class="vc-title">底图对齐</div>
@@ -457,6 +470,7 @@ const AdjustableImageOverlay = L.ImageOverlay.extend({
 const imageOverlay = new AdjustableImageOverlay(IMAGE.src, [[0, 0], [IMAGE_H, IMAGE_W]]).addTo(map);
 const pointLayer = L.layerGroup().addTo(map);
 const cpLayer = L.layerGroup().addTo(map);
+const coordLayer = L.layerGroup().addTo(map);
 const statusEl = document.getElementById('status');
 const bannerEl = document.getElementById('banner');
 const holdoutEl = document.getElementById('holdout');
@@ -466,6 +480,12 @@ const pickBtn = document.getElementById('pick-btn');
 const exportBtn = document.getElementById('export-btn');
 const locateBtn = document.getElementById('locate-btn');
 const clearBtn = document.getElementById('clear-btn');
+const coordPickBtn = document.getElementById('coord-pick-btn');
+const coordPanelEl = document.getElementById('coord-panel');
+const coordValueEl = document.getElementById('coord-value');
+const coordUtmEl = document.getElementById('coord-utm');
+const coordCopyBtn = document.getElementById('coord-copy');
+const coordCloseBtn = document.getElementById('coord-close');
 const hintEl = document.getElementById('pick-hint');
 const imageVisibleEl = document.getElementById('image-visible');
 const imageOpacityEl = document.getElementById('image-opacity');
@@ -502,6 +522,7 @@ let pairs = INITIAL_PAIRS.map(pair => {
 });
 let transform = null;
 let picking = false;
+let coordPicking = false;
 let labelEntries = [];
 let lastHoldout = null;
 const datasetSelectEl = document.getElementById('dataset-select');
@@ -591,6 +612,7 @@ function fitSimilarity(controls) {
   });
   return {
     a, b, tx, ty, det, east0, north0,
+    zone: controls[0].utm_zone || '',
     pixelsPerMeter: 1 / Math.sqrt(det),
     rotation: Math.atan2(b, a) * 180 / Math.PI,
     residuals,
@@ -604,6 +626,47 @@ function pointPixel(point, model) {
   return {
     u: (model.a * dx + model.b * dy) / model.det,
     v: (-model.b * dx + model.a * dy) / model.det
+  };
+}
+function pixelToUtm(u, v, model) {
+  const x = model.a * u - model.b * v + model.tx;
+  const y = model.b * u + model.a * v + model.ty;
+  return {e: x + model.east0, n: y + model.north0};
+}
+function approxPixelToUtm(u, v, model) {
+  return {
+    e: model.east0 + model.xmid + (u - model.cx) / model.scale,
+    n: model.north0 + model.ymid - (v - model.cy) / model.scale
+  };
+}
+function utmToLonLat(easting, northing, zone, hemisphere) {
+  const a = 6378137.0, f = 1 / 298.257223563;
+  const e = f * (2 - f), ep = e / (1 - e);
+  const e1 = (1 - Math.sqrt(1 - e)) / (1 + Math.sqrt(1 - e));
+  const k0 = 0.9996;
+  const x = easting - 500000.0;
+  const y = hemisphere === 'S' ? northing - 10000000.0 : northing;
+  const lonOrigin = (zone - 1) * 6 - 180 + 3;
+  const m = y / k0;
+  const mu = m / (a * (1 - e / 4 - 3 * e * e / 64 - 5 * e * e * e / 256));
+  const phi1 = mu + (3 * e1 / 2 - 27 * Math.pow(e1, 3) / 32) * Math.sin(2 * mu)
+    + (21 * e1 * e1 / 16 - 55 * Math.pow(e1, 4) / 32) * Math.sin(4 * mu)
+    + (151 * Math.pow(e1, 3) / 96) * Math.sin(6 * mu)
+    + (1097 * Math.pow(e1, 4) / 512) * Math.sin(8 * mu);
+  const sinPhi = Math.sin(phi1), cosPhi = Math.cos(phi1), tanPhi = Math.tan(phi1);
+  const n1 = a / Math.sqrt(1 - e * sinPhi * sinPhi);
+  const t1 = tanPhi * tanPhi;
+  const c1 = ep * cosPhi * cosPhi;
+  const r1 = a * (1 - e) / Math.pow(1 - e * sinPhi * sinPhi, 1.5);
+  const d = x / (n1 * k0);
+  const lat = phi1 - (n1 * tanPhi / r1) * (d * d / 2
+    - (5 + 3 * t1 + 10 * c1 - 4 * c1 * c1 - 9 * ep) * Math.pow(d, 4) / 24
+    + (61 + 90 * t1 + 298 * c1 + 45 * t1 * t1 - 252 * ep - 3 * c1 * c1) * Math.pow(d, 6) / 720);
+  const lon = (d - (1 + 2 * t1 + c1) * Math.pow(d, 3) / 6
+    + (5 - 2 * c1 + 28 * t1 - 3 * c1 * c1 + 8 * ep + 24 * t1 * t1) * Math.pow(d, 5) / 120) / cosPhi;
+  return {
+    lat: lat * 180 / Math.PI,
+    lon: lonOrigin + lon * 180 / Math.PI
   };
 }
 function computeApprox() {
@@ -873,9 +936,11 @@ function refresh() {
   renderHoldout();
   syncViewControls();
   updateViewState();
+  updateCoordState();
   applyImageTransform();
 }
 function setPicking(value) {
+  if (value && coordPicking) setCoordPicking(false);
   picking = value;
   pickBtn.textContent = picking ? '取消拾取' : '在图纸上拾取所选点位';
   map.getContainer().style.cursor = picking ? 'crosshair' : '';
@@ -1062,6 +1127,62 @@ clearBtn.onclick = () => {
     refresh();
   }
 };
+function showCoordMessage(message) {
+  coordValueEl.textContent = '—';
+  coordUtmEl.textContent = message;
+  coordPanelEl.classList.add('visible');
+}
+function setCoordPicking(value) {
+  coordPicking = value;
+  if (value) setPicking(false);
+  coordPickBtn.textContent = coordPicking ? '退出坐标拾取' : '拾取坐标（估算经纬度）';
+  map.getContainer().style.cursor = coordPicking ? 'crosshair' : '';
+  if (!coordPicking) coordPanelEl.classList.remove('visible');
+  if (coordPicking && !transform && !approx) showCoordMessage('没有可用的坐标基准');
+}
+function updateCoordState() {
+  coordPickBtn.disabled = !(transform || approx);
+  coordPickBtn.title = transform ? '' : (approx ? '未标定，将使用近似摆放估算' : '没有可用的坐标基准');
+  if (!transform && !approx && coordPicking) setCoordPicking(false);
+}
+coordPickBtn.onclick = () => setCoordPicking(!coordPicking);
+coordCloseBtn.onclick = () => {
+  setCoordPicking(false);
+  coordLayer.clearLayers();
+};
+coordCopyBtn.onclick = () => {
+  const text = coordValueEl.textContent;
+  if (!text || text === '—') return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+  coordCopyBtn.textContent = '已复制';
+  setTimeout(() => { coordCopyBtn.textContent = '复制'; }, 1200);
+};
+map.on('click', event => {
+  if (!coordPicking || (!transform && !approx)) return;
+  const u = event.latlng.lng;
+  const v = IMAGE_H - event.latlng.lat;
+  const utm = transform ? pixelToUtm(u, v, transform) : approxPixelToUtm(u, v, approx);
+  const zoneText = String((transform && transform.zone) || (POINTS[0] && POINTS[0].utm_zone) || '49N');
+  const match = zoneText.match(/(\d+)\s*([NS])/);
+  const zone = match ? Number(match[1]) : 49;
+  const hemisphere = match && match[2] === 'S' ? 'S' : 'N';
+  const geo = utmToLonLat(utm.e, utm.n, zone, hemisphere);
+  coordValueEl.textContent = geo.lat.toFixed(6) + ',' + geo.lon.toFixed(6);
+  coordUtmEl.textContent = 'UTM: E ' + utm.e.toFixed(2) + ' N ' + utm.n.toFixed(2) + ' (' + zoneText + ')' +
+    (transform ? '' : ' · 近似摆放估算，标定后更准确');
+  coordPanelEl.classList.add('visible');
+  coordLayer.clearLayers();
+  L.circleMarker(event.latlng, {
+    radius: 6,
+    color: '#b45309',
+    fillColor: '#fbbf24',
+    fillOpacity: 0.95,
+    weight: 2,
+    zIndexOffset: 2500
+  }).addTo(coordLayer);
+});
 map.on('zoomend moveend viewreset', applyImageTransform);
 map.on('zoomend moveend', refreshLabels);
 imageOverlay.on('load', applyImageTransform);

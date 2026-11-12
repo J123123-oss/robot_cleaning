@@ -26,26 +26,18 @@ start_rtk_preview.bat rtk_points_006-E22-W24_with_pdf.html
 
 ## 3. 更换底图并生成页面
 
-新 PDF 可直接生成 SVG 页面（需 `pymupdf`）：
+命令均为单行，可直接粘贴到 PowerShell 或 cmd。`^` 是 cmd 的续行符，PowerShell 不识别，请勿使用。
+
+仓库当前只保留 SVG，已有底图直接用 `--background-image`（下面第二个命令）。新 PDF 可用 `--background-pdf ... --pdf-format svg` 生成（需 `pymupdf`）。
 
 ```bash
-python tools/plot_rtk_points.py ^
-  --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md ^
-  --output rtk_points_006-E22-W24_layout1112.html ^
-  --background-pdf 图纸.pdf --pdf-format svg ^
-  --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md"
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-pdf 图纸.pdf --pdf-format svg --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md"
 ```
 
 已有 SVG 或图片时，用 `--background-image`：
 
 ```bash
-python tools/plot_rtk_points.py ^
-  --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md ^
-  --output rtk_points_006-E22-W24_layout1112.html ^
-  --background-image 布置图1112.svg ^
-  --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" ^
-  --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" ^
-  --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-image 布置图1112.svg --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
 ```
 
 - `--input`：默认点位序列。
@@ -59,6 +51,8 @@ python tools/plot_rtk_points.py ^
 3. **交叉验证**：加第 3 个点，页面会先按旧标定预测再比较，误差小于 1 px 说明可信。
 4. **导出**：点“导出标定 JSON”，把文件放回 `src/rtk_nav/rtk_nav/config/`。
 5. **固化**：重新生成时加 `--calibration 标定.json`。需要默认镜像时，在 JSON 顶层加 `"image_mirror_y": true`（或 `image_mirror_x`）。
+
+辅助功能：点“拾取坐标（估算经纬度）”，再点图纸任意位置，左下角显示该点的 `lat,lon` 与 UTM，可复制。已完成标定时用标定反算；未标定时用近似摆放估算（结果仅供参考）。
 
 ## 5. 常见问题
 
