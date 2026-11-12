@@ -166,7 +166,8 @@ class Charging485Node(Node):
         self.declare_parameter('battery_base_poll_interval', 1.0)
         self.declare_parameter('battery_temp_poll_interval', 2.0)
         self.declare_parameter('charge_poll_interval', 5.0)
-        self.declare_parameter('battery_internal_resistance', 0.0)
+        # 由 2026-11-12 运行日志中充放电电压跃迁估算，后续用现场数据校准。
+        self.declare_parameter('battery_internal_resistance', 0.08)
         self.declare_parameter('battery_soc_filter_time_constant', 30.0)
         self.declare_parameter('battery_soc_max_rate', 0.2)
 
