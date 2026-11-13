@@ -65,3 +65,27 @@
   position_status: 4
   orientation_status: 4
   time: "from YAML"
+- seq: 9
+  area: "bridge_6A-7bB"
+  label: 9
+  point: {lon: 111.483818, lat: 35.688438}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "from YAML"
+- seq: 10
+  area: "bridge_6A-7bB"
+  label: 10
+  point: {lon: 111.484439, lat: 35.687578}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "from YAML"
+- seq: 11
+  area: "bridge_6A-7bB"
+  label: 11
+  point: {lon: 111.484311, lat: 35.688398}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "from YAML"
