@@ -386,6 +386,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 <button id="pick-btn">在图纸上拾取所选点位</button>
 <button id="export-btn">导出标定 JSON</button>
 <button id="locate-btn">定位到点位</button>
+<button id="locate-references-btn">定位到参考点</button>
 <button id="coord-pick-btn">拾取坐标（估算经纬度）</button>
 <button id="clear-btn">清空标定</button>
 <label class="dataset-row"><input id="label-avoid-overlap" type="checkbox"> 标签自动避让（隐藏重叠序号）</label>
@@ -495,6 +496,7 @@ const selectEl = document.getElementById('point-select');
 const pickBtn = document.getElementById('pick-btn');
 const exportBtn = document.getElementById('export-btn');
 const locateBtn = document.getElementById('locate-btn');
+const locateReferencesBtn = document.getElementById('locate-references-btn');
 const clearBtn = document.getElementById('clear-btn');
 const labelAvoidOverlapEl = document.getElementById('label-avoid-overlap');
 const coordPickBtn = document.getElementById('coord-pick-btn');
@@ -560,6 +562,7 @@ function switchDataset(index) {
   POINTS = DATASETS[index].points;
   approx = computeApprox();
   renderPoints();
+  renderReferencePoints();
   renderSelect();
   updateDatasetHint();
   requestAnimationFrame(refreshLabels);
@@ -1014,6 +1017,7 @@ function renderCalibrationPoints() {
 }
 function renderReferencePoints() {
   referenceLayer.clearLayers();
+  locateReferencesBtn.disabled = !REFERENCE_POINTS.length || !(transform || approx);
   REFERENCE_POINTS.forEach(reference => {
     const wgs = toWgs84(Number(reference.lon), Number(reference.lat), 'wgs84');
     const utm = lonLatToUtm(wgs[0], wgs[1]);
@@ -1290,6 +1294,14 @@ locateBtn.onclick = () => {
     }
   });
   if (latlngs.length) map.fitBounds(L.latLngBounds(latlngs), {padding: [40, 40], maxZoom: 2});
+};
+locateReferencesBtn.onclick = () => {
+  const latlngs = referenceLayer.getLayers()
+    .filter(layer => layer.getLatLng)
+    .map(layer => layer.getLatLng());
+  if (latlngs.length) {
+    map.fitBounds(L.latLngBounds(latlngs), {padding: [60, 60], maxZoom: 2});
+  }
 };
 clearBtn.onclick = () => {
   if (!pairs.length || confirm('清空所有标定控制点？')) {
