@@ -274,7 +274,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'port': '/dev/WTRTK'},
-            {'baud': 460800}
+            {'baud': 230400}
         ]
     )
 
