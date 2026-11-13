@@ -46,6 +46,7 @@ python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_11
 - `--coord-system`：点位文件坐标系（`wgs84`/`gcj02`/`bd09`），页面会转换为 WGS84。
 - `--dataset "名称=路径"`：增加到页面“点位序列”下拉框，可重复。
 - 换底图或改分辨率后，控制点 `px/py` 会变化，必须重新标定。
+- `--reference-point NAME,LON,LAT`：在带底图页面叠加青色参考点，支持重复指定。
 
 ## 4. 对准步骤
 
@@ -56,6 +57,8 @@ python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_11
 5. **固化**：导出的 JSON 现在包含 `view`（缩放/旋转/镜像/平移），重新生成时加 `--calibration 标定.json`，页面会自动恢复旋转和平移。若 `control_points` 为空，只会恢复视图，点位仍是近似摆放。
 
 辅助功能：点“拾取坐标（估算经纬度）”，再点图纸任意位置，左下角显示该点的 `lat,lon` 与 UTM，可复制。已完成标定时用标定反算；未标定时用近似摆放估算（结果仅供参考）。
+
+页面默认逐个绘制所有点位，即使多个点位落在同一位置也不会合并。点位标签重叠时默认仍全部显示；如果图纸过密，可勾选“标签自动避让”隐藏重叠标签。
 
 ## 5. 常见问题
 

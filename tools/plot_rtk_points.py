@@ -388,6 +388,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 <button id="locate-btn">定位到点位</button>
 <button id="coord-pick-btn">拾取坐标（估算经纬度）</button>
 <button id="clear-btn">清空标定</button>
+<label class="dataset-row"><input id="label-avoid-overlap" type="checkbox"> 标签自动避让（隐藏重叠序号）</label>
 <div class="hint" id="pick-hint">图纸标签只显示序号；下拉列表附带区域/标签和经纬度。</div>
 </aside>
 <button id="sidebar-reopen" type="button" aria-controls="sidebar" title="展开标定菜单">显示标定</button>
@@ -426,6 +427,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 const SOURCE_COORD_SYSTEM = '__COORD_SYSTEM__';
 const COORD_LABELS = {wgs84: 'WGS84', gcj02: 'GCJ02', bd09: 'BD09'};
 const DATASETS = __DATASETS__;
+const REFERENCE_POINTS = __REFERENCE_POINTS__;
 let datasetIndex = 0;
 let coordSystem = SOURCE_COORD_SYSTEM;
 let POINTS = DATASETS[datasetIndex].points;
@@ -484,6 +486,7 @@ const imageOverlay = new AdjustableImageOverlay(IMAGE.src, [[0, 0], [IMAGE_H, IM
 const pointLayer = L.layerGroup().addTo(map);
 const cpLayer = L.layerGroup().addTo(map);
 const coordLayer = L.layerGroup().addTo(map);
+const referenceLayer = L.layerGroup().addTo(map);
 const statusEl = document.getElementById('status');
 const bannerEl = document.getElementById('banner');
 const holdoutEl = document.getElementById('holdout');
@@ -493,6 +496,7 @@ const pickBtn = document.getElementById('pick-btn');
 const exportBtn = document.getElementById('export-btn');
 const locateBtn = document.getElementById('locate-btn');
 const clearBtn = document.getElementById('clear-btn');
+const labelAvoidOverlapEl = document.getElementById('label-avoid-overlap');
 const coordPickBtn = document.getElementById('coord-pick-btn');
 const coordPanelEl = document.getElementById('coord-panel');
 const coordValueEl = document.getElementById('coord-value');
@@ -836,35 +840,27 @@ function popupHtml(records) {
 function renderPoints() {
   pointLayer.clearLayers();
   labelEntries = [];
-  const groups = new Map();
   POINTS.forEach(point => {
     const base = transform ? pointPixel(point, transform) : (approx ? approxPixel(point, approx) : null);
     if (!base || !Number.isFinite(base.u) || !Number.isFinite(base.v)) return;
     const pixel = base;
-    const key = pixel.u.toFixed(2) + ',' + pixel.v.toFixed(2);
-    if (!groups.has(key)) groups.set(key, {pixel, records: []});
-    groups.get(key).records.push(point);
-  });
-  groups.forEach(group => {
-    const latlng = [IMAGE_H - group.pixel.v, group.pixel.u];
-    const invalid = group.records.some(record => !record.valid);
+    const latlng = [IMAGE_H - pixel.v, pixel.u];
     const marker = L.circleMarker(latlng, {
       radius: 6,
-      color: invalid ? '#c62828' : '#16803c',
-      fillColor: invalid ? '#ef9a9a' : '#8ce99a',
+      color: point.valid ? '#16803c' : '#c62828',
+      fillColor: point.valid ? '#8ce99a' : '#ef9a9a',
       fillOpacity: 0.9,
       weight: 2,
       dashArray: transform ? null : '4,4',
       interactive: !picking,
       zIndexOffset: 1000
     });
-    marker.bindPopup(popupHtml(group.records));
+    marker.bindPopup(popupHtml([point]));
     marker.addTo(pointLayer);
-    const text = group.records.map(record => record.seq).join(',');
     const label = L.marker(latlng, {
       icon: L.divIcon({
         className: 'seq-label' + (transform ? '' : ' approx'),
-        html: escapeHtml(text),
+        html: escapeHtml(point.seq),
         iconSize: null,
         iconAnchor: [-9, 9]
       }),
@@ -873,12 +869,19 @@ function renderPoints() {
       zIndexOffset: 1500
     });
     label.addTo(pointLayer);
-    labelEntries.push({marker: label, latlng, text});
+    labelEntries.push({marker: label, latlng, text: String(point.seq)});
   });
   requestAnimationFrame(refreshLabels);
 }
 function refreshLabels() {
   if (!labelEntries.length) return;
+  if (!labelAvoidOverlapEl.checked) {
+    labelEntries.forEach(entry => {
+      const element = entry.marker.getElement();
+      if (element) element.classList.remove('label-hidden');
+    });
+    return;
+  }
   const items = labelEntries.map(entry => {
     const point = map.latLngToContainerPoint(entry.latlng);
     const width = Math.max(20, entry.text.length * 8 + 10);
@@ -1009,6 +1012,33 @@ function renderCalibrationPoints() {
     label.addTo(cpLayer);
   });
 }
+function renderReferencePoints() {
+  referenceLayer.clearLayers();
+  REFERENCE_POINTS.forEach(reference => {
+    const wgs = toWgs84(Number(reference.lon), Number(reference.lat), 'wgs84');
+    const utm = lonLatToUtm(wgs[0], wgs[1]);
+    const point = {utm_e: utm.e, utm_n: utm.n};
+    const pixel = transform ? pointPixel(point, transform) : (approx ? approxPixel(point, approx) : null);
+    if (!pixel || !Number.isFinite(pixel.u) || !Number.isFinite(pixel.v)) return;
+    const marker = L.circleMarker([IMAGE_H - pixel.v, pixel.u], {
+      radius: 8, color: '#00a6b2', fillColor: '#fff', fillOpacity: 1,
+      weight: 3, zIndexOffset: 2200
+    }).addTo(referenceLayer);
+    marker.bindPopup('<b>参考点 ' + escapeHtml(reference.name) + '</b><br>lon: ' +
+      escapeHtml(reference.lon) + '<br>lat: ' + escapeHtml(reference.lat));
+    L.marker([IMAGE_H - pixel.v, pixel.u], {
+      icon: L.divIcon({
+        className: 'cp-label',
+        html: escapeHtml(reference.name),
+        iconSize: null,
+        iconAnchor: [-11, -11]
+      }),
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 2250
+    }).addTo(referenceLayer);
+  });
+}
 function renderHoldout() {
   if (!lastHoldout) {
     holdoutEl.textContent = '';
@@ -1059,6 +1089,7 @@ function refresh() {
   transform = rawTransform && rawTransform.rmse <= CALIBRATION_MAX_RMSE_PX ? rawTransform : null;
   renderPoints();
   renderCalibrationPoints();
+  renderReferencePoints();
   renderPairs();
   renderSelect();
   updateStatus();
@@ -1328,6 +1359,7 @@ map.on('click', event => {
 });
 map.on('zoomend moveend viewreset', applyImageTransform);
 map.on('zoomend moveend', refreshLabels);
+labelAvoidOverlapEl.onchange = refreshLabels;
 imageOverlay.on('load', applyImageTransform);
 coordSystemEl.value = SOURCE_COORD_SYSTEM;
 coordSystemEl.onchange = () => {
@@ -1404,8 +1436,9 @@ def image_data_uri(path):
 
 
 def render_sheet(points, background_image, control_points=None, default_view=None, datasets=None,
-                 coord_system="wgs84"):
+                 coord_system="wgs84", reference_points=None):
     control_points = control_points or []
+    reference_points = reference_points or []
     datasets = datasets or [{"label": "当前点位", "file": "", "points": points}]
     default_view = dict({
         "scale": 1,
@@ -1426,6 +1459,7 @@ def render_sheet(points, background_image, control_points=None, default_view=Non
     }, ensure_ascii=False)
     datasets_payload = json.dumps(datasets, ensure_ascii=False)
     pairs_payload = json.dumps(control_points, ensure_ascii=False)
+    references_payload = json.dumps(reference_points, ensure_ascii=False)
     print(f"底图: {background_image} ({width}×{height}), 内容区: {content}")
     for dataset in datasets:
         print(f"点位序列: {dataset['label']} ({len(dataset['points'])} 点)")
@@ -1442,6 +1476,7 @@ def render_sheet(points, background_image, control_points=None, default_view=Non
             .replace("__DATASETS__", datasets_payload.replace("</", "<\\/"))
             .replace("__IMAGE__", image_payload)
             .replace("__PAIRS__", pairs_payload.replace("</", "<\\/"))
+            .replace("__REFERENCE_POINTS__", references_payload.replace("</", "<\\/"))
             .replace("__DEFAULT_VIEW__", json.dumps(default_view)))
 
 
@@ -1520,11 +1555,11 @@ def main():
                 pdf_to_svg(args.background_pdf, image, args.pdf_dpi)
             else:
                 pdf_to_png(args.background_pdf, image, args.pdf_dpi)
-            output = render_sheet(points, image, controls, default_view, datasets, args.coord_system)
+            output = render_sheet(points, image, controls, default_view, datasets, args.coord_system, references)
             Path(args.output).write_text(output, encoding="utf-8")
         return
     if args.background_image:
-        output = render_sheet(points, args.background_image, controls, default_view, datasets, args.coord_system)
+        output = render_sheet(points, args.background_image, controls, default_view, datasets, args.coord_system, references)
         Path(args.output).write_text(output, encoding="utf-8")
         return
     if controls:
