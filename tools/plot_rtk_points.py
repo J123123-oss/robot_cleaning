@@ -362,6 +362,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 #coord-panel .coord-hint{font-size:11px;color:#627d98;margin-top:4px}
 .dataset-row{display:block;font-size:12px;color:#334e68;margin:0 0 8px}
 #dataset-select{width:100%;margin-top:4px;font:12px monospace;box-sizing:border-box}
+#coord-system-select{width:100%;margin-top:4px;font:12px monospace;box-sizing:border-box}
 </style></head><body>
 <div id="app">
 <aside id="sidebar">
@@ -370,6 +371,11 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
   <button id="sidebar-collapse" class="panel-toggle" type="button" aria-controls="sidebar" aria-expanded="true" title="收起标定菜单">收起</button>
 </div>
 <label class="dataset-row">点位序列 <select id="dataset-select"></select></label>
+<label class="dataset-row">源坐标系 <select id="coord-system-select">
+  <option value="wgs84">WGS84</option>
+  <option value="gcj02">GCJ02（火星）</option>
+  <option value="bd09">BD09（百度）</option>
+</select></label>
 <div class="hint" id="dataset-hint"></div>
 <div id="status">加载中…</div>
 <div id="banner" class="warn"></div>
@@ -417,8 +423,11 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+const SOURCE_COORD_SYSTEM = '__COORD_SYSTEM__';
+const COORD_LABELS = {wgs84: 'WGS84', gcj02: 'GCJ02', bd09: 'BD09'};
 const DATASETS = __DATASETS__;
 let datasetIndex = 0;
+let coordSystem = SOURCE_COORD_SYSTEM;
 let POINTS = DATASETS[datasetIndex].points;
 const IMAGE = __IMAGE__;
 const INITIAL_PAIRS = __PAIRS__;
@@ -521,7 +530,10 @@ let pairs = INITIAL_PAIRS.map(pair => {
     label: point ? point.label : '',
     utm_e: point ? point.utm_e : null,
     utm_n: point ? point.utm_n : null,
-    utm_zone: point ? point.utm_zone : ''
+    utm_zone: point ? point.utm_zone : '',
+    src_lon: Number(pair.lon),
+    src_lat: Number(pair.lat),
+    src_system: 'wgs84'
   }, pair);
 });
 let transform = null;
@@ -532,9 +544,11 @@ let labelEntries = [];
 let lastHoldout = null;
 const datasetSelectEl = document.getElementById('dataset-select');
 const datasetHintEl = document.getElementById('dataset-hint');
+const coordSystemEl = document.getElementById('coord-system-select');
 function updateDatasetHint() {
   const dataset = DATASETS[datasetIndex];
-  datasetHintEl.textContent = '数据源：' + dataset.file + ' · ' + dataset.points.length + ' 点';
+  const label = COORD_LABELS[coordSystem] || coordSystem;
+  datasetHintEl.textContent = '数据源：' + dataset.file + ' · ' + dataset.points.length + ' 点 · ' + label + '→WGS84';
 }
 function switchDataset(index) {
   if (!DATASETS[index]) return;
@@ -674,6 +688,109 @@ function utmToLonLat(easting, northing, zone, hemisphere) {
     lon: lonOrigin + lon * 180 / Math.PI
   };
 }
+const X_PI = Math.PI * 3000 / 180;
+const GCJ_A = 6378245.0, GCJ_EE = 0.00669342162296594323;
+function outOfChina(lon, lat) {
+  return lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+function transformLon(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return ret;
+}
+function wgs84ToGcj02(lon, lat) {
+  if (outOfChina(lon, lat)) return [lon, lat];
+  let dLat = transformLat(lon - 105.0, lat - 35.0);
+  let dLon = transformLon(lon - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * Math.PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - GCJ_EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
+  dLon = (dLon * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
+  return [lon + dLon, lat + dLat];
+}
+function gcj02ToWgs84(lon, lat) {
+  let wLon = lon, wLat = lat;
+  for (let i = 0; i < 3; i++) {
+    const gcj = wgs84ToGcj02(wLon, wLat);
+    wLon += lon - gcj[0];
+    wLat += lat - gcj[1];
+  }
+  return [wLon, wLat];
+}
+function bd09ToGcj02(lon, lat) {
+  const x = lon - 0.0065, y = lat - 0.006;
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * X_PI);
+  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * X_PI);
+  return [z * Math.cos(theta), z * Math.sin(theta)];
+}
+function toWgs84(lon, lat, system) {
+  if (system === 'bd09') {
+    const gcj = bd09ToGcj02(lon, lat);
+    return gcj02ToWgs84(gcj[0], gcj[1]);
+  }
+  if (system === 'gcj02') return gcj02ToWgs84(lon, lat);
+  return [lon, lat];
+}
+function lonLatToUtm(lon, lat) {
+  const a = 6378137.0, f = 1 / 298.257223563;
+  const e2 = f * (2 - f), k0 = 0.9996;
+  const zone = Math.floor((lon + 180.0) / 6.0) + 1;
+  const lon0 = ((zone - 1) * 6 - 180 + 3) * Math.PI / 180;
+  const latRad = lat * Math.PI / 180, lonRad = lon * Math.PI / 180;
+  const n = a / Math.sqrt(1 - e2 * Math.sin(latRad) * Math.sin(latRad));
+  const t = Math.tan(latRad) * Math.tan(latRad);
+  const c = e2 / (1 - e2) * Math.cos(latRad) * Math.cos(latRad);
+  const aa = Math.cos(latRad) * (lonRad - lon0);
+  const m = a * ((1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * e2 * e2 * e2 / 256) * latRad
+    - (3 * e2 / 8 + 3 * e2 * e2 / 32 + 45 * e2 * e2 * e2 / 1024) * Math.sin(2 * latRad)
+    + (15 * e2 * e2 / 256 + 45 * e2 * e2 * e2 / 1024) * Math.sin(4 * latRad)
+    - (35 * e2 * e2 * e2 / 3072) * Math.sin(6 * latRad));
+  const easting = k0 * n * (aa + (1 - t + c) * Math.pow(aa, 3) / 6
+    + (5 - 18 * t + t * t + 72 * c - 58 * e2) * Math.pow(aa, 5) / 120) + 500000.0;
+  let northing = k0 * (m + n * Math.tan(latRad) * (aa * aa / 2
+    + (5 - t + 9 * c + 4 * c * c) * Math.pow(aa, 4) / 24
+    + (61 - 58 * t + t * t + 600 * c - 330 * e2) * Math.pow(aa, 6) / 720));
+  if (lat < 0) northing += 10000000.0;
+  return {e: easting, n: northing, zone: zone + (lat >= 0 ? 'N' : 'S')};
+}
+function applyCoordConversion(system) {
+  coordSystem = system;
+  DATASETS.forEach(dataset => dataset.points.forEach(point => {
+    const wgs = toWgs84(Number(point.lon), Number(point.lat), system);
+    point.wgs_lon = wgs[0];
+    point.wgs_lat = wgs[1];
+    const utm = lonLatToUtm(wgs[0], wgs[1]);
+    point.utm_e = utm.e;
+    point.utm_n = utm.n;
+    point.utm_zone = utm.zone;
+  }));
+  pairs.forEach(pair => {
+    const srcLon = pair.src_lon !== undefined ? Number(pair.src_lon) : Number(pair.lon);
+    const srcLat = pair.src_lat !== undefined ? Number(pair.src_lat) : Number(pair.lat);
+    const wgs = toWgs84(srcLon, srcLat, pair.src_system || system);
+    pair.wgs_lon = wgs[0];
+    pair.wgs_lat = wgs[1];
+    pair.lon = wgs[0];
+    pair.lat = wgs[1];
+    const utm = lonLatToUtm(wgs[0], wgs[1]);
+    pair.utm_e = utm.e;
+    pair.utm_n = utm.n;
+    pair.utm_zone = utm.zone;
+  });
+  POINTS = DATASETS[datasetIndex].points;
+  approx = computeApprox();
+}
 function computeApprox() {
   if (!POINTS.length || !IMAGE_W || !IMAGE_H) return null;
   const east0 = mean(POINTS.map(point => Number(point.utm_e)));
@@ -707,8 +824,9 @@ function popupHtml(records) {
     const area = record.area ? ' · ' + escapeHtml(record.area) : '';
     const label = record.label ? '-' + escapeHtml(record.label) : '';
     return '<div class="popup-record"><span class="popup-title">' + escapeHtml(record.seq) + '</span>' + area + label +
+      '<br>WGS84: ' + Number(record.wgs_lon ?? record.lon).toFixed(6) + ', ' + Number(record.wgs_lat ?? record.lat).toFixed(6) +
+      '<br>源坐标(' + (COORD_LABELS[coordSystem] || coordSystem) + '): ' + escapeHtml(record.lon) + ', ' + escapeHtml(record.lat) +
       '<br>UTM: E ' + Number(record.utm_e).toFixed(2) + ' N ' + Number(record.utm_n).toFixed(2) + ' (' + escapeHtml(record.utm_zone) + ')' +
-      '<br>lon: ' + escapeHtml(record.lon) + '<br>lat: ' + escapeHtml(record.lat) +
       '<br>valid: ' + escapeHtml(record.valid) +
       '<br>position_status: ' + escapeHtml(record.position) +
       '<br>orientation_status: ' + escapeHtml(record.orientation) +
@@ -995,8 +1113,11 @@ map.on('click', event => {
     label: point.label,
     px: u,
     py: v,
-    lon: Number(point.lon),
-    lat: Number(point.lat),
+    lon: Number(point.wgs_lon ?? point.lon),
+    lat: Number(point.wgs_lat ?? point.lat),
+    src_lon: Number(point.lon),
+    src_lat: Number(point.lat),
+    src_system: coordSystem,
     utm_e: Number(point.utm_e),
     utm_n: Number(point.utm_n),
     utm_zone: point.utm_zone
@@ -1010,6 +1131,7 @@ exportBtn.onclick = () => {
     image: IMAGE.name,
     image_width: IMAGE_W,
     image_height: IMAGE_H,
+    coord_system: 'wgs84',
     control_points: pairs.map(pair => ({
       name: pair.name,
       seq: pair.seq,
@@ -1207,6 +1329,13 @@ map.on('click', event => {
 map.on('zoomend moveend viewreset', applyImageTransform);
 map.on('zoomend moveend', refreshLabels);
 imageOverlay.on('load', applyImageTransform);
+coordSystemEl.value = SOURCE_COORD_SYSTEM;
+coordSystemEl.onchange = () => {
+  applyCoordConversion(coordSystemEl.value);
+  updateDatasetHint();
+  refresh();
+};
+applyCoordConversion(SOURCE_COORD_SYSTEM);
 const content = Array.isArray(IMAGE.content) && IMAGE.content.length === 4 ? IMAGE.content : [0,0,IMAGE_W,IMAGE_H];
 map.fitBounds(L.latLngBounds([[IMAGE_H - content[3], content[0]], [IMAGE_H - content[1], content[2]]]), {padding: [24, 24]});
 refresh();
@@ -1274,7 +1403,8 @@ def image_data_uri(path):
     return f"data:{mime};base64,{encoded}"
 
 
-def render_sheet(points, background_image, control_points=None, default_view=None, datasets=None):
+def render_sheet(points, background_image, control_points=None, default_view=None, datasets=None,
+                 coord_system="wgs84"):
     control_points = control_points or []
     datasets = datasets or [{"label": "当前点位", "file": "", "points": points}]
     default_view = dict({
@@ -1308,6 +1438,7 @@ def render_sheet(points, background_image, control_points=None, default_view=Non
     elif len(control_points) >= 2:
         print("警告: 控制点无法求解，页面将显示近似摆放", file=sys.stderr)
     return (SHEET_TEMPLATE
+            .replace("__COORD_SYSTEM__", coord_system)
             .replace("__DATASETS__", datasets_payload.replace("</", "<\\/"))
             .replace("__IMAGE__", image_payload)
             .replace("__PAIRS__", pairs_payload.replace("</", "<\\/"))
@@ -1334,6 +1465,8 @@ def main():
                         help="PDF 渲染 DPI，默认 150；放大查看可提高到 300")
     parser.add_argument("--pdf-format", choices=("png", "svg"), default="png",
                         help="PDF 底图格式：png 位图（默认）或 svg 矢量，svg 放大不模糊")
+    parser.add_argument("--coord-system", choices=("wgs84", "gcj02", "bd09"), default="wgs84",
+                        help="点位文件的坐标系，页面会统一转换为 WGS84（默认 wgs84）")
     parser.add_argument("--background-image")
     parser.add_argument("--reference-point", action="append", default=[], metavar="NAME,LON,LAT")
     parser.add_argument("--control-point", action="append", default=[], metavar="NAME,PX,PY,LON,LAT")
@@ -1387,11 +1520,11 @@ def main():
                 pdf_to_svg(args.background_pdf, image, args.pdf_dpi)
             else:
                 pdf_to_png(args.background_pdf, image, args.pdf_dpi)
-            output = render_sheet(points, image, controls, default_view, datasets)
+            output = render_sheet(points, image, controls, default_view, datasets, args.coord_system)
             Path(args.output).write_text(output, encoding="utf-8")
         return
     if args.background_image:
-        output = render_sheet(points, args.background_image, controls, default_view, datasets)
+        output = render_sheet(points, args.background_image, controls, default_view, datasets, args.coord_system)
         Path(args.output).write_text(output, encoding="utf-8")
         return
     if controls:

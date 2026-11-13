@@ -34,13 +34,16 @@ start_rtk_preview.bat rtk_points_006-E22-W24_with_pdf.html
 python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-pdf 图纸.pdf --pdf-format svg --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md"
 ```
 
-已有 SVG 或图片时，用 `--background-image`；布置图 1112 的默认视图保存在 `rtk_calibration_1112.json`，用 `--calibration` 恢复：
+已有 SVG 或图片时，用 `--background-image`；布置图 1112 的默认视图保存在 `rtk_calibration_1112.json`，点位文件为 BD09，用 `--coord-system bd09` 声明、`--calibration` 恢复视图：
 
 ```bash
-python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-image 布置图1112.svg --calibration src/rtk_nav/rtk_nav/config/rtk_calibration_1112.json --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points_1112.md --output rtk_points_006-E22-W24_layout1112.html --background-image 布置图1112.svg --coord-system bd09 --calibration src/rtk_nav/rtk_nav/config/rtk_calibration_1112.json --dataset "006 派生点=src/rtk_nav/rtk_nav/config/rtk_points_006-E22-W24.md" --dataset "原始采点 rtk_points.md=src/rtk_nav/rtk_nav/config/rtk_points.md" --dataset "E1-E8 派生点=src/rtk_nav/rtk_nav/config/rtk_points_001-E1-E8.md"
 ```
 
+页面左侧“源坐标系”可切换 WGS84 / GCJ02 / BD09：选中的坐标系会先转换为 WGS84，再计算 UTM、标定和显示。BD09/GCJ02 数据选错会导致点位整体偏移数百米到 1 km。
+
 - `--input`：默认点位序列。
+- `--coord-system`：点位文件坐标系（`wgs84`/`gcj02`/`bd09`），页面会转换为 WGS84。
 - `--dataset "名称=路径"`：增加到页面“点位序列”下拉框，可重复。
 - 换底图或改分辨率后，控制点 `px/py` 会变化，必须重新标定。
 
