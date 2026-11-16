@@ -37,6 +37,7 @@ def make_driver():
     driver.kinco_reduction_ratio = 1.0
     driver.kinco_acceleration_rps2 = 100.0
     driver.kinco_deceleration_rps2 = 100.0
+    driver.kinco_peak_current_a = 47.9
     driver.motor_velocity_feedback_publisher = Mock()
     driver.profile_acceleration = 60000
     driver.profile_deceleration = 445000
@@ -87,14 +88,14 @@ def test_direction_disable_reset_and_ramps_match_kinco():
     assert frames[-1] == (0x601, bytes.fromhex("2B 40 60 00 00 00 00 00"))
 
 
-def test_kinco_immediate_velocity_mode_writes_signed_minus_three():
+def test_kinco_velocity_mode_writes_three():
     driver, frames = make_driver()
 
     assert driver.motor_set_mode(3, 3)
 
     assert frames[-1] == (
         0x603,
-        bytes.fromhex("2F 60 60 00 FD 00 00 00"),
+        bytes.fromhex("2F 60 60 00 03 00 00 00"),
     )
 
 
@@ -133,7 +134,9 @@ def test_feedback_only_accepts_uploads_and_uses_kinco_position_object():
     driver.parse_motor_feedback(0x183, bytes.fromhex("37 02 03 E8 03 00 00"))
     assert driver.motors[2]["actual_position"] == pytest.approx(2 * math.pi)
     driver.parse_motor_feedback(0x583, bytes.fromhex("4B 78 60 00 2C 01 00 00"))
-    assert driver.motors[2]["actual_current"] == pytest.approx(300.0)
+    assert driver.motors[2]["actual_current"] == pytest.approx(
+        300.0 * 47.9 / (1.414 * 2048)
+    )
     assert driver.motors[2]["actual_current_updated_monotonic"] > 0.0
 
 
@@ -251,9 +254,10 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     arguments = {
         action.args[0]: action.kwargs for action in launch.actions if action.args
     }
-    assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "false"
+    assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "true"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
+    assert arguments["kinco_peak_current_a"]["default_value"].kwargs["text"] == "47.9"
     assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "150.0"
     controller = next(
         action for action in launch.actions
@@ -268,7 +272,8 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     for name in (
         "brush_use_kinco", "kinco_encoder_resolution",
         "kinco_reduction_ratio", "kinco_acceleration_rps2",
-        "kinco_deceleration_rps2", "kinco_brush_speed_rpm",
+        "kinco_deceleration_rps2", "kinco_peak_current_a",
+        "kinco_brush_speed_rpm",
     ):
         assert parameters[name].args[0].args == (name,)
 

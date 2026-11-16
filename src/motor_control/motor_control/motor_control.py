@@ -63,7 +63,8 @@ MIN_SPEED = -MAX_SPEED  # 遥控器最大反向轮速（r/min）。
 MANUAL_DRIVE_SPEED_SCALE = 0.8  # 普通模式前进/后退速度相对最大轮速的比例。
 MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为0.8。
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
-BRUSH_SPEED = -18.0  # 滚刷输出轴速度，单位 r/min
+AIMOTOR_DEFAULT_BRUSH_SPEED_RPM = 70.0
+KINCO_DEFAULT_BRUSH_SPEED_RPM = 150.0
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
 SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 # 历史名称保留兼容旧代码；AIMotor 的 actual_velocity 当前按 r/min 解释，不是 rad/s。
@@ -432,6 +433,7 @@ class MotorControlNode(Node):
             "kinco_reduction_ratio": 10.0,
             "kinco_acceleration_rps2": 100.0,
             "kinco_deceleration_rps2": 100.0,
+            "kinco_peak_current_a": 47.9,
         }
         for name, default in kinco_defaults.items():
             self.declare_parameter(name, default)
@@ -1683,7 +1685,11 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            # self.set_brush_speed(70.0)
+            self.set_brush_speed(
+                KINCO_DEFAULT_BRUSH_SPEED_RPM
+                if self.brush_use_kinco
+                else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
+            )
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -2599,6 +2605,11 @@ class MotorControlNode(Node):
         elif new_state == "ENABLE":
 
             self.motor_ctrl.initialize_motors()
+            self.set_brush_speed(
+                KINCO_DEFAULT_BRUSH_SPEED_RPM
+                if self.brush_use_kinco
+                else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
+            )
             time.sleep(0.001)
             self.complete_state = False
             # 取消 MQTT 方向指令的自动停止定时器，防止干扰导航

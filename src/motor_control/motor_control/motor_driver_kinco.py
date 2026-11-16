@@ -21,7 +21,7 @@ class CanMotorDriver(AimotorDriver):
     """Use Kinco objects for brushes and the existing AIMotor API for wheels."""
 
     KINCO_MOTOR_IDS = (3, 4)
-    KINCO_IMMEDIATE_VELOCITY_MODE = -3
+    KINCO_VELOCITY_MODE = 3
     KINCO_CONTROL_SHUTDOWN = 0x0006
     KINCO_CONTROL_SWITCH_ON = 0x0007
     KINCO_CONTROL_ENABLE_OPERATION = 0x000F
@@ -36,7 +36,7 @@ class CanMotorDriver(AimotorDriver):
     def __init__(
         self, *args, kinco_encoder_resolution=65536,
         kinco_reduction_ratio=10.0, kinco_acceleration_rps2=100.0,
-        kinco_deceleration_rps2=100.0, **kwargs
+        kinco_deceleration_rps2=100.0, kinco_peak_current_a=47.9, **kwargs
     ):
         """Configure Kinco conversion before the inherited threads start."""
         self.kinco_encoder_resolution = self._validate_positive_int_parameter(
@@ -51,6 +51,9 @@ class CanMotorDriver(AimotorDriver):
         self.kinco_deceleration_rps2 = self._validate_positive_float_parameter(
             kinco_deceleration_rps2, "kinco_deceleration_rps2"
         )
+        self.kinco_peak_current_a = self._validate_positive_float_parameter(
+            kinco_peak_current_a, "kinco_peak_current_a"
+        )
         self._kinco_ramp_raw(self.kinco_acceleration_rps2)
         self._kinco_ramp_raw(self.kinco_deceleration_rps2)
         self._kinco_acceleration_ready = {}
@@ -58,7 +61,8 @@ class CanMotorDriver(AimotorDriver):
         self.get_logger().info(
             "Kinco brush protocol enabled for configured IDs 3/4: "
             f"encoder={self.kinco_encoder_resolution}, "
-            f"reduction={self.kinco_reduction_ratio}"
+            f"reduction={self.kinco_reduction_ratio}, "
+            f"ipeak={self.kinco_peak_current_a}A"
         )
 
     def motor_set_speed(self, motor_id: int, speed: float) -> bool:
@@ -106,12 +110,12 @@ class CanMotorDriver(AimotorDriver):
         return result
 
     def motor_set_mode(self, motor_id: int, mode: int) -> bool:
-        """Select Kinco's immediate velocity mode (-3, wire value FDh)."""
+        """Select Kinco profile velocity mode (3, wire value 03h)."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_set_mode(motor_id, mode)
         if not self._validate_motor_id(motor_id):
             return False
-        if mode not in (self.KINCO_IMMEDIATE_VELOCITY_MODE, 3):
+        if mode != self.KINCO_VELOCITY_MODE:
             self.get_logger().error(
                 f"Unsupported Kinco velocity mode for motor {motor_id}: {mode}"
             )
@@ -121,7 +125,7 @@ class CanMotorDriver(AimotorDriver):
             self.MODES_OF_OPERATION_INDEX,
             0,
             self.SDO_WRITE_1,
-            self.KINCO_IMMEDIATE_VELOCITY_MODE.to_bytes(1, "little", signed=True),
+            self.KINCO_VELOCITY_MODE.to_bytes(1, "little", signed=True),
         )
 
     def _kinco_ramp_raw(self, value):
@@ -322,8 +326,9 @@ class CanMotorDriver(AimotorDriver):
                     data[4:6], "little", signed=True
                 )
             elif index == self.KINCO_ACTUAL_CURRENT_INDEX:
-                motor["actual_current"] = int.from_bytes(
-                    data[4:6], "little", signed=True
+                raw_current = int.from_bytes(data[4:6], "little", signed=True)
+                motor["actual_current"] = (
+                    raw_current * self.kinco_peak_current_a / (1.414 * 2048)
                 )
                 motor["actual_current_updated_monotonic"] = time.monotonic()
         if fault_changed:
