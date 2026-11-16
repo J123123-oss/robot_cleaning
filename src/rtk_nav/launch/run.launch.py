@@ -43,6 +43,7 @@ def generate_launch_description():
         ("kinco_reduction_ratio", "1.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
         ("kinco_acceleration_rps2", "100.0", float, "步科电机侧加速度，单位rps/s"),
         ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
+        ("kinco_brush_speed_rpm", "0.0", float, "步科滚刷输出轴转速上限，0表示不限制，单位r/min"),
     )
     declare_kinco_args = tuple(
         DeclareLaunchArgument(

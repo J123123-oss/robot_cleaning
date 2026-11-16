@@ -87,6 +87,31 @@ def test_direction_disable_reset_and_ramps_match_kinco():
     assert frames[-1] == (0x601, bytes.fromhex("2B 40 60 00 00 00 00 00"))
 
 
+def test_kinco_immediate_velocity_mode_writes_signed_minus_three():
+    driver, frames = make_driver()
+
+    assert driver.motor_set_mode(3, 3)
+
+    assert frames[-1] == (
+        0x603,
+        bytes.fromhex("2F 60 60 00 FD 00 00 00"),
+    )
+
+
+def test_kinco_enable_follows_manual_sequence_and_releases_shaft():
+    driver, frames = make_driver()
+
+    assert driver.motor_enable(3)
+
+    assert frames == [
+        (0x603, bytes.fromhex("23 FF 60 00 00 00 00 00")),
+        (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
+        (0x603, bytes.fromhex("2B 40 60 00 07 00 00 00")),
+        (0x603, bytes.fromhex("2B 40 60 00 0F 00 00 00")),
+        (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
+    ]
+
+
 @pytest.mark.parametrize("speed", [float("nan"), float("inf"), 1e30, "bad"])
 def test_invalid_speed_never_reaches_can(speed):
     driver, frames = make_driver()
@@ -152,10 +177,13 @@ def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enabl
         requests = [data for can_id, data in frames if can_id == 0x600 + motor_id]
         disable = bytes.fromhex("2B 40 60 00 06 00 00 00")
         zero = bytes.fromhex("23 FF 60 00 00 00 00 00")
+        switch_on = bytes.fromhex("2B 40 60 00 07 00 00 00")
         enable = bytes.fromhex("2B 40 60 00 0F 00 00 00")
         polarity = next(data for data in requests if data[1:3] == b"\x7e\x60")
         assert requests.index(disable) < requests.index(polarity)
         assert requests.index(zero) < requests.index(enable)
+        assert requests.index(switch_on) < requests.index(enable)
+        assert requests[-1] == disable
 
 
 def test_deceleration_readback_checks_kinco_raw_units():
@@ -226,6 +254,7 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "false"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "1.0"
+    assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "0.0"
     controller = next(
         action for action in launch.actions
         if action.kwargs.get("executable") == "motor_control"
@@ -239,7 +268,7 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     for name in (
         "brush_use_kinco", "kinco_encoder_resolution",
         "kinco_reduction_ratio", "kinco_acceleration_rps2",
-        "kinco_deceleration_rps2",
+        "kinco_deceleration_rps2", "kinco_brush_speed_rpm",
     ):
         assert parameters[name].args[0].args == (name,)
 

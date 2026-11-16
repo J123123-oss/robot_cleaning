@@ -143,6 +143,22 @@ def brush_motor_ids_for_count(brush_motor_count: int) -> Tuple[int, ...]:
     return (3, 4)
 
 
+def limit_kinco_brush_speed(brush_speed: float, maximum_speed: float) -> float:
+    """Limit Kinco brush output rpm while preserving the command direction."""
+    try:
+        brush_speed = float(brush_speed)
+        maximum_speed = float(maximum_speed)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Kinco brush speeds must be numeric") from exc
+    if not math.isfinite(brush_speed) or not math.isfinite(maximum_speed):
+        raise ValueError("Kinco brush speeds must be finite")
+    if maximum_speed < 0.0:
+        raise ValueError("Kinco brush speed limit must be non-negative")
+    if maximum_speed == 0.0:
+        return brush_speed
+    return max(-maximum_speed, min(maximum_speed, brush_speed))
+
+
 def parse_motor_feedback_values(values, motor_count):
     """解析旧版 5 字段或带电流的 8 字段 AIMOTOR 反馈。"""
     try:
@@ -419,6 +435,20 @@ class MotorControlNode(Node):
         }
         for name, default in kinco_defaults.items():
             self.declare_parameter(name, default)
+        self.declare_parameter("kinco_brush_speed_rpm", 0.0)
+        try:
+            self.kinco_brush_speed_rpm = float(
+                self.get_parameter("kinco_brush_speed_rpm").value
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("kinco_brush_speed_rpm must be numeric") from exc
+        if (
+            not math.isfinite(self.kinco_brush_speed_rpm)
+            or self.kinco_brush_speed_rpm < 0.0
+        ):
+            raise ValueError(
+                "kinco_brush_speed_rpm must be finite and non-negative"
+            )
 
         # 双滚刷共用一个上层速度值；opposite仅对4号滚刷取反。
         self.declare_parameter("brush_direction_mode", "same")
@@ -4311,6 +4341,11 @@ class MotorControlNode(Node):
         if not self.brush_motor_ids:
             self.brush_speed = 0.0
             return
+
+        if self.brush_use_kinco:
+            brush_speed = limit_kinco_brush_speed(
+                brush_speed, self.kinco_brush_speed_rpm
+            )
 
         brush_results = []
         for motor_id in self.brush_motor_ids:

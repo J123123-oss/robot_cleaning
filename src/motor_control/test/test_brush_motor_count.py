@@ -1,6 +1,7 @@
 """Tests for brush motor topology configuration."""
 
 import ast
+import math
 from pathlib import Path
 from typing import Tuple
 
@@ -27,6 +28,20 @@ def _load_brush_motor_ids_function():
     return namespace["brush_motor_ids_for_count"]
 
 
+def _load_kinco_speed_limiter():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "limit_kinco_brush_speed"
+    )
+    namespace = {"math": math}
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    return namespace["limit_kinco_brush_speed"]
+
+
 def test_brush_motor_count_maps_to_configured_node_ids():
     """Zero, one, and two brushes select the expected CANopen nodes."""
     brush_motor_ids_for_count = _load_brush_motor_ids_function()
@@ -47,3 +62,24 @@ def test_brush_motor_count_rejects_unsupported_values():
             pass
         else:
             raise AssertionError("unsupported brush count was accepted")
+
+
+def test_kinco_brush_speed_limit_preserves_direction_and_zero_means_unlimited():
+    limit_kinco_brush_speed = _load_kinco_speed_limiter()
+
+    assert limit_kinco_brush_speed(25.0, 18.0) == 18.0
+    assert limit_kinco_brush_speed(-25.0, 18.0) == -18.0
+    assert limit_kinco_brush_speed(12.0, 18.0) == 12.0
+    assert limit_kinco_brush_speed(-25.0, 0.0) == -25.0
+
+
+def test_kinco_brush_speed_limit_rejects_invalid_values():
+    limit_kinco_brush_speed = _load_kinco_speed_limiter()
+
+    for speed, maximum in (("bad", 18.0), (10.0, -1.0), (10.0, "bad")):
+        try:
+            limit_kinco_brush_speed(speed, maximum)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid Kinco brush speed was accepted")

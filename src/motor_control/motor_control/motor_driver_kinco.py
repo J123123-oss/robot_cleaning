@@ -21,6 +21,11 @@ class CanMotorDriver(AimotorDriver):
     """Use Kinco objects for brushes and the existing AIMotor API for wheels."""
 
     KINCO_MOTOR_IDS = (3, 4)
+    KINCO_IMMEDIATE_VELOCITY_MODE = -3
+    KINCO_CONTROL_SHUTDOWN = 0x0006
+    KINCO_CONTROL_SWITCH_ON = 0x0007
+    KINCO_CONTROL_ENABLE_OPERATION = 0x000F
+    KINCO_CONTROL_RELEASE_SHAFT = 0x0006
     KINCO_POSITION_INDEX = 0x6063
     KINCO_ACTUAL_CURRENT_INDEX = 0x6078
     KINCO_ERROR_STATUS_INDEX = 0x2601
@@ -100,6 +105,25 @@ class CanMotorDriver(AimotorDriver):
             self.motor_directions[motor_id] = direction
         return result
 
+    def motor_set_mode(self, motor_id: int, mode: int) -> bool:
+        """Select Kinco's immediate velocity mode (-3, wire value FDh)."""
+        if motor_id not in self.KINCO_MOTOR_IDS:
+            return super().motor_set_mode(motor_id, mode)
+        if not self._validate_motor_id(motor_id):
+            return False
+        if mode not in (self.KINCO_IMMEDIATE_VELOCITY_MODE, 3):
+            self.get_logger().error(
+                f"Unsupported Kinco velocity mode for motor {motor_id}: {mode}"
+            )
+            return False
+        return self._sdo_write(
+            motor_id,
+            self.MODES_OF_OPERATION_INDEX,
+            0,
+            self.SDO_WRITE_1,
+            self.KINCO_IMMEDIATE_VELOCITY_MODE.to_bytes(1, "little", signed=True),
+        )
+
     def _kinco_ramp_raw(self, value):
         """Convert rps/s to Kinco's unsigned 32-bit acceleration units."""
         value = self._validate_positive_float_parameter(value, "kinco_ramp")
@@ -168,7 +192,7 @@ class CanMotorDriver(AimotorDriver):
             )
 
     def motor_enable(self, motor_id: int) -> bool:
-        """Clear stale targets before Kinco's 06h -> 0Fh enable sequence."""
+        """Enable Kinco velocity mode and release its shaft lock."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_enable(motor_id)
         if not getattr(self, "_kinco_acceleration_ready", {}).get(motor_id, True):
@@ -176,11 +200,19 @@ class CanMotorDriver(AimotorDriver):
                 f"Kinco node {motor_id} remains disabled after acceleration failure"
             )
             return False
-        return (
-            self.motor_set_speed(motor_id, 0.0)
-            and self._write_u16(motor_id, self.CONTROLWORD_INDEX, 0x0006)
-            and self._write_u16(motor_id, self.CONTROLWORD_INDEX, 0x000F)
-        )
+        if not self.motor_set_speed(motor_id, 0.0):
+            return False
+        for controlword in (
+            self.KINCO_CONTROL_SHUTDOWN,
+            self.KINCO_CONTROL_SWITCH_ON,
+            self.KINCO_CONTROL_ENABLE_OPERATION,
+            self.KINCO_CONTROL_RELEASE_SHAFT,
+        ):
+            if not self._write_u16(
+                motor_id, self.CONTROLWORD_INDEX, controlword
+            ):
+                return False
+        return True
 
     def motor_disable(self, motor_id: int) -> bool:
         """Release a Kinco shaft with 6040h=0006h."""
