@@ -7,6 +7,7 @@ Protocol reference: iSMK manual 20250523, sections 5.2, 7.1--7.3,
 import importlib
 import math
 import threading
+import time
 
 from std_msgs.msg import Float32MultiArray
 
@@ -21,6 +22,7 @@ class CanMotorDriver(AimotorDriver):
 
     KINCO_MOTOR_IDS = (3, 4)
     KINCO_POSITION_INDEX = 0x6063
+    KINCO_ACTUAL_CURRENT_INDEX = 0x6078
     KINCO_ERROR_STATUS_INDEX = 0x2601
     KINCO_ERROR_STATUS_2_INDEX = 0x2602
     KINCO_TEMPERATURE_INDEX = 0x6410
@@ -217,6 +219,7 @@ class CanMotorDriver(AimotorDriver):
             (self.KINCO_ERROR_STATUS_INDEX, 0),
             (self.KINCO_ERROR_STATUS_2_INDEX, 0),
             (self.KINCO_TEMPERATURE_INDEX, self.KINCO_TEMPERATURE_SUBINDEX),
+            (self.KINCO_ACTUAL_CURRENT_INDEX, 0),
         ))
         results = [
             self._sdo_read(motor_id, index, subindex)
@@ -286,6 +289,11 @@ class CanMotorDriver(AimotorDriver):
                 motor["actual_temperature"] = int.from_bytes(
                     data[4:6], "little", signed=True
                 )
+            elif index == self.KINCO_ACTUAL_CURRENT_INDEX:
+                motor["actual_current"] = int.from_bytes(
+                    data[4:6], "little", signed=True
+                )
+                motor["actual_current_updated_monotonic"] = time.monotonic()
         if fault_changed:
             self.publish_motor_fault_codes()
         if index == self.VELOCITY_ACTUAL_INDEX:

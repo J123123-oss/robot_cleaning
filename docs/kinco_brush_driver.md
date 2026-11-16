@@ -73,16 +73,39 @@ ramp_DEC = round(rps_per_second * 65536 * encoder_resolution / 4000000)
 
 ## 反馈与当前限制
 
-步科通过 SDO 读取实际位置、速度、状态、温度、应急错误码和两个错误状态字。
+步科通过 SDO 读取实际位置、速度、状态、实际电流、温度、应急错误码和两个错误状态字。
 不套用 AIMotor 默认 PDO 映射或厂家故障历史对象。收到写入确认、中止响应或长度
 不足的帧时，不将其当作速度反馈；等待中的 SDO 回读仍能收到正常响应及中止通知。
 `fault_code` 保留应急错误码，`kinco_error_status` 和 `kinco_error_status_2`
 分别保留两个错误状态字。
 
-当前不读取或换算步科实际电流与转矩，避免沿用 AIMotor 的标度。
-手册 80 页的电流换算说明列出 6071/6073，未明确说明实际电流 6078 的标度，
-且现场驱动器型号及峰值电流尚未确认。因此，步科单滚刷的软件电流堵转保护暂时没有
-有效采样输入；原有电池总电流保护继续使用。后续确认实际电流标度后再接入。
+驱动通过 SDO 查询 `0x6078:00`，请求帧为 `40 78 60 00 00 00 00 00`，
+响应命令为 `0x4B`。驱动按有符号 `Integer16` 解析，写入
+`motor["actual_current"]`，并更新 `actual_current_updated_monotonic`，
+因此现有滚刷电流保护会把该样本当作实时电流使用。
+手册第 80 页将 `6078:00` 的单位标为 `Ap`，当前代码保留设备返回值，不套用
+AIMotor 的 `/100` 标度；现场仍需用驱动器界面或实测电流确认该型号的显示精度。
+实际电流查询失败或样本过期时，保护逻辑会忽略该样本；原有电池总电流保护继续使用。
+
+## 独立设定目标电流限制
+
+`src/motor_control/motor_control/kinco_current_limit.py` 是独立的 CANopen
+命令行工具，写入 `0x6073:00` 后自动写入 `0x2FF0:01=1` 保存控制参数，
+不会启动 ROS 节点。
+构建工作空间后可以使用安装的命令：
+
+```bash
+kinco_current_limit read --motor-id 3
+kinco_current_limit read --motor-id 3 --ipeak 48
+kinco_current_limit set --motor-id 3 --raw-dec 603
+kinco_current_limit set --motor-id 3 --arms 10 --ipeak 48
+```
+
+默认使用 `can0` 和 `500000` bit/s，可通过 `--channel`、`--bitrate`、
+`--timeout` 覆盖。`--raw-dec` 是手册对象的原始无符号 16 位值；
+`--arms` 通过 `Ipeak` 按手册公式换算。工具收到从站 `0x60` 写入确认后才报告
+成功，收到 `0x80` 或超时会报错。保存动作只保存控制参数，不执行
+`0x2FF0:03` 电机参数保存。
 
 离线测试对照手册报文验证速度、方向、使能/失能、复位、加减速、反馈及混合协议分派。
 尚需在 ROS2/Linux 实机验证 ID、编码器分辨率、减速比、旋转方向及实际停机行为。

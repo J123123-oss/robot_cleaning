@@ -107,6 +107,9 @@ def test_feedback_only_accepts_uploads_and_uses_kinco_position_object():
     assert driver.motors[2]["actual_position"] == pytest.approx(2 * math.pi)
     driver.parse_motor_feedback(0x183, bytes.fromhex("37 02 03 E8 03 00 00"))
     assert driver.motors[2]["actual_position"] == pytest.approx(2 * math.pi)
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 78 60 00 2C 01 00 00"))
+    assert driver.motors[2]["actual_current"] == pytest.approx(300.0)
+    assert driver.motors[2]["actual_current_updated_monotonic"] > 0.0
 
 
 def test_feedback_queries_kinco_objects_without_aimotor_history_or_torque():
@@ -122,6 +125,7 @@ def test_feedback_queries_kinco_objects_without_aimotor_history_or_torque():
             "40 01 26 00 00 00 00 00",
             "40 02 26 00 00 00 00 00",
             "40 10 64 19 00 00 00 00",
+            "40 78 60 00 00 00 00 00",
         )
     ]
 

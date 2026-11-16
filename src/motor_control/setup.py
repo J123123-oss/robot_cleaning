@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'motor_control = motor_control.motor_control:main',
             'motor_driver = motor_control.motor_driver:main',
+            'kinco_current_limit = motor_control.kinco_current_limit:main',
             'remote_control = motor_control.remote_control:main',
             'camera_remote_control_node = motor_control.camera_remote_control_node:main',
             'sensors_485 = motor_control.sensors_485:main',
