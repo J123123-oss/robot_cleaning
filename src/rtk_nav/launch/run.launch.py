@@ -40,10 +40,10 @@ def generate_launch_description():
     )
     kinco_parameters = (
         ("kinco_encoder_resolution", "65536", int, "步科编码器每转计数，默认取手册示例，现场需确认"),
-        ("kinco_reduction_ratio", "1.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
+        ("kinco_reduction_ratio", "10.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
         ("kinco_acceleration_rps2", "100.0", float, "步科电机侧加速度，单位rps/s"),
         ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
-        ("kinco_brush_speed_rpm", "0.0", float, "步科滚刷输出轴转速上限，0表示不限制，单位r/min"),
+        ("kinco_brush_speed_rpm", "150.0", float, "步科滚刷输出轴转速上限，单位r/min"),
     )
     declare_kinco_args = tuple(
         DeclareLaunchArgument(
@@ -234,6 +234,9 @@ def generate_launch_description():
             {'rtk_path_file': rtk_path_file},
             {'loading_gps': loading_gps},
             {
+                'brush_use_kinco': ParameterValue(
+                    LaunchConfiguration('brush_use_kinco'), value_type=bool
+                ),
                 'enable_imu_odom_fallback': ParameterValue(
                     LaunchConfiguration("enable_imu_odom_fallback"),
                     value_type=bool,

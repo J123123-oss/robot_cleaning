@@ -429,13 +429,13 @@ class MotorControlNode(Node):
         )
         kinco_defaults = {
             "kinco_encoder_resolution": 65536,
-            "kinco_reduction_ratio": 1.0,
+            "kinco_reduction_ratio": 10.0,
             "kinco_acceleration_rps2": 100.0,
             "kinco_deceleration_rps2": 100.0,
         }
         for name, default in kinco_defaults.items():
             self.declare_parameter(name, default)
-        self.declare_parameter("kinco_brush_speed_rpm", 0.0)
+        self.declare_parameter("kinco_brush_speed_rpm", 150.0)
         try:
             self.kinco_brush_speed_rpm = float(
                 self.get_parameter("kinco_brush_speed_rpm").value

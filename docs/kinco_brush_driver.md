@@ -18,16 +18,17 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 |------|--------|------|
 | `brush_use_kinco` | `false` | true 时使用步科滚刷协议 |
 | `kinco_encoder_resolution` | `65536` | 每个电机轴转动一圈的编码器计数 |
-| `kinco_reduction_ratio` | `1.0` | 电机轴转速/滚刷输出轴转速 |
+| `kinco_reduction_ratio` | `10.0` | 电机轴转速/滚刷输出轴转速 |
 | `kinco_acceleration_rps2` | `100.0` | 电机侧加速度，rps/s |
 | `kinco_deceleration_rps2` | `100.0` | 电机侧减速度，rps/s |
-| `kinco_brush_speed_rpm` | `0.0` | 滚刷输出轴转速上限，r/min；0 表示不限制 |
+| `kinco_brush_speed_rpm` | `150.0` | 滚刷输出轴转速上限，r/min |
 
 编码器分辨率 `65536` 来自手册第 105 页的示例，不是对现场型号的确认。
-减速比 `1.0` 表示直驱。安装减速机时必须按实际数值设置。例如实际减速比
-为 5 时应加 `kinco_reduction_ratio:=5.0`；不要沿用 AIMotor 滚刷的默认减速比 40。
-`kinco_brush_speed_rpm` 只限制步科滚刷的输出轴转速上限，外部速度指令仍可动态
-调速，超过该值时保留正负方向并截断绝对值；设为 `0.0` 时不限制。
+当前现场配置的机械减速比为 `10.0`；必须按实际安装传动比设置，不要沿用
+AIMotor 滚刷的默认减速比 40。
+启用步科协议后，RTK 导航清扫时的滚刷输出轴目标转速为 `150 r/min`；
+AIMotor 协议仍使用 `70 r/min`。`kinco_brush_speed_rpm` 是步科滚刷的输出轴
+转速上限，外部速度指令超过该值时保留正负方向并截断绝对值；设为 `0.0` 时不限制。
 步科驱动器的波特率须配置为 500 kbit/s，ID 须预先设置为 3、4。
 
 `motor_direction_3/4` 继续使用 `1`（正常）和 `-1`（反向），步科驱动分别映射到

@@ -253,8 +253,8 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     }
     assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "false"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
-    assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "1.0"
-    assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "0.0"
+    assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
+    assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "150.0"
     controller = next(
         action for action in launch.actions
         if action.kwargs.get("executable") == "motor_control"

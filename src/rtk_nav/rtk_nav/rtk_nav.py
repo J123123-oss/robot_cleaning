@@ -49,8 +49,9 @@ MAX_LINEAR_SPEED_MPS = 0.35  # 允许的最大车体线速度（m/s）。
 WHEEL_RPM_TO_MPS = 2.0 * math.pi * WHEEL_RADIUS / 60.0  # 轮子输出轴 r/min -> m/s。
 MAX_WHEEL_SPEED_RPM = MAX_LINEAR_SPEED_MPS / WHEEL_RPM_TO_MPS  # 最大轮子输出轴转速（r/min）。
 
-# 滚刷输出轴速度，单位 r/min。
-RTK_BRUSH_SPEED = 70.0
+# 滚刷输出轴速度，单位 r/min；协议切换后由节点参数选择。
+AIMOTOR_BRUSH_SPEED_RPM = 70.0
+KINCO_BRUSH_SPEED_RPM = 150.0
 
 # RTK导航配置
 RTK_WAYPOINT_TOLERANCE = 0.10 # 多点导航距离阈值
@@ -445,6 +446,12 @@ class RTKNavControlNode(Node):
         # 声明RTK路径参数
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/three_path_20260129_144149.txt")
         self.rtk_path_file = self.get_parameter("rtk_path_file").value
+        self.declare_parameter("brush_use_kinco", False)
+        self.brush_speed_rpm = (
+            KINCO_BRUSH_SPEED_RPM
+            if bool(self.get_parameter("brush_use_kinco").value)
+            else AIMOTOR_BRUSH_SPEED_RPM
+        )
         self.geofence_path = os.path.splitext(self.rtk_path_file)[0] + ".fence.json"
         self.geofence_payload = None
         self.geofence_outside_count = 0
@@ -2337,7 +2344,7 @@ class RTKNavControlNode(Node):
                             self.nav_context["pause_reason"] = None
                             self.brush_active = self.nav_context.get("brush_active", False)
                             if self.brush_active:
-                                self.publish_brush_speed(RTK_BRUSH_SPEED)
+                                self.publish_brush_speed(self.brush_speed_rpm)
                             else:
                                 self.publish_brush_speed(0.0)
                             self.get_logger().info("[航向恢复] 航向角已恢复正常，自动恢复导航")
@@ -2720,7 +2727,7 @@ class RTKNavControlNode(Node):
         self._last_motor_left, self._last_motor_right = left_speed, right_speed
         speed_msg = Vector3()
         speed_msg.x, speed_msg.y = left_speed, right_speed
-        speed_msg.z = RTK_BRUSH_SPEED if self.brush_active else 0.0
+        speed_msg.z = self.brush_speed_rpm if self.brush_active else 0.0
         self.motor_speed_pub.publish(speed_msg)
         velocity_msg = Float32()
         velocity_msg.data = fallback_base_rpm * WHEEL_RPM_TO_MPS
@@ -3328,7 +3335,7 @@ class RTKNavControlNode(Node):
                     self.publish_nav_state(self.nav_context["nav_state"])
                     self.brush_active = self.nav_context.get("brush_active", False)
                     if self.brush_active:
-                        self.publish_brush_speed(RTK_BRUSH_SPEED)
+                        self.publish_brush_speed(self.brush_speed_rpm)
                     else:
                         self.publish_brush_speed(0.0)
                 # RTK Float期间定时器可能已清空生成器；保持未运行状态，
@@ -5452,7 +5459,7 @@ class RTKNavControlNode(Node):
             if next_start <= next_stop:
                 self.brush_start_indices.pop(0)
                 if not self.brush_active:
-                    self.publish_brush_speed(RTK_BRUSH_SPEED)
+                    self.publish_brush_speed(self.brush_speed_rpm)
             else:
                 self.brush_stop_indices.pop(0)
                 if self.brush_active:
@@ -6050,7 +6057,7 @@ class RTKNavControlNode(Node):
                 if hasattr(self, 'nav_context'):
                     self.brush_active = self.nav_context.get("brush_active", False)
                     if self.brush_active:
-                        self.publish_brush_speed(RTK_BRUSH_SPEED)
+                        self.publish_brush_speed(self.brush_speed_rpm)
                     else:
                         self.publish_brush_speed(0.0)
         elif msg.data == "DISABLE" and self.last_state == "LOADING":
@@ -6584,7 +6591,11 @@ class RTKNavControlNode(Node):
                     self._last_motor_left = float(left_speed)
                     self._last_motor_right = float(right_speed)
                     # 根据滚刷状态设置速度
-                    brush_speed = RTK_BRUSH_SPEED if getattr(self, 'brush_active', False) else 0.0
+                    brush_speed = (
+                        self.brush_speed_rpm
+                        if getattr(self, 'brush_active', False)
+                        else 0.0
+                    )
                     speed_msg.z = brush_speed
                     self.motor_speed_pub.publish(speed_msg)
                     velocity_msg = Float32()
