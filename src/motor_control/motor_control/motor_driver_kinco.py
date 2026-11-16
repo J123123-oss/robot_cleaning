@@ -35,7 +35,7 @@ class CanMotorDriver(AimotorDriver):
 
     def __init__(
         self, *args, kinco_encoder_resolution=65536,
-        kinco_reduction_ratio=1.0, kinco_acceleration_rps2=100.0,
+        kinco_reduction_ratio=10.0, kinco_acceleration_rps2=100.0,
         kinco_deceleration_rps2=100.0, **kwargs
     ):
         """Configure Kinco conversion before the inherited threads start."""
