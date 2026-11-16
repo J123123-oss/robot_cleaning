@@ -25,7 +25,7 @@ def generate_launch_description():
     # 滚刷配置：0表示未安装滚刷，1只控制3号，2控制3、4号。
     declare_brush_motor_count_arg = DeclareLaunchArgument(
         "brush_motor_count",
-        default_value=TextSubstitution(text="0"),
+        default_value=TextSubstitution(text="2"),
         description="滚刷电机数量，只支持0、1或2",
     )
     declare_brush_direction_mode_arg = DeclareLaunchArgument(
@@ -35,7 +35,7 @@ def generate_launch_description():
     )
     declare_brush_use_kinco_arg = DeclareLaunchArgument(
         "brush_use_kinco",
-        default_value=TextSubstitution(text="false"),
+        default_value=TextSubstitution(text="true"),
         description="滚刷3/4协议：false使用AIMotor，true使用步科iSMK",
     )
     kinco_parameters = (
@@ -43,6 +43,7 @@ def generate_launch_description():
         ("kinco_reduction_ratio", "10.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
         ("kinco_acceleration_rps2", "100.0", float, "步科电机侧加速度，单位rps/s"),
         ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
+        ("kinco_peak_current_a", "47.9", float, "步科电机峰值电流Ipeak，单位A，用于0x6078电流换算"),
         ("kinco_brush_speed_rpm", "150.0", float, "步科滚刷输出轴转速上限，单位r/min"),
     )
     declare_kinco_args = tuple(
@@ -334,7 +335,7 @@ def generate_launch_description():
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
-    ld.add_action(sensors_485_node)
+    # ld.add_action(sensors_485_node)
     ld.add_action(magnetic_navigation_node)
     # ld.add_action(laser_node)
     ld.add_action(charging_node)
