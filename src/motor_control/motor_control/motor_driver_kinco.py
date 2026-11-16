@@ -25,7 +25,6 @@ class CanMotorDriver(AimotorDriver):
     KINCO_CONTROL_SHUTDOWN = 0x0006
     KINCO_CONTROL_SWITCH_ON = 0x0007
     KINCO_CONTROL_ENABLE_OPERATION = 0x000F
-    KINCO_CONTROL_RELEASE_SHAFT = 0x0006
     KINCO_POSITION_INDEX = 0x6063
     KINCO_ACTUAL_CURRENT_INDEX = 0x6078
     KINCO_ERROR_STATUS_INDEX = 0x2601
@@ -196,7 +195,7 @@ class CanMotorDriver(AimotorDriver):
             )
 
     def motor_enable(self, motor_id: int) -> bool:
-        """Enable Kinco velocity mode and release its shaft lock."""
+        """Enable Kinco velocity mode and leave 6040h in operation-enabled state."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_enable(motor_id)
         if not getattr(self, "_kinco_acceleration_ready", {}).get(motor_id, True):
@@ -210,7 +209,6 @@ class CanMotorDriver(AimotorDriver):
             self.KINCO_CONTROL_SHUTDOWN,
             self.KINCO_CONTROL_SWITCH_ON,
             self.KINCO_CONTROL_ENABLE_OPERATION,
-            self.KINCO_CONTROL_RELEASE_SHAFT,
         ):
             if not self._write_u16(
                 motor_id, self.CONTROLWORD_INDEX, controlword

@@ -99,7 +99,7 @@ def test_kinco_velocity_mode_writes_three():
     )
 
 
-def test_kinco_enable_follows_manual_sequence_and_releases_shaft():
+def test_kinco_enable_follows_manual_sequence_and_leaves_operation_enabled():
     driver, frames = make_driver()
 
     assert driver.motor_enable(3)
@@ -109,7 +109,6 @@ def test_kinco_enable_follows_manual_sequence_and_releases_shaft():
         (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
         (0x603, bytes.fromhex("2B 40 60 00 07 00 00 00")),
         (0x603, bytes.fromhex("2B 40 60 00 0F 00 00 00")),
-        (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
     ]
 
 
@@ -186,7 +185,7 @@ def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enabl
         assert requests.index(disable) < requests.index(polarity)
         assert requests.index(zero) < requests.index(enable)
         assert requests.index(switch_on) < requests.index(enable)
-        assert requests[-1] == disable
+        assert requests[-1] == enable
 
 
 def test_deceleration_readback_checks_kinco_raw_units():
