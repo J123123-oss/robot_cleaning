@@ -3,7 +3,9 @@
 import ast
 import math
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Tuple
+from unittest.mock import Mock
 
 
 SOURCE_PATH = (
@@ -11,6 +13,99 @@ SOURCE_PATH = (
     / "motor_control"
     / "motor_control.py"
 )
+
+
+def test_startup_auto_enable_selects_only_aimotor_and_keeps_zero_speed():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "auto_enable_startup_motors")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    controller = SimpleNamespace(
+        aimotor_auto_enable=True, brush_use_kinco=True,
+        current_status="ENABLE",
+        motor_ctrl=Mock(motor_ids=(1, 2, 3, 4)),
+        get_logger=Mock(return_value=Mock()),
+    )
+    controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
+    controller.motor_ctrl.initialize_motors.return_value = True
+    namespace["auto_enable_startup_motors"](controller)
+    controller.motor_ctrl.initialize_motors.assert_called_once_with(motor_ids=(1, 2))
+    assert controller.current_status == "ENABLE"
+    controller.motor_ctrl.initialize_motors.return_value = False
+    namespace["auto_enable_startup_motors"](controller)
+    assert controller.current_status == "DISABLE"
+    controller.motor_ctrl.reset_mock()
+    controller.aimotor_auto_enable = False
+    namespace["auto_enable_startup_motors"](controller)
+    controller.motor_ctrl.initialize_motors.assert_not_called()
+
+
+def test_initial_state_is_enable_before_startup_initialization():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    initializer = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                       and item.name == "__init__")
+    assignment = next(
+        item for item in initializer.body if isinstance(item, ast.Assign)
+        and any(isinstance(target, ast.Attribute) and target.attr == "current_status"
+                for target in item.targets)
+    )
+    controller = SimpleNamespace(aimotor_auto_enable=True, status_list=["HOLD"])
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), {"self": controller})
+    assert controller.current_status == "ENABLE"
+
+
+def test_enabled_dock_detection_requires_three_consecutive_six_bit_samples():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "_disable_if_docked_while_enabled")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    controller = SimpleNamespace(
+        enable_magnetic_navigation=True, current_status="ENABLE",
+        magnetic_loading_end_active_bits=6, magnetic_loading_end_count_required=3,
+        _magnetic_enabled_dock_count=0, finish_loading_process=Mock(),
+    )
+    detect = namespace["_disable_if_docked_while_enabled"]
+    for mask in (0xFC, 0xFC, 0, 0xFC, 0xFC):
+        assert not detect(controller, mask)
+    controller.finish_loading_process.assert_not_called()
+    assert detect(controller, 0xFC)
+    controller.finish_loading_process.assert_called_once()
+    controller.current_status = "START"
+    assert not detect(controller, 0xFF)
+    assert controller._magnetic_enabled_dock_count == 0
+
+
+def test_confirmed_dock_reuses_zero_speed_disable_and_charging_flow():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "finish_loading_process")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    controller = SimpleNamespace(
+        current_status="ENABLE", loading_timer=None,
+        set_motors_speed=Mock(), get_logger=Mock(return_value=Mock()),
+        _request_charge_if_docked=Mock(),
+    )
+    controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
+    namespace["finish_loading_process"](controller)
+    assert controller.current_status == "DISABLE"
+    assert controller.complete_state
+    controller.set_motors_speed.assert_called_once_with(0.0, 0.0)
+    controller._request_charge_if_docked.assert_called_once()
 
 
 def _load_brush_motor_ids_function():

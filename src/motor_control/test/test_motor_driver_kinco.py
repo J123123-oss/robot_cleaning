@@ -35,6 +35,7 @@ def make_driver():
     driver = module.CanMotorDriver.__new__(module.CanMotorDriver)
     driver.__dict__.update(_make_driver(aimotor).__dict__)
     driver.motors.append(dict(driver.motors[2], id=4))
+    driver.motor_ids = (1, 2, 3, 4)
     driver.kinco_encoder_resolution = 65536
     driver.kinco_reduction_ratio = 1.0
     driver.kinco_acceleration_rps2 = 100.0
@@ -45,6 +46,9 @@ def make_driver():
     driver.profile_deceleration = 445000
     driver.drive_motor_ids = (1, 2)
     driver._feedback_thread = None
+    driver._sdo_transaction_lock = threading.Lock()
+    driver._kinco_guard_nodes = {}
+    driver.configure_kinco_guard = Mock(return_value=True)
     frames = []
     driver.send_can_frame = (
         lambda can_id, data: frames.append((can_id, bytes(data))) or True
@@ -60,6 +64,97 @@ def test_speed_matches_manual_negative_100_rpm_example():
     assert frames[-1] == (0x604, bytes.fromhex("23 FF 60 00 82 4E 1B 00"))
     assert driver.motor_set_speed(1, 60)
     assert frames[-1] == (0x601, bytes.fromhex("23 FF 60 00 50 C3 00 00"))
+
+
+def test_guard_configuration_requires_readback_and_initial_remote_request():
+    driver, frames = make_driver()
+    del driver.configure_kinco_guard
+    driver.kinco_guard_time_ms = 100
+    driver.kinco_guard_life_factor = 5
+    driver._kinco_guard_nodes = {}
+    driver._read_sdo_response = Mock(side_effect=[
+        bytes.fromhex("4B 17 10 00 00 00 00 00"),
+        bytes.fromhex("4B 0C 10 00 64 00 00 00"),
+        bytes.fromhex("4F 0D 10 00 05 00 00 00"),
+        bytes.fromhex("4B 07 60 00 01 00 00 00"),
+    ])
+    driver.send_can_frame = Mock(return_value=True)
+    assert driver.configure_kinco_guard(3)
+    assert driver.send_can_frame.call_args.kwargs == {"is_remote_frame": True}
+    assert driver.send_can_frame.call_args.args == (0x703, b"")
+    assert 3 in driver._kinco_guard_nodes
+    writes = [call.args for call in driver.send_can_frame.call_args_list[:-1]]
+    assert writes == [
+        (0x603, bytes.fromhex("2B 17 10 00 00 00 00 00")),
+        (0x603, bytes.fromhex("2B 0C 10 00 64 00 00 00")),
+        (0x603, bytes.fromhex("2F 0D 10 00 05 00 00 00")),
+        (0x603, bytes.fromhex("2B 07 60 00 01 00 00 00")),
+    ]
+
+
+@pytest.mark.parametrize("response", [None, bytes.fromhex("4B 0C 10 00 00 00 00 00")])
+def test_guard_readback_failure_blocks_enable(response):
+    driver, frames = make_driver()
+    del driver.configure_kinco_guard
+    driver.kinco_guard_time_ms = 100
+    driver.kinco_guard_life_factor = 5
+    driver._read_sdo_response = Mock(return_value=response)
+    assert not driver.motor_enable(3)
+    assert not any(data == bytes.fromhex("2B 40 60 00 0F 00 00 00")
+                   for _, data in frames)
+
+
+def test_guard_service_uses_remote_frames_only_for_armed_nodes_and_stops_on_exit():
+    driver, _ = make_driver()
+    driver.kinco_guard_time_ms = 100
+    driver._kinco_guard_nodes = {3: 1.0}
+    driver.running = True
+    driver._stopping = False
+    driver._send_can_frame_direct = Mock(return_value=True)
+    with patch("time.monotonic", return_value=1.05):
+        driver.service_periodic_can_frames()
+    driver._send_can_frame_direct.assert_not_called()
+    with patch("time.monotonic", return_value=1.11):
+        driver.service_periodic_can_frames()
+    driver._send_can_frame_direct.assert_called_once_with(
+        0x703, b"", is_remote_frame=True
+    )
+    driver._stopping = True
+    with patch("time.monotonic", return_value=2.0):
+        driver.service_periodic_can_frames()
+    assert driver._send_can_frame_direct.call_count == 1
+
+
+def test_guard_runs_in_idle_sender_without_creating_an_extra_thread():
+    driver, _ = make_driver()
+    _, aimotor = load_kinco()
+    driver.running = True
+    driver._stopping = False
+    driver.kinco_guard_time_ms = 100
+    driver._kinco_guard_nodes = {4: 0.0}
+    driver.can_tx_interval_sec = 0.0
+    driver._can_tx_condition = threading.Condition()
+    driver._can_tx_heap = []
+    driver._can_tx_sequence = aimotor.itertools.count()
+    driver._can_tx_stop = threading.Event()
+    driver._can_tx_thread = None
+    driver._can_tx_last_send_time = 0.0
+    sent = threading.Event()
+    threads = []
+
+    def send_remote(can_id, data, is_remote_frame=False):
+        assert (can_id, data, is_remote_frame) == (0x704, b"", True)
+        threads.append(threading.current_thread())
+        sent.set()
+        return True
+
+    driver._send_can_frame_direct = send_remote
+    try:
+        driver.start_can_sender()
+        assert sent.wait(1.0)
+        assert threads[0] is driver._can_tx_thread
+    finally:
+        driver.stop_can_sender()
 
 
 def test_gearbox_and_encoder_are_independent_of_aimotor():
@@ -270,6 +365,10 @@ def test_deceleration_readback_checks_kinco_raw_units():
         ("kinco_acceleration_rps2", 1e30),
         ("kinco_deceleration_rps2", 0),
         ("kinco_deceleration_rps2", 0.0001),
+        ("kinco_guard_time_ms", 49),
+        ("kinco_guard_time_ms", 65536),
+        ("kinco_guard_life_factor", 1),
+        ("kinco_guard_life_factor", 256),
     ],
 )
 def test_invalid_conversion_configuration_is_rejected_before_startup(parameter, value):

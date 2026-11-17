@@ -342,6 +342,7 @@ class MotorControlNode(Node):
         self.magnetic_loading_end_count = 0
         self.magnetic_loading_end_count_required = 3
         self.magnetic_loading_end_active_bits = 6
+        self._magnetic_enabled_dock_count = 0
         self.magnetic_center_lost_limit = 5
         self.magnetic_precise_count = 0
         self.magnetic_precise_ready = False
@@ -428,12 +429,18 @@ class MotorControlNode(Node):
         self.brush_use_kinco = bool(
             self.get_parameter("brush_use_kinco").value
         )
+        self.declare_parameter("aimotor_auto_enable", True)
+        self.aimotor_auto_enable = bool(
+            self.get_parameter("aimotor_auto_enable").value
+        )
         kinco_defaults = {
             "kinco_encoder_resolution": 65536,
             "kinco_reduction_ratio": 10.0,
             "kinco_acceleration_rps2": 100.0,
             "kinco_deceleration_rps2": 100.0,
             "kinco_peak_current_a": 47.9,
+            "kinco_guard_time_ms": 100,
+            "kinco_guard_life_factor": 5,
         }
         for name, default in kinco_defaults.items():
             self.declare_parameter(name, default)
@@ -886,7 +893,7 @@ class MotorControlNode(Node):
             "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START", "UNLOADING",
             "LEFT", "RIGHT", "OFFSET_LEFT", "OFFSET_RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
-        self.current_status = self.status_list[0]
+        self.current_status = "ENABLE" if self.aimotor_auto_enable else self.status_list[0]
 
         # 新增：进出仓状态标记（用于优先级判断，解决速度穿插问题）
         self.is_in_bin_process = False  # True=正在进出仓，False=正常状态
@@ -896,8 +903,8 @@ class MotorControlNode(Node):
 
         # 确保IMU航向默认值存在
         self.imu_yaw_deg = None
-        # 初始化电机（进入ENABLE状态）>>DISABLE
-        self.switch_state('z')
+        if not self.aimotor_auto_enable:
+            self.switch_state('z')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
         self.charge_resume_timer = self.create_timer(30.0, self.charge_resume_callback)  # 30秒检查一次恢复充电
@@ -927,6 +934,26 @@ class MotorControlNode(Node):
         # self.wait_for_services()
 
         self.get_logger().info("电机控制节点启动成功，已连接充电服务")
+        self.auto_enable_startup_motors()
+
+    def auto_enable_startup_motors(self):
+        """节点初始化完成后零速使能 AIMotor；步科滚刷等待显式使能。"""
+        if not self.aimotor_auto_enable:
+            return
+        if self.brush_use_kinco:
+            for motor_id in self.motor_ctrl.motor_ids:
+                if motor_id in (3, 4):
+                    self.motor_ctrl.motor_set_speed(motor_id, 0.0)
+                    self.motor_ctrl.motor_disable(motor_id)
+        motor_ids = tuple(
+            motor_id for motor_id in self.motor_ctrl.motor_ids
+            if not self.brush_use_kinco or motor_id not in (3, 4)
+        )
+        if self.motor_ctrl.initialize_motors(motor_ids=motor_ids):
+            self.get_logger().info("AIMotor 初始 ENABLE 状态下零速使能完成")
+        else:
+            self.switch_state('z')
+            self.get_logger().error("AIMotor 启动初始化失败，保持 DISABLE")
 
     def wait_for_services(self):
         """等待所有充电服务上线"""
@@ -1240,6 +1267,20 @@ class MotorControlNode(Node):
             return 3.0
         return self.magnetic_search_duration
 
+    def _disable_if_docked_while_enabled(self, mask):
+        """ENABLE 下连续满足末端磁条条件时复用进仓完成停机与充电流程。"""
+        if (not self.enable_magnetic_navigation
+                or self.current_status != "ENABLE"
+                or mask.bit_count() < self.magnetic_loading_end_active_bits):
+            self._magnetic_enabled_dock_count = 0
+            return False
+        self._magnetic_enabled_dock_count += 1
+        if self._magnetic_enabled_dock_count < self.magnetic_loading_end_count_required:
+            return False
+        self._magnetic_enabled_dock_count = 0
+        self.finish_loading_process()
+        return True
+
     def magnetic_mask_callback(self, msg: UInt16):
         raw_mask = int(msg.data) & 0xFF
         if self.current_status == "LOADING" and self.loading_countdown_started:
@@ -1253,6 +1294,8 @@ class MotorControlNode(Node):
         if self.magnetic_mask:
             self.magnetic_last_nonzero_mask = self.magnetic_mask
             self.magnetic_last_nonzero_time = time.time()
+        if self._disable_if_docked_while_enabled(raw_mask):
+            return
         # 进仓完成后会切到DISABLE；如果设备重启时已经停在末端横向磁条上，
         # 没有新的MQTT上升沿也应允许通过本地磁导航电平启动充电。
         if (
@@ -2499,7 +2542,7 @@ class MotorControlNode(Node):
             return
         # AUTO_CLEANING模式下允许重复设置HOLD状态，确保能正确切换控制模式。
         # 出仓结算阶段的HOLD也必须继续处理，才能让人工HOLD真正终止流程。
-        if new_state == self.current_status:
+        if new_state == self.current_status and new_state != "ENABLE":
             if self.current_stall_fault and new_state in (
                 "ENABLE", "DISABLE", "AUTO_CLEANING"
             ):
@@ -2541,6 +2584,7 @@ class MotorControlNode(Node):
 
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
+        self._magnetic_enabled_dock_count = 0
         if new_state in ("ENABLE", "DISABLE", "AUTO_CLEANING"):
             # 恢复命令已在门控处确认并清除锁存。
             self._clear_current_stall_fault()
@@ -2604,7 +2648,9 @@ class MotorControlNode(Node):
 
         elif new_state == "ENABLE":
 
-            self.motor_ctrl.initialize_motors()
+            if not self.motor_ctrl.initialize_motors():
+                self.switch_state('z')
+                return
             # self.set_brush_speed(
             #     KINCO_DEFAULT_BRUSH_SPEED_RPM
             #     if self.brush_use_kinco

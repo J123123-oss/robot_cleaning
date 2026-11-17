@@ -5,7 +5,7 @@ import sys
 import threading
 import types
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 def _load_module():
@@ -65,6 +65,8 @@ def _make_driver(module):
     driver = module.CanMotorDriver.__new__(module.CanMotorDriver)
     driver.pulses_per_motor_rev = 1000
     driver.encoder_pulses_per_rev = 1000
+    driver.motor_ids = (1, 2, 3)
+    driver.profile_acceleration = 60000
     driver.mechanical_reduction_ratios = {
         1: 50.0,
         2: 50.0,
@@ -261,6 +263,47 @@ def test_can_sender_queue_serializes_and_prioritizes_control_frames():
     assert sent[1][1][0] == module.CanMotorDriver.SDO_READ
 
 
+def test_remote_request_keeps_rtr_and_zero_dlc_through_sender_queue():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.can_tx_interval_sec = 0.0
+    driver._can_tx_condition = threading.Condition()
+    driver._can_tx_heap = []
+    driver._can_tx_sequence = module.itertools.count()
+    driver._can_tx_stop = threading.Event()
+    driver._can_tx_thread = None
+    driver._can_tx_last_send_time = 0.0
+    module.can.Message = lambda **options: types.SimpleNamespace(**options)
+    driver.bus = Mock()
+    try:
+        driver.start_can_sender()
+        assert driver.send_can_frame(0x703, b"", is_remote_frame=True)
+    finally:
+        driver.stop_can_sender()
+    message = driver.bus.send.call_args.args[0]
+    assert message.arbitration_id == 0x703
+    assert message.is_remote_frame is True
+    assert message.is_extended_id is False
+    assert message.data == b""
+
+
+def test_initialization_failure_disables_all_selected_nodes():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.send_nmt_command = Mock(return_value=True)
+    driver.motor_set_mode = Mock(side_effect=[True, False])
+    driver.motor_set_direction = Mock(return_value=True)
+    driver.motor_set_acceleration = Mock(return_value=True)
+    driver.motor_set_deceleration = Mock(return_value=True)
+    driver.motor_set_speed = Mock(return_value=True)
+    driver.motor_enable = Mock(return_value=True)
+    driver.motor_disable = Mock(return_value=True)
+    with patch("time.sleep"):
+        assert not driver.initialize_motors(motor_ids=(1, 2))
+    driver.motor_enable.assert_called_once_with(1)
+    assert {call.args[0] for call in driver.motor_disable.call_args_list} == {1, 2}
+
+
 def test_profile_acceleration_and_deceleration_use_documented_objects():
     module = _load_module()
     driver = _make_driver(module)
@@ -302,6 +345,7 @@ def test_initialization_sets_mode_and_ramps_before_enable():
     driver.motor_set_deceleration = lambda motor_id: events.append(("decel", motor_id)) or True
     driver.motor_enable = lambda motor_id: events.append(("enable", motor_id)) or True
 
+    driver.motor_set_speed = lambda motor_id, speed: True
     driver.initialize_motors()
 
     assert events[:6] == [
@@ -312,6 +356,24 @@ def test_initialization_sets_mode_and_ramps_before_enable():
         ("decel", 1),
         ("enable", 1),
     ]
+
+
+def test_selected_startup_nodes_are_zeroed_before_enable():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motor_ids = (1, 2, 3)
+    driver.motors[0]["velocity"] = 20.0
+    frames = []
+    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+    driver.motor_set_deceleration = Mock(return_value=True)
+    with patch("time.sleep"):
+        assert driver.initialize_motors(motor_ids=(1, 2))
+    assert all(can_id != 0x603 for can_id, _ in frames)
+    for motor_id in (1, 2):
+        requests = [data for can_id, data in frames if can_id == 0x600 + motor_id]
+        zero = bytes.fromhex("23 FF 60 00 00 00 00 00")
+        enable = bytes.fromhex("2B 40 60 00 0F 00 00 00")
+        assert requests.index(zero) < requests.index(enable)
 
 
 def test_enable_disable_and_fault_reset_use_cia402_controlword():

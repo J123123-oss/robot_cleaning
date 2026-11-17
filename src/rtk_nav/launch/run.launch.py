@@ -38,6 +38,11 @@ def generate_launch_description():
         default_value=TextSubstitution(text="true"),
         description="滚刷3/4协议：false使用AIMotor，true使用步科iSMK",
     )
+    declare_aimotor_auto_enable_arg = DeclareLaunchArgument(
+        "aimotor_auto_enable",
+        default_value=TextSubstitution(text="true"),
+        description="初始状态设为ENABLE并自动零速使能AIMotor，磁导航确认在仓后转DISABLE",
+    )
     kinco_parameters = (
         ("kinco_encoder_resolution", "65536", int, "步科编码器每转计数，默认取手册示例，现场需确认"),
         ("kinco_reduction_ratio", "10.0", float, "步科电机轴到滚刷输出轴的机械减速比"),
@@ -45,6 +50,8 @@ def generate_launch_description():
         ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
         ("kinco_peak_current_a", "47.9", float, "步科电机峰值电流Ipeak，单位A，用于0x6078电流换算"),
         ("kinco_brush_speed_rpm", "150.0", float, "步科滚刷输出轴转速上限，单位r/min"),
+        ("kinco_guard_time_ms", "100", int, "步科节点保护RTR请求周期，单位ms，范围50至65535"),
+        ("kinco_guard_life_factor", "5", int, "步科节点保护超时倍数，范围2至255"),
     )
     declare_kinco_args = tuple(
         DeclareLaunchArgument(
@@ -153,6 +160,9 @@ def generate_launch_description():
                 ),
                 'brush_use_kinco': ParameterValue(
                     LaunchConfiguration('brush_use_kinco'), value_type=bool
+                ),
+                'aimotor_auto_enable': ParameterValue(
+                    LaunchConfiguration('aimotor_auto_enable'), value_type=bool
                 ),
                 **{
                     name: ParameterValue(
@@ -316,6 +326,7 @@ def generate_launch_description():
     ld.add_action(declare_brush_motor_count_arg)
     ld.add_action(declare_brush_direction_mode_arg)
     ld.add_action(declare_brush_use_kinco_arg)
+    ld.add_action(declare_aimotor_auto_enable_arg)
     for declare_kinco_arg in declare_kinco_args:
         ld.add_action(declare_kinco_arg)
     ld.add_action(declare_profile_acceleration_arg)

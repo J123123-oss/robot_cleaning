@@ -627,7 +627,9 @@ class CanMotorDriver(Node):
         time.sleep(0.1)
         self.create_can_bus()
 
-    def _send_can_frame_direct(self, can_id: int, data: bytes) -> bool:
+    def _send_can_frame_direct(
+        self, can_id: int, data: bytes, is_remote_frame: bool = False
+    ) -> bool:
         """在发送线程中直接写入一帧 CAN，不负责节流。"""
         if self.bus is None:
             self.get_logger().error("CAN bus not initialized")
@@ -635,11 +637,13 @@ class CanMotorDriver(Node):
         try:
             if not 0 <= can_id <= 0x7FF:
                 raise ValueError(f"CANopen COB-ID out of range: 0x{can_id:X}")
-            payload = bytes(data[:8]).ljust(8, b"\x00")
+            payload = b"" if is_remote_frame else bytes(data[:8]).ljust(8, b"\x00")
+            frame_options = {"is_remote_frame": True} if is_remote_frame else {}
             message = can.Message(
                 arbitration_id=can_id,
                 data=payload,
                 is_extended_id=False,
+                **frame_options,
             )
             send_return_monotonic = None
             send_return_wall = None
@@ -703,11 +707,15 @@ class CanMotorDriver(Node):
     def _can_tx_worker(self):
         """按优先级和最小间隔发送 CAN 队列中的帧。"""
         while True:
+            if not self._can_tx_stop.is_set():
+                self.service_periodic_can_frames()
             with self._can_tx_condition:
-                while not self._can_tx_heap and not self._can_tx_stop.is_set():
-                    self._can_tx_condition.wait(timeout=0.1)
+                if not self._can_tx_heap and not self._can_tx_stop.is_set():
+                    self._can_tx_condition.wait(timeout=0.01)
                 if not self._can_tx_heap and self._can_tx_stop.is_set():
                     return
+                if not self._can_tx_heap:
+                    continue
                 _, _, request = heapq.heappop(self._can_tx_heap)
 
             try:
@@ -719,12 +727,19 @@ class CanMotorDriver(Node):
                     with self._can_tx_condition:
                         cancelled = request.get("cancelled", False)
                     if not cancelled and not self._can_tx_stop.is_set():
+                        frame_options = (
+                            {"is_remote_frame": True}
+                            if request.get("is_remote_frame") else {}
+                        )
                         request["result"] = self._send_can_frame_direct(
-                            request["can_id"], request["data"]
+                            request["can_id"], request["data"], **frame_options
                         )
                         self._can_tx_last_send_time = time.monotonic()
             finally:
                 request["done"].set()
+
+    def service_periodic_can_frames(self):
+        """为混合协议提供发送线程内的周期维护入口。"""
 
     def start_can_sender(self):
         """启动单一 CAN 发送线程，串行化所有总线写入。"""
@@ -759,16 +774,19 @@ class CanMotorDriver(Node):
             return
         self._can_tx_thread = None
 
-    def send_can_frame(self, can_id: int, data: bytes) -> bool:
+    def send_can_frame(
+        self, can_id: int, data: bytes, is_remote_frame: bool = False
+    ) -> bool:
         """将一帧 11 位标准 CAN 帧加入串行发送队列并等待结果。"""
-        payload = bytes(data[:8]).ljust(8, b"\x00")
+        payload = b"" if is_remote_frame else bytes(data[:8]).ljust(8, b"\x00")
+        frame_options = {"is_remote_frame": True} if is_remote_frame else {}
         tx_thread = getattr(self, "_can_tx_thread", None)
         if (
             tx_thread is None
             or not tx_thread.is_alive()
             or threading.current_thread() is tx_thread
         ):
-            return self._send_can_frame_direct(can_id, payload)
+            return self._send_can_frame_direct(can_id, payload, **frame_options)
 
         request = {
             "can_id": can_id,
@@ -776,6 +794,7 @@ class CanMotorDriver(Node):
             "done": threading.Event(),
             "result": False,
             "cancelled": False,
+            "is_remote_frame": is_remote_frame,
         }
         with self._can_tx_condition:
             if self._can_tx_stop.is_set():
@@ -1302,9 +1321,13 @@ class CanMotorDriver(Node):
             motor_id, self.CONTROLWORD_INDEX, self.CONTROL_DISABLE_VOLTAGE
         )
 
-    def initialize_motors(self):
+    def initialize_motors(self, motor_ids=None):
         """启动节点，设置 PV 模式、方向及加减速参数，然后逐个使能电机。"""
         self.get_logger().info("Initializing AIMOTOR CANopen nodes...")
+        selected_ids = set(self.motor_ids if motor_ids is None else motor_ids)
+        if not selected_ids.issubset({motor["id"] for motor in self.motors}):
+            raise ValueError("Initialization contains unconfigured motor IDs")
+        success = True
         velocity_poll_pause = getattr(self, "_velocity_poll_pause", None)
         velocity_poll_resumed = getattr(self, "_velocity_poll_resumed", None)
         if velocity_poll_pause is not None:
@@ -1316,21 +1339,35 @@ class CanMotorDriver(Node):
         drive_deceleration_failed = False
         for motor in self.motors:
             motor_id = motor["id"]
-            self.send_nmt_command(0x01, motor_id)  # 启动远程节点。
+            if motor_id not in selected_ids:
+                continue
+            if not self.send_nmt_command(0x01, motor_id):
+                success = False
+                continue
             time.sleep(0.01)
-            self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE)
+            if not self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE):
+                success = False
+                self.motor_disable(motor_id)
+                continue
             time.sleep(0.01)
             if not self.motor_set_direction(motor_id):
+                success = False
                 self.get_logger().error(
                     f"Failed to set direction for AIMOTOR node {motor_id}"
                 )
+                self.motor_disable(motor_id)
+                continue
             time.sleep(0.01)
             if not self.motor_set_acceleration(motor_id):
+                success = False
                 self.get_logger().error(
                     f"Failed to set acceleration for AIMOTOR node {motor_id}"
                 )
+                self.motor_disable(motor_id)
+                continue
             time.sleep(0.01)
             if not self.motor_set_deceleration(motor_id):
+                success = False
                 self.get_logger().error(
                     f"Failed to confirm deceleration for AIMOTOR node {motor_id}; "
                     "disabling drive motors until the ramp setting is confirmed"
@@ -1343,15 +1380,26 @@ class CanMotorDriver(Node):
                 continue
             time.sleep(0.01)
             if motor_id in drive_motor_ids and drive_deceleration_failed:
+                success = False
+                self.motor_disable(motor_id)
+                continue
+            if not self.motor_set_speed(motor_id, 0.0):
+                success = False
                 self.motor_disable(motor_id)
                 continue
             if not self.motor_enable(motor_id):
+                success = False
                 self.get_logger().error(f"Failed to enable AIMOTOR node {motor_id}")
+                self.motor_disable(motor_id)
             time.sleep(0.01)
         if velocity_poll_pause is not None:
             velocity_poll_pause.clear()
             if velocity_poll_resumed is not None:
                 velocity_poll_resumed.set()
+        if not success:
+            for motor_id in selected_ids:
+                self.motor_disable(motor_id)
+        return success
 
     def speed_command_callback(self, msg: Float32MultiArray):
         """缓存从 ROS2 接收的有限输出轴 r/min 速度指令。"""

@@ -23,6 +23,7 @@ class CanMotorDriver(AimotorDriver):
 
     KINCO_MOTOR_IDS = (3, 4)
     KINCO_VELOCITY_MODE = 3
+    SDO_READ_1_RESPONSE = 0x4F
     KINCO_CONTROL_SHUTDOWN = 0x0006
     KINCO_CONTROL_SWITCH_ON = 0x0007
     KINCO_CONTROL_ENABLE_OPERATION = 0x000F
@@ -43,7 +44,8 @@ class CanMotorDriver(AimotorDriver):
     def __init__(
         self, *args, kinco_encoder_resolution=65536,
         kinco_reduction_ratio=10.0, kinco_acceleration_rps2=100.0,
-        kinco_deceleration_rps2=100.0, kinco_peak_current_a=47.9, **kwargs
+        kinco_deceleration_rps2=100.0, kinco_peak_current_a=47.9,
+        kinco_guard_time_ms=100, kinco_guard_life_factor=5, **kwargs
     ):
         """Configure Kinco conversion before the inherited threads start."""
         self.kinco_encoder_resolution = self._validate_positive_int_parameter(
@@ -64,6 +66,17 @@ class CanMotorDriver(AimotorDriver):
         self._kinco_ramp_raw(self.kinco_acceleration_rps2)
         self._kinco_ramp_raw(self.kinco_deceleration_rps2)
         self._kinco_acceleration_ready = {}
+        self.kinco_guard_time_ms = self._validate_positive_int_parameter(
+            kinco_guard_time_ms, "kinco_guard_time_ms"
+        )
+        self.kinco_guard_life_factor = self._validate_positive_int_parameter(
+            kinco_guard_life_factor, "kinco_guard_life_factor"
+        )
+        if not 50 <= self.kinco_guard_time_ms <= 65535:
+            raise ValueError("kinco_guard_time_ms must be in 50..65535")
+        if not 2 <= self.kinco_guard_life_factor <= 255:
+            raise ValueError("kinco_guard_life_factor must be in 2..255")
+        self._kinco_guard_nodes = {}
         super().__init__(*args, **kwargs)
         self.kinco_feedback_publisher = self.create_publisher(
             String, "/motor/kinco_feedback", 10
@@ -255,8 +268,16 @@ class CanMotorDriver(AimotorDriver):
             return False
         if not self.motor_set_speed(motor_id, 0.0):
             return False
+        if not self._write_u16(
+            motor_id, self.CONTROLWORD_INDEX, self.KINCO_CONTROL_SHUTDOWN
+        ):
+            return False
+        if not self.configure_kinco_guard(motor_id):
+            self.get_logger().error(
+                f"Kinco node {motor_id} remains disabled: communication guard not confirmed"
+            )
+            return False
         for controlword in (
-            self.KINCO_CONTROL_SHUTDOWN,
             self.KINCO_CONTROL_SWITCH_ON,
             self.KINCO_CONTROL_ENABLE_OPERATION,
         ):
@@ -265,6 +286,63 @@ class CanMotorDriver(AimotorDriver):
             ):
                 return False
         return True
+
+    def configure_kinco_guard(self, motor_id):
+        """回读确认节点保护参数，发送首条 RTR 后才允许使能。"""
+        if (motor_id not in self.KINCO_MOTOR_IDS
+                or not self._validate_motor_id(motor_id)):
+            return False
+        settings = (
+            (0x1017, 0, 2, self.SDO_READ_2_RESPONSE),
+            (0x100C, self.kinco_guard_time_ms, 2, self.SDO_READ_2_RESPONSE),
+            (0x100D, self.kinco_guard_life_factor, 1, self.SDO_READ_1_RESPONSE),
+            (0x6007, 1, 2, self.SDO_READ_2_RESPONSE),
+        )
+        with self._sdo_transaction_lock:
+            for index, value, size, response_command in settings:
+                command = self.SDO_WRITE_1 if size == 1 else self.SDO_WRITE_2
+                if not self._sdo_write(
+                    motor_id, index, 0, command, value.to_bytes(size, "little")
+                ):
+                    self.get_logger().error(
+                        f"Kinco node {motor_id} guard write failed: 0x{index:04X}"
+                    )
+                    return False
+                response = self._read_sdo_response(
+                    motor_id, index, 0, response_command
+                )
+                actual = (
+                    None if response is None
+                    else int.from_bytes(response[4:4 + size], "little")
+                )
+                if actual != value:
+                    self.get_logger().error(
+                        f"Kinco node {motor_id} guard readback failed: "
+                        f"0x{index:04X}, requested={value}, actual={actual}"
+                    )
+                    return False
+        if not self.send_can_frame(0x700 + motor_id, b"", is_remote_frame=True):
+            return False
+        with self._feedback_lock:
+            self._kinco_guard_nodes[motor_id] = time.monotonic()
+        return True
+
+    def service_periodic_can_frames(self):
+        """复用 CAN 发送线程发送 RTR；主控退出或发送线程停顿即停止喂保护。"""
+        if not self.running or self._stopping:
+            return
+        now = time.monotonic()
+        with self._feedback_lock:
+            nodes = tuple(self._kinco_guard_nodes.items())
+        for motor_id, last_sent in nodes:
+            if now - last_sent < self.kinco_guard_time_ms / 1000.0:
+                continue
+            if self._send_can_frame_direct(
+                0x700 + motor_id, b"", is_remote_frame=True
+            ):
+                with self._feedback_lock:
+                    self._kinco_guard_nodes[motor_id] = time.monotonic()
+                self._can_tx_last_send_time = time.monotonic()
 
     def motor_disable(self, motor_id: int) -> bool:
         """Release a Kinco shaft with 6040h=0006h."""
@@ -278,15 +356,16 @@ class CanMotorDriver(AimotorDriver):
             return super().motor_clear_fault(motor_id)
         return self._write_u16(motor_id, self.CONTROLWORD_INDEX, 0x0086)
 
-    def initialize_motors(self):
+    def initialize_motors(self, motor_ids=None):
         """Release brushes before configuring their direction."""
         for motor in self.motors:
-            if motor["id"] in self.KINCO_MOTOR_IDS:
+            if (motor["id"] in self.KINCO_MOTOR_IDS
+                    and (motor_ids is None or motor["id"] in motor_ids)):
                 if not self.motor_disable(motor["id"]):
                     raise RuntimeError(
                         f"Cannot release Kinco node {motor['id']} for configuration"
                     )
-        super().initialize_motors()
+        return super().initialize_motors(motor_ids=motor_ids)
 
     def motor_query_feedback(self, motor_id, include_velocity=True):
         """Read only documented Kinco objects; PDO maps are not assumed."""
