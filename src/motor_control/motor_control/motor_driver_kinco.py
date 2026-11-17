@@ -5,11 +5,12 @@ Protocol reference: iSMK manual 20250523, sections 5.2, 7.1--7.3,
 """
 
 import importlib
+import json
 import math
 import threading
 import time
 
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 
 
 AimotorDriver = importlib.import_module(
@@ -31,6 +32,13 @@ class CanMotorDriver(AimotorDriver):
     KINCO_ERROR_STATUS_2_INDEX = 0x2602
     KINCO_TEMPERATURE_INDEX = 0x6410
     KINCO_TEMPERATURE_SUBINDEX = 0x19
+    KINCO_FEEDBACK_FIELDS = (
+        "output_speed_rpm", "motor_speed_rpm", "velocity_raw",
+        "motor_position_rad", "position_raw", "output_current_arms",
+        "output_current_ap", "current_raw", "temperature_c",
+        "status_word", "mode_display", "fault_code",
+        "error_status", "error_status_2",
+    )
 
     def __init__(
         self, *args, kinco_encoder_resolution=65536,
@@ -57,12 +65,54 @@ class CanMotorDriver(AimotorDriver):
         self._kinco_ramp_raw(self.kinco_deceleration_rps2)
         self._kinco_acceleration_ready = {}
         super().__init__(*args, **kwargs)
+        self.kinco_feedback_publisher = self.create_publisher(
+            String, "/motor/kinco_feedback", 10
+        )
         self.get_logger().info(
             "Kinco brush protocol enabled for configured IDs 3/4: "
             f"encoder={self.kinco_encoder_resolution}, "
             f"reduction={self.kinco_reduction_ratio}, "
             f"ipeak={self.kinco_peak_current_a}A"
         )
+
+    def get_kinco_feedback_snapshot(self):
+        """Return cached Kinco samples with per-field monotonic ages; unread values are null."""
+        now = time.monotonic()
+        with self._feedback_lock:
+            feedback = []
+            for motor in self.motors:
+                if motor["id"] not in self.KINCO_MOTOR_IDS:
+                    continue
+                samples = motor.get("kinco_feedback", {})
+                ages = {
+                    field: max(0.0, now - samples[field][1])
+                    if field in samples else None
+                    for field in self.KINCO_FEEDBACK_FIELDS
+                }
+                values = {
+                    field: samples[field][0] if field in samples else None
+                    for field in self.KINCO_FEEDBACK_FIELDS
+                }
+                feedback.append({
+                    "id": motor["id"],
+                    "target_output_speed_rpm": motor["velocity"],
+                    **values,
+                    "sample_age_sec": ages,
+                })
+            return feedback
+
+    def poll_feedback(self):
+        """Publish the shared feedback and a named Kinco snapshot without extra CAN requests."""
+        snapshot = super().poll_feedback()
+        publisher = getattr(self, "kinco_feedback_publisher", None)
+        if publisher is not None:
+            message = String()
+            message.data = json.dumps({
+                "timestamp_unix_sec": time.time(),
+                "motors": self.get_kinco_feedback_snapshot(),
+            }, allow_nan=False)
+            publisher.publish(message)
+        return snapshot
 
     def motor_set_speed(self, motor_id: int, speed: float) -> bool:
         """Write Kinco DEC = motor rpm * 512 * encoder resolution / 1875."""
@@ -244,6 +294,7 @@ class CanMotorDriver(AimotorDriver):
             return super().motor_query_feedback(motor_id, include_velocity)
         objects = [
             (self.STATUSWORD_INDEX, 0),
+            (self.MODES_OF_OPERATION_DISPLAY_INDEX, 0),
             (self.KINCO_POSITION_INDEX, 0),
         ]
         if include_velocity:
@@ -290,7 +341,8 @@ class CanMotorDriver(AimotorDriver):
         if subindex != expected_subindex:
             return
         expected_command = (
-            self.SDO_READ_4_RESPONSE
+            0x4F if index == self.MODES_OF_OPERATION_DISPLAY_INDEX
+            else self.SDO_READ_4_RESPONSE
             if index in (self.KINCO_POSITION_INDEX, self.VELOCITY_ACTUAL_INDEX)
             else self.SDO_READ_2_RESPONSE
         )
@@ -298,37 +350,65 @@ class CanMotorDriver(AimotorDriver):
             return
         fault_changed = False
         with self._feedback_lock:
+            values = {}
             if index == self.VELOCITY_ACTUAL_INDEX:
                 motor["actual_velocity"] = (
                     int.from_bytes(data[4:8], "little", signed=True) * 1875
                     / (512 * self.kinco_encoder_resolution)
                     / self.kinco_reduction_ratio
                 )
+                values = {
+                    "output_speed_rpm": motor["actual_velocity"],
+                    "motor_speed_rpm": (
+                        motor["actual_velocity"] * self.kinco_reduction_ratio
+                    ),
+                    "velocity_raw": int.from_bytes(data[4:8], "little", signed=True),
+                }
             elif index == self.KINCO_POSITION_INDEX:
                 motor["actual_position"] = (
                     int.from_bytes(data[4:8], "little", signed=True)
                     * 2 * math.pi / self.kinco_encoder_resolution
                 )
+                values = {
+                    "motor_position_rad": motor["actual_position"],
+                    "position_raw": int.from_bytes(data[4:8], "little", signed=True),
+                }
             elif index == self.STATUSWORD_INDEX:
                 motor["status_word"] = int.from_bytes(data[4:6], "little")
+                values = {"status_word": motor["status_word"]}
+            elif index == self.MODES_OF_OPERATION_DISPLAY_INDEX:
+                motor["mode_display"] = int.from_bytes(data[4:5], "little", signed=True)
+                values = {"mode_display": motor["mode_display"]}
             elif index == self.FAULT_CODE_INDEX:
                 fault_code = int.from_bytes(data[4:6], "little")
                 fault_changed = motor["fault_code"] != fault_code
                 motor["fault_code"] = fault_code
+                values = {"fault_code": fault_code}
             elif index == self.KINCO_ERROR_STATUS_INDEX:
                 motor["kinco_error_status"] = int.from_bytes(data[4:6], "little")
+                values = {"error_status": motor["kinco_error_status"]}
             elif index == self.KINCO_ERROR_STATUS_2_INDEX:
                 motor["kinco_error_status_2"] = int.from_bytes(data[4:6], "little")
+                values = {"error_status_2": motor["kinco_error_status_2"]}
             elif index == self.KINCO_TEMPERATURE_INDEX:
                 motor["actual_temperature"] = int.from_bytes(
                     data[4:6], "little", signed=True
                 )
+                values = {"temperature_c": motor["actual_temperature"]}
             elif index == self.KINCO_ACTUAL_CURRENT_INDEX:
                 raw_current = int.from_bytes(data[4:6], "little", signed=True)
                 motor["actual_current"] = (
                     raw_current * self.kinco_peak_current_a / (1.414 * 2048)
                 )
                 motor["actual_current_updated_monotonic"] = time.monotonic()
+                values = {
+                    "output_current_arms": motor["actual_current"],
+                    "output_current_ap": raw_current * self.kinco_peak_current_a / 2048,
+                    "current_raw": raw_current,
+                }
+            samples = motor.setdefault("kinco_feedback", {})
+            updated = time.monotonic()
+            samples.update({field: (value, updated) for field, value in values.items()})
         if fault_changed:
             self.publish_motor_fault_codes()
         if index == self.VELOCITY_ACTUAL_INDEX:
@@ -353,6 +433,12 @@ class CanMotorDriver(AimotorDriver):
             motor["fault_code"] = int.from_bytes(data[0:2], "little")
             motor["kinco_error_status"] = int.from_bytes(data[4:6], "little")
             motor["kinco_error_status_2"] = int.from_bytes(data[6:8], "little")
+            updated = time.monotonic()
+            motor.setdefault("kinco_feedback", {}).update({
+                "fault_code": (motor["fault_code"], updated),
+                "error_status": (motor["kinco_error_status"], updated),
+                "error_status_2": (motor["kinco_error_status_2"], updated),
+            })
         self.get_logger().info(
             f"Kinco node {motor_id} EMCY=0x{motor['fault_code']:04X}, "
             f"2601=0x{motor['kinco_error_status']:04X}, "

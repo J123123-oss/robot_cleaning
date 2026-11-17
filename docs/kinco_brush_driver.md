@@ -93,6 +93,43 @@ ramp_DEC = round(rps_per_second * 65536 * encoder_resolution / 4000000)
 中按实际电机参数调整；因此现有滚刷电流保护使用的是安培值，而不是原始 DEC。
 实际电流查询失败或样本过期时，保护逻辑会忽略该样本；原有电池总电流保护继续使用。
 
+## 实时调试话题
+
+开启步科协议后，驱动在现有 `poll_feedback()` 发布周期同时发布
+`/motor/kinco_feedback`，类型为 `std_msgs/msg/String`，内容是 JSON。
+主控制节点正常运行时约 10 Hz 发布；消息是异步 SDO 缓存快照，各字段并非同一时刻采集。
+仅包含实际配置的步科电机：单滚刷 ID 3，双滚刷 ID 3、4。
+继续保留 `/motor_feedback`、`/motor_velocity_feedback` 等现有通用话题。
+新增话题不创建 CAN 接收线程；原有 SDO 查询增加 `6061:00` 有效工作模式回读。
+
+```bash
+ros2 topic echo /motor/kinco_feedback
+ros2 topic hz /motor/kinco_feedback
+```
+
+JSON 顶层包含 `timestamp_unix_sec`（发布时间）和 `motors` 列表，每台电机包含：
+
+| 字段 | 含义与单位 |
+|------|------------|
+| `id` | CAN 节点 ID |
+| `target_output_speed_rpm` | 软件最近缓存的输出轴目标转速，r/min；不是驱动器目标回读 |
+| `output_speed_rpm` / `motor_speed_rpm` | 实际输出轴/电机轴转速，r/min |
+| `output_current_arms` | 电机侧有符号等效 RMS 电流，A，沿用现有保护换算 |
+| `output_current_ap` | 电机侧峰值标度电流，A，`DEC * Ipeak / 2048`，便于与上位机 Ap 对照 |
+| `motor_position_rad` | 电机轴实际位置，rad，未除以减速比 |
+| `temperature_c` | 电机温度，℃ |
+| `status_word` | `6041:00` 状态字，无符号整数 |
+| `mode_display` | `6061:00` 有效工作模式，有符号整数 |
+| `fault_code` | `603F:00` 或 EMCY 错误码 |
+| `error_status` / `error_status_2` | `2601:00` / `2602:00` 错误状态字 |
+| `velocity_raw` / `position_raw` / `current_raw` | 对应 SDO 原始有符号 DEC 值 |
+| `sample_age_sec` | 各反馈字段距最后有效响应的秒数 |
+
+未收到有效反馈时，对应字段及其年龄为 `null`；通信中断后保留最后一次值，
+其年龄持续增大，订阅端应按年龄判断是否过期，不能仅凭零速或零故障码判断在线。
+电流字段是电机侧电流，不是 48 V 电源输入电流；`Arms` 和 `Ap` 两种标度不会
+按电源电压换算成输入电流。
+
 ## 独立设定目标电流限制
 
 `src/motor_control/motor_control/kinco_current_limit.py` 是独立的 CANopen

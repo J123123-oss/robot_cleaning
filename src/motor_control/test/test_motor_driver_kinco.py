@@ -2,6 +2,7 @@
 
 import ast
 import importlib.util
+import json
 import math
 import runpy
 import threading
@@ -21,6 +22,7 @@ def load_kinco():
     module = importlib.util.module_from_spec(spec)
     messages = types.ModuleType("std_msgs.msg")
     messages.Float32MultiArray = aimotor.Float32MultiArray
+    messages.String = type("String", (), {})
     with patch.dict("sys.modules", {"std_msgs.msg": messages}), patch(
         "importlib.import_module", return_value=aimotor
     ):
@@ -146,6 +148,7 @@ def test_feedback_queries_kinco_objects_without_aimotor_history_or_torque():
         (0x603, bytes.fromhex(value))
         for value in (
             "40 41 60 00 00 00 00 00",
+            "40 61 60 00 00 00 00 00",
             "40 63 60 00 00 00 00 00",
             "40 6C 60 00 00 00 00 00",
             "40 3F 60 00 00 00 00 00",
@@ -155,6 +158,61 @@ def test_feedback_queries_kinco_objects_without_aimotor_history_or_torque():
             "40 78 60 00 00 00 00 00",
         )
     ]
+
+
+def test_kinco_debug_snapshot_publishes_units_raw_values_and_unread_fields():
+    driver, frames = make_driver()
+    driver.kinco_feedback_publisher = Mock()
+    driver.kinco_reduction_ratio = 10.0
+    driver.parse_motor_feedback(0x583, bytes.fromhex("43 6C 60 00 00 00 00 01"))
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 78 60 00 00 FC 00 00"))
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4F 61 60 00 03 00 00 00"))
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 41 60 00 37 46 00 00"))
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 10 64 19 18 00 00 00"))
+    driver.parse_motor_feedback(0x583, bytes.fromhex("43 63 60 00 00 00 01 00"))
+    driver.parse_motor_fault(0x084, bytes.fromhex("10 42 08 00 10 00 20 00"))
+    driver.poll_feedback()
+    payload = json.loads(driver.kinco_feedback_publisher.publish.call_args.args[0].data)
+    assert payload["timestamp_unix_sec"] > 0
+    assert [motor["id"] for motor in payload["motors"]] == [3, 4]
+    motor = payload["motors"][0]
+    assert motor["velocity_raw"] == 0x01000000
+    assert motor["output_speed_rpm"] == pytest.approx(93.75)
+    assert motor["motor_speed_rpm"] == pytest.approx(937.5)
+    assert motor["current_raw"] == -1024
+    assert motor["output_current_ap"] == pytest.approx(-23.95)
+    assert motor["output_current_arms"] == pytest.approx(-23.95 / 1.414)
+    assert motor["mode_display"] == 3
+    assert motor["status_word"] == 0x4637
+    assert motor["temperature_c"] == 24
+    assert motor["motor_position_rad"] == pytest.approx(2 * math.pi)
+    assert motor["sample_age_sec"]["output_current_arms"] >= 0
+    assert motor["fault_code"] is None
+    assert motor["sample_age_sec"]["fault_code"] is None
+    assert payload["motors"][1]["output_speed_rpm"] is None
+    assert payload["motors"][1]["error_status"] == 0x10
+    assert payload["motors"][1]["error_status_2"] == 0x20
+    assert frames == []
+    driver.motor_feedback_publisher.publish.assert_called_once()
+
+
+def test_kinco_debug_snapshot_ignores_invalid_responses_and_reports_aging():
+    driver, _ = make_driver()
+    with patch("time.monotonic", return_value=100.0):
+        driver.parse_motor_feedback(0x583, bytes.fromhex("4F 61 60 00 FD 00 00 00"))
+    for invalid in (
+        "60 61 60 00 03 00 00 00",
+        "80 61 60 00 03 00 00 00",
+        "4F 61 60 01 03 00 00 00",
+        "4B 61 60 00 03 00 00 00",
+    ):
+        driver.parse_motor_feedback(0x583, bytes.fromhex(invalid))
+    with patch("time.monotonic", return_value=110.0):
+        snapshot = driver.get_kinco_feedback_snapshot()
+    assert snapshot[0]["mode_display"] == -3
+    assert snapshot[0]["sample_age_sec"]["mode_display"] == 10.0
+    driver.motors = driver.motors[:2]
+    assert driver.get_kinco_feedback_snapshot() == []
 
 
 def test_faults_keep_emergency_code_and_both_kinco_error_words():
