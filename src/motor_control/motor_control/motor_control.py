@@ -1685,11 +1685,11 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            self.set_brush_speed(
-                KINCO_DEFAULT_BRUSH_SPEED_RPM
-                if self.brush_use_kinco
-                else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
-            )
+            # self.set_brush_speed(
+            #     KINCO_DEFAULT_BRUSH_SPEED_RPM
+            #     if self.brush_use_kinco
+            #     else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
+            # )
             # self.set_motors_speed(left_speed, right_speed)
             # stop brush
 
@@ -2605,11 +2605,11 @@ class MotorControlNode(Node):
         elif new_state == "ENABLE":
 
             self.motor_ctrl.initialize_motors()
-            self.set_brush_speed(
-                KINCO_DEFAULT_BRUSH_SPEED_RPM
-                if self.brush_use_kinco
-                else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
-            )
+            # self.set_brush_speed(
+            #     KINCO_DEFAULT_BRUSH_SPEED_RPM
+            #     if self.brush_use_kinco
+            #     else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
+            # )
             time.sleep(0.001)
             self.complete_state = False
             # 取消 MQTT 方向指令的自动停止定时器，防止干扰导航
