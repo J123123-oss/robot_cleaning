@@ -21,7 +21,8 @@ class Sensors485(Node):
         super().__init__('sensors_485_node')
 
         self.declare_parameter('gpio_chip', '/dev/gpiochip6')
-        self.declare_parameter('gpio_lines', [9, 8, 7, 6])
+        self.declare_parameter('gpio_lines', [4, 5, 3, 2])
+        # self.declare_parameter('gpio_lines', [9, 8, 7, 6]) #old version
         self.declare_parameter('poll_interval', 0.05)
         self.declare_parameter('gpio_use_sudo', False)
 
