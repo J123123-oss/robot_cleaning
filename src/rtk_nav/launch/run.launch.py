@@ -194,7 +194,8 @@ def generate_launch_description():
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
             {'gpio_chip': '/dev/gpiochip6'},
-            {'gpio_lines': [9, 8, 7, 6]},
+            # {'gpio_lines': [9, 8, 7, 6]},
+            {'gpio_lines': [4, 5, 3, 2]},
             {'poll_interval': 0.01},
             {'gpio_use_sudo': False},
         ]
