@@ -2005,7 +2005,11 @@ class MotorControlNode(Node):
         self._rtk_auto_pause = False
         self.nav_status = nav_status
         # self.get_logger().info(f"[RTKNavStatus] 当前导航状态：{self.nav_status}")
-        if self.nav_status == "COMPLETED" and not self.is_in_bin_process:
+        if (
+            self.nav_status == "COMPLETED"
+            and self.current_control_mode == "AUTO_CLEANING"
+            and not self.is_in_bin_process
+        ):
             if self.auto_cleaning_finish_to_loading:
                 self.get_logger().info("[RTKNavStatus] RTK导航完成，切换到LOADING状态")
                 self.current_control_mode = "NORMAL"  # 切换回普通模式

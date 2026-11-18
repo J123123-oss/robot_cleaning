@@ -6385,7 +6385,7 @@ class RTKNavControlNode(Node):
             self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             self.publish_stop_speed()
             # 新增：无航点时强制重置导航上下文，避免恢复时保留异常状态
-            if not self.waypoints:
+            if not self.waypoints and previous_mode != self.current_control_mode:
                 self.reset_nav_context()
                 self.get_logger().info("[ROSNode] 非RTK模式：无航点数据，重置导航上下文为IDLE")
             # 不重置导航上下文, 保存状态以便后续恢复

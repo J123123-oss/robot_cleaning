@@ -136,6 +136,12 @@ src/
 
 - `publish_state()` 的 `state_msg` 中，除 `current_lon/current_lat` 保留原始精度外，所有层级的浮点数统一四舍五入至两位小数；保持数字类型，整数、布尔值、字符串和空值不转换，不修改内部采样数据。
 
+## 清扫测试与导航收尾约定
+
+- 仅测试清扫、不自动进仓时使用 `auto_cleaning_finish_to_loading:=false`（当前 launch 默认值）；设为 true 时清扫完成后进入 LOADING。独立运行 motor_control 节点时该参数默认 true，测试时须显式关闭。
+- 导航 COMPLETED 仅在底盘仍处于 AUTO_CLEANING 控制模式且不在进出仓流程时触发收尾；重复或切出自动模式后到达的完成消息不得再次切换状态。
+- 非 AUTO_CLEANING 的模式消息可重复发布，零速停车保留；无航点的上下文重置和对应日志仅在模式发生变化时执行，避免周期消息反复清理、刷屏。
+
 ## 滚刷混合协议实现约定
 
 - `motor_driver_kinco.py` 实现步科滚刷协议适配，复用 AIMotor 驱动的 CAN 总线、线程和反馈接口；不得为滚刷创建第二个 CAN 接收线程。
