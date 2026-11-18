@@ -21,6 +21,49 @@ AimotorDriver = importlib.import_module(
 class CanMotorDriver(AimotorDriver):
     """Use Kinco objects for brushes and the existing AIMotor API for wheels."""
 
+    KINCO_FAULT_TABLE = {
+        0x0000: "无故障",
+        0x2320: "驱动器功率部分短路或电机短路",
+        0x2321: "电流采样饱和",
+        0x2350: "电机或驱动器过载",
+        0x3210: "驱动器总线电压过高",
+        0x3220: "驱动器总线电压过低",
+        0x4210: "驱动器温度过高",
+        0x4310: "电机温度过高",
+        0x5112: "逻辑电压低",
+        0x5210: "电流传感器故障",
+        0x5441: "负限位报错",
+        0x5442: "正限位报错",
+        0x5443: "预使能报警",
+        0x6010: "软件看门狗复位",
+        0x6011: "异常中断",
+        0x6012: "SPI 故障",
+        0x6310: "EEPROM 数据错误",
+        0x6320: "电机型号配置错误",
+        0x6321: "电机动力线缺相",
+        0x7110: "驱动器制动电阻异常",
+        0x7306: "主编码器计数错误",
+        0x7320: "通讯式编码器多圈错误",
+        0x7330: "通讯式编码器校验错误",
+        0x7331: "通讯式编码器没有连接或没有回应",
+        0x7382: "主编码器ABZ 故障",
+        0x7400: "MCU 故障",
+        0x8100: "总线通讯错误",
+        0x81FF: "总线通讯超时",
+        0x8611: "实际跟随误差超过允许",
+        0x8A80: "输入脉冲频率过高",
+        0x8A81: "全闭环检查错误",
+    }
+    KINCO_ERROR_REGISTER_TABLE = {
+        0: "一般错误",
+        1: "电流",
+        2: "电压",
+        3: "温度",
+        4: "通讯错误",
+        5: "设备配置文件特定",
+        6: "编码器",
+        7: "保留",
+    }
     KINCO_MOTOR_IDS = (3, 4)
     KINCO_VELOCITY_MODE = 3
     SDO_READ_1_RESPONSE = 0x4F
@@ -37,7 +80,7 @@ class CanMotorDriver(AimotorDriver):
         "output_speed_rpm", "motor_speed_rpm", "velocity_raw",
         "motor_position_rad", "position_raw", "output_current_arms",
         "output_current_ap", "current_raw", "temperature_c",
-        "status_word", "mode_display", "fault_code",
+        "status_word", "mode_display", "fault_code", "error_register",
         "error_status", "error_status_2",
     )
 
@@ -88,6 +131,25 @@ class CanMotorDriver(AimotorDriver):
             f"ipeak={self.kinco_peak_current_a}A"
         )
 
+    @classmethod
+    def describe_kinco_fault(cls, fault_code):
+        """Decode manual 9.3.3.6 table 9-24; 7331 retains both listed meanings."""
+        if fault_code is None:
+            return None
+        return cls.KINCO_FAULT_TABLE.get(
+            fault_code, f"手册未定义故障码 0x{fault_code:04X}"
+        )
+
+    @classmethod
+    def decode_kinco_error_register(cls, error_register):
+        """Decode all set 1001 bits from table 9-25; unread registers remain null."""
+        if error_register is None:
+            return None
+        return [
+            description for bit, description in cls.KINCO_ERROR_REGISTER_TABLE.items()
+            if error_register & (1 << bit)
+        ]
+
     def get_kinco_feedback_snapshot(self):
         """Return cached Kinco samples with per-field monotonic ages; unread values are null."""
         now = time.monotonic()
@@ -110,6 +172,10 @@ class CanMotorDriver(AimotorDriver):
                     "id": motor["id"],
                     "target_output_speed_rpm": motor["velocity"],
                     **values,
+                    "fault_description": self.describe_kinco_fault(values["fault_code"]),
+                    "error_register_descriptions": self.decode_kinco_error_register(
+                        values["error_register"]
+                    ),
                     "sample_age_sec": ages,
                 })
             return feedback
@@ -123,7 +189,7 @@ class CanMotorDriver(AimotorDriver):
             message.data = json.dumps({
                 "timestamp_unix_sec": time.time(),
                 "motors": self.get_kinco_feedback_snapshot(),
-            }, allow_nan=False)
+            }, allow_nan=False, ensure_ascii=False)
             publisher.publish(message)
         return snapshot
 
@@ -550,6 +616,11 @@ class CanMotorDriver(AimotorDriver):
             updated = time.monotonic()
             samples.update({field: (value, updated) for field, value in values.items()})
         if fault_changed:
+            log = self.get_logger().error if fault_code else self.get_logger().info
+            log(
+                f"Kinco node {motor_id} 603F=0x{fault_code:04X} "
+                f"({self.describe_kinco_fault(fault_code)})"
+            )
             self.publish_motor_fault_codes()
         if index == self.VELOCITY_ACTUAL_INDEX:
             message = Float32MultiArray()
@@ -562,26 +633,37 @@ class CanMotorDriver(AimotorDriver):
             super()._parse_tpdo_feedback(can_id, data)
 
     def parse_motor_fault(self, can_id, data):
-        """Preserve Kinco EMCY and both error words without AIMotor decoding."""
+        """Decode EMCY bytes per manual 9.3.3.6 tables 9-23/24/25, leaving byte 3 unused."""
         motor_id = can_id - self.EMCY_BASE
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().parse_motor_fault(can_id, data)
         motor = self._get_motor(motor_id)
         if motor is None or len(data) != 8:
             return
+        fault_code = int.from_bytes(data[0:2], "little")
+        error_register = data[2]
+        error_status = int.from_bytes(data[4:6], "little")
+        error_status_2 = int.from_bytes(data[6:8], "little")
         with self._feedback_lock:
-            motor["fault_code"] = int.from_bytes(data[0:2], "little")
-            motor["kinco_error_status"] = int.from_bytes(data[4:6], "little")
-            motor["kinco_error_status_2"] = int.from_bytes(data[6:8], "little")
+            motor["fault_code"] = fault_code
+            motor["kinco_error_register"] = error_register
+            motor["kinco_error_status"] = error_status
+            motor["kinco_error_status_2"] = error_status_2
             updated = time.monotonic()
             motor.setdefault("kinco_feedback", {}).update({
-                "fault_code": (motor["fault_code"], updated),
-                "error_status": (motor["kinco_error_status"], updated),
-                "error_status_2": (motor["kinco_error_status_2"], updated),
+                "fault_code": (fault_code, updated),
+                "error_register": (error_register, updated),
+                "error_status": (error_status, updated),
+                "error_status_2": (error_status_2, updated),
             })
-        self.get_logger().info(
-            f"Kinco node {motor_id} EMCY=0x{motor['fault_code']:04X}, "
-            f"2601=0x{motor['kinco_error_status']:04X}, "
-            f"2602=0x{motor['kinco_error_status_2']:04X}"
+        register_description = "、".join(
+            self.decode_kinco_error_register(error_register)
+        ) or "无错误位"
+        log = self.get_logger().error if fault_code else self.get_logger().info
+        log(
+            f"Kinco node {motor_id} EMCY=0x{fault_code:04X} "
+            f"({self.describe_kinco_fault(fault_code)}), "
+            f"1001=0x{error_register:02X} ({register_description}), "
+            f"2601=0x{error_status:04X}, 2602=0x{error_status_2:04X}"
         )
         self.publish_motor_fault_codes()

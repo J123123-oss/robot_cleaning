@@ -532,6 +532,95 @@ def test_faults_keep_emergency_code_and_both_kinco_error_words():
     assert driver.motors[2]["fault_code"] == 0
 
 
+@pytest.mark.parametrize("code,description", [
+    (0x8100, "总线通讯错误"),
+    (0x81FF, "总线通讯超时"),
+    (0x5442, "正限位报错"),
+    (0x5443, "预使能报警"),
+    (0x7331, "通讯式编码器没有连接或没有回应"),
+    (0x0000, "无故障"),
+])
+def test_kinco_fault_table_matches_manual_emergency_codes(code, description):
+    driver, _ = make_driver()
+    assert driver.KINCO_FAULT_TABLE[code] == description
+
+
+def test_kinco_emergency_decodes_error_register_and_publishes_named_fault():
+    driver, _ = make_driver()
+    with patch("time.monotonic", return_value=100.0):
+        driver.parse_motor_fault(0x083, bytes.fromhex("00 81 15 AA 34 12 00 10"))
+    with patch("time.monotonic", return_value=100.25):
+        motor = driver.get_kinco_feedback_snapshot()[0]
+    assert motor["fault_code"] == 0x8100
+    assert motor["fault_description"] == "总线通讯错误"
+    assert motor["error_register"] == 0x15
+    assert motor["error_register_descriptions"] == ["一般错误", "电压", "通讯错误"]
+    assert motor["error_status"] == 0x1234
+    assert motor["error_status_2"] == 0x1000
+    assert motor["sample_age_sec"]["error_register"] == pytest.approx(0.25)
+    log = driver.get_logger.return_value.error.call_args.args[0]
+    assert "0x8100" in log and "总线通讯错误" in log
+    assert "1001=0x15" in log and "电压" in log and "通讯错误" in log
+    assert "2601=0x1234" in log and "2602=0x1000" in log
+    driver.motor_fault_publisher.publish.assert_called_once()
+
+
+def test_kinco_fault_reset_clears_description_and_error_register():
+    driver, _ = make_driver()
+    driver.parse_motor_fault(0x084, bytes.fromhex("FF 81 10 00 00 00 00 10"))
+    driver.parse_motor_fault(0x084, bytes(8))
+    motor = driver.get_kinco_feedback_snapshot()[1]
+    assert motor["fault_description"] == "无故障"
+    assert motor["error_register"] == 0
+    assert motor["error_register_descriptions"] == []
+    assert motor["error_status"] == 0
+    assert motor["error_status_2"] == 0
+    assert "无故障" in driver.get_logger.return_value.info.call_args.args[0]
+
+
+def test_kinco_unknown_fault_is_explicit_and_keeps_raw_code():
+    driver, _ = make_driver()
+    driver.parse_motor_fault(0x083, bytes.fromhex("EF BE 80 00 00 00 00 00"))
+    motor = driver.get_kinco_feedback_snapshot()[0]
+    assert motor["fault_code"] == 0xBEEF
+    assert motor["fault_description"] == "手册未定义故障码 0xBEEF"
+    assert motor["error_register_descriptions"] == ["保留"]
+    assert "0xBEEF" in driver.get_logger.return_value.error.call_args.args[0]
+
+
+def test_kinco_sdo_fault_uses_same_table_and_keeps_unread_register_null():
+    driver, _ = make_driver()
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 3F 60 00 FF 81 00 00"))
+    motor = driver.get_kinco_feedback_snapshot()[0]
+    assert motor["fault_description"] == "总线通讯超时"
+    assert motor["error_register"] is None
+    assert motor["error_register_descriptions"] is None
+    assert motor["sample_age_sec"]["error_register"] is None
+    assert "总线通讯超时" in driver.get_logger.return_value.error.call_args.args[0]
+    driver.parse_motor_feedback(0x583, bytes.fromhex("4B 3F 60 00 00 00 00 00"))
+    assert driver.get_kinco_feedback_snapshot()[0]["fault_description"] == "无故障"
+
+
+def test_kinco_fault_descriptions_are_in_published_json():
+    driver, _ = make_driver()
+    driver.kinco_feedback_publisher = Mock()
+    driver.parse_motor_fault(0x083, bytes.fromhex("00 81 10 00 00 00 00 10"))
+    driver.poll_feedback()
+    message = driver.kinco_feedback_publisher.publish.call_args.args[0].data
+    motor = json.loads(message)["motors"][0]
+    assert motor["fault_description"] == "总线通讯错误"
+    assert motor["error_register_descriptions"] == ["通讯错误"]
+    assert "总线通讯错误" in message
+
+
+def test_mixed_driver_retains_aimotor_fault_meaning_for_wheels():
+    driver, _ = make_driver()
+    driver.parse_motor_fault(0x081, bytes.fromhex("42 54 01 00 00 00 00 00"))
+    errors = [call.args[0] for call in driver.get_logger.return_value.error.call_args_list]
+    assert any("紧急停机" in message for message in errors)
+    assert not any("正限位报错" in message for message in errors)
+
+
 def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enable():
     driver, frames = make_driver()
     mock_configuration_readback(driver)
