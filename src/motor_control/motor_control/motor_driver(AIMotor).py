@@ -22,6 +22,7 @@ import rclpy
 from geometry_msgs.msg import Quaternion
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
+from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Float64MultiArray
 
@@ -1877,6 +1878,9 @@ class CanMotorDriver(Node):
                     if motor is not None and message.data:
                         motor["online"] = message.data[0] in (0x05, 0x7F)
             except Exception as exc:
+                if (isinstance(exc, (_rclpy.RCLError, _rclpy.InvalidHandle))
+                        and not rclpy.ok()):
+                    break
                 consecutive_errors += 1
                 self.get_logger().error(
                     f"CAN receive error ({consecutive_errors}/5): {exc}"
@@ -2027,9 +2031,12 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except Exception as exc:
-        print(f"Unexpected error: {exc}")
-        if motor_driver is not None:
-            motor_driver.stop_all_motors()
+        if isinstance(exc, (_rclpy.RCLError, _rclpy.InvalidHandle)) and not rclpy.ok():
+            print("ROS context has shut down; applying normal motor shutdown policy")
+        else:
+            print(f"Unexpected error: {exc}")
+            if motor_driver is not None:
+                motor_driver.stop_all_motors()
     finally:
         if motor_driver is not None:
             motor_driver.destroy_node()

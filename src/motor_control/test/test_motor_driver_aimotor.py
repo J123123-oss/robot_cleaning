@@ -84,6 +84,13 @@ def _load_module():
     rclpy_executors.ExternalShutdownException = type(
         "ExternalShutdownException", (Exception,), {}
     )
+    rclpy_impl = types.ModuleType("rclpy.impl")
+    rclpy_singleton = types.ModuleType("rclpy.impl.implementation_singleton")
+    rclpy_singleton.rclpy_implementation = types.SimpleNamespace(
+        RCLError=type("RCLError", (Exception,), {}),
+        InvalidHandle=type("InvalidHandle", (Exception,), {}),
+    )
+    rclpy._test_implementation = rclpy_singleton.rclpy_implementation
 
     std_msgs = types.ModuleType("std_msgs")
     std_msgs_msg = types.ModuleType("std_msgs.msg")
@@ -109,6 +116,8 @@ def _load_module():
         "rclpy": rclpy,
         "rclpy.node": rclpy_node,
         "rclpy.executors": rclpy_executors,
+        "rclpy.impl": rclpy_impl,
+        "rclpy.impl.implementation_singleton": rclpy_singleton,
         "std_msgs": std_msgs,
         "std_msgs.msg": std_msgs_msg,
         "nav_msgs": nav_msgs,
@@ -622,6 +631,40 @@ def test_receive_timeout_does_not_send_disable_or_reset_frames():
     driver.bus.shutdown.assert_not_called()
 
 
+@pytest.mark.parametrize("exception_name", ["RCLError", "InvalidHandle"])
+@pytest.mark.parametrize("context_active", [False, True])
+def test_receive_distinguishes_shutdown_from_live_publish_errors(
+    exception_name, context_active
+):
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.running = True
+    driver.can_initialized = True
+    driver.bus = Mock()
+    module.rclpy.ok = Mock(return_value=context_active)
+    message = types.SimpleNamespace(arbitration_id=0x581, data=bytes(8))
+
+    def receive(timeout):
+        driver.running = False
+        return message
+
+    driver.bus.recv.side_effect = receive
+    driver.parse_motor_feedback = Mock(side_effect=getattr(
+        module.rclpy._test_implementation, exception_name
+    )("publisher's context is invalid"))
+    logger = driver.get_logger()
+    with patch("time.sleep") as sleep:
+        driver.receive_can_frames()
+
+    assert logger.error.call_count == int(context_active)
+    driver.bus.shutdown.assert_not_called()
+    if context_active:
+        sleep.assert_called_once_with(1.0)
+    else:
+        sleep.assert_not_called()
+    assert driver.can_initialized
+
+
 def test_restart_stops_at_zero_and_reuses_aimotor_enable_without_controlword_drop():
     module = _load_module()
     driver = _make_driver(module)
@@ -664,18 +707,28 @@ def test_explicit_stop_still_disables_aimotor_and_failed_zero_cannot_keep_enable
 
 def test_driver_main_distinguishes_shutdown_signals_from_fatal_errors():
     module = _load_module()
-    for exit_reason in (KeyboardInterrupt(), module.ExternalShutdownException(),
-                        RuntimeError("driver failed")):
+    implementation = module.rclpy._test_implementation
+    cases = (
+        (KeyboardInterrupt(), False, False),
+        (module.ExternalShutdownException(), False, False),
+        (RuntimeError("driver failed"), False, True),
+        (implementation.RCLError("publisher's context is invalid"), False, False),
+        (implementation.InvalidHandle("destruction was requested"), False, False),
+        (implementation.RCLError("publish failed"), True, True),
+        (implementation.InvalidHandle("invalid handle"), True, True),
+    )
+    for exit_reason, context_active, should_disable in cases:
         driver = Mock()
         module.CanMotorDriver = Mock(return_value=driver)
         module.rclpy.init = Mock()
         module.rclpy.spin = Mock(side_effect=exit_reason)
-        module.rclpy.ok = Mock(return_value=False)
+        module.rclpy.ok = Mock(return_value=context_active)
+        module.rclpy.shutdown = Mock()
 
         module.main()
 
         driver.destroy_node.assert_called_once()
-        if isinstance(exit_reason, RuntimeError):
+        if should_disable:
             driver.stop_all_motors.assert_called_once_with()
         else:
             driver.stop_all_motors.assert_not_called()

@@ -11,6 +11,7 @@ import importlib
 from typing import Optional, List, Dict, Tuple
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16, UInt16MultiArray, Int16, Bool
 from geometry_msgs.msg import Vector3
@@ -4512,14 +4513,19 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")
     except Exception as e:
-        motor_node.get_logger().fatal(
-            f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
-        )
-        motor_node.motor_ctrl.stop_all_motors()
+        if isinstance(e, (_rclpy.RCLError, _rclpy.InvalidHandle)) and not rclpy.ok():
+            motor_node.get_logger().info(
+                "[ROSNode] ROS上下文已关闭，按正常退出执行零速保持使能"
+            )
+        else:
+            motor_node.get_logger().fatal(
+                f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
+            )
+            motor_node.motor_ctrl.stop_all_motors()
     finally:
         if motor_node:
             motor_node.get_logger().info(
-                "[ROSNode] 退出时零速停车，AIMotor 保持使能，步科失能"
+                "[ROSNode] 清理电机连接，按退出原因执行停车策略"
             )
             motor_node.motor_ctrl.destroy_node()
             if rclpy.ok():

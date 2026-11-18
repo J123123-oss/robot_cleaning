@@ -254,19 +254,31 @@ def test_manual_enable_applies_same_settings_without_starting_motors():
 
 
 def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
+    from test_motor_driver_aimotor import _load_module
+
+    implementation = _load_module().rclpy._test_implementation
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     main = next(item for item in tree.body if isinstance(item, ast.FunctionDef)
                 and item.name == "main")
     external_shutdown = type("ExternalShutdownException", (Exception,), {})
-    for exit_reason in (KeyboardInterrupt(), external_shutdown(),
-                        RuntimeError("control failed")):
+    cases = (
+        (KeyboardInterrupt(), False, False),
+        (external_shutdown(), False, False),
+        (RuntimeError("control failed"), False, True),
+        (implementation.RCLError("publisher's context is invalid"), False, False),
+        (implementation.InvalidHandle("destruction was requested"), False, False),
+        (implementation.RCLError("publish failed"), True, True),
+        (implementation.InvalidHandle("invalid handle"), True, True),
+    )
+    for exit_reason, context_active, should_disable in cases:
         controller = Mock()
         ros = SimpleNamespace(
             init=Mock(), spin=Mock(side_effect=exit_reason),
-            ok=Mock(return_value=False), shutdown=Mock(),
+            ok=Mock(return_value=context_active), shutdown=Mock(),
         )
         namespace = {
             "rclpy": ros, "MotorControlNode": Mock(return_value=controller),
+            "_rclpy": implementation,
             "ExternalShutdownException": external_shutdown,
             "traceback": SimpleNamespace(format_exc=Mock(return_value="trace")),
         }
@@ -277,11 +289,11 @@ def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
 
         controller.motor_ctrl.destroy_node.assert_called_once()
         controller.motor_ctrl.motor_disable.assert_not_called()
-        if isinstance(exit_reason, RuntimeError):
+        if should_disable:
             controller.motor_ctrl.stop_all_motors.assert_called_once_with()
         else:
             controller.motor_ctrl.stop_all_motors.assert_not_called()
-        ros.shutdown.assert_not_called()
+        assert ros.shutdown.call_count == int(context_active)
 
 
 def test_initial_state_is_enable_before_startup_initialization():
