@@ -19,7 +19,9 @@ except ImportError as exc:  # pragma: no cover
 
 
 AT_EOL = b"\r\n"
-DEFAULT_TIMEOUT = 1.0
+DEFAULT_TIMEOUT = 0.3
+RESPONSE_TIMEOUT = 3.0
+COMMAND_RETRIES = 3
 MAX_DOMAIN_BYTES = 31
 MAX_CORS_BYTES = 31
 MAX_MOUNTPOINT_BYTES = 23
@@ -116,12 +118,13 @@ def read_at_response(
 ) -> str:
     """Scan the mixed binary/text stream until a target AT response is found."""
     serial_timeout = float(getattr(ser, "timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
-    response_timeout = max(0.1, timeout if timeout is not None else serial_timeout)
+    response_timeout = max(0.1, timeout) if timeout is not None else max(RESPONSE_TIMEOUT, serial_timeout)
     deadline = time.monotonic() + response_timeout
     received = bytearray()
     markers = tuple(prefix.encode("ascii") for prefix in expected_prefixes)
     while time.monotonic() < deadline:
-        chunk = ser.read(64)
+        # Avoid waiting for 64 bytes when the short +CFG reply is already available.
+        chunk = ser.read(min(64, max(1, getattr(ser, "in_waiting", 0))))
         if not chunk:
             continue
         received.extend(chunk)
@@ -129,7 +132,11 @@ def read_at_response(
             start = received.find(marker)
             if start < 0:
                 continue
-            end = received.find(b"\n", start)
+            line_endings = [
+                index for index in (received.find(b"\r", start), received.find(b"\n", start))
+                if index >= 0
+            ]
+            end = min(line_endings) if line_endings else -1
             if end < 0:
                 # Some firmware emits the short +CFG echo without a complete
                 # line terminator before resuming the binary stream.
@@ -154,24 +161,52 @@ def send_at(
     command: str,
     expected_prefixes: tuple[str, ...],
     dry_run: bool = False,
+    *,
+    response_timeout: float | None = None,
+    retries: int = COMMAND_RETRIES,
+    clear_input: bool = True,
 ) -> str | None:
     print("TX", command)
     if dry_run:
         return None
     assert ser is not None
-    ser.reset_input_buffer()
-    ser.write(at_command(command))
-    ser.flush()
-    return read_at_response(ser, expected_prefixes)
+    packet = at_command(command)
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            if clear_input:
+                ser.reset_input_buffer()
+            ser.write(packet)
+            ser.flush()
+            return read_at_response(ser, expected_prefixes, timeout=response_timeout)
+        except (RuntimeError, SerialException, OSError) as exc:
+            last_error = exc
+            if attempt < retries:
+                print(f"等待响应失败（第 {attempt}/{retries} 次）：{exc}，重试")
+                time.sleep(0.25 * attempt)
+    assert last_error is not None
+    raise last_error
 
 
 def enter_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
-    try:
+    # 先退出可能残留的配置会话，避免设备已在配置模式时不再回复 +CFG。
+    exit_config(ser, dry_run)
+    if dry_run:
         send_at(ser, "AT+CFG", ("+CFG",), dry_run)
-    except RuntimeError as exc:
-        if dry_run:
-            raise
-        print(f"警告：未捕获 +CFG 回显，继续查询当前配置：{exc}")
+        return
+    time.sleep(0.5)
+    # 未确认进入配置模式前，禁止发送查询、写入或保存命令。
+    first_attempt = True
+    while True:
+        try:
+            send_at(ser, "AT+CFG", ("+CFG",), False,
+                    response_timeout=0.5, retries=1, clear_input=first_attempt)
+            # 给固件留出切换模式的时间，再允许后续查询或写入。
+            time.sleep(0.2)
+            return
+        except RuntimeError as exc:
+            print(f"尚未收到 +CFG，继续尝试进入配置模式（Ctrl+C 退出）：{exc}", flush=True)
+            first_attempt = False
 
 
 def exit_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
@@ -179,16 +214,20 @@ def exit_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
     if dry_run:
         return
     assert ser is not None
-    ser.reset_input_buffer()
-    ser.write(at_command("AT+EXIT"))
-    ser.flush()
+    try:
+        ser.reset_input_buffer()
+        ser.write(at_command("AT+EXIT"))
+        ser.flush()
+    except (SerialException, OSError) as exc:
+        # NETRESET/RESET may already have disconnected the USB serial device.
+        print(f"AT+EXIT 未发送（设备可能正在重启）：{exc}")
     # 4GAC exits directly into the normal WTRAW/NMEA stream and does not
     # return a dedicated +EXIT line.
 
 
 def read_config(ser: serial.Serial) -> dict[str, str | int]:
-    enter_config(ser)
     try:
+        enter_config(ser)
         addr_line = send_at(ser, "AT+ADDR?", ("+ADDR=",))
         cors_line = send_at(ser, "AT+CORS?", ("+CORS=",))
         mountpoint_line = send_at(ser, "AT+MP?", ("+MP=",))
@@ -223,16 +262,21 @@ def backup_config(ser: serial.Serial, path: str) -> None:
 
 def configure(ser: serial.Serial | None, config: Config, dry_run: bool) -> None:
     validate_config(config)
-    enter_config(ser, dry_run)
     try:
+        enter_config(ser, dry_run)
         send_at(ser, f"AT+ADDR={config.domain},{config.port}", ("+ADDR=",), dry_run)
         send_at(ser, f"AT+CORS={config.username},{config.password}", ("+CORS=",), dry_run)
         send_at(ser, f"AT+MP={config.mountpoint}", ("+MP=",), dry_run)
         send_at(ser, "AT+SAVE", ("SAVE", "+SAVE", "OK"), dry_run)
-        send_at(ser, "AT+NETRESET", ("+NETRESET", "NETRESET"), dry_run)
+        try:
+            send_at(ser, "AT+NETRESET", ("+NETRESET", "NETRESET"), dry_run)
+        except (RuntimeError, SerialException, OSError) as exc:
+            if dry_run:
+                raise
+            print(f"警告：AT+NETRESET 未返回回显，设备可能正在重启：{exc}")
         try:
             send_at(ser, "AT+RESET", ("+RESET", "RESET"), dry_run)
-        except RuntimeError as exc:
+        except (RuntimeError, SerialException, OSError) as exc:
             # RESET may reboot the modem before it can emit its acknowledgement.
             if dry_run:
                 raise
@@ -275,7 +319,7 @@ def main() -> int:
     args = parse_args()
     if args.backup:
         try:
-            with serial.Serial(args.port_device, args.baud, timeout=1, write_timeout=1) as ser:
+            with serial.Serial(args.port_device, args.baud, timeout=DEFAULT_TIMEOUT, write_timeout=1) as ser:
                 backup_config(ser, args.backup)
         except (SerialException, OSError, RuntimeError, ValueError) as exc:
             print(f"备份失败: {exc}", file=sys.stderr)
@@ -306,7 +350,7 @@ def main() -> int:
             return 2
         return 0
     try:
-        with serial.Serial(args.port_device, args.baud, timeout=1, write_timeout=1) as ser:
+        with serial.Serial(args.port_device, args.baud, timeout=DEFAULT_TIMEOUT, write_timeout=1) as ser:
             configure(ser, config, False)
     except (SerialException, OSError, RuntimeError, ValueError) as exc:
         print(f"串口操作失败: {exc}", file=sys.stderr)
@@ -316,4 +360,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("\n用户已取消配置。", file=sys.stderr)
+        raise SystemExit(130)
