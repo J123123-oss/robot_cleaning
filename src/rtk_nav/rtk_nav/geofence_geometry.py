@@ -167,8 +167,24 @@ def build_geofence_payload(
 ) -> dict:
     """Build JSON-compatible fence metadata from legacy planner geometry."""
     areas = []
+    placeholder_tracks = []
     for name, corners in zip(area_names, inner_corners_utm):
         if abs(_signed_area(corners)) < 1e-6:
+            # A=C collapses a cleaning rectangle into a passage. It still
+            # needs its own corridor, even when no other region is connected.
+            if corners:
+                start, end = max(
+                    ((a, b) for a in corners for b in corners),
+                    key=lambda pair: math.hypot(
+                        pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]
+                    ),
+                )
+                placeholder_tracks.append({
+                    "name": name,
+                    "from_area": name,
+                    "to_area": name,
+                    "centerline_utm": [start, end],
+                })
             continue
         boundary = expand_convex_polygon(corners, expansion_radius_m)
         areas.append({
@@ -177,7 +193,7 @@ def build_geofence_payload(
         })
 
     bridges = []
-    for bridge in bridge_tracks:
+    for bridge in [*placeholder_tracks, *bridge_tracks]:
         centerline = bridge["centerline_utm"]
         corridors = build_polyline_corridor(centerline, expansion_radius_m)
         bridges.append({

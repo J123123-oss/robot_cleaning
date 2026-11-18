@@ -77,3 +77,23 @@ def test_payload_skips_zero_area_bridge_placeholder_regions():
     )
 
     assert [area["name"] for area in payload["areas"]] == ["E1"]
+    assert point_allowed_by_payload((0.0, 0.5), payload)
+    assert not point_allowed_by_payload((0.21, 0.5), payload)
+
+
+def test_single_zero_width_region_has_its_own_corridor_at_utm_coordinates():
+    start = (218233.5392076015, 3357913.2137208744)
+    end = (218234.15532956453, 3357907.617060187)
+    payload = build_geofence_payload(
+        ["hangzhou001"], [[start, end, end, start]], [], (51, "R")
+    )
+
+    assert payload["areas"] == []
+    assert len(payload["bridges"]) == 1
+    assert payload["bridges"][0]["corridors_utm"]
+    # The lon/lat round trip in the reported log shifts the endpoint by <1 mm.
+    assert point_allowed_by_payload((218233.53897431004, 3357913.213675742), payload)
+    assert point_allowed_by_payload(end, payload)
+    midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+    assert point_allowed_by_payload(midpoint, payload)
+    assert not point_allowed_by_payload((midpoint[0] + 0.3, midpoint[1]), payload)
