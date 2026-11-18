@@ -10,6 +10,7 @@ import math
 import importlib
 from typing import Optional, List, Dict, Tuple
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8, Float32, Float32MultiArray, UInt16, UInt16MultiArray, Int16, Bool
 from geometry_msgs.msg import Vector3
@@ -4471,36 +4472,23 @@ def main(args=None):
     motor_node = MotorControlNode()
     try:
         rclpy.spin(motor_node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         motor_node.get_logger().info("[ROSNode] 收到中断信号，即将退出")
     except Exception as e:
         motor_node.get_logger().fatal(
             f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
         )
+        motor_node.motor_ctrl.stop_all_motors()
     finally:
-        # 退出时停止所有电机（原有清理逻辑）
         if motor_node:
-            motor_node.get_logger().info("[ROSNode] 退出时停止所有电机...")
-            for motor in motor_node.motor_ctrl.motors:
-                try:
-                    motor_node.motor_ctrl.motor_set_speed(motor["id"], 0.0)
-                    time.sleep(0.1)
-                    motor_node.motor_ctrl.motor_disable(motor["id"])
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 停止电机{motor['id']}失败：{str(e)}")
-                time.sleep(0.001)
-            if motor_node.motor_ctrl.bus and motor_node.motor_ctrl.bus is not None:
-                motor_node.get_logger().info("[ROSNode] 关闭CAN串口连接...")
-                try:
-                    motor_node.motor_ctrl.bus.shutdown()
-                except Exception as e:
-                    motor_node.get_logger().warn(f"[ROSNode] 关闭CAN串口失败：{str(e)}")
-            # try:
-            #     motor_node.sbus_remote.stop()
-            # except Exception as e:
-            #     motor_node.get_logger().warn(f"[ROSNode] 关闭SBUS遥控器失败：{str(e)}")
-        motor_node.destroy_node()
-        rclpy.shutdown()
+            motor_node.get_logger().info(
+                "[ROSNode] 退出时零速停车，AIMotor 保持使能，步科失能"
+            )
+            motor_node.motor_ctrl.destroy_node()
+            if rclpy.ok():
+                motor_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
         print("[ROSNode] 电机控制节点退出完成")
 
 if __name__ == "__main__":

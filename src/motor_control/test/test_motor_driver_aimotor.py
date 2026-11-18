@@ -13,6 +13,10 @@ def _load_module():
     rclpy_node = types.ModuleType("rclpy.node")
     rclpy_node.Node = object
     rclpy.node = rclpy_node
+    rclpy_executors = types.ModuleType("rclpy.executors")
+    rclpy_executors.ExternalShutdownException = type(
+        "ExternalShutdownException", (Exception,), {}
+    )
 
     std_msgs = types.ModuleType("std_msgs")
     std_msgs_msg = types.ModuleType("std_msgs.msg")
@@ -37,6 +41,7 @@ def _load_module():
     modules = {
         "rclpy": rclpy,
         "rclpy.node": rclpy_node,
+        "rclpy.executors": rclpy_executors,
         "std_msgs": std_msgs,
         "std_msgs.msg": std_msgs_msg,
         "nav_msgs": nav_msgs,
@@ -366,6 +371,9 @@ def test_selected_startup_nodes_are_zeroed_before_enable():
     frames = []
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
     driver.motor_set_deceleration = Mock(return_value=True)
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4b 41 60 00 40 00 00 00")
+    )
     with patch("time.sleep"):
         assert driver.initialize_motors(motor_ids=(1, 2))
     assert all(can_id != 0x603 for can_id, _ in frames)
@@ -381,6 +389,9 @@ def test_enable_disable_and_fault_reset_use_cia402_controlword():
     driver = _make_driver(module)
     frames = []
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4b 41 60 00 40 00 00 00")
+    )
 
     assert driver.motor_enable(1)
     assert [frame[0] for frame in frames] == [0x601, 0x601, 0x601]
@@ -394,6 +405,129 @@ def test_enable_disable_and_fault_reset_use_cia402_controlword():
     assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 00 00 00 00"))
     assert driver.motor_clear_fault(1)
     assert frames[-1] == (0x601, bytes.fromhex("2b 40 60 00 80 00 00 00"))
+
+
+def test_enable_keeps_live_operation_enabled_state_without_shutdown_sequence():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["status_word"] = 0
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4b 41 60 00 37 06 00 00")
+    )
+    driver.send_can_frame = Mock(return_value=True)
+
+    assert driver.motor_enable(1)
+    driver._read_sdo_response.assert_called_once_with(
+        1, driver.STATUSWORD_INDEX, 0, driver.SDO_READ_2_RESPONSE
+    )
+    driver.send_can_frame.assert_not_called()
+
+
+def test_enable_rejects_missing_live_status_even_if_cached_status_is_enabled():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["status_word"] = 0x0237
+    driver._read_sdo_response = Mock(return_value=None)
+    driver.send_can_frame = Mock(return_value=True)
+
+    assert not driver.motor_enable(1)
+    driver.send_can_frame.assert_not_called()
+
+
+def test_live_disabled_status_overrides_enabled_cache_and_runs_enable_sequence():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.motors[0]["status_word"] = 0x0237
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4b 41 60 00 50 02 00 00")
+    )
+    frames = []
+    driver.send_can_frame = lambda can_id, data: frames.append(data) or True
+
+    assert driver.motor_enable(1)
+    assert [int.from_bytes(data[4:6], "little") for data in frames] == [6, 7, 15]
+
+
+def test_receive_timeout_does_not_send_disable_or_reset_frames():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.running = True
+    driver.can_initialized = True
+    driver.bus = Mock()
+    driver.send_can_frame = Mock()
+    polls = []
+
+    def receive_timeout(timeout):
+        polls.append(timeout)
+        if len(polls) == 10:
+            driver.running = False
+        return None
+
+    driver.bus.recv.side_effect = receive_timeout
+    driver.receive_can_frames()
+
+    assert len(polls) == 10
+    driver.send_can_frame.assert_not_called()
+    driver.bus.shutdown.assert_not_called()
+
+
+def test_restart_stops_at_zero_and_reuses_aimotor_enable_without_controlword_drop():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.running = True
+    driver._stopping = False
+    driver.stop_feedback_thread = Mock()
+    driver.profile_deceleration = module.CanMotorDriver.DEFAULT_PROFILE_DECELERATION
+    driver.motors[0]["velocity"] = 20.0
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4b 41 60 00 37 02 00 00")
+    )
+    frames = []
+    driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
+
+    driver.stop_all_motors(preserve_aimotor_enable=True)
+    assert all(motor["velocity"] == 0.0 for motor in driver.motors)
+    assert len(frames) == len(driver.motors)
+    assert all(data == bytes.fromhex("23 ff 60 00 00 00 00 00")
+               for _, data in frames)
+    driver._stopping = False
+    driver.running = True
+    with patch("time.sleep"):
+        assert driver.initialize_motors()
+    assert not any(data[1:3] == bytes.fromhex("40 60") for _, data in frames)
+
+
+def test_explicit_stop_still_disables_aimotor_and_failed_zero_cannot_keep_enable():
+    module = _load_module()
+    for preserve_enabled, speed_result in ((False, True), (True, False)):
+        driver = _make_driver(module)
+        driver._stopping = False
+        driver.stop_feedback_thread = Mock()
+        driver.motor_set_speed = Mock(return_value=speed_result)
+        driver.motor_disable = Mock(return_value=True)
+
+        driver.stop_all_motors(preserve_aimotor_enable=preserve_enabled)
+
+        assert driver.motor_disable.call_count == len(driver.motors)
+
+
+def test_driver_main_distinguishes_shutdown_signals_from_fatal_errors():
+    module = _load_module()
+    for exit_reason in (KeyboardInterrupt(), module.ExternalShutdownException(),
+                        RuntimeError("driver failed")):
+        driver = Mock()
+        module.CanMotorDriver = Mock(return_value=driver)
+        module.rclpy.init = Mock()
+        module.rclpy.spin = Mock(side_effect=exit_reason)
+        module.rclpy.ok = Mock(return_value=False)
+
+        module.main()
+
+        driver.destroy_node.assert_called_once()
+        if isinstance(exit_reason, RuntimeError):
+            driver.stop_all_motors.assert_called_once_with()
+        else:
+            driver.stop_all_motors.assert_not_called()
 
 
 def test_mode_and_feedback_queries_use_documented_objects():

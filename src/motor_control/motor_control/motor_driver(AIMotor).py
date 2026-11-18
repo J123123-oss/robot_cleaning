@@ -21,6 +21,7 @@ import can
 import rclpy
 from geometry_msgs.msg import Quaternion
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Float64MultiArray
 
@@ -1303,9 +1304,23 @@ class CanMotorDriver(Node):
         return all(results)
 
     def motor_enable(self, motor_id: int) -> bool:
-        """执行 CiA402 使能序列 06h -> 07h -> 0Fh。"""
+        """实时确认使能状态，已使能时直接衔接，否则执行 06h -> 07h -> 0Fh。"""
         if not self._validate_motor_id(motor_id):
             return False
+        response = self._read_sdo_response(
+            motor_id, self.STATUSWORD_INDEX, 0, self.SDO_READ_2_RESPONSE
+        )
+        if response is None:
+            self.get_logger().error(
+                f"Cannot confirm AIMOTOR node {motor_id} enable state"
+            )
+            return False
+        status_word = int.from_bytes(response[4:6], "little")
+        if status_word & 0x006F == 0x0027:
+            self.get_logger().info(
+                f"AIMOTOR node {motor_id} already enabled; retaining enable state"
+            )
+            return True
         results = []
         for controlword in (
             self.CONTROL_SHUTDOWN,
@@ -1340,6 +1355,10 @@ class CanMotorDriver(Node):
         for motor in self.motors:
             motor_id = motor["id"]
             if motor_id not in selected_ids:
+                continue
+            if not self.motor_set_speed(motor_id, 0.0):
+                success = False
+                self.motor_disable(motor_id)
                 continue
             if not self.send_nmt_command(0x01, motor_id):
                 success = False
@@ -1898,22 +1917,31 @@ class CanMotorDriver(Node):
         self.motor_feedback_publisher.publish(feedback_msg)
         return snapshot
 
-    def stop_all_motors(self):
-        """停止所有目标速度，然后使每个电机进入失能状态。"""
+    def preserves_enable_on_shutdown(self, motor_id):
+        """AIMotor 允许正常退出后保持零速使能。"""
+        return True
+
+    def stop_all_motors(self, preserve_aimotor_enable=False):
+        """停止发送线程并置零；正常退出可保留 AIMotor 使能，失败时失能。"""
         if self._stopping:
             return
         self._stopping = True
         self.running = False
         self.stop_feedback_thread()
+        zero_results = {}
         for motor in self.motors:
             motor["velocity"] = 0.0
-            self.motor_set_speed(motor["id"], 0.0)
+            zero_results[motor["id"]] = self.motor_set_speed(motor["id"], 0.0)
         for motor in self.motors:
-            self.motor_disable(motor["id"])
+            motor_id = motor["id"]
+            if (not preserve_aimotor_enable
+                    or not self.preserves_enable_on_shutdown(motor_id)
+                    or not zero_results[motor_id]):
+                self.motor_disable(motor_id)
 
     def destroy_node(self):
-        """停止电机、等待接收线程、关闭 CAN，然后销毁 ROS 节点。"""
-        self.stop_all_motors()
+        """零速保留 AIMotor 使能，等待线程并关闭 CAN 和 ROS 节点。"""
+        self.stop_all_motors(preserve_aimotor_enable=True)
         if self.velocity_poll_thread:
             self.velocity_poll_thread.join(timeout=1.0)
         if self.feedback_poll_thread:
@@ -1938,15 +1966,15 @@ def main(args=None):
     try:
         motor_driver = CanMotorDriver()
         rclpy.spin(motor_driver)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except Exception as exc:
         print(f"Unexpected error: {exc}")
-    finally:
         if motor_driver is not None:
             motor_driver.stop_all_motors()
-            if rclpy.ok():
-                motor_driver.destroy_node()
+    finally:
+        if motor_driver is not None:
+            motor_driver.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

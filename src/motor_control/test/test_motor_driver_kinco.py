@@ -66,6 +66,23 @@ def test_speed_matches_manual_negative_100_rpm_example():
     assert frames[-1] == (0x601, bytes.fromhex("23 FF 60 00 50 C3 00 00"))
 
 
+def test_shutdown_preserves_only_aimotor_enable_and_disables_kinco():
+    driver, frames = make_driver()
+    driver._stopping = False
+    driver.running = True
+    driver.stop_feedback_thread = Mock()
+
+    driver.stop_all_motors(preserve_aimotor_enable=True)
+
+    controlwords = [(can_id, data) for can_id, data in frames
+                    if data[1:3] == bytes.fromhex("40 60")]
+    assert controlwords == [
+        (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
+        (0x604, bytes.fromhex("2B 40 60 00 06 00 00 00")),
+    ]
+    assert all(motor["velocity"] == 0.0 for motor in driver.motors)
+
+
 def test_guard_configuration_requires_readback_and_initial_remote_request():
     driver, frames = make_driver()
     del driver.configure_kinco_guard
@@ -326,6 +343,9 @@ def test_faults_keep_emergency_code_and_both_kinco_error_words():
 
 def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enable():
     driver, frames = make_driver()
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4B 41 60 00 40 00 00 00")
+    )
     with patch("time.sleep"):
         driver.initialize_motors()
     for motor_id in (3, 4):
@@ -481,6 +501,9 @@ def test_shutdown_sends_zero_and_protocol_specific_disable_to_all_nodes():
 
 def test_failed_kinco_acceleration_write_keeps_brush_disabled():
     driver, frames = make_driver()
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4B 41 60 00 40 00 00 00")
+    )
     send = driver.send_can_frame
 
     def fail_acceleration(can_id, data):

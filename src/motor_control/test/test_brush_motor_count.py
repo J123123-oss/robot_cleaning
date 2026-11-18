@@ -44,6 +44,37 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     controller.motor_ctrl.initialize_motors.assert_not_called()
 
 
+def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    main = next(item for item in tree.body if isinstance(item, ast.FunctionDef)
+                and item.name == "main")
+    external_shutdown = type("ExternalShutdownException", (Exception,), {})
+    for exit_reason in (KeyboardInterrupt(), external_shutdown(),
+                        RuntimeError("control failed")):
+        controller = Mock()
+        ros = SimpleNamespace(
+            init=Mock(), spin=Mock(side_effect=exit_reason),
+            ok=Mock(return_value=False), shutdown=Mock(),
+        )
+        namespace = {
+            "rclpy": ros, "MotorControlNode": Mock(return_value=controller),
+            "ExternalShutdownException": external_shutdown,
+            "traceback": SimpleNamespace(format_exc=Mock(return_value="trace")),
+        }
+        exec(compile(ast.Module(body=[main], type_ignores=[]),
+                     str(SOURCE_PATH), "exec"), namespace)
+
+        namespace["main"]()
+
+        controller.motor_ctrl.destroy_node.assert_called_once()
+        controller.motor_ctrl.motor_disable.assert_not_called()
+        if isinstance(exit_reason, RuntimeError):
+            controller.motor_ctrl.stop_all_motors.assert_called_once_with()
+        else:
+            controller.motor_ctrl.stop_all_motors.assert_not_called()
+        ros.shutdown.assert_not_called()
+
+
 def test_initial_state_is_enable_before_startup_initialization():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)

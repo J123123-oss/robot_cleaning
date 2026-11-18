@@ -350,6 +350,10 @@ class CanMotorDriver(AimotorDriver):
             return super().motor_disable(motor_id)
         return self._write_u16(motor_id, self.CONTROLWORD_INDEX, 0x0006)
 
+    def preserves_enable_on_shutdown(self, motor_id):
+        """混合驱动仅允许 AIMotor 保持使能，步科退出仍失能。"""
+        return motor_id not in self.KINCO_MOTOR_IDS
+
     def motor_clear_fault(self, motor_id: int) -> bool:
         """Reset Kinco faults using the manual's 6040h=0086h."""
         if motor_id not in self.KINCO_MOTOR_IDS:

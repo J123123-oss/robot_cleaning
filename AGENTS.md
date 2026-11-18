@@ -139,4 +139,5 @@ src/
 - 上层速度统一使用输出轴 r/min。步科编码器分辨率、机械减速比、rps/s 加减速度独立配置，不复用 AIMotor 的脉冲速度或加减速单位。
 - 协议依据与现场配置说明放在 `docs/kinco_brush_driver.md`，离线协议测试放在 `src/motor_control/test/test_motor_driver_kinco.py`。
 - `motor_auto_enable=true` 时初始状态直接设为 ENABLE，并零速初始化使能所有已配置的 AIMotor 和 Kinco 电机；初始化失败转 DISABLE。ENABLE 下磁导航连续达到进仓完成条件后复用完成流程转 DISABLE。
+- 服务正常退出时 AIMotor 发送零速并保持使能，启动时实时回读 `6041`，已使能节点不得重发 `06→07→0F`；显式 DISABLE、异常退出、初始化或零速发送失败仍失能。步科退出时仍零速失能并停止节点保护。
 - 步科断通信保护采用节点保护，启用前回读确认 `1017=0`、`100C`、`100D`、`6007=1`；RTR 必须复用现有 CAN 发送线程，停止进程后不得由独立服务继续发送。
