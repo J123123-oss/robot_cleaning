@@ -15,7 +15,7 @@ SOURCE_PATH = (
 )
 
 
-def test_startup_auto_enable_selects_only_aimotor_and_keeps_zero_speed():
+def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
                 and item.name == "MotorControlNode")
@@ -33,7 +33,7 @@ def test_startup_auto_enable_selects_only_aimotor_and_keeps_zero_speed():
     controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
     controller.motor_ctrl.initialize_motors.return_value = True
     namespace["auto_enable_startup_motors"](controller)
-    controller.motor_ctrl.initialize_motors.assert_called_once_with(motor_ids=(1, 2))
+    controller.motor_ctrl.initialize_motors.assert_called_once_with(motor_ids=(1, 2, 3, 4))
     assert controller.current_status == "ENABLE"
     controller.motor_ctrl.initialize_motors.return_value = False
     namespace["auto_enable_startup_motors"](controller)

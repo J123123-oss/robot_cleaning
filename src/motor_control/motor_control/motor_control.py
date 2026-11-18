@@ -937,23 +937,15 @@ class MotorControlNode(Node):
         self.auto_enable_startup_motors()
 
     def auto_enable_startup_motors(self):
-        """节点初始化完成后零速使能 AIMotor；步科滚刷等待显式使能。"""
+        """初始 ENABLE 状态下零速初始化并使能所有已配置电机。"""
         if not self.aimotor_auto_enable:
             return
-        if self.brush_use_kinco:
-            for motor_id in self.motor_ctrl.motor_ids:
-                if motor_id in (3, 4):
-                    self.motor_ctrl.motor_set_speed(motor_id, 0.0)
-                    self.motor_ctrl.motor_disable(motor_id)
-        motor_ids = tuple(
-            motor_id for motor_id in self.motor_ctrl.motor_ids
-            if not self.brush_use_kinco or motor_id not in (3, 4)
-        )
+        motor_ids = tuple(self.motor_ctrl.motor_ids)
         if self.motor_ctrl.initialize_motors(motor_ids=motor_ids):
-            self.get_logger().info("AIMotor 初始 ENABLE 状态下零速使能完成")
+            self.get_logger().info("全部电机初始 ENABLE 状态下零速使能完成")
         else:
             self.switch_state('z')
-            self.get_logger().error("AIMotor 启动初始化失败，保持 DISABLE")
+            self.get_logger().error("电机启动初始化失败，保持 DISABLE")
 
     def wait_for_services(self):
         """等待所有充电服务上线"""

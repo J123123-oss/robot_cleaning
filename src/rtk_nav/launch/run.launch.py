@@ -41,7 +41,7 @@ def generate_launch_description():
     declare_aimotor_auto_enable_arg = DeclareLaunchArgument(
         "aimotor_auto_enable",
         default_value=TextSubstitution(text="true"),
-        description="初始状态设为ENABLE并自动零速使能AIMotor，磁导航确认在仓后转DISABLE",
+        description="初始状态设为ENABLE并自动零速使能AIMotor和Kinco，磁导航确认在仓后转DISABLE",
     )
     kinco_parameters = (
         ("kinco_encoder_resolution", "65536", int, "步科编码器每转计数，默认取手册示例，现场需确认"),
