@@ -129,14 +129,13 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
         self.assertIn("self.nav_context['nav_state'] = NavState.WAYPOINT_CALIB", helper)
 
     def test_gate_release_handles_path_direction_before_first_segment(self):
-        _, tree = _source_tree()
-        initializer = ast.unparse(_function(tree, "__init__"))
-        helper = ast.unparse(_function(tree, "_start_auto_heading_gate_path_alignment"))
+        from test_segment_direction_recovery import make_node
 
-        self.assertIn("self.stanley_path_direction = None", initializer)
-        self.assertIn("getattr", helper)
-        self.assertIn("stanley_path_direction", helper)
-        self.assertIn("self.calculate_bearing", helper)
+        node, _ = make_node()
+        node.stanley_path_direction = None
+        self.assertTrue(node._start_auto_heading_gate_path_alignment())
+        self.assertGreater(node.nav_context["calib_target_heading"], 91.0)
+        self.assertLess(node.nav_context["calib_target_heading"], 92.0)
 
     def test_initial_move_does_not_duplicate_heading_gate_inside_generator(self):
         _, tree = _source_tree()

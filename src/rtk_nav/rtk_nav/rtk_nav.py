@@ -709,6 +709,8 @@ class RTKNavControlNode(Node):
             )
             return
         self.current_waypoint_idx = index
+        self.stanley_path_start = None
+        self.stanley_path_direction = None
         self.last_waypoint_cache = self.waypoints[index - 1] if index > 0 else None
         self.nav_context["target_waypoint"] = self.waypoints[index]
         saved_state = snapshot.get("nav_state")
@@ -3740,6 +3742,20 @@ class RTKNavControlNode(Node):
             self.nav_context["distance_increase_count"] = 0
         return False
 
+    def _get_resume_path_direction(self, target_waypoint):
+        """恢复时仅复用完整航段缓存，否则按当前目标和前置航点重算方向。"""
+        if self.stanley_path_start is not None and self.stanley_path_direction is not None:
+            return self.stanley_path_direction
+        if self.current_waypoint_idx > 0:
+            path_start = self.waypoints[self.current_waypoint_idx - 1][:2]
+        elif self.cross_file_last_waypoint is not None:
+            path_start = self.cross_file_last_waypoint[:2]
+        else:
+            path_start = self.current_gps
+        return self.calculate_path_bearing(
+            path_start[0], path_start[1], target_waypoint[0], target_waypoint[1]
+        )
+
     def _reset_waypoint_tracking(self):
         """切换目标后清除上一目标的 force_bearing 距离和计数状态。"""
         self.nav_context["force_bearing_mode"] = False
@@ -4406,6 +4422,8 @@ class RTKNavControlNode(Node):
     def reset_nav_context(self):
         """重置导航状态"""
         self.current_waypoint_idx = 0
+        self.stanley_path_start = None
+        self.stanley_path_direction = None
         self._reset_ultrasonic_suppression_runtime()
         self._reset_boundary_cycle_tracking()
         self.nav_context = {
@@ -4605,6 +4623,7 @@ class RTKNavControlNode(Node):
         self._reset_boundary_cycle_tracking()
 
         self.stanley_path_start = None
+        self.stanley_path_direction = None
         if self.current_waypoint_idx > 0:
             self.last_waypoint_cache = self.waypoints[self.current_waypoint_idx - 1]
         else:
@@ -4721,12 +4740,9 @@ class RTKNavControlNode(Node):
                 self.nav_context["last_distance"] = distance
 
                 if current_nav_state == NavState.WAYPOINT_MOVE and self.current_gps:
-                    target_lon, target_lat, _ = self.nav_context["target_waypoint"]
-                    current_lon, current_lat = self.current_gps
-                    if hasattr(self, 'stanley_path_direction') and self.stanley_path_direction is not None:
-                        path_direction = self.stanley_path_direction
-                    else:
-                        path_direction = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                    path_direction = self._get_resume_path_direction(
+                        self.nav_context["target_waypoint"]
+                    )
 
                     heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                     if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
@@ -4817,6 +4833,7 @@ class RTKNavControlNode(Node):
                     current_nav_state = NavState.WAYPOINT_MOVE
                     self.nav_context["nav_state"] = current_nav_state
                     self.stanley_path_start = None
+                    self.stanley_path_direction = None
                     self.get_logger().info("[ROSNode] 初始移动完成, 进入航点导航阶段")
                     break
                 except Exception as e:
@@ -4850,6 +4867,7 @@ class RTKNavControlNode(Node):
                 current_nav_state = NavState.WAYPOINT_MOVE
                 self.nav_context["nav_state"] = current_nav_state
                 self.stanley_path_start = None
+                self.stanley_path_direction = None
                 self.get_logger().info(f"[航点切换] 进入路段{self.current_waypoint_idx - 1}→{self.current_waypoint_idx}")
                 
                 # 核心修正：处理「新文件第一个航点（索引0）+ 跨文件缓存」的场景
@@ -5073,6 +5091,7 @@ class RTKNavControlNode(Node):
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
                         self.stanley_path_start = None
+                        self.stanley_path_direction = None
                         if self.current_waypoint_idx - 1 >= 0 and len(self.waypoints) > self.current_waypoint_idx - 1:
                             self.last_waypoint_cache = self.waypoints[self.current_waypoint_idx - 1]
                         self.last_valid_heading = None  # 清空航向缓存，切换航点后使用实时航向
@@ -5120,6 +5139,7 @@ class RTKNavControlNode(Node):
                         # t>1.0 立即触发 bearing mode 压制后续航向异常检测
                         self.nav_context["bearing_mode_locked"] = False
                         self.stanley_path_start = None
+                        self.stanley_path_direction = None
                     yield (0.0, 0.0)
                 except Exception as e:
                     self.get_logger().error(f"[ROSNav] 航向校准失败：{str(e)}")
@@ -5884,13 +5904,7 @@ class RTKNavControlNode(Node):
             self.get_logger().warn("[AUTO航向门控] 等待当前路径目标，保持停车")
             return False
 
-        path_direction = getattr(self, "stanley_path_direction", None)
-        if path_direction is None:
-            target_lon, target_lat, _ = target_waypoint
-            current_lon, current_lat = self.current_gps
-            path_direction = self.calculate_bearing(
-                current_lat, current_lon, target_lat, target_lon
-            )
+        path_direction = self._get_resume_path_direction(target_waypoint)
 
         heading_err = self.normalize_angle(path_direction - self.imu_yaw)
         self.start_heading_recalibration(
