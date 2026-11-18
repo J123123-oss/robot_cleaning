@@ -65,7 +65,7 @@ MANUAL_DRIVE_SPEED_SCALE = 0.8  # 普通模式前进/后退速度相对最大轮
 MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为0.8。
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 AIMOTOR_DEFAULT_BRUSH_SPEED_RPM = 70.0
-KINCO_DEFAULT_BRUSH_SPEED_RPM = 150.0
+KINCO_DEFAULT_BRUSH_SPEED_RPM = 100.0
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
 SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 # 历史名称保留兼容旧代码；AIMotor 的 actual_velocity 当前按 r/min 解释，不是 rad/s。
@@ -445,7 +445,7 @@ class MotorControlNode(Node):
         }
         for name, default in kinco_defaults.items():
             self.declare_parameter(name, default)
-        self.declare_parameter("kinco_brush_speed_rpm", 150.0)
+        self.declare_parameter("kinco_brush_speed_rpm", 110.0)
         try:
             self.kinco_brush_speed_rpm = float(
                 self.get_parameter("kinco_brush_speed_rpm").value

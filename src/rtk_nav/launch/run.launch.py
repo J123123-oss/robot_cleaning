@@ -49,7 +49,7 @@ def generate_launch_description():
         ("kinco_acceleration_rps2", "100.0", float, "步科电机侧加速度，单位rps/s"),
         ("kinco_deceleration_rps2", "100.0", float, "步科电机侧减速度，单位rps/s"),
         ("kinco_peak_current_a", "47.9", float, "步科电机峰值电流Ipeak，单位A，用于0x6078电流换算"),
-        ("kinco_brush_speed_rpm", "150.0", float, "步科滚刷输出轴转速上限，单位r/min"),
+        ("kinco_brush_speed_rpm", "110.0", float, "步科滚刷输出轴转速上限，单位r/min"),
         ("kinco_guard_time_ms", "100", int, "步科节点保护RTR请求周期，单位ms，范围50至65535"),
         ("kinco_guard_life_factor", "5", int, "步科节点保护超时倍数，范围2至255"),
     )
