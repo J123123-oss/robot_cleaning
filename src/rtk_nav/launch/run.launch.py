@@ -85,6 +85,19 @@ def generate_launch_description():
         )
         for motor_id in range(1, 5)
     )
+    declare_kinco_motor_direction_args = tuple(
+        DeclareLaunchArgument(
+            f"kinco_motor_direction_{motor_id}",
+            default_value=TextSubstitution(
+                text="-1" if motor_id == 4 else "1"
+            ),
+            choices=["1", "-1"],
+            description=(
+                f"Kinco 电机 {motor_id} 速度指令方向，1 正常，-1 反向"
+            ),
+        )
+        for motor_id in (3, 4)
+    )
 
     declare_enable_magnetic_navigation_arg = DeclareLaunchArgument(
         "enable_magnetic_navigation",
@@ -182,6 +195,13 @@ def generate_launch_description():
                         value_type=int,
                     )
                     for motor_id in range(1, 5)
+                },
+                **{
+                    f'kinco_motor_direction_{motor_id}': ParameterValue(
+                        LaunchConfiguration(f'kinco_motor_direction_{motor_id}'),
+                        value_type=int,
+                    )
+                    for motor_id in (3, 4)
                 },
             },
         ]
@@ -333,6 +353,8 @@ def generate_launch_description():
     ld.add_action(declare_profile_deceleration_arg)
     for declare_motor_direction_arg in declare_motor_direction_args:
         ld.add_action(declare_motor_direction_arg)
+    for declare_kinco_motor_direction_arg in declare_kinco_motor_direction_args:
+        ld.add_action(declare_kinco_motor_direction_arg)
     ld.add_action(declare_enable_magnetic_navigation_arg)
     ld.add_action(declare_magnetic_test_loading_arg)
     ld.add_action(declare_magnetic_test_unloading_arg)
@@ -347,7 +369,7 @@ def generate_launch_description():
     ld.add_action(mqtt_ros_bridge_node)
     ld.add_action(motor_control_node)
 
-    # ld.add_action(sensors_485_node)
+    ld.add_action(sensors_485_node)
     ld.add_action(magnetic_navigation_node)
     # ld.add_action(laser_node)
     ld.add_action(charging_node)

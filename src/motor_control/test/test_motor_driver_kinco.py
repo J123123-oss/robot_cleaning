@@ -436,6 +436,10 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
     assert arguments["kinco_peak_current_a"]["default_value"].kwargs["text"] == "47.9"
     assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "150.0"
+    for motor_id, default in ((3, "1"), (4, "-1")):
+        name = f"kinco_motor_direction_{motor_id}"
+        assert arguments[name]["default_value"].kwargs["text"] == default
+        assert arguments[name]["choices"] == ["1", "-1"]
     controller = next(
         action for action in launch.actions
         if action.kwargs.get("executable") == "motor_control"
@@ -447,6 +451,10 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     }
     assert parameters["brush_use_kinco"].kwargs["value_type"] is bool
     assert parameters["motor_auto_enable"].kwargs["value_type"] is bool
+    for motor_id in (3, 4):
+        parameter = parameters[f"kinco_motor_direction_{motor_id}"]
+        assert parameter.kwargs["value_type"] is int
+        assert parameter.args[0].args == (f"kinco_motor_direction_{motor_id}",)
     for name in (
         "motor_auto_enable", "brush_use_kinco", "kinco_encoder_resolution",
         "kinco_reduction_ratio", "kinco_acceleration_rps2",
@@ -543,6 +551,9 @@ def test_controller_selects_driver_and_preserves_topology(use_kinco, brush_ids):
     }
     parameters = dict(defaults)
     parameters.update({f"motor_direction_{motor_id}": 1 for motor_id in range(1, 5)})
+    parameters.update({
+        "kinco_motor_direction_3": -1, "kinco_motor_direction_4": 1,
+    })
     controller = types.SimpleNamespace(
         brush_motor_ids=brush_ids, brush_use_kinco=use_kinco,
         get_parameter=lambda name: types.SimpleNamespace(value=parameters[name]),
@@ -582,6 +593,10 @@ def test_controller_selects_driver_and_preserves_topology(use_kinco, brush_ids):
     ), str(path), "exec"), namespace)
     assert type(controller.motor_ctrl) is (Kinco if use_kinco else Aimotor)
     assert controller.motor_ctrl.options["motor_ids"] == (1, 2, *brush_ids)
+    assert controller.motor_ctrl.options["motor_directions"] == {
+        motor_id: (-1 if use_kinco and motor_id == 3 else 1)
+        for motor_id in (1, 2, *brush_ids)
+    }
     for name, value in defaults.items():
         if use_kinco:
             assert controller.motor_ctrl.options[name] == value

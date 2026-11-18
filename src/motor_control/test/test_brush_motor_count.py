@@ -15,6 +15,62 @@ SOURCE_PATH = (
 )
 
 
+def test_direction_selection_uses_kinco_parameters_only_for_configured_brushes():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    initializer = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                       and item.name == "__init__")
+    assignment = next(
+        item for item in initializer.body if isinstance(item, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "motor_directions"
+                for target in item.targets)
+    )
+    values = {
+        "motor_direction_1": -1, "motor_direction_2": -1,
+        "motor_direction_3": 1, "motor_direction_4": -1,
+        "kinco_motor_direction_3": -1, "kinco_motor_direction_4": 1,
+    }
+    for use_kinco in (False, True):
+        for motor_ids in ((1, 2), (1, 2, 3), (1, 2, 3, 4)):
+            controller = SimpleNamespace(
+                brush_use_kinco=use_kinco,
+                get_parameter=lambda name: SimpleNamespace(value=values[name]),
+            )
+            namespace = {"self": controller, "motor_ids": motor_ids}
+            exec(compile(ast.Module(body=[assignment], type_ignores=[]),
+                         str(SOURCE_PATH), "exec"), namespace)
+            assert namespace["motor_directions"] == {
+                motor_id: values[
+                    f"kinco_motor_direction_{motor_id}"
+                    if use_kinco and motor_id in (3, 4)
+                    else f"motor_direction_{motor_id}"
+                ]
+                for motor_id in motor_ids
+            }
+
+
+def test_kinco_direction_parameters_are_declared_for_both_brush_ids():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    declarations = [
+        item for item in ast.walk(tree) if isinstance(item, ast.For)
+        and any(isinstance(child, ast.Constant)
+                and child.value == "kinco_motor_direction_"
+                for child in ast.walk(item))
+    ]
+    assert len(declarations) == 1
+    declared = {}
+    namespace = {
+        "self": SimpleNamespace(
+            declare_parameter=lambda name, default: declared.update({name: default})
+        ),
+        "CanMotorDriver": SimpleNamespace(DEFAULT_MOTOR_DIRECTION=1),
+    }
+    exec(compile(ast.Module(body=declarations, type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    assert declared == {"kinco_motor_direction_3": 1, "kinco_motor_direction_4": 1}
+
+
 def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)

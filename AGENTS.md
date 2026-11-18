@@ -137,6 +137,7 @@ src/
 - `motor_driver_kinco.py` 实现步科滚刷协议适配，复用 AIMotor 驱动的 CAN 总线、线程和反馈接口；不得为滚刷创建第二个 CAN 接收线程。
 - `brush_use_kinco=false` 保持现有 AIMotor 行为；为 true 时仅 ID 3、4 使用步科协议，滚刷数量仍由 `brush_motor_count` 决定。
 - 上层速度统一使用输出轴 r/min。步科编码器分辨率、机械减速比、rps/s 加减速度独立配置，不复用 AIMotor 的脉冲速度或加减速单位。
+- 步科 ID 3、4 的方向由 `kinco_motor_direction_3/4` 独立配置（1 正常，-1 反向）；`motor_direction_1..4` 保留给 AIMotor，混合协议只覆盖已配置的步科滚刷方向。
 - 协议依据与现场配置说明放在 `docs/kinco_brush_driver.md`，离线协议测试放在 `src/motor_control/test/test_motor_driver_kinco.py`。
 - `motor_auto_enable=true` 时初始状态直接设为 ENABLE，并零速初始化使能所有已配置的 AIMotor 和 Kinco 电机；初始化失败转 DISABLE。ENABLE 下磁导航连续达到进仓完成条件后复用完成流程转 DISABLE。
 - 服务正常退出时 AIMotor 发送零速并保持使能，启动时实时回读 `6041`，已使能节点不得重发 `06→07→0F`；显式 DISABLE、异常退出、初始化或零速发送失败仍失能。步科退出时仍零速失能并停止节点保护。

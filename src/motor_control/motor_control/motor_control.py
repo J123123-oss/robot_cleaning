@@ -486,6 +486,11 @@ class MotorControlNode(Node):
                 f"motor_direction_{motor_id}",
                 CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
             )
+        for motor_id in (3, 4):
+            self.declare_parameter(
+                f"kinco_motor_direction_{motor_id}",
+                CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
+            )
 
         # UNLOADING parameters
         self.unloading_forword_threshold = 14.0 # seconds
@@ -676,7 +681,9 @@ class MotorControlNode(Node):
         motor_ids = (1, 2) + tuple(self.brush_motor_ids)
         motor_directions = {
             motor_id: self.get_parameter(
-                f"motor_direction_{motor_id}"
+                f"kinco_motor_direction_{motor_id}"
+                if self.brush_use_kinco and motor_id in (3, 4)
+                else f"motor_direction_{motor_id}"
             ).value
             for motor_id in motor_ids
         }

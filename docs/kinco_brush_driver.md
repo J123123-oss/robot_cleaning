@@ -29,6 +29,8 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
 | `brush_use_kinco` | `false` | true 时使用步科滚刷协议 |
+| `kinco_motor_direction_3` | `1` | 步科 3 号速度指令方向，1 正常，-1 反向 |
+| `kinco_motor_direction_4` | `-1` | 步科 4 号速度指令方向，1 正常，-1 反向 |
 | `kinco_encoder_resolution` | `65536` | 每个电机轴转动一圈的编码器计数 |
 | `kinco_reduction_ratio` | `10.0` | 电机轴转速/滚刷输出轴转速 |
 | `kinco_acceleration_rps2` | `100.0` | 电机侧加速度，rps/s |
@@ -117,9 +119,21 @@ AIMotor 协议仍使用 `70 r/min`。`kinco_brush_speed_rpm` 是步科滚刷的�
 转速上限，外部速度指令超过该值时保留正负方向并截断绝对值；设为 `0.0` 时不限制。
 步科驱动器的波特率须配置为 500 kbit/s，ID 须预先设置为 3、4。
 
-`motor_direction_3/4` 继续使用 `1`（正常）和 `-1`（反向），步科驱动分别映射到
-`0x607E:00=0/1`。`brush_direction_mode` 的原有速度符号处理继续生效。
+`brush_use_kinco=true` 时，3/4 号分别读取 `kinco_motor_direction_3/4`：
+`1`（正常）和 `-1`（反向）由步科驱动映射到 `0x607E:00=0/1`。
+launch 默认 3 号为 `1`、4 号为 `-1`，保留原先的默认方向；
+1/2 号仍读取 `motor_direction_1/2`。
+`brush_use_kinco=false` 时，所有 AIMotor 仍读取 `motor_direction_1..4`。
+参数只应用于 `brush_motor_count` 选中的滚刷。`brush_direction_mode` 的原有速度符号处理
+继续生效，设为 `opposite` 时还会对 4 号速度取反，与电机方向参数叠加。
 方向只能在失能状态配置，初始化先发送 `0x6040=0x0006`。
+
+例如将两台步科滚刷的速度指令方向均设为正常：
+
+```bash
+ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2 \
+  kinco_motor_direction_3:=1 kinco_motor_direction_4:=1
+```
 
 ## 协议依据
 
