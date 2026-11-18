@@ -25,7 +25,7 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     exec(compile(ast.Module(body=[method], type_ignores=[]),
                  str(SOURCE_PATH), "exec"), namespace)
     controller = SimpleNamespace(
-        aimotor_auto_enable=True, brush_use_kinco=True,
+        motor_auto_enable=True, brush_use_kinco=True,
         current_status="ENABLE",
         motor_ctrl=Mock(motor_ids=(1, 2, 3, 4)),
         get_logger=Mock(return_value=Mock()),
@@ -39,7 +39,7 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     namespace["auto_enable_startup_motors"](controller)
     assert controller.current_status == "DISABLE"
     controller.motor_ctrl.reset_mock()
-    controller.aimotor_auto_enable = False
+    controller.motor_auto_enable = False
     namespace["auto_enable_startup_motors"](controller)
     controller.motor_ctrl.initialize_motors.assert_not_called()
 
@@ -55,7 +55,7 @@ def test_initial_state_is_enable_before_startup_initialization():
         and any(isinstance(target, ast.Attribute) and target.attr == "current_status"
                 for target in item.targets)
     )
-    controller = SimpleNamespace(aimotor_auto_enable=True, status_list=["HOLD"])
+    controller = SimpleNamespace(motor_auto_enable=True, status_list=["HOLD"])
     exec(compile(ast.Module(body=[assignment], type_ignores=[]),
                  str(SOURCE_PATH), "exec"), {"self": controller})
     assert controller.current_status == "ENABLE"

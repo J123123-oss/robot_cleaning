@@ -429,9 +429,9 @@ class MotorControlNode(Node):
         self.brush_use_kinco = bool(
             self.get_parameter("brush_use_kinco").value
         )
-        self.declare_parameter("aimotor_auto_enable", True)
-        self.aimotor_auto_enable = bool(
-            self.get_parameter("aimotor_auto_enable").value
+        self.declare_parameter("motor_auto_enable", True)
+        self.motor_auto_enable = bool(
+            self.get_parameter("motor_auto_enable").value
         )
         kinco_defaults = {
             "kinco_encoder_resolution": 65536,
@@ -893,7 +893,7 @@ class MotorControlNode(Node):
             "HOLD", "ENABLE", "FORWARD", "BACKWARD", "LOADING", "START", "UNLOADING",
             "LEFT", "RIGHT", "OFFSET_LEFT", "OFFSET_RIGHT", "PAUSE", "AUTO_CLEANING","DISABLE","RC_ENABLE"
         ]
-        self.current_status = "ENABLE" if self.aimotor_auto_enable else self.status_list[0]
+        self.current_status = "ENABLE" if self.motor_auto_enable else self.status_list[0]
 
         # 新增：进出仓状态标记（用于优先级判断，解决速度穿插问题）
         self.is_in_bin_process = False  # True=正在进出仓，False=正常状态
@@ -903,7 +903,7 @@ class MotorControlNode(Node):
 
         # 确保IMU航向默认值存在
         self.imu_yaw_deg = None
-        if not self.aimotor_auto_enable:
+        if not self.motor_auto_enable:
             self.switch_state('z')
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
@@ -938,7 +938,7 @@ class MotorControlNode(Node):
 
     def auto_enable_startup_motors(self):
         """初始 ENABLE 状态下零速初始化并使能所有已配置电机。"""
-        if not self.aimotor_auto_enable:
+        if not self.motor_auto_enable:
             return
         motor_ids = tuple(self.motor_ctrl.motor_ids)
         if self.motor_ctrl.initialize_motors(motor_ids=motor_ids):

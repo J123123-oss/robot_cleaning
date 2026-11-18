@@ -411,6 +411,7 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
         action.args[0]: action.kwargs for action in launch.actions if action.args
     }
     assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "true"
+    assert arguments["motor_auto_enable"]["default_value"].kwargs["text"] == "true"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
     assert arguments["kinco_peak_current_a"]["default_value"].kwargs["text"] == "47.9"
@@ -425,8 +426,9 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
         for name, value in group.items()
     }
     assert parameters["brush_use_kinco"].kwargs["value_type"] is bool
+    assert parameters["motor_auto_enable"].kwargs["value_type"] is bool
     for name in (
-        "brush_use_kinco", "kinco_encoder_resolution",
+        "motor_auto_enable", "brush_use_kinco", "kinco_encoder_resolution",
         "kinco_reduction_ratio", "kinco_acceleration_rps2",
         "kinco_deceleration_rps2", "kinco_peak_current_a",
         "kinco_brush_speed_rpm",

@@ -38,8 +38,8 @@ def generate_launch_description():
         default_value=TextSubstitution(text="true"),
         description="滚刷3/4协议：false使用AIMotor，true使用步科iSMK",
     )
-    declare_aimotor_auto_enable_arg = DeclareLaunchArgument(
-        "aimotor_auto_enable",
+    declare_motor_auto_enable_arg = DeclareLaunchArgument(
+        "motor_auto_enable",
         default_value=TextSubstitution(text="true"),
         description="初始状态设为ENABLE并自动零速使能AIMotor和Kinco，磁导航确认在仓后转DISABLE",
     )
@@ -161,8 +161,8 @@ def generate_launch_description():
                 'brush_use_kinco': ParameterValue(
                     LaunchConfiguration('brush_use_kinco'), value_type=bool
                 ),
-                'aimotor_auto_enable': ParameterValue(
-                    LaunchConfiguration('aimotor_auto_enable'), value_type=bool
+                'motor_auto_enable': ParameterValue(
+                    LaunchConfiguration('motor_auto_enable'), value_type=bool
                 ),
                 **{
                     name: ParameterValue(
@@ -326,7 +326,7 @@ def generate_launch_description():
     ld.add_action(declare_brush_motor_count_arg)
     ld.add_action(declare_brush_direction_mode_arg)
     ld.add_action(declare_brush_use_kinco_arg)
-    ld.add_action(declare_aimotor_auto_enable_arg)
+    ld.add_action(declare_motor_auto_enable_arg)
     for declare_kinco_arg in declare_kinco_args:
         ld.add_action(declare_kinco_arg)
     ld.add_action(declare_profile_acceleration_arg)
