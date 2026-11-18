@@ -2325,7 +2325,7 @@ class MotorControlNode(Node):
         self.last_charging_fault = self.charging_fault  # 保存上一次的故障码
 
     def motor_fault_callback(self, msg: Float32MultiArray):
-        """更新已配置电机的故障码并请求清除当前故障。"""
+        """Confirm live faults before stopping; stale messages must not reset healthy drives."""
         motor_count = len(self.motor_ctrl.motors)
         if len(msg.data) < motor_count:
             self.get_logger().warn(
@@ -2335,26 +2335,40 @@ class MotorControlNode(Node):
 
         previous_fault_codes = self.motor_fault_codes
         self.motor_fault_codes = [int(msg.data[i]) for i in range(motor_count)]
-        fault_codes_changed = self.motor_fault_codes != previous_fault_codes
-
         fault_codes = self.motor_fault_codes
-        has_fault = False
+        active_fault_ids = []
+        status_unconfirmed = False
         fault_str = ""
         motor_names = {1: "左轮", 2: "右轮", 3: "滚刷1", 4: "滚刷2"}
         for i, code in enumerate(fault_codes):
             if code != 0:
-                has_fault = True
                 motor_id = self.motor_ctrl.motors[i]["id"]
+                status_word = self.motor_ctrl.read_motor_status_word(motor_id)
+                if status_word is not None and not status_word & 0x0008:
+                    self.motor_fault_codes[i] = 0
+                    self.get_logger().info(
+                        f"[MotorControl] 忽略已恢复的电机{motor_id}旧故障0x{code:04X}，"
+                        f"当前6041=0x{status_word:04X}"
+                    )
+                    continue
+                if status_word is None:
+                    status_unconfirmed = True
+                else:
+                    active_fault_ids.append(motor_id)
                 motor_name = motor_names.get(motor_id, f"电机{motor_id}")
                 fault_str += f"{motor_name}:0x{code:04X}; "
 
-        if has_fault:
-            self.get_logger().warn(f"[MotorControl] 电机故障: {fault_str}")
-            for motor in self.motor_ctrl.motors:
-                self.motor_ctrl.motor_clear_fault(motor["id"])
-            self.get_logger().warn(f"发送清除故障指令！")
+        if active_fault_ids or status_unconfirmed:
+            self.get_logger().warn(
+                f"[MotorControl] 电机故障或状态无法确认: {fault_str}，转 DISABLE"
+            )
+            if self.current_status != "DISABLE":
+                self.switch_state('z')
+            for motor_id in active_fault_ids:
+                if not self.motor_ctrl.motor_clear_fault(motor_id):
+                    self.get_logger().error(f"电机{motor_id}清除故障指令发送失败")
 
-        if fault_codes_changed:
+        if self.motor_fault_codes != previous_fault_codes:
             self.publish_state()
 
     def motor_feedback_callback(self, msg: Float32MultiArray):

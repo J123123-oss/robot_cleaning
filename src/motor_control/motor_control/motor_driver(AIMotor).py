@@ -1303,32 +1303,82 @@ class CanMotorDriver(Node):
         )
         return all(results)
 
-    def motor_enable(self, motor_id: int) -> bool:
-        """实时确认使能状态，已使能时直接衔接，否则执行 06h -> 07h -> 0Fh。"""
-        if not self._validate_motor_id(motor_id):
-            return False
+    def read_motor_status_word(self, motor_id: int, timeout_sec=0.5) -> Optional[int]:
+        """Read live 6041; never infer a drive's hardware state from cached feedback."""
         response = self._read_sdo_response(
-            motor_id, self.STATUSWORD_INDEX, 0, self.SDO_READ_2_RESPONSE
+            motor_id, self.STATUSWORD_INDEX, 0, self.SDO_READ_2_RESPONSE,
+            timeout_sec=timeout_sec,
         )
         if response is None:
+            return None
+        return int.from_bytes(response[4:6], "little")
+
+    def wait_motor_status(self, motor_id, mask, expected, timeout_sec=0.5):
+        """Confirm a CiA402 transition within a bounded live-read deadline."""
+        deadline = time.monotonic() + timeout_sec
+        status_word = None
+        while time.monotonic() < deadline:
+            status_word = self.read_motor_status_word(
+                motor_id, timeout_sec=max(0.001, deadline - time.monotonic())
+            )
+            if status_word is None:
+                break
+            if status_word & mask == expected:
+                if expected == 0x0027:
+                    self.get_logger().info(
+                        f"Node {motor_id} operation enabled confirmed: "
+                        f"6041=0x{status_word:04X}"
+                    )
+                return True
+            if expected == 0x0027 and status_word & 0x0008:
+                break
+            time.sleep(0.01)
+        self.get_logger().error(
+            f"Node {motor_id} status transition not confirmed: "
+            f"6041={None if status_word is None else hex(status_word)}, "
+            f"mask=0x{mask:04X}, expected=0x{expected:04X}"
+        )
+        return False
+
+    def prepare_motor_initialization(self, motor_id):
+        """Reset only live faults at zero speed before configuring and enabling."""
+        status_word = self.read_motor_status_word(motor_id)
+        if status_word is None:
+            return False
+        if not status_word & 0x0008:
+            return True
+        self.get_logger().warn(
+            f"Node {motor_id} has a latched fault at initialization: "
+            f"6041=0x{status_word:04X}; resetting at zero speed"
+        )
+        if not self.motor_disable(motor_id) or not self.motor_clear_fault(motor_id):
+            return False
+        return self.wait_motor_status(motor_id, 0x0008, 0)
+
+    def motor_enable(self, motor_id: int) -> bool:
+        """Retain live enable or execute 06/07/0F and confirm operation enabled."""
+        if not self._validate_motor_id(motor_id):
+            return False
+        status_word = self.read_motor_status_word(motor_id)
+        if status_word is None or status_word & 0x0008:
             self.get_logger().error(
-                f"Cannot confirm AIMOTOR node {motor_id} enable state"
+                f"Cannot enable AIMOTOR node {motor_id}: "
+                f"6041={None if status_word is None else hex(status_word)}"
             )
             return False
-        status_word = int.from_bytes(response[4:6], "little")
         if status_word & 0x006F == 0x0027:
             self.get_logger().info(
                 f"AIMOTOR node {motor_id} already enabled; retaining enable state"
             )
             return True
-        results = []
         for controlword in (
             self.CONTROL_SHUTDOWN,
             self.CONTROL_SWITCH_ON,
             self.CONTROL_ENABLE_OPERATION,
         ):
-            results.append(self._write_u16(motor_id, self.CONTROLWORD_INDEX, controlword))
-        return all(results)
+            if not self._write_u16(motor_id, self.CONTROLWORD_INDEX, controlword):
+                return False
+        return self.wait_motor_status(motor_id, 0x006F, 0x0027)
 
     def motor_disable(self, motor_id: int) -> bool:
         """停止运行，并将 CiA402 返回到“禁止上电”状态。"""
@@ -1364,6 +1414,13 @@ class CanMotorDriver(Node):
                 success = False
                 continue
             time.sleep(0.01)
+            if not self.prepare_motor_initialization(motor_id):
+                success = False
+                self.get_logger().error(
+                    f"Failed to prepare node {motor_id}: live fault state not cleared"
+                )
+                self.motor_disable(motor_id)
+                continue
             if not self.motor_set_mode(motor_id, self.CANOPEN_VELOCITY_MODE):
                 success = False
                 self.motor_disable(motor_id)

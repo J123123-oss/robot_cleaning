@@ -303,6 +303,7 @@ def test_initialization_failure_disables_all_selected_nodes():
     driver.motor_set_speed = Mock(return_value=True)
     driver.motor_enable = Mock(return_value=True)
     driver.motor_disable = Mock(return_value=True)
+    driver.prepare_motor_initialization = Mock(return_value=True)
     with patch("time.sleep"):
         assert not driver.initialize_motors(motor_ids=(1, 2))
     driver.motor_enable.assert_called_once_with(1)
@@ -349,6 +350,7 @@ def test_initialization_sets_mode_and_ramps_before_enable():
     driver.motor_set_acceleration = lambda motor_id: events.append(("accel", motor_id)) or True
     driver.motor_set_deceleration = lambda motor_id: events.append(("decel", motor_id)) or True
     driver.motor_enable = lambda motor_id: events.append(("enable", motor_id)) or True
+    driver.prepare_motor_initialization = Mock(return_value=True)
 
     driver.motor_set_speed = lambda motor_id, speed: True
     driver.initialize_motors()
@@ -372,7 +374,10 @@ def test_selected_startup_nodes_are_zeroed_before_enable():
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
     driver.motor_set_deceleration = Mock(return_value=True)
     driver._read_sdo_response = Mock(
-        return_value=bytes.fromhex("4b 41 60 00 40 00 00 00")
+        side_effect=[
+            bytes.fromhex(f"4B 41 60 00 {status} 00 00 00")
+            for status in ("40", "40", "27", "40", "40", "27")
+        ]
     )
     with patch("time.sleep"):
         assert driver.initialize_motors(motor_ids=(1, 2))
@@ -390,7 +395,10 @@ def test_enable_disable_and_fault_reset_use_cia402_controlword():
     frames = []
     driver.send_can_frame = lambda can_id, data: frames.append((can_id, data)) or True
     driver._read_sdo_response = Mock(
-        return_value=bytes.fromhex("4b 41 60 00 40 00 00 00")
+        side_effect=[
+            bytes.fromhex("4B 41 60 00 40 00 00 00"),
+            bytes.fromhex("4B 41 60 00 27 00 00 00"),
+        ]
     )
 
     assert driver.motor_enable(1)
@@ -418,7 +426,8 @@ def test_enable_keeps_live_operation_enabled_state_without_shutdown_sequence():
 
     assert driver.motor_enable(1)
     driver._read_sdo_response.assert_called_once_with(
-        1, driver.STATUSWORD_INDEX, 0, driver.SDO_READ_2_RESPONSE
+        1, driver.STATUSWORD_INDEX, 0, driver.SDO_READ_2_RESPONSE,
+        timeout_sec=0.5,
     )
     driver.send_can_frame.assert_not_called()
 
@@ -439,13 +448,88 @@ def test_live_disabled_status_overrides_enabled_cache_and_runs_enable_sequence()
     driver = _make_driver(module)
     driver.motors[0]["status_word"] = 0x0237
     driver._read_sdo_response = Mock(
-        return_value=bytes.fromhex("4b 41 60 00 50 02 00 00")
+        side_effect=[
+            bytes.fromhex("4B 41 60 00 50 02 00 00"),
+            bytes.fromhex("4B 41 60 00 37 02 00 00"),
+        ]
     )
     frames = []
     driver.send_can_frame = lambda can_id, data: frames.append(data) or True
 
     assert driver.motor_enable(1)
     assert [int.from_bytes(data[4:6], "little") for data in frames] == [6, 7, 15]
+
+
+def test_enable_fails_when_operation_enabled_status_is_not_confirmed():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.send_can_frame = Mock(return_value=True)
+    driver._read_sdo_response = Mock(side_effect=[
+        bytes.fromhex("4B 41 60 00 40 00 00 00"), None,
+    ])
+
+    assert not driver.motor_enable(1)
+    assert driver._read_sdo_response.call_count == 2
+
+
+def test_status_confirmation_times_out_when_drive_stays_ready_instead_of_enabled():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4B 41 60 00 21 00 00 00")
+    )
+    with patch("time.monotonic", side_effect=[0.0, 0.1, 0.2, 0.6]), patch("time.sleep"):
+        assert not driver.wait_motor_status(1, 0x006F, 0x0027)
+    assert driver._read_sdo_response.call_count == 1
+
+
+def test_initialization_resets_latched_fault_before_configuring_and_confirms_enable():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.profile_deceleration = 445000
+    frames = []
+    status = 0x0008
+
+    def send(can_id, data):
+        nonlocal status
+        frames.append((can_id, bytes(data)))
+        if data[:4] == bytes.fromhex("2B 40 60 00"):
+            controlword = int.from_bytes(data[4:6], "little")
+            status = {0: 0x40, 0x80: 0x40, 6: 0x21, 7: 0x23, 15: 0x27}[controlword]
+        return True
+
+    def readback(motor_id, index, subindex, expected_command, **kwargs):
+        assert index == driver.STATUSWORD_INDEX
+        return bytes.fromhex("4B 41 60 00") + status.to_bytes(2, "little") + bytes(2)
+
+    driver.send_can_frame = send
+    driver._read_sdo_response = Mock(side_effect=readback)
+    with patch("time.sleep"):
+        assert driver.initialize_motors(motor_ids=(1,))
+    reset = (0x601, bytes.fromhex("2B 40 60 00 80 00 00 00"))
+    mode = (0x601, bytes.fromhex("2F 60 60 00 03 00 00 00"))
+    assert reset in frames
+    assert frames.index(reset) < frames.index(mode)
+    assert frames[0] == (0x601, bytes.fromhex("23 FF 60 00 00 00 00 00"))
+    assert status == 0x27
+    assert frames.count(reset) == 1
+
+
+def test_unconfirmed_fault_reset_prevents_configuration_and_enable():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.profile_deceleration = 445000
+    driver.send_can_frame = Mock(return_value=True)
+    driver._read_sdo_response = Mock(side_effect=[
+        bytes.fromhex("4B 41 60 00 08 00 00 00"), None,
+    ])
+    driver.motor_set_mode = Mock(return_value=True)
+    driver.motor_enable = Mock(return_value=True)
+
+    with patch("time.sleep"):
+        assert not driver.initialize_motors(motor_ids=(1,))
+    driver.motor_set_mode.assert_not_called()
+    driver.motor_enable.assert_not_called()
 
 
 def test_receive_timeout_does_not_send_disable_or_reset_frames():

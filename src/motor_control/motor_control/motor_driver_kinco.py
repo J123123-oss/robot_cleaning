@@ -335,7 +335,7 @@ class CanMotorDriver(AimotorDriver):
                 motor_id, self.CONTROLWORD_INDEX, controlword
             ):
                 return False
-        return True
+        return self.wait_motor_status(motor_id, 0x006F, 0x0027)
 
     def configure_kinco_guard(self, motor_id):
         """回读确认节点保护参数，发送首条 RTR 后才允许使能。"""
@@ -420,6 +420,13 @@ class CanMotorDriver(AimotorDriver):
                         f"Cannot release Kinco node {motor['id']} for configuration"
                     )
         return super().initialize_motors(motor_ids=motor_ids)
+
+    def prepare_motor_initialization(self, motor_id):
+        """Restore RTR protection before resetting a Kinco fault left by an outage."""
+        if motor_id in self.KINCO_MOTOR_IDS:
+            if not self.configure_kinco_guard(motor_id):
+                return False
+        return super().prepare_motor_initialization(motor_id)
 
     def motor_query_feedback(self, motor_id, include_velocity=True):
         """Read only documented Kinco objects; PDO maps are not assumed."""

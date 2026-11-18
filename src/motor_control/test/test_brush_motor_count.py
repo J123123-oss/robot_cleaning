@@ -149,6 +149,64 @@ def test_enable_state_settings_create_publisher_timer_when_none_exists():
     controller.create_timer.assert_called_once_with(0.5, controller.publish_state)
 
 
+def test_fault_callback_does_not_reset_enabled_motors_for_stale_startup_faults():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "motor_fault_callback")
+    namespace = {"Float32MultiArray": SimpleNamespace}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    controller = SimpleNamespace(
+        motor_ctrl=Mock(motors=[{"id": motor_id} for motor_id in (1, 2, 3, 4)]),
+        motor_fault_codes=[0, 0, 0, 0], current_status="ENABLE",
+        get_logger=Mock(return_value=Mock()), publish_state=Mock(),
+        switch_state=Mock(),
+    )
+    controller.motor_ctrl.read_motor_status_word.return_value = 0x4637
+
+    namespace["motor_fault_callback"](
+        controller, SimpleNamespace(data=[0.0, 0.0, 33024.0, 33024.0])
+    )
+
+    controller.motor_ctrl.motor_clear_fault.assert_not_called()
+    controller.switch_state.assert_not_called()
+    assert controller.motor_fault_codes == [0, 0, 0, 0]
+
+
+def test_fault_callback_disables_on_live_fault_and_resets_only_faulted_nodes():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "motor_fault_callback")
+    namespace = {"Float32MultiArray": SimpleNamespace}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    for status in (0x0008, None):
+        controller = SimpleNamespace(
+            motor_ctrl=Mock(motors=[{"id": motor_id} for motor_id in (1, 2, 3, 4)]),
+            motor_fault_codes=[0, 0, 0, 0], current_status="ENABLE",
+            get_logger=Mock(return_value=Mock()), publish_state=Mock(),
+        )
+        events = []
+        controller.switch_state = lambda key: events.append(("state", key))
+        controller.motor_ctrl.motor_clear_fault.side_effect = (
+            lambda motor_id: events.append(("reset", motor_id)) or True
+        )
+        controller.motor_ctrl.read_motor_status_word.return_value = status
+
+        namespace["motor_fault_callback"](
+            controller, SimpleNamespace(data=[0.0, 0.0, 33024.0, 0.0])
+        )
+
+        assert events == ([("state", "z"), ("reset", 3)]
+                          if status is not None else [("state", "z")])
+        assert controller.motor_fault_codes == [0, 0, 33024, 0]
+        controller.publish_state.assert_called()
+
+
 def test_manual_enable_applies_same_settings_without_starting_motors():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
