@@ -7,6 +7,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ AT_EOL = b"\r\n"
 DEFAULT_TIMEOUT = 0.3
 RESPONSE_TIMEOUT = 3.0
 COMMAND_RETRIES = 3
+CFG_RESPONSE_TIMEOUT = 5.0
 MAX_DOMAIN_BYTES = 31
 MAX_CORS_BYTES = 31
 MAX_MOUNTPOINT_BYTES = 23
@@ -115,18 +117,29 @@ def read_at_response(
     ser: serial.Serial,
     expected_prefixes: tuple[str, ...],
     timeout: float | None = None,
+    *,
+    receive_buffer: bytearray | None = None,
+    read_size: int | None = None,
 ) -> str:
     """Scan the mixed binary/text stream until a target AT response is found."""
     serial_timeout = float(getattr(ser, "timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
     response_timeout = max(0.1, timeout) if timeout is not None else max(RESPONSE_TIMEOUT, serial_timeout)
     deadline = time.monotonic() + response_timeout
-    received = bytearray()
+    received = receive_buffer if receive_buffer is not None else bytearray()
+    received_bytes = 0
+    handshake_tail = bytearray()
     markers = tuple(prefix.encode("ascii") for prefix in expected_prefixes)
     while time.monotonic() < deadline:
         # Avoid waiting for 64 bytes when the short +CFG reply is already available.
-        chunk = ser.read(min(64, max(1, getattr(ser, "in_waiting", 0))))
+        size = read_size if read_size is not None else min(64, max(1, getattr(ser, "in_waiting", 0)))
+        chunk = ser.read(size)
         if not chunk:
             continue
+        received_bytes += len(chunk)
+        if expected_prefixes == ("+CFG",):
+            # 只诊断握手数据，不把 CORS 查询中的账号密码转储到超时日志。
+            handshake_tail.extend(chunk)
+            del handshake_tail[:-32]
         received.extend(chunk)
         for marker in markers:
             start = received.find(marker)
@@ -150,10 +163,21 @@ def read_at_response(
                 raise RuntimeError(f"设备返回错误: {line}")
             print("RX", line)
             return line
+        # ERROR 不含期望的成功前缀，必须独立检查，否则会被误报为超时。
+        error = re.search(rb"(?:^|[\r\n])(\+?ERROR(?:[=:][^\r\n]*)?)[\r\n]", received)
+        if error:
+            line = _response_line(error.group(1))
+            del received[:error.end()]
+            raise RuntimeError(f"设备返回错误: {line}")
         if len(received) > 256:
             del received[:-64]
     expected = ", ".join(expected_prefixes)
-    raise RuntimeError(f"等待 AT 响应超时（期望: {expected}）")
+    diagnostic = ""
+    if handshake_tail:
+        diagnostic = f"；握手 RX 尾部 HEX: {handshake_tail.hex(' ')}"
+    raise RuntimeError(
+        f"等待 AT 响应超时（期望: {expected}；本轮接收字节数: {received_bytes}{diagnostic}）"
+    )
 
 
 def send_at(
@@ -165,6 +189,7 @@ def send_at(
     response_timeout: float | None = None,
     retries: int = COMMAND_RETRIES,
     clear_input: bool = True,
+    receive_buffer: bytearray | None = None,
 ) -> str | None:
     print("TX", command)
     if dry_run:
@@ -176,9 +201,14 @@ def send_at(
         try:
             if clear_input:
                 ser.reset_input_buffer()
+                if receive_buffer is not None:
+                    receive_buffer.clear()
             ser.write(packet)
             ser.flush()
-            return read_at_response(ser, expected_prefixes, timeout=response_timeout)
+            return read_at_response(
+                ser, expected_prefixes, timeout=response_timeout,
+                receive_buffer=receive_buffer,
+            )
         except (RuntimeError, SerialException, OSError) as exc:
             last_error = exc
             if attempt < retries:
@@ -188,7 +218,10 @@ def send_at(
     raise last_error
 
 
-def enter_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
+def enter_config(
+    ser: serial.Serial | None, dry_run: bool = False, *,
+    cfg_timeout: float = CFG_RESPONSE_TIMEOUT,
+) -> None:
     # 先退出可能残留的配置会话，避免设备已在配置模式时不再回复 +CFG。
     exit_config(ser, dry_run)
     if dry_run:
@@ -197,10 +230,14 @@ def enter_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
     time.sleep(0.5)
     # 未确认进入配置模式前，禁止发送查询、写入或保存命令。
     first_attempt = True
+    # +CFG 可能跨越两次短等待窗口；重发命令时保留未解析的串口数据。
+    receive_buffer = bytearray()
+    print(f"等待 +CFG 确认，每次最多 {cfg_timeout:g} 秒，超时后重发（Ctrl+C 退出）。", flush=True)
     while True:
         try:
             send_at(ser, "AT+CFG", ("+CFG",), False,
-                    response_timeout=0.5, retries=1, clear_input=first_attempt)
+                    response_timeout=cfg_timeout, retries=1, clear_input=first_attempt,
+                    receive_buffer=receive_buffer)
             # 给固件留出切换模式的时间，再允许后续查询或写入。
             time.sleep(0.2)
             return
@@ -225,9 +262,38 @@ def exit_config(ser: serial.Serial | None, dry_run: bool = False) -> None:
     # return a dedicated +EXIT line.
 
 
-def read_config(ser: serial.Serial) -> dict[str, str | int]:
+def open_serial(port_device: str, baud: int, *, prepare_4ga: bool = False) -> serial.Serial:
+    """Optionally reproduce the observed 4GA recovery session before opening."""
+    if prepare_4ga:
+        print("执行兼容预处理：460800 下查询 CFG、ADDR，退出并关闭后切回目标波特率。", flush=True)
+        # 现场验证的是完整 4GA 查询会话，而非单纯切换波特率。
+        # 不在此会话发送配置写入、保存或复位命令。
+        with serial.Serial(port_device, 460800, timeout=3.0, write_timeout=1) as preparation_port:
+            try:
+                for command, expected in (
+                    ("AT+CFG", ("+CFG",)),
+                    ("AT+ADDR?", ("+ADDR=",)),
+                ):
+                    print("预处理 TX", command, flush=True)
+                    preparation_port.reset_input_buffer()
+                    preparation_port.write(at_command(command))
+                    preparation_port.flush()
+                    try:
+                        read_at_response(preparation_port, expected, timeout=3.0, read_size=64)
+                    except RuntimeError:
+                        # 原 4GA 流程在这两项查询超时后仍发送 EXIT 并关闭串口。
+                        print(f"预处理 {command} 未获确认，继续完成查询会话。", flush=True)
+            finally:
+                exit_config(preparation_port)
+    print(f"打开配置串口：{port_device}，波特率 {baud}", flush=True)
+    return serial.Serial(port_device, baud, timeout=DEFAULT_TIMEOUT, write_timeout=1)
+
+
+def read_config(
+    ser: serial.Serial, *, cfg_timeout: float = CFG_RESPONSE_TIMEOUT,
+) -> dict[str, str | int]:
     try:
-        enter_config(ser)
+        enter_config(ser, cfg_timeout=cfg_timeout)
         addr_line = send_at(ser, "AT+ADDR?", ("+ADDR=",))
         cors_line = send_at(ser, "AT+CORS?", ("+CORS=",))
         mountpoint_line = send_at(ser, "AT+MP?", ("+MP=",))
@@ -248,8 +314,10 @@ def read_config(ser: serial.Serial) -> dict[str, str | int]:
         exit_config(ser)
 
 
-def backup_config(ser: serial.Serial, path: str) -> None:
-    values = read_config(ser)
+def backup_config(
+    ser: serial.Serial, path: str, *, cfg_timeout: float = CFG_RESPONSE_TIMEOUT,
+) -> None:
+    values = read_config(ser, cfg_timeout=cfg_timeout)
     with open(path, "w", encoding="utf-8") as output:
         json.dump(values, output, ensure_ascii=False, indent=2)
         output.write("\n")
@@ -260,10 +328,13 @@ def backup_config(ser: serial.Serial, path: str) -> None:
     print(f"当前配置已保存到 {path}")
 
 
-def configure(ser: serial.Serial | None, config: Config, dry_run: bool) -> None:
+def configure(
+    ser: serial.Serial | None, config: Config, dry_run: bool, *,
+    cfg_timeout: float = CFG_RESPONSE_TIMEOUT,
+) -> None:
     validate_config(config)
     try:
-        enter_config(ser, dry_run)
+        enter_config(ser, dry_run, cfg_timeout=cfg_timeout)
         send_at(ser, f"AT+ADDR={config.domain},{config.port}", ("+ADDR=",), dry_run)
         send_at(ser, f"AT+CORS={config.username},{config.password}", ("+CORS=",), dry_run)
         send_at(ser, f"AT+MP={config.mountpoint}", ("+MP=",), dry_run)
@@ -289,6 +360,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="配置 WTRTK-4GAC 的 NTRIP 客户端")
     parser.add_argument("--port-device", default="/dev/WTRTK")
     parser.add_argument("--baud", type=int, default=230400)
+    parser.add_argument(
+        "--prepare-4ga", action="store_true",
+        help="先以 460800 执行 4GA CFG/ADDR 查询和 EXIT，再关闭并按 --baud 打开；用于现场兼容恢复",
+    )
+    parser.add_argument(
+        "--cfg-timeout", type=float, default=CFG_RESPONSE_TIMEOUT,
+        help="每次发送 AT+CFG 后持续读取响应的秒数，超时才重发（默认 5）",
+    )
     parser.add_argument("--domain", help="NTRIP 服务器域名或 IP")
     parser.add_argument("--ntrip-port", type=int)
     parser.add_argument("--username")
@@ -299,6 +378,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backup", help="通过 AT 查询当前 NTRIP 配置并保存为 JSON")
     parser.add_argument("--restore", help="从 JSON 读取 NTRIP 配置并写入设备")
     args = parser.parse_args()
+    if not 0 < args.cfg_timeout < float("inf"):
+        parser.error("--cfg-timeout 必须是大于 0 的有限秒数")
     if args.backup is None and args.restore is None:
         missing = [
             option
@@ -319,8 +400,8 @@ def main() -> int:
     args = parse_args()
     if args.backup:
         try:
-            with serial.Serial(args.port_device, args.baud, timeout=DEFAULT_TIMEOUT, write_timeout=1) as ser:
-                backup_config(ser, args.backup)
+            with open_serial(args.port_device, args.baud, prepare_4ga=args.prepare_4ga) as ser:
+                backup_config(ser, args.backup, cfg_timeout=args.cfg_timeout)
         except (SerialException, OSError, RuntimeError, ValueError) as exc:
             print(f"备份失败: {exc}", file=sys.stderr)
             return 2
@@ -344,14 +425,14 @@ def main() -> int:
     if not args.apply:
         print("dry-run：不会打开或写入串口；使用 --apply 才会实际配置。")
         try:
-            configure(None, config, True)
+            configure(None, config, True, cfg_timeout=args.cfg_timeout)
         except ValueError as exc:
             print(f"配置参数无效: {exc}", file=sys.stderr)
             return 2
         return 0
     try:
-        with serial.Serial(args.port_device, args.baud, timeout=DEFAULT_TIMEOUT, write_timeout=1) as ser:
-            configure(ser, config, False)
+        with open_serial(args.port_device, args.baud, prepare_4ga=args.prepare_4ga) as ser:
+            configure(ser, config, False, cfg_timeout=args.cfg_timeout)
     except (SerialException, OSError, RuntimeError, ValueError) as exc:
         print(f"串口操作失败: {exc}", file=sys.stderr)
         return 2
