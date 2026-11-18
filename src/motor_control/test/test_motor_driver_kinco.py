@@ -186,6 +186,12 @@ def test_gearbox_and_encoder_are_independent_of_aimotor():
 
 def test_direction_disable_reset_and_ramps_match_kinco():
     driver, frames = make_driver()
+    driver._read_sdo_response = Mock(side_effect=[
+        bytes.fromhex("4B 41 60 00 21 00 00 00"),
+        bytes.fromhex("4F 7E 60 00 01 00 00 00"),
+        bytes.fromhex("4B 41 60 00 21 00 00 00"),
+        bytes.fromhex("4F 7E 60 00 00 00 00 00"),
+    ])
     assert driver.motor_set_direction(4, -1)
     assert frames[-1] == (0x604, bytes.fromhex("2F 7E 60 00 01 00 00 00"))
     assert driver.motor_set_direction(3, 1)
@@ -200,6 +206,129 @@ def test_direction_disable_reset_and_ramps_match_kinco():
     assert frames[-1] == (0x604, bytes.fromhex("23 84 60 00 6E A3 01 00"))
     assert driver.motor_disable(1)
     assert frames[-1] == (0x601, bytes.fromhex("2B 40 60 00 00 00 00 00"))
+
+
+@pytest.mark.parametrize("direction,polarity", [(1, 0), (-1, 1)])
+def test_direction_waits_for_shutdown_and_confirms_polarity(direction, polarity):
+    driver, frames = make_driver()
+    driver._pending_sdo_lock = threading.Lock()
+    driver._pending_sdo_responses = {}
+    driver._sdo_node_locks = {3: threading.RLock()}
+    status_reads = 0
+
+    def receive_response(can_id, payload):
+        nonlocal status_reads
+        frames.append((can_id, bytes(payload)))
+        if payload[:4] == bytes.fromhex("40 41 60 00"):
+            status_reads += 1
+            status = 0x4637 if status_reads == 1 else 0x4231
+            driver.parse_motor_feedback(
+                0x583, bytes.fromhex("4B 41 60 00")
+                + status.to_bytes(2, "little") + bytes(2),
+            )
+        elif payload[:4] == bytes.fromhex("2F 7E 60 00"):
+            assert status_reads == 2
+        elif payload[:4] == bytes.fromhex("40 7E 60 00"):
+            driver.parse_motor_feedback(
+                0x583, bytes.fromhex("4F 7E 60 00") + bytes((polarity, 0, 0, 0))
+            )
+        return True
+
+    driver.send_can_frame = receive_response
+    with patch("time.sleep"):
+        assert driver.motor_set_direction(3, direction)
+    assert frames[:2] == [
+        (0x603, bytes.fromhex("23 FF 60 00 00 00 00 00")),
+        (0x603, bytes.fromhex("2B 40 60 00 06 00 00 00")),
+    ]
+    assert frames[-1] == (0x603, bytes.fromhex("40 7E 60 00 00 00 00 00"))
+    assert driver.motor_directions[3] == direction
+    frames.clear()
+    assert driver.motor_set_speed(3, 100)
+    assert frames == [(0x603, bytes.fromhex("23 FF 60 00 82 4E 1B 00"))]
+
+
+@pytest.mark.parametrize("polarity_response", [
+    None, bytes.fromhex("4F 7E 60 00 00 00 00 00"),
+])
+def test_unconfirmed_direction_fails_initialization_without_enabling(polarity_response):
+    driver, frames = make_driver()
+    driver.motor_directions[3] = -1
+
+    def readback(motor_id, index, subindex, expected_command, **kwargs):
+        if index == driver.STATUSWORD_INDEX:
+            return bytes.fromhex("4B 41 60 00 21 00 00 00")
+        assert index == driver.COMMAND_POLARITY_INDEX
+        return polarity_response
+
+    driver._read_sdo_response = Mock(side_effect=readback)
+    with patch("time.sleep"):
+        assert not driver.initialize_motors(motor_ids=(3,))
+    assert (0x603, bytes.fromhex("2B 40 60 00 0F 00 00 00")) not in frames
+
+
+def test_direction_is_not_written_when_shutdown_is_unconfirmed():
+    driver, frames = make_driver()
+    driver._read_sdo_response = Mock(return_value=None)
+    assert not driver.motor_set_direction(3, -1)
+    assert not any(data[1:3] == bytes.fromhex("7E 60") for _, data in frames)
+    assert driver.motor_directions[3] == 1
+
+
+@pytest.mark.parametrize("status", [0x4637, 0x0008])
+def test_direction_is_not_written_when_motor_remains_enabled_or_faulted(status):
+    driver, frames = make_driver()
+    driver._read_sdo_response = Mock(
+        return_value=bytes.fromhex("4B 41 60 00")
+        + status.to_bytes(2, "little") + bytes(2)
+    )
+    with patch("time.monotonic", side_effect=[0.0, 0.1, 0.2, 0.6]), patch("time.sleep"):
+        assert not driver.motor_set_direction(3, -1)
+    assert not any(data[1:3] == bytes.fromhex("7E 60") for _, data in frames)
+    assert driver.motor_directions[3] == 1
+
+
+@pytest.mark.parametrize("abort", [False, True])
+def test_rejected_polarity_write_does_not_report_direction_success(abort):
+    driver, _ = make_driver()
+    driver._pending_sdo_lock = threading.Lock()
+    driver._pending_sdo_responses = {}
+    driver._sdo_node_locks = {3: threading.RLock()}
+
+    def receive_response(can_id, payload):
+        if payload[:4] == bytes.fromhex("40 41 60 00"):
+            driver.parse_motor_feedback(
+                0x583, bytes.fromhex("4B 41 60 00 31 42 00 00")
+            )
+        elif payload[:4] == bytes.fromhex("2F 7E 60 00"):
+            driver.parse_motor_feedback(
+                0x583, bytes.fromhex("80 7E 60 00 22 00 00 08")
+            )
+        elif payload[:4] == bytes.fromhex("40 7E 60 00"):
+            driver.parse_motor_feedback(
+                0x583, bytes.fromhex(
+                    "80 7E 60 00 00 00 02 06" if abort
+                    else "4F 7E 60 00 00 00 00 00"
+                ),
+            )
+        return True
+
+    driver.send_can_frame = receive_response
+    assert not driver.motor_set_direction(3, -1)
+    assert driver.motor_directions[3] == 1
+    assert not driver._pending_sdo_responses
+
+
+def mock_configuration_readback(driver):
+    def readback(motor_id, index, subindex, expected_command, **kwargs):
+        if index == driver.COMMAND_POLARITY_INDEX:
+            polarity = 1 if driver.motor_directions[motor_id] == -1 else 0
+            return bytes.fromhex("4F 7E 60 00") + bytes((polarity, 0, 0, 0))
+        assert index == driver.STATUSWORD_INDEX
+        status = 0x21 if motor_id in (3, 4) else 0x40
+        return bytes.fromhex("4B 41 60 00") + status.to_bytes(2, "little") + bytes(2)
+
+    driver._read_sdo_response = Mock(side_effect=readback)
 
 
 def test_kinco_velocity_mode_writes_three():
@@ -343,9 +472,7 @@ def test_faults_keep_emergency_code_and_both_kinco_error_words():
 
 def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enable():
     driver, frames = make_driver()
-    driver._read_sdo_response = Mock(
-        return_value=bytes.fromhex("4B 41 60 00 40 00 00 00")
-    )
+    mock_configuration_readback(driver)
     with patch("time.sleep"):
         driver.initialize_motors()
     for motor_id in (3, 4):
@@ -509,9 +636,7 @@ def test_shutdown_sends_zero_and_protocol_specific_disable_to_all_nodes():
 
 def test_failed_kinco_acceleration_write_keeps_brush_disabled():
     driver, frames = make_driver()
-    driver._read_sdo_response = Mock(
-        return_value=bytes.fromhex("4B 41 60 00 40 00 00 00")
-    )
+    mock_configuration_readback(driver)
     send = driver.send_can_frame
 
     def fail_acceleration(can_id, data):

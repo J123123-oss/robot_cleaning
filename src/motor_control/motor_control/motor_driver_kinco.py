@@ -151,25 +151,75 @@ class CanMotorDriver(AimotorDriver):
         return self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, raw_speed)
 
     def motor_set_direction(self, motor_id: int, direction=None) -> bool:
-        """Kinco 607E uses 0/1 rather than AIMotor's bit 6."""
+        """Configure and verify 607E polarity only after confirming shutdown."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_set_direction(motor_id, direction)
+        if not self._validate_motor_id(motor_id):
+            return False
         if direction is None:
             direction = self.motor_directions.get(motor_id)
         try:
             direction = self._validate_motor_direction(
-                direction, f"motor_direction_{motor_id}"
+                direction, f"kinco_motor_direction_{motor_id}"
             )
         except ValueError as exc:
             self.get_logger().error(str(exc))
             return False
-        result = self._sdo_write(
-            motor_id, self.COMMAND_POLARITY_INDEX, 0, self.SDO_WRITE_1,
-            bytes((1 if direction == -1 else 0,)),
+        polarity = 1 if direction == -1 else 0
+        with self._sdo_transaction_lock:
+            if not self.motor_set_speed(motor_id, 0.0):
+                return False
+            if not self.motor_disable(motor_id):
+                return False
+            if not self._wait_kinco_shutdown(motor_id):
+                return False
+            if not self._sdo_write(
+                motor_id, self.COMMAND_POLARITY_INDEX, 0, self.SDO_WRITE_1,
+                bytes((polarity,)),
+            ):
+                return False
+            response = self._read_sdo_response(
+                motor_id, self.COMMAND_POLARITY_INDEX, 0,
+                self.SDO_READ_1_RESPONSE,
+            )
+            actual = None if response is None else response[4]
+            if actual != polarity:
+                self.get_logger().error(
+                    f"Kinco node {motor_id} direction readback failed: "
+                    f"direction={direction}, requested 607E={polarity}, "
+                    f"actual={actual}; initialization must remain disabled"
+                )
+                return False
+        self.motor_directions[motor_id] = direction
+        self.get_logger().info(
+            f"Kinco node {motor_id} direction confirmed: "
+            f"direction={direction}, 607E={polarity}"
         )
-        if result:
-            self.motor_directions[motor_id] = direction
-        return result
+        return True
+
+    def _wait_kinco_shutdown(self, motor_id, timeout_sec=0.5):
+        """Wait for a live ready-to-switch-on status before changing polarity."""
+        deadline = time.monotonic() + timeout_sec
+        status = None
+        while time.monotonic() < deadline:
+            response = self._read_sdo_response(
+                motor_id, self.STATUSWORD_INDEX, 0, self.SDO_READ_2_RESPONSE,
+                timeout_sec=max(0.001, deadline - time.monotonic()),
+            )
+            if response is None:
+                break
+            status = int.from_bytes(response[4:6], "little")
+            if status & 0x006F == 0x0021:
+                return True
+            if status & 0x0008:
+                break
+            time.sleep(0.01)
+        self.get_logger().error(
+            f"Kinco node {motor_id} shutdown not confirmed: "
+            f"6041={None if status is None else hex(status)}; "
+            "direction was not changed"
+        )
+        return False
 
     def motor_set_mode(self, motor_id: int, mode: int) -> bool:
         """Select Kinco profile velocity mode (3, wire value 03h)."""
