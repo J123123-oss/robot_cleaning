@@ -311,6 +311,8 @@ class MotorControlNode(Node):
         )
 
         # 声明RTK路径参数，用于获取route_id
+        self.declare_parameter("enable_geofence", True)
+        self.enable_geofence = bool(self.get_parameter("enable_geofence").value)
         self.declare_parameter("rtk_path_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test_bridge6-11.txt")
         self.declare_parameter("rtk_points_file", "/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/config/rtk_points.md")
         self.rtk_points_file = self.get_parameter("rtk_points_file").value
@@ -2025,6 +2027,8 @@ class MotorControlNode(Node):
 
     def geofence_fault_callback(self, msg: Int16):
         """Latch an RTK geofence fault and route the robot through HOLD."""
+        if not self.enable_geofence:
+            return
         if int(msg.data) & ERROR_GEOFENCE_OUTSIDE:
             was_latched = self.geofence_fault_latched
             self.geofence_fault_latched = True
@@ -2837,6 +2841,8 @@ class MotorControlNode(Node):
 
     def _check_auto_cleaning_entry(self) -> bool:
         """Gate AUTO_CLEANING on the route fence and manual fence recovery."""
+        if not self.enable_geofence:
+            return True
         configured_path = str(getattr(self, "rtk_path_file", "") or "").strip()
         fence_path = (
             os.path.splitext(configured_path)[0] + ".fence.json"

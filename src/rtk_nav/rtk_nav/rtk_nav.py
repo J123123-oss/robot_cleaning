@@ -452,6 +452,11 @@ class RTKNavControlNode(Node):
             if bool(self.get_parameter("brush_use_kinco").value)
             else AIMOTOR_BRUSH_SPEED_RPM
         )
+        self.declare_parameter("enable_geofence", True)
+        self.enable_geofence = bool(self.get_parameter("enable_geofence").value)
+        self.get_logger().info(
+            f"[电子围栏] 启动配置: enable_geofence={self.enable_geofence}"
+        )
         self.geofence_path = os.path.splitext(self.rtk_path_file)[0] + ".fence.json"
         self.geofence_payload = None
         self.geofence_outside_count = 0
@@ -685,7 +690,7 @@ class RTKNavControlNode(Node):
             self.get_logger().error(f"[RTK进度] 路线文件不存在，拒绝恢复: {route_path}")
             return
         fence_path = os.path.splitext(route_path)[0] + ".fence.json"
-        if not os.path.isfile(fence_path):
+        if self.enable_geofence and not os.path.isfile(fence_path):
             self.get_logger().error(f"[RTK进度] 围栏文件不存在，拒绝恢复: {fence_path}")
             return
         if os.path.abspath(self.rtk_path_file) != route_path:
@@ -894,6 +899,11 @@ class RTKNavControlNode(Node):
 
     def load_geofence_sidecar(self, path: str) -> bool:
         """Load the legacy dense planner's fence sidecar for the active route."""
+        if not self.enable_geofence:
+            self.geofence_payload = None
+            self.geofence_outside_count = 0
+            self.geofence_latched = False
+            return True
         self.publish_geofence_recovery_ready(False)
         try:
             self.geofence_payload = load_geofence_payload(path)
@@ -981,6 +991,8 @@ class RTKNavControlNode(Node):
 
     def enforce_geofence(self) -> bool:
         """Return True when navigation must remain stopped by the geofence."""
+        if not self.enable_geofence:
+            return False
         if self.geofence_latched:
             self.publish_stop_speed()
             return True
