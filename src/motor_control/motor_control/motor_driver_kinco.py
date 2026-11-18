@@ -86,8 +86,8 @@ class CanMotorDriver(AimotorDriver):
 
     def __init__(
         self, *args, kinco_encoder_resolution=65536,
-        kinco_reduction_ratio=10.0, kinco_acceleration_rps2=100.0,
-        kinco_deceleration_rps2=100.0, kinco_peak_current_a=47.9,
+        kinco_reduction_ratio=10.0, kinco_acceleration_rps2=800.0,
+        kinco_deceleration_rps2=800.0, kinco_peak_current_a=47.9,
         kinco_guard_time_ms=100, kinco_guard_life_factor=5, **kwargs
     ):
         """Configure Kinco conversion before the inherited threads start."""
@@ -193,7 +193,7 @@ class CanMotorDriver(AimotorDriver):
             publisher.publish(message)
         return snapshot
 
-    def motor_set_speed(self, motor_id: int, speed: float) -> bool:
+    def motor_set_speed(self, motor_id: int, speed: float, *, send_allowed=None) -> bool:
         """Write Kinco DEC = motor rpm * 512 * encoder resolution / 1875."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_set_speed(motor_id, speed)
@@ -213,8 +213,13 @@ class CanMotorDriver(AimotorDriver):
         except (TypeError, ValueError, OverflowError) as exc:
             self.get_logger().error(f"Invalid Kinco velocity {speed!r}: {exc}")
             return False
+        if not self._sdo_write(
+            motor_id, self.TARGET_VELOCITY_INDEX, 0, self.SDO_WRITE_4,
+            raw_speed.to_bytes(4, "little", signed=True), send_allowed=send_allowed,
+        ):
+            return False
         self._get_motor(motor_id)["velocity"] = speed
-        return self._write_i32(motor_id, self.TARGET_VELOCITY_INDEX, raw_speed)
+        return True
 
     def motor_set_direction(self, motor_id: int, direction=None) -> bool:
         """Configure and verify 607E polarity only after confirming shutdown."""
@@ -349,10 +354,12 @@ class CanMotorDriver(AimotorDriver):
         """Use separate Kinco rps/s values for brushes."""
         if motor_id not in self.KINCO_MOTOR_IDS:
             return super().motor_set_acceleration(motor_id, acceleration)
-        result = self._set_kinco_ramp(
-            motor_id, self.PROFILE_ACCELERATION_INDEX,
-            self.kinco_acceleration_rps2 if acceleration is None else acceleration,
-        )
+        with self._sdo_transaction_lock:
+            result = self._set_kinco_ramp(
+                motor_id, self.PROFILE_ACCELERATION_INDEX,
+                self.kinco_acceleration_rps2 if acceleration is None else acceleration,
+                verify=True,
+            )
         if not hasattr(self, "_kinco_acceleration_ready"):
             self._kinco_acceleration_ready = {}
         self._kinco_acceleration_ready[motor_id] = result
@@ -476,16 +483,30 @@ class CanMotorDriver(AimotorDriver):
             return super().motor_clear_fault(motor_id)
         return self._write_u16(motor_id, self.CONTROLWORD_INDEX, 0x0086)
 
-    def initialize_motors(self, motor_ids=None):
-        """Release brushes before configuring their direction."""
-        for motor in self.motors:
-            if (motor["id"] in self.KINCO_MOTOR_IDS
-                    and (motor_ids is None or motor["id"] in motor_ids)):
-                if not self.motor_disable(motor["id"]):
-                    raise RuntimeError(
-                        f"Cannot release Kinco node {motor['id']} for configuration"
-                    )
-        return super().initialize_motors(motor_ids=motor_ids)
+    def initialize_motors(self, motor_ids=None, *, enable_kinco=True):
+        """Configure selected nodes, optionally deferring brush enable."""
+        selected_ids = tuple(self.motor_ids if motor_ids is None else motor_ids)
+        enable_ids = (
+            selected_ids if enable_kinco else
+            tuple(motor_id for motor_id in selected_ids
+                  if motor_id not in self.KINCO_MOTOR_IDS)
+        )
+        return super().initialize_motors(
+            motor_ids=selected_ids, enable_motor_ids=enable_ids
+        )
+
+    def read_brush_velocity(self, motor_id, timeout_sec):
+        """Read one live 606C sample as output-shaft rpm."""
+        response = self._read_sdo_response(
+            motor_id, self.VELOCITY_ACTUAL_INDEX, 0, self.SDO_READ_4_RESPONSE,
+            timeout_sec=timeout_sec,
+        )
+        if response is None:
+            return None
+        raw = int.from_bytes(response[4:8], "little", signed=True)
+        return raw * 1875 / (
+            512 * self.kinco_encoder_resolution * self.kinco_reduction_ratio
+        )
 
     def prepare_motor_initialization(self, motor_id):
         """Restore RTR protection before resetting a Kinco fault left by an outage."""

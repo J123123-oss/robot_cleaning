@@ -344,6 +344,34 @@ def test_can_sender_queue_serializes_and_prioritizes_control_frames():
     assert sent[1][1][0] == module.CanMotorDriver.SDO_READ
 
 
+def test_can_sender_skips_revoked_speed_frame_and_keeps_servicing_queue():
+    module = _load_module()
+    driver = _make_driver(module)
+    driver.can_tx_interval_sec = 0.0
+    driver._can_tx_condition = threading.Condition()
+    driver._can_tx_heap = []
+    driver._can_tx_sequence = module.itertools.count()
+    driver._can_tx_stop = threading.Event()
+    driver._can_tx_thread = None
+    driver._can_tx_last_send_time = 0.0
+    module.can.Message = lambda **options: types.SimpleNamespace(**options)
+    driver.bus = Mock()
+    speed = bytes.fromhex("23 ff 60 00 01 00 00 00")
+    zero = bytes.fromhex("23 ff 60 00 00 00 00 00")
+    permission = Mock(return_value=False)
+    try:
+        driver.start_can_sender()
+        assert not driver.send_can_frame(0x603, speed, send_allowed=permission)
+        assert driver.send_can_frame(0x603, zero)
+    finally:
+        driver.stop_can_sender()
+    permission.assert_called_once_with()
+    driver.bus.send.assert_called_once()
+    message = driver.bus.send.call_args.args[0]
+    assert message.arbitration_id == 0x603
+    assert message.data == zero
+
+
 def test_remote_request_keeps_rtr_and_zero_dlc_through_sender_queue():
     module = _load_module()
     driver = _make_driver(module)

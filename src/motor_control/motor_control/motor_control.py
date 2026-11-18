@@ -24,7 +24,7 @@ from sensor_msgs.msg import NavSatFix
 import collections  # 用于创建固定长度的双端队列
 from std_srvs.srv import Trigger
 from custom_msgs.srv import ChargeControl  # 导入自定义充电控制服务类型
-from custom_msgs.msg import WTRTK
+from custom_msgs.msg import RtkMotionCommand, WTRTK
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -38,6 +38,7 @@ from motor_control.charging import Charging485Node
 from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMonitor
 from motor_control.rtk_point_recorder import record_rtk_point
 from motor_control.loading_timing import advance_active_elapsed
+from motor_control.kinco_brush_control import BrushAction, KincoBrushControl
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -67,6 +68,7 @@ MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 AIMOTOR_DEFAULT_BRUSH_SPEED_RPM = 70.0
 KINCO_DEFAULT_BRUSH_SPEED_RPM = 100.0
+RTK_MOTION_MAX_AGE = 0.5
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
 SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
 # 历史名称保留兼容旧代码；AIMotor 的 actual_velocity 当前按 r/min 解释，不是 rad/s。
@@ -455,8 +457,8 @@ class MotorControlNode(Node):
         kinco_defaults = {
             "kinco_encoder_resolution": 65536,
             "kinco_reduction_ratio": 10.0,
-            "kinco_acceleration_rps2": 100.0,
-            "kinco_deceleration_rps2": 100.0,
+            "kinco_acceleration_rps2": 800.0,
+            "kinco_deceleration_rps2": 800.0,
             "kinco_peak_current_a": 47.9,
             "kinco_guard_time_ms": 100,
             "kinco_guard_life_factor": 5,
@@ -738,6 +740,15 @@ class MotorControlNode(Node):
             **driver_options,
         )
         self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
+        self._rtk_motion_stamp = -1
+        self._rtk_motion_deadline = None
+        self._kinco_brush = (
+            KincoBrushControl(
+                self.motor_ctrl, self.brush_motor_ids,
+                self.brush_direction_mode == "opposite", self._kinco_brush_can_run,
+            )
+            if self.brush_use_kinco and self.brush_motor_ids else None
+        )
         self.get_logger().info("[ROSNode] 开始初始化CAN串口...")
 
         # 2. 初始化遥控器模块
@@ -772,12 +783,14 @@ class MotorControlNode(Node):
             self.keyboard_callback,
             10  # QoS深度
         )
-        self.rtk_speed_sub = self.create_subscription(
-            Vector3,
-            "/rtk/motor_speed",
-            self.rtk_speed_callback,
-            10
-        )
+        if self.brush_use_kinco:
+            self.rtk_speed_sub = self.create_subscription(
+                RtkMotionCommand, "/rtk/motion_command", self.rtk_motion_callback, 1
+            )
+        else:
+            self.rtk_speed_sub = self.create_subscription(
+                Vector3, "/rtk/motor_speed", self.rtk_speed_callback, 10
+            )
         self.rtk_nav_sub = self.create_subscription(
             String,
             "/rtk/nav_state",
@@ -963,17 +976,28 @@ class MotorControlNode(Node):
         self.auto_enable_startup_motors()
 
     def auto_enable_startup_motors(self):
-        """初始 ENABLE 状态下零速初始化并使能所有已配置电机。"""
+        """初始 ENABLE 状态下初始化电机并保持步科滚刷失能。"""
         if not self.motor_auto_enable:
             return
         motor_ids = tuple(self.motor_ctrl.motor_ids)
-        if self.motor_ctrl.initialize_motors(motor_ids=motor_ids):
+        if self._initialize_control_motors(motor_ids=motor_ids):
             self._configure_enabled_state()
             self.publish_state()
-            self.get_logger().info("全部电机初始 ENABLE 状态下零速使能完成")
+            self.get_logger().info("初始 ENABLE 状态下电机零速初始化完成")
         else:
             self.switch_state('z')
             self.get_logger().error("电机启动初始化失败，保持 DISABLE")
+
+    def _initialize_control_motors(self, **options):
+        if self.brush_use_kinco:
+            options["enable_kinco"] = False
+            if self._kinco_brush is not None:
+                self._kinco_brush.request(BrushAction.DISABLE, urgent=True)
+                self._kinco_brush.wait_idle()
+        initialized = self.motor_ctrl.initialize_motors(**options)
+        if initialized and self._kinco_brush is not None:
+            self._kinco_brush.reset_fault()
+        return initialized
 
     def _configure_enabled_state(self):
         """统一启动和手动 ENABLE 的状态标记、方向定时器及 0.5 秒发布周期。"""
@@ -1535,6 +1559,8 @@ class MotorControlNode(Node):
         return SetParametersResult(successful=True)
 
     def timer_callback(self):
+        if getattr(self, "brush_use_kinco", False):
+            self._service_kinco_motion()
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
@@ -1581,11 +1607,14 @@ class MotorControlNode(Node):
                 # 应用 Web 遥控器速度（带超时保护）
                 if time.time() - self.web_rc_last_update < self.web_rc_timeout:
                     self.set_motors_speed(self.web_rc_left_speed, self.web_rc_right_speed)
+                    self.set_brush_speed(self.web_rc_brush_speed)
                 else:
                     if self.current_left_speed != 0.0 or self.current_right_speed != 0.0:
                         self.get_logger().warn("[WebRC] 速度数据超时，自动停车")
                     self.set_motors_speed(0.0, 0.0)
-                self.set_brush_speed(self.web_rc_brush_speed)
+                    self.set_brush_speed(
+                        0.0 if self.brush_use_kinco else self.web_rc_brush_speed
+                    )
 
             # 发布控制模式
             mode_msg = String()
@@ -1731,7 +1760,9 @@ class MotorControlNode(Node):
                 else:
                     # 超时保护：超过阈值未收到遥控器数据则停车
                     self.set_motors_speed(0.0, 0.0)
-                    self.set_brush_speed(self.web_rc_brush_speed)
+                    self.set_brush_speed(
+                        0.0 if self.brush_use_kinco else self.web_rc_brush_speed
+                    )
             # 防跌落：传感器触发时仅禁止对应方向，其他方向正常可用
             elif self.current_status in self.blocked_directions:
                 self.set_motors_speed(0.0, 0.0)
@@ -1772,7 +1803,8 @@ class MotorControlNode(Node):
             if self._rtk_auto_pause:
                 left_speed = 0.0
                 right_speed = 0.0
-                self.set_brush_speed(0.0)
+                if not getattr(self, "brush_use_kinco", False):
+                    self.set_brush_speed(0.0)
             else:
                 left_speed = self.rtk_left_speed
                 right_speed = self.rtk_right_speed
@@ -1817,6 +1849,9 @@ class MotorControlNode(Node):
                     self.get_logger().info(
                         "[MotorProtection] 重新进入AUTO_CLEANING，清除电流保护锁存并恢复清扫"
                     )
+                if (getattr(self, "brush_use_kinco", False)
+                        and self.current_control_mode != "AUTO_CLEANING"):
+                    self._cancel_kinco_motion()
                 self.current_control_mode = "AUTO_CLEANING"
                 self.get_logger().info(f"[ROSNode] 控制模式切换：→ AUTO_CLEANING")
                 if fault_cleared:
@@ -1826,10 +1861,14 @@ class MotorControlNode(Node):
         elif key == 'n':
             # 切回普通模式
             self.current_control_mode = "NORMAL"
+            if getattr(self, "brush_use_kinco", False):
+                self._cancel_kinco_motion()
             self.get_logger().info(f"[ROSNode] 控制模式切换：→ NORMAL")
         elif key == 'm':
             # 切换到遥控器模式（已废弃，切到NORMAL）
             self.current_control_mode = "NORMAL"
+            if getattr(self, "brush_use_kinco", False):
+                self._cancel_kinco_motion()
             self.get_logger().info(f"[ROSNode] 控制模式切换：→ NORMAL (原REMOTE已废弃)")
         # 原有状态切换逻辑（仅非RTK模式生效）
         elif key in STATE_DICT:
@@ -1848,6 +1887,91 @@ class MotorControlNode(Node):
             self.set_brush_speed(float(msg.z))
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}，刷：{msg.z:.2f}")
 
+    def _kinco_brush_can_run(self, source):
+        if (
+            self.current_status in ("DISABLE", "START", "LOADING")
+            or self.is_in_bin_process or self.current_stall_fault
+            or self.geofence_fault_latched
+        ):
+            return False
+        if source == "rtk":
+            return (
+                self.current_control_mode == "AUTO_CLEANING"
+                and not self.web_control_active and not self.rc_control
+                and not self._rtk_auto_pause
+            )
+        return (
+            self.current_control_mode != "AUTO_CLEANING"
+            and (self.web_control_active or self.rc_control)
+            and time.time() - self.web_rc_last_update < self.web_rc_timeout
+        )
+
+    def rtk_motion_callback(self, msg: RtkMotionCommand):
+        if (
+            self.current_control_mode != "AUTO_CLEANING" or self.web_control_active
+            or self.rc_control or self.current_status in ("DISABLE", "START", "LOADING")
+            or self.is_in_bin_process or self.current_stall_fault
+            or self.geofence_fault_latched
+        ):
+            return
+        stamp = msg.stamp.sec * 1_000_000_000 + msg.stamp.nanosec
+        age = (self.get_clock().now().nanoseconds - stamp) / 1_000_000_000
+        if stamp <= self._rtk_motion_stamp or not 0.0 <= age < RTK_MOTION_MAX_AGE:
+            return
+        speeds = (msg.left_rpm, msg.right_rpm, msg.brush_rpm)
+        if not all(math.isfinite(speed) for speed in speeds):
+            self._cancel_kinco_motion()
+            return
+        try:
+            action = BrushAction(msg.brush_action)
+        except ValueError:
+            self._cancel_kinco_motion()
+            return
+        lifetime = RTK_MOTION_MAX_AGE - age
+        self._rtk_motion_stamp = stamp
+        self._rtk_motion_deadline = time.monotonic() + lifetime
+        if self._rtk_auto_pause:
+            self.rtk_left_speed = self.rtk_right_speed = 0.0
+            if action == BrushAction.RUN:
+                action = BrushAction.HOLD_ZERO
+        else:
+            self.rtk_left_speed = max(MIN_SPEED, min(MAX_SPEED, msg.left_rpm))
+            self.rtk_right_speed = max(MIN_SPEED, min(MAX_SPEED, msg.right_rpm))
+        if self._kinco_brush is not None:
+            speed = limit_kinco_brush_speed(msg.brush_rpm, self.kinco_brush_speed_rpm)
+            if action == BrushAction.RUN and speed == 0.0:
+                action = BrushAction.HOLD_ZERO
+            self._kinco_brush.request(
+                action, speed if action == BrushAction.RUN else 0.0,
+                source="rtk" if action == BrushAction.RUN else None,
+                valid_for=lifetime if action != BrushAction.DISABLE else None,
+            )
+
+    def _cancel_kinco_motion(self, *, urgent=False):
+        self._rtk_motion_stamp = self.get_clock().now().nanoseconds
+        self._rtk_motion_deadline = None
+        self.rtk_left_speed = self.rtk_right_speed = 0.0
+        if self._kinco_brush is not None:
+            self._kinco_brush.request(BrushAction.DISABLE, urgent=urgent)
+        self.set_motors_speed(0.0, 0.0)
+
+    def _service_kinco_motion(self):
+        if self._kinco_brush is not None:
+            self.brush_speed = self._kinco_brush.speed
+            if self._kinco_brush.fault and self.current_status != "DISABLE":
+                self.get_logger().error(f"[KincoBrush] {self._kinco_brush.fault}，转 DISABLE")
+                self.switch_state("z")
+                return
+        deadline = self._rtk_motion_deadline
+        if deadline is None:
+            return
+        if self.current_control_mode != "AUTO_CLEANING" or self.web_control_active or self.rc_control:
+            self._cancel_kinco_motion()
+        elif time.monotonic() >= deadline:
+            self._cancel_kinco_motion()
+            self.get_logger().warn("[KincoBrush] RTK运动指令超时，停车并切换HOLD")
+            self.switch_state("h")
+
     def web_rc_speed_callback(self, msg: Vector3):
         """订阅 Web 遥控器解析节点发布的速度指令"""
         self.web_rc_left_speed = float(msg.x)
@@ -1860,6 +1984,8 @@ class MotorControlNode(Node):
         was_active = self.web_control_active
         self.web_control_active = msg.data
         if was_active != self.web_control_active:
+            if getattr(self, "brush_use_kinco", False):
+                self._cancel_kinco_motion()
             if self.web_control_active:
                 self.get_logger().info("[WebRC] 🟢 收到 MANUAL，Web 遥控器独占控制已激活")
             else:
@@ -2010,6 +2136,8 @@ class MotorControlNode(Node):
             and self.current_control_mode == "AUTO_CLEANING"
             and not self.is_in_bin_process
         ):
+            if getattr(self, "brush_use_kinco", False):
+                self._cancel_kinco_motion()
             if self.auto_cleaning_finish_to_loading:
                 self.get_logger().info("[RTKNavStatus] RTK导航完成，切换到LOADING状态")
                 self.current_control_mode = "NORMAL"  # 切换回普通模式
@@ -2373,6 +2501,8 @@ class MotorControlNode(Node):
             )
             if self.current_status != "DISABLE":
                 self.switch_state('z')
+            if getattr(self, "_kinco_brush", None) is not None:
+                self._kinco_brush.wait_idle()
             for motor_id in active_fault_ids:
                 if not self.motor_ctrl.motor_clear_fault(motor_id):
                     self.get_logger().error(f"电机{motor_id}清除故障指令发送失败")
@@ -2634,6 +2764,8 @@ class MotorControlNode(Node):
             self.publish_state()  # 发布原状态 + ERROR_LOW_BATTERY，不更新 current_status
             return  # 不执行后续状态切换，START 流程不会被触发
 
+        if getattr(self, "brush_use_kinco", False) and new_state != "AUTO_CLEANING":
+            self._cancel_kinco_motion(urgent=new_state == "DISABLE")
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
         self._magnetic_enabled_dock_count = 0
@@ -2655,8 +2787,15 @@ class MotorControlNode(Node):
 
         # 状态执行逻辑
         if new_state == "DISABLE":
+            if getattr(self, "brush_use_kinco", False):
+                self.current_control_mode = "NORMAL"
             # 停止：失能所有电机
             for motor in self.motor_ctrl.motors:
+                if (
+                    getattr(self, "_kinco_brush", None) is not None
+                    and motor["id"] in self.brush_motor_ids
+                ):
+                    continue
                 self.motor_ctrl.motor_set_speed(motor["id"], 0.0)
                 self.motor_ctrl.motor_disable(motor["id"])
                 time.sleep(0.01)
@@ -2700,7 +2839,7 @@ class MotorControlNode(Node):
 
         elif new_state == "ENABLE":
 
-            if not self.motor_ctrl.initialize_motors():
+            if not self._initialize_control_motors():
                 self.switch_state('z')
                 return
             time.sleep(0.001)
@@ -2756,7 +2895,10 @@ class MotorControlNode(Node):
             self.direction_timer = self.create_timer(0.05, self.handle_offset_step)
         elif new_state == "START":
             # 使能电机
-            self.motor_ctrl.initialize_motors()
+            initialized = self._initialize_control_motors()
+            if not initialized and self.brush_use_kinco:
+                self.switch_state("z")
+                return
             time.sleep(0.001)
             self.complete_state = False
             # 恢复状态发布频率至5秒
@@ -2833,6 +2975,8 @@ class MotorControlNode(Node):
             # 修正：降低定时器频率到100ms，匹配IMU更新频率
             self.loading_timer = self.create_timer(0.05, self.handle_loading_step)
         elif new_state == "AUTO_CLEANING":
+            if getattr(self, "brush_use_kinco", False):
+                self._cancel_kinco_motion()
             self.current_control_mode = "AUTO_CLEANING"
             self.get_logger().info(f"{self.current_control_mode}")
             self.get_logger().info(f"[ROSNode] 切换到RTK导航模式，等待RTK速度指令")
@@ -3114,6 +3258,8 @@ class MotorControlNode(Node):
                     self.previous_control_mode = self.current_control_mode
                     self.rc_previous_status = self.current_status
                     self.rc_control = True
+                    if getattr(self, "brush_use_kinco", False):
+                        self._cancel_kinco_motion()
                     self.current_status = command
                     # 立即停车，防止导航残留速度继续驱动电机
                     self.set_motors_speed(0.0, 0.0)
@@ -3132,6 +3278,8 @@ class MotorControlNode(Node):
                 # 恢复之前的控制模式
                 if hasattr(self, 'previous_control_mode') and self.previous_control_mode:
                     restore_mode = self.previous_control_mode
+                    if getattr(self, "brush_use_kinco", False):
+                        self._cancel_kinco_motion()
                     self.current_control_mode = restore_mode
                     restore_status = self.rc_previous_status
                     # START 特殊处理：如果已经完成后退动作（COMPLETE阶段），
@@ -3609,6 +3757,10 @@ class MotorControlNode(Node):
     def handle_loading_step(self):
         # timer 取消后可能仍有已排队回调；它不能在其他状态继续写速度。
         if not self.is_in_bin_process or self.current_status != "LOADING":
+            return
+        brush = getattr(self, "_kinco_brush", None)
+        if brush is not None and brush.wheel_motion_blocked:
+            self.set_motors_speed(0.0, 0.0)
             return
 
         # ========== 阶段0：导航到进仓目标GPS点（不依赖dock传感器） ==========
@@ -4389,6 +4541,9 @@ class MotorControlNode(Node):
         # 0.35 m/s 对应的物理轮速范围内，避免任一控制路径绕过限幅。
         left_speed = max(MIN_SPEED, min(MAX_SPEED, float(left_speed)))
         right_speed = max(MIN_SPEED, min(MAX_SPEED, float(right_speed)))
+        brush = getattr(self, "_kinco_brush", None)
+        if brush is not None and brush.wheel_motion_blocked:
+            left_speed = right_speed = 0.0
 
         # 进出仓定时器会持续写轮速，必须在最终下发处拦截被禁止的方向，
         # 防止IO回调停车后又被下一帧恢复。安全退出方向仍可通行。
@@ -4444,6 +4599,25 @@ class MotorControlNode(Node):
             brush_speed = limit_kinco_brush_speed(
                 brush_speed, self.kinco_brush_speed_rpm
             )
+            if self._kinco_brush is not None:
+                auto_mode = self.current_control_mode == "AUTO_CLEANING"
+                manual_lifetime = self.web_rc_timeout - (
+                    time.time() - self.web_rc_last_update
+                )
+                if brush_speed and not auto_mode and manual_lifetime > 0:
+                    self._kinco_brush.request(
+                        BrushAction.RUN, brush_speed, source="manual",
+                        valid_for=manual_lifetime,
+                    )
+                elif auto_mode and self._rtk_auto_pause:
+                    remaining = (self._rtk_motion_deadline or 0.0) - time.monotonic()
+                    if remaining > 0:
+                        self._kinco_brush.request(BrushAction.HOLD_ZERO, valid_for=remaining)
+                    else:
+                        self._kinco_brush.request(BrushAction.DISABLE)
+                else:
+                    self._kinco_brush.request(BrushAction.DISABLE)
+            return
 
         brush_results = []
         for motor_id in self.brush_motor_ids:
@@ -4518,6 +4692,7 @@ def main(args=None):
 
     # 创建电机控制节点
     motor_node = MotorControlNode()
+    fatal = False
     try:
         rclpy.spin(motor_node)
     except (KeyboardInterrupt, ExternalShutdownException):
@@ -4531,12 +4706,19 @@ def main(args=None):
             motor_node.get_logger().fatal(
                 f"[ROSNode] 节点运行致命错误：{str(e)}\n{traceback.format_exc()}"
             )
-            motor_node.motor_ctrl.stop_all_motors()
+            fatal = True
     finally:
         if motor_node:
             motor_node.get_logger().info(
                 "[ROSNode] 清理电机连接，按退出原因执行停车策略"
             )
+            if getattr(motor_node, "_kinco_brush", None) is not None:
+                motor_node.current_status = "DISABLE"
+                for motor_id in motor_node.motor_ctrl.drive_motor_ids:
+                    motor_node.motor_ctrl.motor_set_speed(motor_id, 0.0)
+                motor_node._kinco_brush.close()
+            if fatal:
+                motor_node.motor_ctrl.stop_all_motors()
             motor_node.motor_ctrl.destroy_node()
             if rclpy.ok():
                 motor_node.destroy_node()

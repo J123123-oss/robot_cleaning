@@ -13,12 +13,14 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WTRTK.msg"
   "msg/LatLonPoint.msg"
+  "msg/RtkMotionCommand.msg"
   "srv/ChargeControl.srv"
-  DEPENDENCIES std_msgs std_srvs
+  DEPENDENCIES std_msgs std_srvs builtin_interfaces
 
 )
 if(BUILD_TESTING)

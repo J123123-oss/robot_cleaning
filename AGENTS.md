@@ -97,7 +97,8 @@ src/
 |------|------|------|
 | `/fix` | wtrtk → rtk_nav | GPS 经纬度 (NavSatFix) |
 | `/wtrtk_data` | wtrtk → rtk_nav | RTK 完整数据 (WTRTK) |
-| `/motor_speed` | rtk_nav → motor_control | 目标左右轮速度 (Vector3) |
+| `/rtk/motor_speed` | rtk_nav → motor_control | AIMotor 配置使用的左右轮及滚刷转速 (Vector3) |
+| `/rtk/motion_command` | rtk_nav → motor_control | 混合协议使用的带时间戳轮速及滚刷三态指令 (RtkMotionCommand) |
 | `/keyboard/control` | 外部 → motor_control | 控制指令字符 (String) |
 | `/robot_cmd` | mqtt → motor_control | MQTT 下发的控制指令 (String) |
 | `/robot_state` | motor_control → mqtt | 机器人状态上报 (String) |
@@ -167,7 +168,9 @@ src/
 - 驱动构造参数 `motor_directions` 中显式指定的 ID 优先于进程级 `motor_direction_*` 覆盖值；未显式指定的 ID 保留 ROS 参数配置能力，避免主节点选出的步科方向在基类构造时被 AIMotor 参数二次覆盖。
 - 步科方向通过 `607E:00=0/1` 设置，不在 `60FF` 速度上重复乘方向；修改前零速并发送 `6040=0006`、实时回读 `6041` 确认退出使能，修改后必须回读 `607E` 一致，否则初始化失败并禁止使能。
 - 协议依据与现场配置说明放在 `docs/kinco_brush_driver.md`，离线协议测试放在 `src/motor_control/test/test_motor_driver_kinco.py`。
-- `motor_auto_enable=true` 时初始状态直接设为 ENABLE，并零速初始化使能所有已配置的 AIMotor 和 Kinco 电机；初始化失败转 DISABLE。ENABLE 下磁导航连续达到进仓完成条件后复用完成流程转 DISABLE。
+- `motor_auto_enable=true` 时初始状态直接设为 ENABLE。启动、手动 ENABLE 和 START 仅使能 AIMotor，步科完成零速配置并确认失能；初始化失败转 DISABLE。ENABLE 下磁导航连续达到进仓完成条件后复用完成流程转 DISABLE。
+- 滚刷 `RUN` 首次按需使能，所有已配置步科滚刷通过实时 `6041` 确认后才允许非零转速。`HOLD_ZERO` 保持当前使能状态，供可自动恢复的导航暂停使用。`DISABLE` 用于区间结束、返仓及任务退出，正常流程先零速并确认停稳，再失能。失效指令、故障和显式停机取消待执行的运行请求。
+- 步科加减速度默认均为电机侧 `800.0 rps/s`，继续通过 `kinco_acceleration_rps2` 和 `kinco_deceleration_rps2` 配置。
 - 启动 ENABLE 与手动进入 ENABLE 共用状态配套设置：清除完成标记和补发计数、取消方向定时器、状态发布周期设为 0.5 秒。启动初始化成功后立即发布状态，保持轮子和滚刷零速。
 - 服务正常退出时 AIMotor 发送零速并保持使能，启动时实时回读 `6041`，已使能节点不得重发 `06→07→0F`；显式 DISABLE、异常退出、初始化或零速发送失败仍失能。步科退出时仍零速失能并停止节点保护。
 - ROS 上下文关闭后的 `RCLError/InvalidHandle` 按正常退出处理，不得触发 AIMotor 失能或计为 CAN 接收故障；上下文有效时的同类异常及其他运行异常仍按故障处理。重启验证须包含不注入查询或保活帧的被动 CAN 抓包，避免测试报文影响断通信行为。

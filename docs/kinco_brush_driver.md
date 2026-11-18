@@ -1,24 +1,24 @@
 # 步科滚刷协议与配置
 
-`AIMotor` 分支通过 `brush_use_kinco` 切换滚刷协议。默认 `false` 使用原有
-`motor_driver(AIMotor).py`；`true` 使用 `motor_driver_kinco.py`，仅将已配置的
+`AIMotor` 分支通过 `brush_use_kinco` 切换滚刷协议。`false` 使用原有
+`motor_driver(AIMotor).py`。`true` 使用 `motor_driver_kinco.py`，仅将已配置的
 ID 3、4 切换为步科 iSMK 协议。ID 1、2 仍调用 AIMotor 原有实现。两类电机共用
 同一个 500 kbit/s CAN 接口及收发线程，不修改硬件 ID，不写入永久存储参数。
 
 ## 启动配置
 
 `motor_auto_enable` 默认 `true`：主控制节点初始状态直接设为 `ENABLE`，
-对所有已配置的 AIMotor 和 Kinco 节点执行零速初始化和使能；任一选定节点初始化失败，
+对所有已配置电机进行零速初始化，只使能 AIMotor。手动 `ENABLE` 和 `START` 采用同一策略。任一选定节点初始化失败，
 撤销这些节点的使能并转为 `DISABLE`。可通过 `motor_auto_enable:=false`
 恢复启动时全部失能。步科 ID 3/4 仍由 `brush_motor_count` 决定是否配置，
-使能前必须确认节点保护参数。`motor_auto_enable` 同时控制两种协议电机的启动自动使能。
+使能前必须确认节点保护参数。步科在首次收到有效 `RUN` 时按需使能。
 这里是软件自动使能，不是写入电机的上电自使能参数。
 
 初始化先读取每个节点的实时 `6041`。故障位 bit3 有效时，只对该节点发送
 失能及协议对应的故障复位，并在最多 0.5 秒内回读确认故障位清零；
 未处于故障的 AIMotor 不发送复位或失能控制字，以保留服务重启时的使能衔接。
 步科先重新配置、确认节点保护并恢复 RTR，再处理上次通信中断留下的故障，
-避免尚未恢复保护就反复清故障。之后设置模式、方向、加减速，再零速使能。
+避免尚未恢复保护就反复清故障。之后设置模式、方向、加减速，步科保持失能。
 两种协议发送使能序列后，都必须在最多 0.5 秒内回读确认
 `(6041 & 0x006F) == 0x0027`；发送成功但状态未转换不能算初始化成功。
 
@@ -42,16 +42,22 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
-| `brush_use_kinco` | `false` | true 时使用步科滚刷协议 |
+| `brush_use_kinco` | launch 为 `true`，独立节点为 `false` | true 时使用步科滚刷协议 |
 | `kinco_motor_direction_3` | `-1` | 步科 3 号速度指令方向，1 正常，-1 反向 |
 | `kinco_motor_direction_4` | `1` | 步科 4 号速度指令方向，1 正常，-1 反向 |
 | `kinco_encoder_resolution` | `65536` | 每个电机轴转动一圈的编码器计数 |
 | `kinco_reduction_ratio` | `10.0` | 电机轴转速/滚刷输出轴转速 |
-| `kinco_acceleration_rps2` | `100.0` | 电机侧加速度，rps/s |
-| `kinco_deceleration_rps2` | `100.0` | 电机侧减速度，rps/s |
+| `kinco_acceleration_rps2` | `800.0` | 电机侧加速度，rps/s |
+| `kinco_deceleration_rps2` | `800.0` | 电机侧减速度，rps/s |
 | `kinco_brush_speed_rpm` | `110.0` | 滚刷输出轴转速上限，r/min |
 | `kinco_guard_time_ms` | `100` | 节点保护 RTR 请求周期，ms，范围 50～65535 |
 | `kinco_guard_life_factor` | `5` | 节点保护超时倍数，范围 2～255 |
+
+## 清扫阶段与滚刷控制
+
+混合协议通过 `/rtk/motion_command` 同帧接收轮速和滚刷动作。`RUN` 在首次清扫时确认各滚刷使能，再下发转速。`HOLD_ZERO` 用于可自动恢复的暂停，写零速并保留已有使能。`DISABLE` 用于清扫区间结束、返仓、任务结束与退出。正常停车时，底盘等待滚刷在 1 秒内降到输出轴 ±1 r/min 以内，并确认 `6041` 已退出使能后才允许行驶。混合协议 RTK 指令最大有效期为 0.5 秒。回读失败、指令失效、显式失能及故障走停车保护流程。
+
+更新时一并重建并重启 `custom_msgs`、`motor_control` 和 `rtk_nav` 对应组件。实车先观察 800 设置下的滚刷启动电流和停刷时间，再验收暂停、恢复与返仓时序。
 
 ## AIMotor 服务重启与使能衔接
 
@@ -250,11 +256,11 @@ ramp_DEC = round(rps_per_second * 65536 * encoder_resolution / 4000000)
 603  23 FF 60 00 7E B1 E4 FF
 ```
 
-100 rps/s 的加速度对应 `23 83 60 00 6E A3 01 00`。
-初始化先失能滚刷，再设置步科速度模式 `6060=3`。控制字按
+编码器分辨率为 65536 时，800 rps/s 对应 `23 83 60 00 71 1B 0D 00`。
+初始化配置步科速度模式 `6060=3` 并保持滚刷失能。按需使能时，控制字按
 `0006→0007→000F` 完成状态机使能，并保持 `6040h=000F`；发送 `0006` 仅用于失能；
-减速度通过 SDO 回读确认。
-加减速度换算为零或超出 UINT32 时，在启动线程前拒绝配置；加速度发送失败时拦截
+加速度与减速度均通过 SDO 回读确认。
+加减速度换算为零或超出 UINT32 时，在启动线程前拒绝配置；加速度写入或回读失败时拦截
 该滚刷的后续使能，重新成功配置后才解除拦截。
 使能前清零旧速度目标；停止和退出时沿用现有零速与失能流程。
 

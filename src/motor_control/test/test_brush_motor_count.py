@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import Tuple
 from unittest.mock import Mock
 
+import pytest
+
 
 SOURCE_PATH = (
     Path(__file__).parents[1]
@@ -71,13 +73,16 @@ def test_kinco_direction_parameters_are_declared_for_both_brush_ids():
     assert declared == {"kinco_motor_direction_3": 1, "kinco_motor_direction_4": 1}
 
 
-def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
+def test_startup_configures_kinco_without_enabling_brushes():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
                 and item.name == "MotorControlNode")
     methods = [
         item for item in node.body if isinstance(item, ast.FunctionDef)
-        and item.name in ("auto_enable_startup_motors", "_configure_enabled_state")
+        and item.name in (
+            "auto_enable_startup_motors", "_configure_enabled_state",
+            "_initialize_control_motors",
+        )
     ]
     namespace = {}
     exec(compile(ast.Module(body=methods, type_ignores=[]),
@@ -86,6 +91,7 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     previous_direction_timer = Mock()
     controller = SimpleNamespace(
         motor_auto_enable=True, brush_use_kinco=True,
+        _kinco_brush=None,
         current_status="ENABLE", complete_state=True,
         state_publish_timer=previous_state_timer,
         direction_timer=previous_direction_timer,
@@ -98,10 +104,15 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     controller._configure_enabled_state = (
         lambda: namespace["_configure_enabled_state"](controller)
     )
+    controller._initialize_control_motors = (
+        lambda **options: namespace["_initialize_control_motors"](controller, **options)
+    )
     controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
     controller.motor_ctrl.initialize_motors.return_value = True
     namespace["auto_enable_startup_motors"](controller)
-    controller.motor_ctrl.initialize_motors.assert_called_once_with(motor_ids=(1, 2, 3, 4))
+    controller.motor_ctrl.initialize_motors.assert_called_once_with(
+        motor_ids=(1, 2, 3, 4), enable_kinco=False
+    )
     assert controller.current_status == "ENABLE"
     assert not controller.complete_state
     assert controller.direction_timer is None
@@ -213,7 +224,7 @@ def test_manual_enable_applies_same_settings_without_starting_motors():
                 and item.name == "MotorControlNode")
     methods = [
         item for item in node.body if isinstance(item, ast.FunctionDef)
-        and item.name in ("switch_state", "_configure_enabled_state")
+        and item.name in ("switch_state", "_configure_enabled_state", "_initialize_control_motors")
     ]
     namespace = {
         "STATE_DICT": {"x": "ENABLE"}, "String": SimpleNamespace,
@@ -225,6 +236,7 @@ def test_manual_enable_applies_same_settings_without_starting_motors():
     previous_direction_timer = Mock()
     controller = SimpleNamespace(
         current_status="HOLD", status_list=["HOLD", "ENABLE"],
+        brush_use_kinco=False, _kinco_brush=None,
         current_stall_fault=False, blocked_directions=set(), is_in_bin_process=False,
         complete_state=True, direction_timer=previous_direction_timer,
         state_publish_timer=previous_state_timer, _disable_publish_countdown=3,
@@ -235,6 +247,9 @@ def test_manual_enable_applies_same_settings_without_starting_motors():
     )
     controller._configure_enabled_state = (
         lambda: namespace["_configure_enabled_state"](controller)
+    )
+    controller._initialize_control_motors = (
+        lambda **options: namespace["_initialize_control_motors"](controller, **options)
     )
     controller.motor_ctrl.initialize_motors.return_value = True
 
@@ -253,7 +268,8 @@ def test_manual_enable_applies_same_settings_without_starting_motors():
     assert controller.state_pub.publish.call_args.args[0].data == "ENABLE"
 
 
-def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
+@pytest.mark.parametrize("brush_configured", [False, True])
+def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only(brush_configured):
     from test_motor_driver_aimotor import _load_module
 
     implementation = _load_module().rclpy._test_implementation
@@ -271,7 +287,8 @@ def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
         (implementation.InvalidHandle("invalid handle"), True, True),
     )
     for exit_reason, context_active, should_disable in cases:
-        controller = Mock()
+        controller = Mock(_kinco_brush=Mock() if brush_configured else None)
+        controller.motor_ctrl.drive_motor_ids = (1, 2)
         ros = SimpleNamespace(
             init=Mock(), spin=Mock(side_effect=exit_reason),
             ok=Mock(return_value=context_active), shutdown=Mock(),
@@ -289,6 +306,11 @@ def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():
 
         controller.motor_ctrl.destroy_node.assert_called_once()
         controller.motor_ctrl.motor_disable.assert_not_called()
+        if brush_configured:
+            assert [call.args for call in controller.motor_ctrl.motor_set_speed.call_args_list] == [
+                (1, 0.0), (2, 0.0)
+            ]
+            controller._kinco_brush.close.assert_called_once_with()
         if should_disable:
             controller.motor_ctrl.stop_all_motors.assert_called_once_with()
         else:

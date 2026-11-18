@@ -631,7 +631,8 @@ class CanMotorDriver(Node):
         self.create_can_bus()
 
     def _send_can_frame_direct(
-        self, can_id: int, data: bytes, is_remote_frame: bool = False
+        self, can_id: int, data: bytes, is_remote_frame: bool = False,
+        *, send_allowed=None,
     ) -> bool:
         """在发送线程中直接写入一帧 CAN，不负责节流。"""
         if self.bus is None:
@@ -655,6 +656,8 @@ class CanMotorDriver(Node):
                 if self.bus is None:
                     self.get_logger().error("CAN bus not initialized")
                     return False
+                if send_allowed is not None and not send_allowed():
+                    return False
                 self.bus.send(message)
                 send_return_monotonic = time.monotonic()
                 send_return_wall = time.time()
@@ -662,6 +665,8 @@ class CanMotorDriver(Node):
                 with send_lock:
                     if self.bus is None:
                         self.get_logger().error("CAN bus not initialized")
+                        return False
+                    if send_allowed is not None and not send_allowed():
                         return False
                     self.bus.send(message)
                     send_return_monotonic = time.monotonic()
@@ -734,6 +739,8 @@ class CanMotorDriver(Node):
                             {"is_remote_frame": True}
                             if request.get("is_remote_frame") else {}
                         )
+                        if request.get("send_allowed") is not None:
+                            frame_options["send_allowed"] = request["send_allowed"]
                         request["result"] = self._send_can_frame_direct(
                             request["can_id"], request["data"], **frame_options
                         )
@@ -778,7 +785,8 @@ class CanMotorDriver(Node):
         self._can_tx_thread = None
 
     def send_can_frame(
-        self, can_id: int, data: bytes, is_remote_frame: bool = False
+        self, can_id: int, data: bytes, is_remote_frame: bool = False,
+        *, send_allowed=None,
     ) -> bool:
         """将一帧 11 位标准 CAN 帧加入串行发送队列并等待结果。"""
         payload = b"" if is_remote_frame else bytes(data[:8]).ljust(8, b"\x00")
@@ -789,6 +797,8 @@ class CanMotorDriver(Node):
             or not tx_thread.is_alive()
             or threading.current_thread() is tx_thread
         ):
+            if send_allowed is not None:
+                frame_options["send_allowed"] = send_allowed
             return self._send_can_frame_direct(can_id, payload, **frame_options)
 
         request = {
@@ -798,6 +808,7 @@ class CanMotorDriver(Node):
             "result": False,
             "cancelled": False,
             "is_remote_frame": is_remote_frame,
+            "send_allowed": send_allowed,
         }
         with self._can_tx_condition:
             if self._can_tx_stop.is_set():
@@ -826,7 +837,7 @@ class CanMotorDriver(Node):
         return request["result"]
 
     def _sdo_write(self, motor_id: int, index: int, subindex: int,
-                   command: int, value: bytes = b"") -> bool:
+                   command: int, value: bytes = b"", *, send_allowed=None) -> bool:
         """向电机节点发送一条经过校验的快速传输 SDO 请求。"""
         if not self._validate_motor_id(motor_id):
             return False
@@ -836,10 +847,11 @@ class CanMotorDriver(Node):
             self.get_logger().error(f"Invalid SDO write: {exc}")
             return False
         node_lock = getattr(self, "_sdo_node_locks", {}).get(motor_id)
+        options = {} if send_allowed is None else {"send_allowed": send_allowed}
         if node_lock is None:
-            return self.send_can_frame(self.SDO_RX_BASE + motor_id, frame)
+            return self.send_can_frame(self.SDO_RX_BASE + motor_id, frame, **options)
         with node_lock:
-            return self.send_can_frame(self.SDO_RX_BASE + motor_id, frame)
+            return self.send_can_frame(self.SDO_RX_BASE + motor_id, frame, **options)
 
     def _sdo_read(self, motor_id: int, index: int, subindex: int) -> bool:
         """通过 SDO 上传请求读取对象字典中的一个值。"""
@@ -1388,12 +1400,15 @@ class CanMotorDriver(Node):
             motor_id, self.CONTROLWORD_INDEX, self.CONTROL_DISABLE_VOLTAGE
         )
 
-    def initialize_motors(self, motor_ids=None):
-        """启动节点，设置 PV 模式、方向及加减速参数，然后逐个使能电机。"""
+    def initialize_motors(self, motor_ids=None, *, enable_motor_ids=None):
+        """配置选定电机，默认全部使能，也可只使能指定子集。"""
         self.get_logger().info("Initializing AIMOTOR CANopen nodes...")
         selected_ids = set(self.motor_ids if motor_ids is None else motor_ids)
         if not selected_ids.issubset({motor["id"] for motor in self.motors}):
             raise ValueError("Initialization contains unconfigured motor IDs")
+        enable_ids = selected_ids if enable_motor_ids is None else set(enable_motor_ids)
+        if not enable_ids.issubset(selected_ids):
+            raise ValueError("Only initialized motors can be enabled")
         success = True
         velocity_poll_pause = getattr(self, "_velocity_poll_pause", None)
         velocity_poll_resumed = getattr(self, "_velocity_poll_resumed", None)
@@ -1465,7 +1480,7 @@ class CanMotorDriver(Node):
                 success = False
                 self.motor_disable(motor_id)
                 continue
-            if not self.motor_enable(motor_id):
+            if motor_id in enable_ids and not self.motor_enable(motor_id):
                 success = False
                 self.get_logger().error(f"Failed to enable AIMOTOR node {motor_id}")
                 self.motor_disable(motor_id)
