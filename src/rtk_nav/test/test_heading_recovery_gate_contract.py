@@ -148,7 +148,7 @@ class HeadingRecoveryGateContractTest(unittest.TestCase):
     def test_first_waypoint_arrival_stops_and_counts_fresh_rtk_samples(self):
         _, tree = _source_tree()
         initializer = ast.unparse(_function(tree, "__init__"))
-        callback = ast.unparse(_function(tree, "heading_callback"))
+        callback = ast.unparse(_function(tree, "_update_navigation_position"))
         move = ast.unparse(_function(tree, "move_to_first_waypoint"))
 
         self.assertIn("self.gps_update_sequence = 0", initializer)

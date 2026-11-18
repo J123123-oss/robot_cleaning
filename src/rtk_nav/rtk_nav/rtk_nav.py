@@ -35,6 +35,7 @@ from rtk_nav.geofence_geometry import (
     point_allowed_by_payload,
 )
 from rtk_nav.progress_store import load_progress, save_progress
+from rtk_nav.navigation_position_safety import ArrivalConfirmation, PositionJumpGuard
 
 ERROR_GEOFENCE_OUTSIDE = 1024
 
@@ -323,6 +324,10 @@ class RTKNavControlNode(Node):
         self.ultrasonic_suppression_area = ""
         self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
         self.gps_update_sequence = 0
+        self._position_guard = PositionJumpGuard(max_speed=MAX_LINEAR_SPEED_MPS)
+        self._arrival_confirmation = ArrivalConfirmation()
+        self._position_sample_trusted = False
+        self._last_wtrtk_stamp_ns = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
         self.imu_yaw = 0.0
@@ -2835,6 +2840,11 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
             return True
         episode = self._fallback_episode
+        if episode and episode.get("pause_reason") == "position_jump":
+            self.publish_stop_speed()
+            if not self._position_guard.blocked:
+                self._advance_imu_odom_recovery(now, episode)
+            return True
         if episode and episode.get("recovering"):
             if self._advance_imu_odom_recovery(now, episode):
                 return True
@@ -2958,6 +2968,11 @@ class RTKNavControlNode(Node):
         self._fallback_last_exit_reason = None
 
     def heading_callback(self, msg: WTRTK) -> None:
+        stamp = msg.header.stamp
+        stamp_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+        if stamp_ns <= self._last_wtrtk_stamp_ns:
+            return
+        self._last_wtrtk_stamp_ns = stamp_ns
         now = time.monotonic()
         self.last_wtrtk_time = now
         zero_angle_data = msg.angle_x == 0.0 and msg.angle_y == 0.0
@@ -3357,77 +3372,105 @@ class RTKNavControlNode(Node):
                 self.multi_waypoint_generator = None
                 self.nav_running = False
 
-        raw_lon = msg.ins_longitude
-        raw_lat = msg.ins_latitude
-        
-        # if self.current_gps and self.current_gps != [0.0, 0.0]:
-        #     lon_diff = abs(raw_lon - self.current_gps[0])
-        #     lat_diff = abs(raw_lat - self.current_gps[1])
-        
-        # self.gps_cache.append((raw_lon, raw_lat))
-        # if len(self.gps_cache) > GPS_SMOOTH_WINDOW:
-        #     self.gps_cache.pop(0)
-        # smooth_lon = sum([x[0] for x in self.gps_cache]) / len(self.gps_cache)
-        # smooth_lat = sum([x[1] for x in self.gps_cache]) / len(self.gps_cache)
-        
-        self.current_gps = (raw_lon, raw_lat)
-        self.current_lon = raw_lon
-        self.current_lat = raw_lat
-    
-        EARTH_RADIUS = 6378137.0       # 地球半径（米），WGS84椭球长半轴
-        # 1. 将航向角转换为弧度（注意：imu_yaw是车体朝向，需确认角度定义：0°为北，顺时针增加）
-        heading_rad = math.radians(self.imu_yaw)
-        
-        # 2. 计算天线相对于车体中心的北向（N）、东向（E）偏移量（米）
-        # 车体朝向为heading_rad，天线在前则北向偏移为正，在左则东向偏移为负（根据坐标系调整）
-        # 核心公式：
-        # 北向偏移 = 前向偏移 * cos(航向角) - 左向偏移 * sin(航向角)
-        # 东向偏移 = 前向偏移 * sin(航向角) + 左向偏移 * cos(航向角)
-        delta_n = self.antenna_offset_front * math.cos(heading_rad) - self.antenna_offset_left * math.sin(heading_rad)
-        delta_e = self.antenna_offset_front * math.sin(heading_rad) + self.antenna_offset_left * math.cos(heading_rad)
-        
-        # 3. 将米级偏移转换为经纬度偏移（弧度）
-        # 纬度偏移：delta_lat = delta_n / 地球半径
-        # 经度偏移：delta_lon = delta_e / (地球半径 * cos(纬度弧度))
-        lat_rad = math.radians(self.current_lat)
-        delta_lat_rad = delta_n / EARTH_RADIUS
-        delta_lon_rad = delta_e / (EARTH_RADIUS * math.cos(lat_rad))
-        
-        # 4. 转换为角度并计算车体中心坐标（天线坐标 - 偏移量 = 车体中心坐标）
-        car_lat = self.current_lat - math.degrees(delta_lat_rad)
-        car_lon = self.current_lon - math.degrees(delta_lon_rad)
+        self._update_navigation_position(
+            msg, now, position_quality_ok, current_sample_fixed
+        )
 
-        # 发布车体中心GPS
+    def _update_navigation_position(
+        self, msg: WTRTK, now: float, position_quality_ok: bool, current_sample_fixed: bool
+    ) -> None:
+        """校验新车体中心定位后才更新导航、发布坐标和备用定位锚点。"""
+        stamp_ns = msg.position_stamp_ns
+        if not position_quality_ok or (
+            self._position_guard.blocked and not current_sample_fixed
+        ):
+            self._position_guard.discard(stamp_ns)
+            self._position_sample_trusted = False
+            self._arrival_confirmation.reset()
+            if self._position_guard.blocked:
+                self.publish_stop_speed()
+            return
+        raw_lon, raw_lat = msg.ins_longitude, msg.ins_latitude
+        position = None
+        car_lon, car_lat = raw_lon, raw_lat
+        if (
+            math.isfinite(raw_lon) and math.isfinite(raw_lat)
+            and -180.0 <= raw_lon <= 180.0 and -90.0 < raw_lat < 90.0
+            and (raw_lon != 0.0 or raw_lat != 0.0)
+            and math.isfinite(self.imu_yaw)
+        ):
+            radius = 6378137.0
+            heading_rad = math.radians(self.imu_yaw)
+            delta_n = (
+                self.antenna_offset_front * math.cos(heading_rad)
+                - self.antenna_offset_left * math.sin(heading_rad)
+            )
+            delta_e = (
+                self.antenna_offset_front * math.sin(heading_rad)
+                + self.antenna_offset_left * math.cos(heading_rad)
+            )
+            car_lat = raw_lat - math.degrees(delta_n / radius)
+            car_lon = raw_lon - math.degrees(
+                delta_e / (radius * math.cos(math.radians(raw_lat)))
+            )
+            if -180.0 <= car_lon <= 180.0 and -90.0 < car_lat < 90.0:
+                position = self.latlon_to_utm(car_lat, car_lon)
+        was_blocked = self._position_guard.blocked
+        episode = getattr(self, "_fallback_episode", None)
+        reference = None
+        odom_time = getattr(self, "last_odom_time", None)
+        if (
+            self.enable_imu_odom_fallback and episode
+            and episode.get("integrating") and episode.get("estimator_valid")
+            and odom_time is not None
+            and 0.0 <= now - odom_time <= RTK_FALLBACK_SENSOR_MAX_AGE
+        ):
+            reference = (
+                episode["anchor_xy"][0] + episode["east_m"],
+                episode["anchor_xy"][1] + episode["north_m"],
+            )
+        if not self._position_guard.update(
+            position, stamp_ns,
+            active=self.current_control_mode == ControlMode.AUTO_CLEANING,
+            reference=reference, reference_tolerance=RTK_FALLBACK_RECOVERY_TOLERANCE_M,
+        ):
+            if self._position_guard.blocked:
+                self._position_sample_trusted = False
+                self._arrival_confirmation.reset()
+                if not was_blocked:
+                    self.get_logger().warn(
+                        f"[定位跳变] 位移{self._position_guard.last_distance:.3f}m，"
+                        f"允许{self._position_guard.allowed_distance:.3f}m，"
+                        "拒绝本帧并停车，等待可信位置恢复"
+                    )
+                    if episode and episode.get("integrating"):
+                        episode["recovering"] = False
+                        episode["recovery_fixed_since"] = None
+                        episode["fixed_since"] = None
+                        self._fallback_position_blend = None
+                        self._pause_imu_odom_fallback("position_jump", now)
+                    self._prepare_auto_cleaning_heading_gate("定位跳变", force=True)
+                self.publish_stop_speed()
+            elif not current_sample_fixed or position is None:
+                self._position_sample_trusted = False
+                self._arrival_confirmation.reset()
+            return
+        if was_blocked:
+            self.get_logger().info("[定位跳变] 连续3个新样本恢复可信位置，解除位置阻塞")
         car_gps_msg = NavSatFix()
         car_gps_msg.header = msg.header
         car_gps_msg.status.status = msg.position_status
         car_gps_msg.status.service = NavSatStatus.SERVICE_GPS
         car_gps_msg.latitude = car_lat
         car_gps_msg.longitude = car_lon
-        car_gps_msg.altitude = msg.ins_altitude  # 使用WTRTK的ins_altitude字段
+        car_gps_msg.altitude = msg.ins_altitude
         self.car_center_gps_pub.publish(car_gps_msg)
 
-        self.current_lat = car_lat
-        self.current_lon = car_lon
-        if (
-            current_sample_fixed
-            and math.isfinite(car_lon)
-            and math.isfinite(car_lat)
-            and -180.0 <= car_lon <= 180.0
-            and -90.0 <= car_lat <= 90.0
-        ):
-            self._last_dual_fixed_position_xy = self.latlon_to_utm(car_lat, car_lon)
+        if current_sample_fixed:
+            self._last_dual_fixed_position_xy = position
             self._last_dual_fixed_position_lonlat = (car_lon, car_lat)
-        nav_lon, nav_lat = (car_lon, car_lat)
-        if (
-            self.enable_imu_odom_fallback
-            and not position_quality_ok
-            and self._last_dual_fixed_position_lonlat is not None
-        ):
-            # Keep the last good map pose during the 0.3s transition window;
-            # never feed a Float/invalid (often zero) position into Stanley.
-            nav_lon, nav_lat = self._last_dual_fixed_position_lonlat
-        elif current_sample_fixed:
+        nav_lon, nav_lat = car_lon, car_lat
+        if current_sample_fixed:
             nav_lon, nav_lat = self._apply_fallback_position_blend(
                 car_lon, car_lat, now
             )
@@ -3435,7 +3478,34 @@ class RTKNavControlNode(Node):
         self.current_lon = nav_lon
         self.current_gps = (nav_lon, nav_lat)
         self.gps_update_sequence += 1
-        self.get_logger().debug(f"当前车体中心坐标：经度={car_lon:.6f}, 纬度={car_lat:.6f}")
+        self._position_sample_trusted = (
+            current_sample_fixed
+            and getattr(self, "_fallback_position_blend", None) is None
+            and not (episode and episode.get("integrating"))
+        )
+        self._confirm_waypoint_arrival(self.nav_context.get("target_waypoint"))
+
+    def _confirm_waypoint_arrival(self, target_waypoint) -> bool:
+        """消费新双 Fixed 定位；普通点三帧、首点五帧确认后才允许最终校准。"""
+        nav_state = self.nav_context.get("nav_state")
+        if (
+            target_waypoint is None
+            or self.current_control_mode != ControlMode.AUTO_CLEANING
+            or nav_state not in (NavState.INITIAL_MOVE, NavState.WAYPOINT_MOVE)
+            or not self._position_sample_trusted
+            or self._position_guard.blocked
+        ):
+            self._arrival_confirmation.reset()
+            return False
+        self._arrival_confirmation.required_samples = (
+            5 if nav_state == NavState.INITIAL_MOVE else 3
+        )
+        return self._arrival_confirmation.update(
+            (nav_state, self.current_waypoint_idx, tuple(target_waypoint)),
+            self.gps_update_sequence,
+            self.calc_distance_to_waypoint(target_waypoint),
+            tolerance=RTK_WAYPOINT_TOLERANCE,
+        )
 
     def get_target_waypoint(self, current_waypoint_idx: int = None) -> Optional[Tuple[float, float, float]]:
         """获取当前目标航点（含航向角）。当前任务结束后只记录下一个路径，等待下一次任务启动。"""
@@ -4195,6 +4265,7 @@ class RTKNavControlNode(Node):
                 return False
         
         # ========== 步骤3：Stanley控制器直线行驶 ==========
+        self._arrival_confirmation.reset()
         last_distance = 0.0
         consecutive_threshold = 5
         consecutive_count = 0
@@ -4210,11 +4281,18 @@ class RTKNavControlNode(Node):
         self.get_logger().info(f"[Stanley] 初始路径：({init_lon:.6f}, {init_lat:.6f}) → ({first_lon:.6f}, {first_lat:.6f}), 方向={fixed_path_dir:.1f}°")
 
         while rclpy.ok():
+            if not self._position_sample_trusted:
+                consecutive_count = 0
+                last_arrival_gps_sequence = self.gps_update_sequence
+                self.publish_stop_speed()
+                yield (0.0, 0.0)
+                continue
             current_lon, current_lat = self.current_gps
             current_pos = (current_lon, current_lat)
             target_lon, target_lat, target_heading = first_waypoint
 
             distance = self.calc_distance_to_waypoint(first_waypoint)
+            arrival_confirmed = self._confirm_waypoint_arrival(first_waypoint)
 
             if abs(last_distance - distance) > 0.1:
                 self.get_logger().info(f"到第一个航点距离：{distance:.2f} m")
@@ -4229,7 +4307,7 @@ class RTKNavControlNode(Node):
                 if self.gps_update_sequence != last_arrival_gps_sequence:
                     last_arrival_gps_sequence = self.gps_update_sequence
                     if distance < INITIAL_MOVE_TOLERANCE:
-                        consecutive_count += 1
+                        consecutive_count = self._arrival_confirmation.count
                         self.get_logger().info(
                             f"距离达标, 新RTK样本连续计数："
                             f"{consecutive_count}/{consecutive_threshold}"
@@ -4251,7 +4329,7 @@ class RTKNavControlNode(Node):
                                 f"从新RTK位置恢复初始直线跟踪，方向={fixed_path_dir:.1f}°"
                             )
                         arrival_hold_active = False
-                if consecutive_count >= consecutive_threshold:
+                if arrival_confirmed:
                     self.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f} m")
                     target_waypoint_heading = self.get_path_heading(first_waypoint)
                     self.get_logger().info(f"开始最终航向校准：目标{target_waypoint_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
@@ -4647,6 +4725,7 @@ class RTKNavControlNode(Node):
         多点RTK导航生成器（适配ROS2定时器回调）
         每次yield返回左右轮速度, 支持中断恢复
         """
+        self._arrival_confirmation.reset()
         # 1. 初始化/恢复导航状态
         if resume:
             current_nav_state = self.nav_context["nav_state"]
@@ -5228,8 +5307,13 @@ class RTKNavControlNode(Node):
                 target_lon, target_lat, target_heading = target_waypoint
 
                 distance = self.calc_distance_to_waypoint(target_waypoint)
+                arrival_confirmed = self._confirm_waypoint_arrival(target_waypoint)
 
                 if distance < RTK_WAYPOINT_TOLERANCE:
+                    self.publish_stop_speed()
+                    if not arrival_confirmed:
+                        yield (0.0, 0.0)
+                        continue
                     self.get_logger().info(
                         f"[ROSNode] 已到达航点{self.current_waypoint_idx}距离阈值（{distance:.2f}m ≤ {RTK_WAYPOINT_TOLERANCE}m）"
                     )
@@ -6423,6 +6507,10 @@ class RTKNavControlNode(Node):
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            if self._position_guard.blocked:
+                self._arrival_confirmation.reset()
+                self.publish_stop_speed()
+                return
             if self.enforce_geofence():
                 return
             # 仅在RTK导航模式下上报导航错误码

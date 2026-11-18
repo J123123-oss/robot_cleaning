@@ -210,6 +210,13 @@ class WTRTKFileParser(Node):
             self.get_logger().warn(f"Failed to parse WTRTK fields: {str(e)}")
             return None
         
+        if self.latest_fix is not None:
+            fix = self.latest_fix
+            msg.ins_latitude = fix.latitude
+            msg.ins_longitude = fix.longitude
+            msg.position_stamp_ns = (
+                fix.header.stamp.sec * 1_000_000_000 + fix.header.stamp.nanosec
+            )
         return msg
 
     def publish_loop(self):
@@ -227,7 +234,6 @@ class WTRTKFileParser(Node):
             
             # 发布GGA解析结果
             if fix_msg:
-                fix_msg.header.stamp = self.get_clock().now().to_msg()
                 # self.fix_pub.publish(fix_msg)
                 self.get_logger().debug(
                     f"Published GGA: lat={fix_msg.latitude:.6f}, "

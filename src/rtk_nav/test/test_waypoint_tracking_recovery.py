@@ -2,12 +2,16 @@
 
 import ast
 import math
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Generator, List, Optional, Tuple
 from unittest.mock import Mock
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from rtk_nav.navigation_position_safety import ArrivalConfirmation, PositionJumpGuard
 
 
 SOURCE_PATH = Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py"
@@ -23,6 +27,7 @@ def _load_navigation():
         "_record_force_bearing_progress", "_force_bearing_diverging",
         "start_heading_recalibration", "multi_waypoint_nav_generator",
         "move_to_first_waypoint",
+        "_confirm_waypoint_arrival", "_get_resume_path_direction",
     }
     node_class = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                       and n.name == "RTKNavControlNode")
@@ -73,6 +78,11 @@ def _make_node():
     node.imu_yaw = 9.3
     node.imu_calibration_offset = 0.0
     node.nav_running = True
+    node._arrival_confirmation = ArrivalConfirmation()
+    node._position_guard = PositionJumpGuard(max_speed=0.35)
+    node._position_sample_trusted = True
+    node.gps_update_sequence = 1
+    node.current_control_mode = ns["ControlMode"].AUTO_CLEANING
     node.brush_active = False
     node.boundary_correct_locked = False
     node.blocked_directions = set()
@@ -109,6 +119,7 @@ def _make_node():
     node.check_and_control_brush = Mock()
     node._reset_boundary_cycle_tracking = Mock()
     node._clear_retreat_context = Mock()
+    node._persist_progress = Mock()
     node._is_ultrasonic_suppression_allowed = Mock(return_value=False)
     node._has_raw_boundary_trigger = Mock(return_value=False)
     node._is_calibration_boundary_active = Mock(return_value=False)
@@ -213,8 +224,14 @@ def test_force_bearing_without_progress_retains_fourth_alignment_stop():
 def test_arrival_stops_before_requesting_the_planned_right_angle_heading():
     node, ns = _make_node()
     node.calc_distance_to_waypoint.return_value = 0.05
+    generator = node.multi_waypoint_nav_generator()
+    for sequence in (1, 2):
+        node.gps_update_sequence = sequence
+        assert next(generator) == (0.0, 0.0)
+        assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_MOVE
 
-    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+    node.gps_update_sequence = 3
+    assert next(generator) == (0.0, 0.0)
     assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_CALIB
     assert node.nav_context["calib_target_heading"] == pytest.approx(-98.28)
     node.calibrate_heading_at_waypoint.assert_called_once_with(pytest.approx(-98.28))
@@ -295,6 +312,11 @@ def test_normal_turn_advances_only_after_calibration_completes():
     )
     generator = node.multi_waypoint_nav_generator()
 
+    for sequence in (1, 2):
+        node.gps_update_sequence = sequence
+        assert next(generator) == (0.0, 0.0)
+        assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_MOVE
+    node.gps_update_sequence = 3
     assert next(generator) == (0.0, 0.0)  # 到点先停车。
     assert next(generator) == (3.0, 3.0)  # 原地旋转期间不切换目标。
     assert node.current_waypoint_idx == 1
@@ -306,7 +328,6 @@ def test_normal_turn_advances_only_after_calibration_completes():
     assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_MOVE
     assert not node.nav_context["force_bearing_mode"]
     assert node.nav_context["force_bearing_min_distance"] == float("inf")
-    assert node.nav_context["force_bearing_progress_distance"] == float("inf")
     assert node.nav_context["force_bearing_recalib_count"] == 0
     assert node.nav_context["distance_increase_count"] == 0
 

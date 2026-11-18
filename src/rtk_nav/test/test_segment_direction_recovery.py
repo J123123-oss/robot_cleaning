@@ -1,10 +1,14 @@
 import ast
 import math
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Generator, List, Optional, Tuple
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from rtk_nav.navigation_position_safety import ArrivalConfirmation, PositionJumpGuard
 
 
 SOURCE_PATH = Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py"
@@ -16,6 +20,8 @@ def load_navigation():
         "normalize_angle", "latlon_to_utm", "calculate_path_bearing",
         "calculate_bearing", "get_path_heading", "_get_resume_path_direction",
         "multi_waypoint_nav_generator", "_start_auto_heading_gate_path_alignment",
+        "_confirm_waypoint_arrival",
+        "move_to_first_waypoint",
     }
     node_class = next(
         item for item in tree.body
@@ -38,6 +44,7 @@ def load_navigation():
         "math": math, "time": SimpleNamespace(monotonic=lambda: 10.0),
         "Dict": Dict, "Generator": Generator, "List": List,
         "Optional": Optional, "Tuple": Tuple,
+        "rclpy": SimpleNamespace(ok=lambda: True),
     }
     module = ast.fix_missing_locations(ast.Module(body=body, type_ignores=[]))
     exec(compile(module, str(SOURCE_PATH), "exec"), namespace)
@@ -60,6 +67,11 @@ def make_node():
     node.heading_timed_out = False
     node.brush_active = False
     node.blocked_directions = set()
+    node._arrival_confirmation = ArrivalConfirmation()
+    node._position_guard = PositionJumpGuard(max_speed=0.35)
+    node._position_sample_trusted = True
+    node.gps_update_sequence = 1
+    node.current_control_mode = namespace["ControlMode"].AUTO_CLEANING
     node._auto_heading_gate_path_alignment_pending = True
     node.nav_context = {
         "nav_state": namespace["NavState"].WAYPOINT_MOVE,
@@ -73,6 +85,7 @@ def make_node():
     node.calc_distance_to_waypoint = lambda *_: 1.0
     node.check_control_mode = lambda: False
     node.publish_nav_state = lambda *_: None
+    node.publish_stop_speed = lambda: None
     node.start_heading_recalibration = lambda direction, *_: node.nav_context.update(
         calib_target_heading=direction, calibration_active=True,
     )

@@ -236,6 +236,13 @@ class WTRTKSerialDriver(Node):
             self.get_logger().warn(f"Failed to parse WTRTK fields: {str(e)}")
             return None
         
+        if self.latest_fix is not None:
+            fix = self.latest_fix
+            msg.ins_latitude = fix.latitude
+            msg.ins_longitude = fix.longitude
+            msg.position_stamp_ns = (
+                fix.header.stamp.sec * 1_000_000_000 + fix.header.stamp.nanosec
+            )
         return msg
 
     def read_serial(self):
@@ -304,10 +311,6 @@ class WTRTKSerialDriver(Node):
                         elif frame_type == "WTRTK":
                             parsed_wtrtk = self.parse_wtrtk(frame)
                             if parsed_wtrtk is not None:
-                                # 定向状态保留在 fix_status，定位状态来自最新GGA帧。
-                                if self.latest_fix is not None:
-                                    parsed_wtrtk.ins_latitude = self._gga_lat
-                                    parsed_wtrtk.ins_longitude = self._gga_lon
                                 with self.data_lock:
                                     self.latest_wtrtk = parsed_wtrtk
                                     self._wtrtk_updated = True

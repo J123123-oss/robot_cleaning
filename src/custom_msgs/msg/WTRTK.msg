@@ -1,5 +1,6 @@
 # WTRTK.msg
 std_msgs/Header header
+uint64 position_stamp_ns # 实际GGA定位帧的ROS时间戳（纳秒）；缓存坐标沿用原值，0表示无定位样本
 float64 diff_x          # 差分X距离:米
 float64 diff_y          # 差分Y距离:米
 float64 diff_z          # 差分Z距离:米
