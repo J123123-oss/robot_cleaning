@@ -329,8 +329,8 @@ class RTKNavControlNode(Node):
         self.rtk_install_offset = 90.95  # RTK安装偏移角度（度），根据真北实测标定
 
          # 例如：天线在车体中心前方0.31米，左侧0.2米（根据实际安装位置调整）
-        self.antenna_offset_front = 0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
-        self.antenna_offset_left = 0.245 # old 0.19625  #old -0.19625   # 左向偏移（-：天线在车体左，+：在右）
+        self.antenna_offset_front = 0.263 #0.285 # old 0.2517   # 前向偏移（+：天线在车体前，-：在后）
+        self.antenna_offset_left = 0.258 #0.245 # old 0.19625  #old -0.19625   # 左向偏移（-：天线在车体左，+：在右）
 
         # 新增：出仓点基准缓存与偏移量
         self.base_loading_waypoint = None  # 基准出仓点（首次接收的出仓点），格式：(lon, lat, heading)
