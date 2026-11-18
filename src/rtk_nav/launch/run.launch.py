@@ -89,7 +89,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             f"kinco_motor_direction_{motor_id}",
             default_value=TextSubstitution(
-                text="-1" if motor_id == 4 else "1"
+                text="-1" if motor_id == 3 else "1"
             ),
             choices=["1", "-1"],
             description=(
