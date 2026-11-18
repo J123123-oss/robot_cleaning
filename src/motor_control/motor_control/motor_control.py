@@ -161,6 +161,21 @@ def limit_kinco_brush_speed(brush_speed: float, maximum_speed: float) -> float:
     return max(-maximum_speed, min(maximum_speed, brush_speed))
 
 
+def round_state_payload(value):
+    """复制状态载荷并递归舍入浮点数至两位小数，经纬度及非浮点值保持原样。"""
+    if isinstance(value, dict):
+        return {
+            key: item if key in ("current_lon", "current_lat")
+            else round_state_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [round_state_payload(item) for item in value]
+    if isinstance(value, float):
+        return round(value, 2)
+    return value
+
+
 def parse_motor_feedback_values(values, motor_count):
     """解析旧版 5 字段或带电流的 8 字段 AIMOTOR 反馈。"""
     try:
@@ -2968,6 +2983,7 @@ class MotorControlNode(Node):
                 # "angle_y": self.angle_y,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
             }
+            state_msg = round_state_payload(state_msg)
             dock_state_msg = {
                 "status": self.current_status,
                 "complete_state": self.complete_state,
