@@ -916,7 +916,7 @@ class MotorControlNode(Node):
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 0.1秒 = 10Hz
         self.charge_resume_timer = self.create_timer(30.0, self.charge_resume_callback)  # 30秒检查一次恢复充电
-        self.state_publish_timer = self.create_timer(1800.0, self.publish_state)  # 默认5秒发布状态
+        self.state_publish_timer = self.create_timer(1800.0, self.publish_state)
 
         # add mqtt
         self.main_board = True # 主控板状态MQTT
@@ -950,10 +950,24 @@ class MotorControlNode(Node):
             return
         motor_ids = tuple(self.motor_ctrl.motor_ids)
         if self.motor_ctrl.initialize_motors(motor_ids=motor_ids):
+            self._configure_enabled_state()
+            self.publish_state()
             self.get_logger().info("全部电机初始 ENABLE 状态下零速使能完成")
         else:
             self.switch_state('z')
             self.get_logger().error("电机启动初始化失败，保持 DISABLE")
+
+    def _configure_enabled_state(self):
+        """统一启动和手动 ENABLE 的状态标记、方向定时器及 0.5 秒发布周期。"""
+        self.complete_state = False
+        self._disable_publish_countdown = 0
+        if self.direction_timer is not None:
+            self.direction_timer.cancel()
+            self.direction_timer = None
+        if self.state_publish_timer is not None:
+            self.state_publish_timer.cancel()
+        self.state_publish_timer = self.create_timer(0.5, self.publish_state)
+        self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布周期为0.5秒")
 
     def wait_for_services(self):
         """等待所有充电服务上线"""
@@ -2651,22 +2665,8 @@ class MotorControlNode(Node):
             if not self.motor_ctrl.initialize_motors():
                 self.switch_state('z')
                 return
-            # self.set_brush_speed(
-            #     KINCO_DEFAULT_BRUSH_SPEED_RPM
-            #     if self.brush_use_kinco
-            #     else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
-            # )
             time.sleep(0.001)
-            self.complete_state = False
-            # 取消 MQTT 方向指令的自动停止定时器，防止干扰导航
-            if self.direction_timer is not None:
-                self.direction_timer.cancel()
-                self.direction_timer = None
-            # 恢复状态发布频率至5秒
-            if self.state_publish_timer is not None:
-                self.state_publish_timer.cancel()
-                self.state_publish_timer = self.create_timer(0.5, self.publish_state)
-                self.get_logger().info("[ROSNode] 进入ENABLE状态，状态发布频率恢复为2秒")
+            self._configure_enabled_state()
 
         elif new_state == "FORWARD":
             # 与 timer_callback 保持相同速度比例，避免状态切换瞬间先冲到全速。

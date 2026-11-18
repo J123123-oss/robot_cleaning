@@ -436,7 +436,7 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
     assert arguments["kinco_peak_current_a"]["default_value"].kwargs["text"] == "47.9"
     assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "110.0"
-    for motor_id, default in ((3, "1"), (4, "-1")):
+    for motor_id, default in ((3, "-1"), (4, "1")):
         name = f"kinco_motor_direction_{motor_id}"
         assert arguments[name]["default_value"].kwargs["text"] == default
         assert arguments[name]["choices"] == ["1", "-1"]

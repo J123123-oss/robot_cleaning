@@ -75,29 +75,124 @@ def test_startup_auto_enable_selects_aimotor_and_kinco_and_keeps_zero_speed():
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
                 and item.name == "MotorControlNode")
-    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
-                  and item.name == "auto_enable_startup_motors")
+    methods = [
+        item for item in node.body if isinstance(item, ast.FunctionDef)
+        and item.name in ("auto_enable_startup_motors", "_configure_enabled_state")
+    ]
     namespace = {}
-    exec(compile(ast.Module(body=[method], type_ignores=[]),
+    exec(compile(ast.Module(body=methods, type_ignores=[]),
                  str(SOURCE_PATH), "exec"), namespace)
+    previous_state_timer = Mock()
+    previous_direction_timer = Mock()
     controller = SimpleNamespace(
         motor_auto_enable=True, brush_use_kinco=True,
-        current_status="ENABLE",
+        current_status="ENABLE", complete_state=True,
+        state_publish_timer=previous_state_timer,
+        direction_timer=previous_direction_timer,
+        _disable_publish_countdown=3,
+        create_timer=Mock(return_value=Mock()),
+        publish_state=Mock(),
         motor_ctrl=Mock(motor_ids=(1, 2, 3, 4)),
         get_logger=Mock(return_value=Mock()),
+    )
+    controller._configure_enabled_state = (
+        lambda: namespace["_configure_enabled_state"](controller)
     )
     controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
     controller.motor_ctrl.initialize_motors.return_value = True
     namespace["auto_enable_startup_motors"](controller)
     controller.motor_ctrl.initialize_motors.assert_called_once_with(motor_ids=(1, 2, 3, 4))
     assert controller.current_status == "ENABLE"
+    assert not controller.complete_state
+    assert controller.direction_timer is None
+    assert controller._disable_publish_countdown == 0
+    previous_state_timer.cancel.assert_called_once()
+    previous_direction_timer.cancel.assert_called_once()
+    controller.create_timer.assert_called_once_with(0.5, controller.publish_state)
+    controller.publish_state.assert_called_once_with()
+    controller.motor_ctrl.motor_set_speed.assert_not_called()
+    controller.motor_ctrl.motor_enable.assert_not_called()
+    controller.create_timer.reset_mock()
+    controller.publish_state.reset_mock()
     controller.motor_ctrl.initialize_motors.return_value = False
     namespace["auto_enable_startup_motors"](controller)
     assert controller.current_status == "DISABLE"
+    controller.create_timer.assert_not_called()
+    controller.publish_state.assert_not_called()
     controller.motor_ctrl.reset_mock()
     controller.motor_auto_enable = False
     namespace["auto_enable_startup_motors"](controller)
     controller.motor_ctrl.initialize_motors.assert_not_called()
+    controller.create_timer.assert_not_called()
+
+
+def test_enable_state_settings_create_publisher_timer_when_none_exists():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    method = next(item for item in node.body if isinstance(item, ast.FunctionDef)
+                  and item.name == "_configure_enabled_state")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    controller = SimpleNamespace(
+        complete_state=True, direction_timer=None, state_publish_timer=None,
+        _disable_publish_countdown=3, create_timer=Mock(return_value=Mock()),
+        publish_state=Mock(), get_logger=Mock(return_value=Mock()),
+    )
+
+    namespace["_configure_enabled_state"](controller)
+
+    assert not controller.complete_state
+    assert controller._disable_publish_countdown == 0
+    assert controller.state_publish_timer is controller.create_timer.return_value
+    controller.create_timer.assert_called_once_with(0.5, controller.publish_state)
+
+
+def test_manual_enable_applies_same_settings_without_starting_motors():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
+                and item.name == "MotorControlNode")
+    methods = [
+        item for item in node.body if isinstance(item, ast.FunctionDef)
+        and item.name in ("switch_state", "_configure_enabled_state")
+    ]
+    namespace = {
+        "STATE_DICT": {"x": "ENABLE"}, "String": SimpleNamespace,
+        "time": SimpleNamespace(sleep=Mock()),
+    }
+    exec(compile(ast.Module(body=methods, type_ignores=[]),
+                 str(SOURCE_PATH), "exec"), namespace)
+    previous_state_timer = Mock()
+    previous_direction_timer = Mock()
+    controller = SimpleNamespace(
+        current_status="HOLD", status_list=["HOLD", "ENABLE"],
+        current_stall_fault=False, blocked_directions=set(), is_in_bin_process=False,
+        complete_state=True, direction_timer=previous_direction_timer,
+        state_publish_timer=previous_state_timer, _disable_publish_countdown=3,
+        motor_ctrl=Mock(), state_pub=Mock(), publish_state=Mock(),
+        create_timer=Mock(return_value=Mock()), get_logger=Mock(return_value=Mock()),
+        _clear_current_stall_fault=Mock(), set_brush_speed=Mock(),
+        set_motors_speed=Mock(),
+    )
+    controller._configure_enabled_state = (
+        lambda: namespace["_configure_enabled_state"](controller)
+    )
+    controller.motor_ctrl.initialize_motors.return_value = True
+
+    namespace["switch_state"](controller, "x")
+
+    assert controller.current_status == "ENABLE"
+    assert not controller.complete_state
+    assert controller.direction_timer is None
+    assert controller._disable_publish_countdown == 0
+    controller.motor_ctrl.initialize_motors.assert_called_once_with()
+    previous_direction_timer.cancel.assert_called_once()
+    previous_state_timer.cancel.assert_called_once()
+    controller.create_timer.assert_called_once_with(0.5, controller.publish_state)
+    controller.set_brush_speed.assert_not_called()
+    controller.set_motors_speed.assert_not_called()
+    assert controller.state_pub.publish.call_args.args[0].data == "ENABLE"
 
 
 def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only():

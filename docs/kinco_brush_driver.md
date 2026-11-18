@@ -14,6 +14,12 @@ ID 3、4 切换为步科 iSMK 协议。ID 1、2 仍调用 AIMotor 原有实现�
 使能前必须确认节点保护参数。`motor_auto_enable` 同时控制两种协议电机的启动自动使能。
 这里是软件自动使能，不是写入电机的上电自使能参数。
 
+启动零速初始化成功后，与手动进入 `ENABLE` 共用状态配套设置：
+清除 `complete_state` 及完成消息补发计数，取消 MQTT 方向自动停止定时器，
+将状态发布周期统一设为 `0.5 s`（2 Hz），并立即发布一次启动状态。
+此设置不下发非零轮速或滚刷速度，不重复执行电机初始化；
+初始化失败仍进入 `DISABLE`，采用原失能状态的发布策略。
+
 开启磁导航时，`ENABLE` 下连续 3 个磁导航 mask 每次至少 6 点触发，
 按现有进仓末端判定确认已在仓内，调用原进仓完成流程停车、置完成标记、
 切换 `DISABLE` 并请求充电。无信号或不足 6 点会清零确认计数；
@@ -29,8 +35,8 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
 | `brush_use_kinco` | `false` | true 时使用步科滚刷协议 |
-| `kinco_motor_direction_3` | `1` | 步科 3 号速度指令方向，1 正常，-1 反向 |
-| `kinco_motor_direction_4` | `-1` | 步科 4 号速度指令方向，1 正常，-1 反向 |
+| `kinco_motor_direction_3` | `-1` | 步科 3 号速度指令方向，1 正常，-1 反向 |
+| `kinco_motor_direction_4` | `1` | 步科 4 号速度指令方向，1 正常，-1 反向 |
 | `kinco_encoder_resolution` | `65536` | 每个电机轴转动一圈的编码器计数 |
 | `kinco_reduction_ratio` | `10.0` | 电机轴转速/滚刷输出轴转速 |
 | `kinco_acceleration_rps2` | `100.0` | 电机侧加速度，rps/s |
@@ -121,7 +127,7 @@ AIMotor 协议仍使用 `70 r/min`。`kinco_brush_speed_rpm` 是步科滚刷的�
 
 `brush_use_kinco=true` 时，3/4 号分别读取 `kinco_motor_direction_3/4`：
 `1`（正常）和 `-1`（反向）由步科驱动映射到 `0x607E:00=0/1`。
-launch 默认 3 号为 `1`、4 号为 `-1`，保留原先的默认方向；
+launch 默认 3 号为 `-1`、4 号为 `1`；
 1/2 号仍读取 `motor_direction_1/2`。
 `brush_use_kinco=false` 时，所有 AIMotor 仍读取 `motor_direction_1..4`。
 参数只应用于 `brush_motor_count` 选中的滚刷。`brush_direction_mode` 的原有速度符号处理
