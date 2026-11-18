@@ -1,11 +1,78 @@
 """Offline tests for the AIMOTOR CANopen driver."""
 
+import ast
 import importlib.util
 import sys
 import threading
 import types
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "configured,overrides,expected",
+    [
+        (
+            {1: -1, 2: -1, 3: -1, 4: 1},
+            {1: 1, 2: 1, 3: 1, 4: -1},
+            {1: -1, 2: -1, 3: -1, 4: 1},
+        ),
+        (None, {1: -1, 2: 1, 3: -1, 4: 1}, {1: -1, 2: 1, 3: -1, 4: 1}),
+        ({3: -1}, {1: -1, 2: -1, 3: 1, 4: -1},
+         {1: -1, 2: -1, 3: -1, 4: -1}),
+        ({}, {}, {1: 1, 2: 1, 3: 1, 4: 1}),
+    ],
+)
+def test_constructor_direction_precedence_preserves_explicit_configuration(
+    configured, overrides, expected
+):
+    module = _load_module()
+    path = Path(__file__).parents[1] / "motor_control" / "motor_driver(AIMotor).py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body
+                if isinstance(item, ast.ClassDef) and item.name == "CanMotorDriver")
+    initializer = next(item for item in node.body
+                       if isinstance(item, ast.FunctionDef) and item.name == "__init__")
+    start = next(
+        index for index, item in enumerate(initializer.body)
+        if isinstance(item, ast.Assign)
+        and any(isinstance(target, ast.Name)
+                and target.id == "configured_motor_directions"
+                for target in item.targets)
+    )
+    end = next(
+        index for index, item in enumerate(initializer.body)
+        if isinstance(item, ast.Assign)
+        and any(isinstance(target, ast.Attribute) and target.attr == "motors"
+                for target in item.targets)
+    )
+    parameters = {}
+
+    def declare_parameter(name, default, *, ignore_override=False):
+        motor_id = int(name.rsplit("_", 1)[1])
+        parameters[name] = (
+            default if ignore_override else overrides.get(motor_id, default)
+        )
+
+    driver = types.SimpleNamespace(
+        motor_ids=(1, 2, 3, 4), DEFAULT_MOTOR_DIRECTION=1,
+        declare_parameter=declare_parameter,
+        get_parameter=lambda name: types.SimpleNamespace(value=parameters[name]),
+        _validate_motor_direction=module.CanMotorDriver._validate_motor_direction,
+    )
+    exec(
+        compile(ast.Module(body=initializer.body[start:end], type_ignores=[]),
+                str(path), "exec"),
+        {"self": driver, "motor_directions": configured},
+    )
+
+    assert driver.motor_directions == expected
+    assert parameters == {
+        f"motor_direction_{motor_id}": direction
+        for motor_id, direction in expected.items()
+    }
 
 
 def _load_module():

@@ -306,6 +306,7 @@ class CanMotorDriver(Node):
                 configured_motor_directions.get(
                     motor_id, self.DEFAULT_MOTOR_DIRECTION
                 ),
+                ignore_override=motor_id in configured_motor_directions,
             )
             self.motor_directions[motor_id] = self._validate_motor_direction(
                 self.get_parameter(parameter_name).value,

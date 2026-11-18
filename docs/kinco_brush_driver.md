@@ -162,6 +162,10 @@ AIMotor 协议仍使用 `70 r/min`。`kinco_brush_speed_rpm` 是步科滚刷的�
 launch 默认 3 号为 `-1`、4 号为 `1`；
 1/2 号仍读取 `motor_direction_1/2`。
 `brush_use_kinco=false` 时，所有 AIMotor 仍读取 `motor_direction_1..4`。
+主节点选好方向后通过构造参数 `motor_directions` 传入驱动。对于字典中显式指定的 ID，
+基类声明 `motor_direction_*` 时设置 `ignore_override=True`，防止同一进程的
+AIMotor 参数覆盖步科方向。单独运行驱动或字典中未指定的 ID，仍可通过 ROS 参数
+`motor_direction_*` 配置，未配置时使用默认方向 `1`。
 参数只应用于 `brush_motor_count` 选中的滚刷。`brush_direction_mode` 的原有速度符号处理
 继续生效，设为 `opposite` 时还会对 4 号速度取反，与电机方向参数叠加。
 手册印刷页 42、79 规定方向只能在失能状态配置。设置方向时先发送零速和
