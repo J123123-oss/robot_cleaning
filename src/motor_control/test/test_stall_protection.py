@@ -8,12 +8,13 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMonitor
 
 
-def test_total_current_requires_five_seconds_above_four_ampere():
-    monitor = TotalCurrentMonitor(threshold=4.0, duration=5.0)
+def test_total_current_requires_five_seconds_above_eight_ampere():
+    monitor = TotalCurrentMonitor(threshold=8.0, duration=5.0)
 
-    assert monitor.update(4.1, enabled=True, now=0.0) is False
-    assert monitor.update(4.5, enabled=True, now=4.9) is False
-    assert monitor.update(4.5, enabled=True, now=5.0) is True
+    assert monitor.update(8.0, enabled=True, now=0.0) is False
+    assert monitor.update(8.1, enabled=True, now=1.0) is False
+    assert monitor.update(8.5, enabled=True, now=5.9) is False
+    assert monitor.update(8.5, enabled=True, now=6.0) is True
 
 
 def test_current_below_threshold_clears_pending_alarm():

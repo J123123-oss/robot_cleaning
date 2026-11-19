@@ -70,7 +70,7 @@ def test_kinco_direction_parameters_are_declared_for_both_brush_ids():
     }
     exec(compile(ast.Module(body=declarations, type_ignores=[]),
                  str(SOURCE_PATH), "exec"), namespace)
-    assert declared == {"kinco_motor_direction_3": 1, "kinco_motor_direction_4": 1}
+    assert declared == {"kinco_motor_direction_3": 1, "kinco_motor_direction_4": -1}
 
 
 def test_startup_configures_kinco_without_enabling_brushes():
@@ -107,7 +107,9 @@ def test_startup_configures_kinco_without_enabling_brushes():
     controller._initialize_control_motors = (
         lambda **options: namespace["_initialize_control_motors"](controller, **options)
     )
-    controller.switch_state = lambda key: setattr(controller, "current_status", "DISABLE")
+    controller.switch_state = Mock(
+        side_effect=lambda key, *, urgent: setattr(controller, "current_status", "DISABLE")
+    )
     controller.motor_ctrl.initialize_motors.return_value = True
     namespace["auto_enable_startup_motors"](controller)
     controller.motor_ctrl.initialize_motors.assert_called_once_with(
@@ -127,6 +129,7 @@ def test_startup_configures_kinco_without_enabling_brushes():
     controller.publish_state.reset_mock()
     controller.motor_ctrl.initialize_motors.return_value = False
     namespace["auto_enable_startup_motors"](controller)
+    controller.switch_state.assert_called_once_with("z", urgent=True)
     assert controller.current_status == "DISABLE"
     controller.create_timer.assert_not_called()
     controller.publish_state.assert_not_called()
@@ -202,7 +205,7 @@ def test_fault_callback_disables_on_live_fault_and_resets_only_faulted_nodes():
             get_logger=Mock(return_value=Mock()), publish_state=Mock(),
         )
         events = []
-        controller.switch_state = lambda key: events.append(("state", key))
+        controller.switch_state = lambda key, *, urgent: events.append(("state", key, urgent))
         controller.motor_ctrl.motor_clear_fault.side_effect = (
             lambda motor_id: events.append(("reset", motor_id)) or True
         )
@@ -212,8 +215,8 @@ def test_fault_callback_disables_on_live_fault_and_resets_only_faulted_nodes():
             controller, SimpleNamespace(data=[0.0, 0.0, 33024.0, 0.0])
         )
 
-        assert events == ([("state", "z"), ("reset", 3)]
-                          if status is not None else [("state", "z")])
+        assert events == ([("state", "z", True), ("reset", 3)]
+                          if status is not None else [("state", "z", True)])
         assert controller.motor_fault_codes == [0, 0, 33024, 0]
         controller.publish_state.assert_called()
 
@@ -310,7 +313,7 @@ def test_control_main_preserves_driver_shutdown_policy_on_normal_exit_only(brush
             assert [call.args for call in controller.motor_ctrl.motor_set_speed.call_args_list] == [
                 (1, 0.0), (2, 0.0)
             ]
-            controller._kinco_brush.close.assert_called_once_with()
+            controller._kinco_brush.close.assert_called_once_with(urgent=should_disable)
         if should_disable:
             controller.motor_ctrl.stop_all_motors.assert_called_once_with()
         else:

@@ -260,7 +260,10 @@ def make_enable_brush_test_controller(**overrides):
                if isinstance(node, ast.FunctionDef) and node.name in names]
     namespace = dict(
         BrushAction=BrushAction, math=math, time=time, json=json, String=SimpleNamespace,
-        STATE_DICT={"h": "HOLD", "w": "FORWARD", "x": "ENABLE", "r": "AUTO_CLEANING"},
+        STATE_DICT={
+            "h": "HOLD", "w": "FORWARD", "x": "ENABLE", "r": "AUTO_CLEANING",
+            "z": "DISABLE",
+        },
         MANUAL_TURN_SPEED_SCALE=0.25,
         KINCO_DEFAULT_BRUSH_SPEED_RPM=100.0, AIMOTOR_DEFAULT_BRUSH_SPEED_RPM=70.0,
         ENABLE_BRUSH_TEST_MAX_AGE=0.5,
@@ -353,6 +356,21 @@ def test_rtk_mode_ends_manual_brush_test():
     assert controller.current_control_mode == "AUTO_CLEANING"
     assert not controller._service_enable_brush_test()
     controller._cancel_kinco_motion.assert_called_once()
+
+
+@pytest.mark.parametrize("urgent", [False, True])
+def test_disable_state_leaves_brush_stopping_to_worker(urgent):
+    controller = make_enable_brush_test_controller(
+        status_list=["ENABLE", "DISABLE"], state_publish_timer=None, complete_state=False,
+    )
+    if urgent:
+        controller.switch_state("z", urgent=True)
+    else:
+        controller.switch_state("z")
+
+    assert controller.current_status == "DISABLE"
+    controller._cancel_kinco_motion.assert_called_once_with(urgent=urgent)
+    assert [call.args for call in controller.motor_ctrl.motor_disable.call_args_list] == [(1,), (2,)]
 
 
 @pytest.mark.parametrize("web_active", [False, True])

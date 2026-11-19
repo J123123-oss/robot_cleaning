@@ -67,8 +67,9 @@ class KincoBrushControl:
         with self._condition:
             self.fault = None
 
-    def close(self):
-        self.request(BrushAction.DISABLE, urgent=True)
+    def close(self, *, urgent=False):
+        """Stop the brushes before closing the worker and its CAN access."""
+        self.request(BrushAction.DISABLE, urgent=urgent)
         self.wait_idle()
         with self._condition:
             self._closing = True

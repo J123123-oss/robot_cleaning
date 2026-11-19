@@ -127,7 +127,7 @@ def should_pause_auto_cleaning_for_low_battery(
         return False
 
 
-TOTAL_CURRENT_STALL_THRESHOLD = 4.0  # 总电流保护阈值（A）。
+TOTAL_CURRENT_STALL_THRESHOLD = 8.0  # 总电流保护阈值（A）。
 TOTAL_CURRENT_STALL_DURATION = 5.0  # 总电流超过阈值的持续时间（s）。
 BRUSH_CURRENT_STALL_THRESHOLD = 4.0  # 单个滚刷电机电流保护阈值（A）。
 BRUSH_CURRENT_STALL_DURATION = 5.0  # 滚刷电流超过阈值的持续时间（s）。
@@ -518,7 +518,7 @@ class MotorControlNode(Node):
         for motor_id in (3, 4):
             self.declare_parameter(
                 f"kinco_motor_direction_{motor_id}",
-                CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
+                -1 if motor_id == 4 else CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
             )
 
         # UNLOADING parameters
@@ -994,7 +994,7 @@ class MotorControlNode(Node):
             self.publish_state()
             self.get_logger().info("初始 ENABLE 状态下电机零速初始化完成")
         else:
-            self.switch_state('z')
+            self.switch_state('z', urgent=True)
             self.get_logger().error("电机启动初始化失败，保持 DISABLE")
 
     def _initialize_control_motors(self, **options):
@@ -2019,7 +2019,7 @@ class MotorControlNode(Node):
             self.brush_speed = self._kinco_brush.speed
             if self._kinco_brush.fault and self.current_status != "DISABLE":
                 self.get_logger().error(f"[KincoBrush] {self._kinco_brush.fault}，转 DISABLE")
-                self.switch_state("z")
+                self.switch_state("z", urgent=True)
                 return
         deadline = self._rtk_motion_deadline
         if deadline is None:
@@ -2563,7 +2563,11 @@ class MotorControlNode(Node):
                 f"[MotorControl] 电机故障或状态无法确认: {fault_str}，转 DISABLE"
             )
             if self.current_status != "DISABLE":
-                self.switch_state('z')
+                self.switch_state('z', urgent=True)
+            elif (getattr(self, "_kinco_brush", None) is not None
+                    and self._kinco_brush.wheel_motion_blocked
+                    and self._kinco_brush.fault is None):
+                self._cancel_kinco_motion(urgent=True)
             if getattr(self, "_kinco_brush", None) is not None:
                 self._kinco_brush.wait_idle()
             for motor_id in active_fault_ids:
@@ -2746,8 +2750,8 @@ class MotorControlNode(Node):
         self.loading_phase = None
         self.get_logger().info(f"[ROSNode] 进/出仓流程被{reason}指令终止，定时器已关闭")
 
-    def switch_state(self, key: str, *, wheel_only=False) -> None:
-        """状态机切换逻辑（新增进出仓状态标记）"""
+    def switch_state(self, key: str, *, wheel_only=False, urgent=False) -> None:
+        """切换底盘状态，普通失能等待步科减速，故障可请求紧急失能。"""
         if key not in STATE_DICT:
             self.get_logger().warn(f"[ROSNode] 无效状态切换key：{key} (仅支持: {list(STATE_DICT.keys())})")
             return
@@ -2839,7 +2843,7 @@ class MotorControlNode(Node):
         )
         if (getattr(self, "brush_use_kinco", False)
                 and new_state != "AUTO_CLEANING" and not keep_brush_test):
-            self._cancel_kinco_motion(urgent=new_state == "DISABLE")
+            self._cancel_kinco_motion(urgent=urgent)
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
         self._brush_test_wheel_hold = new_state == "HOLD" and keep_brush_test
@@ -2918,7 +2922,7 @@ class MotorControlNode(Node):
         elif new_state == "ENABLE":
 
             if not self._initialize_control_motors():
-                self.switch_state('z')
+                self.switch_state('z', urgent=True)
                 return
             time.sleep(0.001)
             self._configure_enabled_state()
@@ -2975,7 +2979,7 @@ class MotorControlNode(Node):
             # 使能电机
             initialized = self._initialize_control_motors()
             if not initialized and self.brush_use_kinco:
-                self.switch_state("z")
+                self.switch_state("z", urgent=True)
                 return
             time.sleep(0.001)
             self.complete_state = False
@@ -4824,7 +4828,7 @@ def main(args=None):
                 motor_node.current_status = "DISABLE"
                 for motor_id in motor_node.motor_ctrl.drive_motor_ids:
                     motor_node.motor_ctrl.motor_set_speed(motor_id, 0.0)
-                motor_node._kinco_brush.close()
+                motor_node._kinco_brush.close(urgent=fatal)
             if fatal:
                 motor_node.motor_ctrl.stop_all_motors()
             motor_node.motor_ctrl.destroy_node()
