@@ -211,8 +211,8 @@ launch 默认 3 号为 `-1`、4 号为 `1`；
 基类声明 `motor_direction_*` 时设置 `ignore_override=True`，防止同一进程的
 AIMotor 参数覆盖步科方向。单独运行驱动或字典中未指定的 ID，仍可通过 ROS 参数
 `motor_direction_*` 配置，未配置时使用默认方向 `1`。
-参数只应用于 `brush_motor_count` 选中的滚刷。`brush_direction_mode` 的原有速度符号处理
-继续生效，设为 `opposite` 时还会对 4 号速度取反，与电机方向参数叠加。
+参数只应用于 `brush_motor_count` 选中的滚刷。`aimotor_brush_direction_mode=opposite`
+仅对 AIMotor 滚刷的 4 号目标转速额外取反。步科两台滚刷使用同符号逻辑速度，由各自的 `607E` 设置物理转向。
 手册印刷页 42、79 规定方向只能在失能状态配置。设置方向时先发送零速和
 `0x6040=0x0006`，最多等待 0.5 秒实时回读 `6041`，确认
 `(status_word & 0x006F) == 0x0021` 后才写入 `607E`。
@@ -224,8 +224,7 @@ AIMotor 参数覆盖步科方向。单独运行驱动或字典中未指定的 ID
 `set_brush_speed()` 的正负号是逻辑速度方向，`607E` 决定其对应的物理转向；
 配置 `-1` 不要求 `60FF` 指令或反馈速度显示为负值。
 速度换算不再次乘方向，避免与驱动器极性叠加后抵消反转。
-如果还启用 `brush_direction_mode=opposite`，4 号的逻辑速度也会取反，
-应同时核对这两项设置。需要现场确认实际转向时，可只读查询：
+需要现场确认实际转向时，可只读查询：
 
 ```bash
 cansend can0 603#407E600000000000

@@ -115,7 +115,7 @@ src/
 
 ### 进仓/出仓流程
 
-**出仓**（START）：键盘 `u` 触发 → 直行（`unloading_forword_threshold` 秒）→ 旋转到目标角度 → 完成。
+**出仓**（START）：键盘 `u` 触发 → 定时前进（`unloading_forward_duration_sec`，默认 14 秒）→ 停车结算 2 秒 → AUTO。独立 `UNLOADING` 完成后保持 `HOLD`。`unloading_use_magnetic_navigation` 默认打开，识别到新鲜纵向磁条时纠偏，T 型磁条满位、无磁条或样本过期时以基础轮速直行。
 
 **进仓**（LOADING）：键盘 `l` 触发 → 激光距离 < 阈值时一直前进 → 后退固定时长 → 旋转到目标角度。
 
@@ -171,6 +171,7 @@ src/
 - `brush_use_kinco=false` 保持现有 AIMotor 行为；为 true 时仅 ID 3、4 使用步科协议，滚刷数量仍由 `brush_motor_count` 决定。
 - 上层速度统一使用输出轴 r/min。步科编码器分辨率、机械减速比、rps/s 加减速度独立配置，不复用 AIMotor 的脉冲速度或加减速单位。
 - 步科 ID 3、4 的方向由 `kinco_motor_direction_3/4` 独立配置（1 正常，-1 反向）；`motor_direction_1..4` 保留给 AIMotor，混合协议只覆盖已配置的步科滚刷方向。
+- `aimotor_brush_direction_mode` 仅控制 AIMotor ID 4 的额外目标转速取反，步科 ID 3、4 的方向由各自的步科极性决定。
 - 驱动构造参数 `motor_directions` 中显式指定的 ID 优先于进程级 `motor_direction_*` 覆盖值；未显式指定的 ID 保留 ROS 参数配置能力，避免主节点选出的步科方向在基类构造时被 AIMotor 参数二次覆盖。
 - 步科方向通过 `607E:00=0/1` 设置，不在 `60FF` 速度上重复乘方向；修改前零速并发送 `6040=0006`、实时回读 `6041` 确认退出使能，修改后必须回读 `607E` 一致，否则初始化失败并禁止使能。
 - 协议依据与现场配置说明放在 `docs/kinco_brush_driver.md`，离线协议测试放在 `src/motor_control/test/test_motor_driver_kinco.py`。

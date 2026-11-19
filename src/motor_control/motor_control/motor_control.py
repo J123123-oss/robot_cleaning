@@ -39,6 +39,7 @@ from motor_control.stall_protection import CurrentStallMonitor, TotalCurrentMoni
 from motor_control.rtk_point_recorder import record_rtk_point
 from motor_control.loading_timing import advance_active_elapsed
 from motor_control.kinco_brush_control import BrushAction, KincoBrushControl
+from motor_control.magnetic_navigation import calculate_magnetic_error
 
 # -------------------------- 全局配置与枚举 --------------------------
 class RobotStateKey(Enum):
@@ -332,7 +333,7 @@ class MotorControlNode(Node):
 
         self.declare_parameter("enable_magnetic_navigation", True)
         self.declare_parameter("magnetic_test_loading_direct", False)
-        self.declare_parameter("magnetic_test_unloading_direct", True)
+        self.declare_parameter("unloading_use_magnetic_navigation", True)
         # 仅用于AUTO_CLEANING测试：清扫完成后是否自动进入LOADING。
         self.declare_parameter("auto_cleaning_finish_to_loading", True)
         self.auto_cleaning_finish_to_loading = bool(
@@ -345,7 +346,9 @@ class MotorControlNode(Node):
         )
         self.enable_magnetic_navigation = bool(self.get_parameter("enable_magnetic_navigation").value)
         self.magnetic_test_loading_direct = bool(self.get_parameter("magnetic_test_loading_direct").value)
-        self.magnetic_test_unloading_direct = bool(self.get_parameter("magnetic_test_unloading_direct").value)
+        self.unloading_use_magnetic_navigation = bool(
+            self.get_parameter("unloading_use_magnetic_navigation").value
+        )
         self.magnetic_test_unloading_active = False
         self._magnetic_unloading_request_pending = False
         self.cleaning_low_battery_threshold = float(self.get_parameter("cleaning_low_battery_threshold").value)
@@ -489,17 +492,17 @@ class MotorControlNode(Node):
                 "kinco_brush_speed_rpm must be finite and non-negative"
             )
 
-        # 双滚刷共用一个上层速度值；opposite仅对4号滚刷取反。
-        self.declare_parameter("brush_direction_mode", "same")
-        brush_direction_mode = str(
-            self.get_parameter("brush_direction_mode").value
+        # AIMotor 双滚刷模式下，opposite 仅对 4 号滚刷目标转速取反。
+        self.declare_parameter("aimotor_brush_direction_mode", "same")
+        aimotor_brush_direction_mode = str(
+            self.get_parameter("aimotor_brush_direction_mode").value
         ).strip().lower()
-        if brush_direction_mode not in ("same", "opposite"):
+        if aimotor_brush_direction_mode not in ("same", "opposite"):
             self.get_logger().warn(
-                f"brush_direction_mode={brush_direction_mode!r}无效，回退为same"
+                f"aimotor_brush_direction_mode={aimotor_brush_direction_mode!r}无效，回退为same"
             )
-            brush_direction_mode = "same"
-        self.brush_direction_mode = brush_direction_mode
+            aimotor_brush_direction_mode = "same"
+        self.aimotor_brush_direction_mode = aimotor_brush_direction_mode
 
         # AIMotor 速度模式参数：加减速度单位为电机侧 Pul/s^2，方向取 1 或 -1。
         self.declare_parameter(
@@ -522,7 +525,13 @@ class MotorControlNode(Node):
             )
 
         # UNLOADING parameters
-        self.unloading_forword_threshold = 14.0 # seconds
+        self.declare_parameter("unloading_forward_duration_sec", 14.0)
+        self.unloading_forward_duration_sec = float(
+            self.get_parameter("unloading_forward_duration_sec").value
+        )
+        if (not math.isfinite(self.unloading_forward_duration_sec)
+                or self.unloading_forward_duration_sec <= 0.0):
+            raise ValueError("unloading_forward_duration_sec must be finite and positive")
         self.unloading_turn_start_time = None
         self.unloading_turn_time_max = 30.0
         self.unloading_phase = None  # None/"FORWARD"/"UNLOADING_TURN"/"COMPLETE"
@@ -754,7 +763,7 @@ class MotorControlNode(Node):
         self._kinco_brush = (
             KincoBrushControl(
                 self.motor_ctrl, self.brush_motor_ids,
-                self.brush_direction_mode == "opposite", self._kinco_brush_can_run,
+                self._kinco_brush_can_run,
             )
             if self.brush_use_kinco and self.brush_motor_ids else None
         )
@@ -2993,7 +3002,7 @@ class MotorControlNode(Node):
             self.current_status = new_state
             # 初始化出仓阶段（仅初始化，不启动定时器）
             self._cancel_bin_process_timers()
-            self.unloading_phase = None  # 先置空，等待归位后再初始化
+            self.unloading_phase = None
             self.magnetic_test_unloading_active = False
             self.unloading_command_hold = False
             self.unloading_start_time = None  # 暂不记录启动时间
@@ -3677,7 +3686,7 @@ class MotorControlNode(Node):
             return 0.3 * self.motor_ctrl.BASE_SPEED  # 小误差（<10°）：慢速转向，防止超调
 
     def handle_unloading_step(self):
-        """出仓分步处理（修正：适配IMU更新频率，修复角度计算）"""
+        """前进出仓，停车结算后按命令进入 AUTO 或保持 HOLD。"""
         # timer 取消后可能仍有已排队回调；它不能在其他状态继续写速度。
         settling = self.unloading_phase == "UNLOADING_SETTLING"
         if not self.is_in_bin_process or (
@@ -3688,29 +3697,19 @@ class MotorControlNode(Node):
         if self.bin_process_paused:
             return
 
-        # 归位位只作为启动门槛。进入UNLOADING_FORWARD后，计时不再依赖
-        # dock_sensors & 0x02，避免归位位在出仓后释放导致状态机停在最后速度。
+        current_time = time.monotonic()
         if self.unloading_phase is None:
-            if False:
-                self.set_motors_speed(0.0, 0.0)
-                return
-            self.get_logger().info("[START] 检测到dock归位，锁存并初始化出仓流程")
             self.unloading_phase = "UNLOADING_FORWARD"
-            self.unloading_start_time = time.time()
+            self.unloading_start_time = current_time
             self.get_logger().info(f"[START] 初始化完成，当前阶段：{self.unloading_phase}")
 
-        current_time = time.time()
-        if not hasattr(self, 'yaw_stable_count_unloading'):
-            self.yaw_stable_count_unloading = 0
-
-        # ========== 阶段1：后退出仓 ==========
         if self.unloading_phase == "UNLOADING_FORWARD":
-            if current_time - self.unloading_start_time < self.unloading_forword_threshold:
-                # 出仓阶段只执行固定时长直行，不读取磁传感器，也不做磁导航纠偏。
-                # 左右轮采用相同幅值、相反符号的速度，保证底盘直线驶出。
+            if current_time - self.unloading_start_time < self.unloading_forward_duration_sec:
+                base_speed = self.motor_ctrl.BASE_SPEED
+                correction = self._unloading_magnetic_correction()
                 self.set_motors_speed(
-                    -self.motor_ctrl.BASE_SPEED,
-                    self.motor_ctrl.BASE_SPEED,
+                    -base_speed - correction,
+                    base_speed - correction,
                 )
             else:
                 self.set_motors_speed(0.0, 0.0)
@@ -3763,6 +3762,18 @@ class MotorControlNode(Node):
             self.unloading_settle_start_time = None
             self.switch_state("r")
 
+    def _unloading_magnetic_correction(self) -> float:
+        """Use a fresh sensor mask for forward steering and return zero off the line."""
+        if not (self.enable_magnetic_navigation and self.unloading_use_magnetic_navigation):
+            return 0.0
+        if (self.magnetic_mask_update_time is None
+                or not 0.0 <= time.monotonic() - self.magnetic_mask_update_time <= 0.25):
+            return 0.0
+        mask = self.magnetic_raw_mask & 0xFF
+        if mask in (0, 0xFF):
+            return 0.0
+        correction = self.magnetic_kp * calculate_magnetic_error(mask)
+        return max(-self.magnetic_max_correction, min(self.magnetic_max_correction, correction))
 
 
     # def handle_loading_step(self):
@@ -4734,7 +4745,7 @@ class MotorControlNode(Node):
         brush_results = []
         for motor_id in self.brush_motor_ids:
             motor_speed = brush_speed
-            if motor_id == 4 and self.brush_direction_mode == "opposite":
+            if motor_id == 4 and self.aimotor_brush_direction_mode == "opposite":
                 motor_speed = -brush_speed
             brush_results.append(
                 self.motor_ctrl.motor_set_speed(motor_id, motor_speed)
@@ -4745,7 +4756,7 @@ class MotorControlNode(Node):
         else:
             self.get_logger().warn(
                 f"[ROSNode] 滚刷速度下发失败：{brush_speed}，"
-                f"模式={self.brush_direction_mode}，电机={self.brush_motor_ids}"
+                f"模式={self.aimotor_brush_direction_mode}，电机={self.brush_motor_ids}"
             )
 
     # -------------------------- 异步调用方式（推荐，非阻塞） --------------------------

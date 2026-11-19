@@ -27,7 +27,7 @@ def brush(request):
     driver = Mock()
     driver.read_motor_status_word.return_value = 0x0021
     driver.read_brush_velocity.return_value = 0.0
-    controller = KincoBrushControl(driver, request.param, True, lambda source: True)
+    controller = KincoBrushControl(driver, request.param, lambda source: True)
     try:
         yield driver, controller, request.param
     finally:
@@ -41,6 +41,9 @@ def test_pause_holds_enable_then_resume_and_disable(brush):
     driver.motor_enable.assert_not_called()
     controller.request(BrushAction.RUN, 90, source="rtk")
     wait_until(lambda: controller.speed == 90)
+    assert [call.args for call in driver.motor_set_speed.call_args_list] == [
+        (motor_id, 90) for motor_id in motor_ids
+    ]
     controller.request(BrushAction.HOLD_ZERO)
     wait_until(lambda: controller.speed == 0)
     driver.motor_disable.assert_not_called()
@@ -279,7 +282,7 @@ def make_enable_brush_test_controller(**overrides):
         web_rc_last_update=0.0, web_rc_timeout=1.0, _kinco_brush=Mock(),
         web_rc_left_speed=0.0, web_rc_right_speed=0.0,
         _wheel_command_blocked_by_sensors=Mock(return_value=False),
-        set_motors_speed=Mock(), motor_ctrl=Mock(), brush_direction_mode="same",
+        set_motors_speed=Mock(), motor_ctrl=Mock(), aimotor_brush_direction_mode="same",
         motor_auto_enable=True, get_logger=Mock(), publish_state=Mock(), state_pub=Mock(),
         _cancel_kinco_motion=Mock(), _check_auto_cleaning_entry=Mock(return_value=True),
         _clear_current_stall_fault=Mock(), _initialize_control_motors=Mock(),
@@ -319,6 +322,17 @@ def test_manual_wheel_control_keeps_configured_brush(overrides):
     controller.current_control_mode = "AUTO_CLEANING"
     controller._service_enable_brush_test()
     controller.motor_ctrl.motor_set_speed.assert_called_with(3, 0.0)
+
+
+def test_aimotor_opposite_reverses_only_brush_four():
+    controller = make_enable_brush_test_controller(
+        brush_motor_ids=[3, 4], brush_use_kinco=False,
+        aimotor_brush_direction_mode="opposite",
+    )
+    controller.set_brush_speed(70.0)
+    assert [call.args for call in controller.motor_ctrl.motor_set_speed.call_args_list] == [
+        (3, 70.0), (4, -70.0),
+    ]
 
 
 def test_mqtt_remote_and_wheel_hold_do_not_cancel_brush_until_explicit_stop():

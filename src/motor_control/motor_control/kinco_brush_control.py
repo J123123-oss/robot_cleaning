@@ -15,10 +15,9 @@ class BrushAction(IntEnum):
 
 
 class KincoBrushControl:
-    def __init__(self, driver, motor_ids, opposite, can_run):
+    def __init__(self, driver, motor_ids, can_run):
         self._driver = driver
         self._motor_ids = tuple(motor_ids)
-        self._opposite = opposite
         self._can_run = can_run
         self._condition = threading.Condition()
         self._desired = (BrushAction.DISABLE, 0.0, None)
@@ -169,7 +168,7 @@ class KincoBrushControl:
 
         for motor_id in self._motor_ids:
             if not self._driver.motor_set_speed(
-                motor_id, self._motor_speed(motor_id, command[1]),
+                motor_id, command[1],
                 send_allowed=send_allowed,
             ):
                 with self._condition:
@@ -189,12 +188,9 @@ class KincoBrushControl:
             self._deadline = None
         return None
 
-    def _motor_speed(self, motor_id, speed):
-        return -speed if self._opposite and motor_id == 4 else speed
-
     def _write_speed(self, speed):
         results = [
-            self._driver.motor_set_speed(motor_id, self._motor_speed(motor_id, speed))
+            self._driver.motor_set_speed(motor_id, speed)
             for motor_id in self._motor_ids
         ]
         if not all(results):

@@ -35,10 +35,10 @@ def generate_launch_description():
         default_value=TextSubstitution(text="2"),
         description="滚刷电机数量，只支持0、1或2",
     )
-    declare_brush_direction_mode_arg = DeclareLaunchArgument(
-        "brush_direction_mode",
+    declare_aimotor_brush_direction_mode_arg = DeclareLaunchArgument(
+        "aimotor_brush_direction_mode",
         default_value=TextSubstitution(text="same"),
-        description="双滚刷方向模式：same或opposite",
+        description="AIMotor 双滚刷方向模式：same 或 opposite",
     )
     declare_brush_use_kinco_arg = DeclareLaunchArgument(
         "brush_use_kinco",
@@ -116,7 +116,16 @@ def generate_launch_description():
     )
 
     declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="true"), description="LOADING直接进入后退磁导航测试")
-    declare_magnetic_test_unloading_arg = DeclareLaunchArgument("magnetic_test_unloading_direct", default_value=TextSubstitution(text="true"), description="允许MQTT磁导航测试指令直接出仓")
+    declare_unloading_magnetic_arg = DeclareLaunchArgument(
+        "unloading_use_magnetic_navigation",
+        default_value=TextSubstitution(text="true"),
+        description="出仓沿纵向磁条纠偏，无磁条时继续直行",
+    )
+    declare_unloading_duration_arg = DeclareLaunchArgument(
+        "unloading_forward_duration_sec",
+        default_value=TextSubstitution(text="14.0"),
+        description="出仓前进总时长（秒），包含磁条段和无磁条段",
+    )
     declare_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("cleaning_low_battery_threshold", default_value=TextSubstitution(text="90.0"), description="清扫/出仓低电量阈值(%)")
     declare_auto_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("auto_cleaning_low_battery_threshold", default_value=TextSubstitution(text="20.0"), description="AUTO_CLEANING中途低电量暂停阈值(%)")
     declare_auto_cleaning_finish_to_loading_arg = DeclareLaunchArgument("auto_cleaning_finish_to_loading", default_value=TextSubstitution(text="false"), description="AUTO_CLEANING清扫完成后是否自动进入LOADING")
@@ -174,15 +183,20 @@ def generate_launch_description():
             {
                 'enable_magnetic_navigation': ParameterValue(LaunchConfiguration('enable_magnetic_navigation'), value_type=bool),
                 'magnetic_test_loading_direct': ParameterValue(LaunchConfiguration('magnetic_test_loading_direct'), value_type=bool),
-                'magnetic_test_unloading_direct': ParameterValue(LaunchConfiguration('magnetic_test_unloading_direct'), value_type=bool),
+                'unloading_use_magnetic_navigation': ParameterValue(
+                    LaunchConfiguration('unloading_use_magnetic_navigation'), value_type=bool
+                ),
+                'unloading_forward_duration_sec': ParameterValue(
+                    LaunchConfiguration('unloading_forward_duration_sec'), value_type=float
+                ),
                 'cleaning_low_battery_threshold': ParameterValue(LaunchConfiguration('cleaning_low_battery_threshold'), value_type=float),
                 'auto_cleaning_low_battery_threshold': ParameterValue(LaunchConfiguration('auto_cleaning_low_battery_threshold'), value_type=float),
                 'auto_cleaning_finish_to_loading': ParameterValue(LaunchConfiguration('auto_cleaning_finish_to_loading'), value_type=bool),
                 'brush_motor_count': ParameterValue(
                     LaunchConfiguration('brush_motor_count'), value_type=int
                 ),
-                'brush_direction_mode': LaunchConfiguration(
-                    'brush_direction_mode'
+                'aimotor_brush_direction_mode': LaunchConfiguration(
+                    'aimotor_brush_direction_mode'
                 ),
                 'brush_use_kinco': ParameterValue(
                     LaunchConfiguration('brush_use_kinco'), value_type=bool
@@ -364,7 +378,7 @@ def generate_launch_description():
     ld.add_action(declare_enable_geofence_arg)
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_brush_motor_count_arg)
-    ld.add_action(declare_brush_direction_mode_arg)
+    ld.add_action(declare_aimotor_brush_direction_mode_arg)
     ld.add_action(declare_brush_use_kinco_arg)
     ld.add_action(declare_motor_auto_enable_arg)
     ld.add_action(declare_enable_brush_test_arg)
@@ -378,7 +392,8 @@ def generate_launch_description():
         ld.add_action(declare_kinco_motor_direction_arg)
     ld.add_action(declare_enable_magnetic_navigation_arg)
     ld.add_action(declare_magnetic_test_loading_arg)
-    ld.add_action(declare_magnetic_test_unloading_arg)
+    ld.add_action(declare_unloading_magnetic_arg)
+    ld.add_action(declare_unloading_duration_arg)
     ld.add_action(declare_cleaning_low_battery_threshold_arg)
     ld.add_action(declare_auto_cleaning_low_battery_threshold_arg)
     ld.add_action(declare_auto_cleaning_finish_to_loading_arg)

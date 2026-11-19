@@ -126,6 +126,7 @@ flowchart TD
 ```
 
 - `motor_auto_enable=true` 时，底盘启动后进入 `ENABLE`，步科滚刷完成初始化并保持失能。`ENABLE` 和 `START` 仅主动使能 AIMotor，步科在接到有效运行指令后按需使能。磁导航确认已在仓时，`ENABLE` 会经进仓完成流程转为 `DISABLE`。
+- `START` 和独立 `UNLOADING` 共用出仓前进流程。起步经过满位 T 型磁条时采用基础轮速，沿纵向磁条行驶时按磁偏差纠偏，驶出磁条后恢复基础轮速，直至从出仓起步计时达到 14 秒。`unloading_use_magnetic_navigation:=false` 时全程采用基础轮速。独立出仓结算后保持 `HOLD`。
 - `HOLD` 用于停车、接管和续扫准备。Web `MANUAL` 是独占手动控制入口，MQTT `RC_ENABLE` 用于遥控器接管。切回自动模式后，`rtk_nav` 重新检查航向门控与接入航段。
 - `rtk_nav` 经 `/rtk/nav_state` 发送带 `pause_reason`、`auto_resume`、递增 `seq` 的 JSON。底盘丢弃旧序号。`auto_resume=true` 保持 `AUTO_CLEANING` 并停车，`auto_resume=false` 切换到 `HOLD/NORMAL`，等待人工重新进入 AUTO。
 - 底盘仅在仍为 AUTO 且未进入出仓或进仓流程时处理 `COMPLETED`。导航在完成和模式切换时清理上下文，周期重复的非 AUTO 消息只维持停车，避免反复重置和刷屏。
@@ -149,7 +150,7 @@ flowchart TD
 | `HOLD_ZERO` | 清扫区间内暂时零速，例如可以自动恢复的 RTK 暂停 | 按减速斜坡降到零，保持当前使能状态，恢复时可直接下发转速 |
 | `DISABLE` | 清扫开始前、到达 `#stop` 标记后、返仓、结束或人工介入暂停 | 正常流程先送零速，确认停稳后失能。停稳超时或回读失败转故障失能 |
 
-键盘 `z` 和正常关闭服务沿用先减速再失能的流程。故障和异常退出使用紧急失能。步科在速度模式 `6060:00=3` 下应用 `6083:00`、`6084:00` 的加减速。设置方向时先发零速和 `6040:00=0x0006`，实时读取 `6041` 确认失能，再写入并回读 `607E:00`。`+1` 写入 `0`，`-1` 写入 `1`。`brush_direction_mode=opposite` 会另对 ID 4 的目标转速取反。
+键盘 `z` 和正常关闭服务沿用先减速再失能的流程。故障和异常退出使用紧急失能。步科在速度模式 `6060:00=3` 下应用 `6083:00`、`6084:00` 的加减速。设置方向时先发零速和 `6040:00=0x0006`，实时读取 `6041` 确认失能，再写入并回读 `607E:00`。`+1` 写入 `0`，`-1` 写入 `1`。步科转向由 `kinco_motor_direction_3/4` 配置。
 
 正常退出服务时，AIMotor 零速并保持使能，重启实时回读确认后可沿用使能状态。步科零速失能并停止节点保护请求。协议、方向配置和 CAN 反馈见[步科滚刷驱动](docs/kinco_brush_driver.md)。
 
@@ -166,9 +167,12 @@ flowchart TD
 | `auto_cleaning_finish_to_loading` | `false` | 清扫结束停在 `HOLD`，设为 `true` 后进入 `LOADING` |
 | `cleaning_low_battery_threshold` / `auto_cleaning_low_battery_threshold` | `90.0` / `20.0` | `START` 出仓最低电量与自动清扫运行中低电量阈值，单位 % |
 | `enable_geofence` | `false` | 启用路线电子围栏校验与越界保护 |
-| `magnetic_test_loading_direct` / `magnetic_test_unloading_direct` | `true` / `true` | 允许相关进仓、出仓指令直接进入磁导航测试流程 |
+| `magnetic_test_loading_direct` | `true` | 允许 `LOADING` 直接进入后退磁导航测试流程 |
+| `unloading_use_magnetic_navigation` | `true` | 出仓使用纵向磁条纠偏，同时需要 `enable_magnetic_navigation=true` |
+| `unloading_forward_duration_sec` | `14.0` | 含磁条段及后续直行段的总前进时长，停车结算时间另计 |
 | `brush_use_kinco` | `true` | 步科与 AIMotor 混合协议，设为 `false` 可使用全 AIMotor |
-| `brush_motor_count` / `brush_direction_mode` | `2` / `same` | 可配置 0、1 或 2 台，单刷使用 ID 3，默认双刷下发同符号转速 |
+| `brush_motor_count` | `2` | 可配置 0、1 或 2 台，单刷使用 ID 3 |
+| `aimotor_brush_direction_mode` | `same` | 仅用于 AIMotor 滚刷。设为 `opposite` 时对 ID 4 目标转速额外取反 |
 | `kinco_motor_direction_3` / `kinco_motor_direction_4` | `-1` / `-1` | 各 ID 的驱动器方向极性 |
 | `kinco_encoder_resolution` / `kinco_reduction_ratio` | `65536` / `10.0` | 编码器每转计数与减速比，按现场设备核对 |
 | `kinco_acceleration_rps2` / `kinco_deceleration_rps2` | `10.0` / `10.0` | 电机轴加速与减速，单位 rps/s |
