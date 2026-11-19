@@ -25,7 +25,7 @@ def generate_launch_description():
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
         "robot_ID",  # 参数名 和ROS1的 arg name="robot_ID" 对应
-        default_value=TextSubstitution(text="HANGZHOU_1"),  # 默认值
+        default_value=TextSubstitution(text="QUWO_Fuyu"),  # 默认值
         description="机器人唯一标识ID，用于拼接MQTT主题"
     )
 
