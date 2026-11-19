@@ -124,6 +124,36 @@ def test_stop_feedback_timeout_still_disables_every_brush(brush):
     assert driver.motor_disable.call_count == len(motor_ids)
 
 
+@pytest.mark.parametrize("urgent", [False, True])
+def test_stop_waits_for_slow_brush_only_during_normal_disable(brush, monkeypatch, urgent):
+    driver, controller, motor_ids = brush
+    controller.request(BrushAction.RUN, 90, source="rtk")
+    controller.wait_idle()
+    clock = SimpleNamespace(elapsed=0.0)
+
+    def advance(seconds):
+        clock.elapsed += seconds
+
+    def read_velocity(motor_id, timeout):
+        driver.motor_disable.assert_not_called()
+        return 2.0 if clock.elapsed < 1.5 else 0.0
+
+    driver.read_brush_velocity.side_effect = read_velocity
+    monkeypatch.setattr(
+        "motor_control.kinco_brush_control.time",
+        SimpleNamespace(monotonic=lambda: clock.elapsed, sleep=advance),
+    )
+    controller.request(BrushAction.DISABLE, urgent=urgent)
+    controller.wait_idle()
+
+    assert controller.fault is None
+    assert driver.motor_disable.call_count == len(motor_ids)
+    if urgent:
+        driver.read_brush_velocity.assert_not_called()
+    else:
+        assert clock.elapsed >= 1.5
+
+
 def test_command_expiry_disables_without_a_new_message(brush):
     driver, controller, motor_ids = brush
     controller.request(BrushAction.RUN, 90, source="rtk", valid_for=0.15)

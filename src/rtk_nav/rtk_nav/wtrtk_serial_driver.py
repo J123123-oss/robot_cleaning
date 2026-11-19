@@ -106,7 +106,12 @@ class WTRTKSerialDriver(Node):
             self.get_logger().warn("Invalid GGA frame (no checksum)")
             return None
 
-        fields = frame.split(',')
+        checksum = frame[star_pos + 1:]
+        if len(checksum) != 2 or any(char not in '0123456789abcdefABCDEF' for char in checksum):
+            self.get_logger().warn("Invalid GGA frame (invalid checksum format)")
+            return None
+
+        fields = frame[:star_pos].split(',')
         # 仅字段0-9是当前解析所必需的；部分设备会省略末尾差分时间等空字段。
         if len(fields) < 10:
             self.get_logger().warn(f"Invalid GGA fields count: {len(fields)} (expected >=10)")

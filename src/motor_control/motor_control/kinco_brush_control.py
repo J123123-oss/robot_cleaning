@@ -5,6 +5,9 @@ import time
 from enum import IntEnum
 
 
+BRUSH_STOP_TIMEOUT_SEC = 3.0
+
+
 class BrushAction(IntEnum):
     DISABLE = 0
     HOLD_ZERO = 1
@@ -201,7 +204,7 @@ class KincoBrushControl:
         if not self._enabled and not urgent:
             return
         self._write_speed(0.0)
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + BRUSH_STOP_TIMEOUT_SEC
         for motor_id in sorted(self._enabled):
             while not urgent:
                 with self._condition:
