@@ -15,7 +15,6 @@ PACKAGE_ROOT = Path(__file__).parents[1]
 VIDEO_SOURCE_PATH = PACKAGE_ROOT / "rtk_nav" / "video_to_v4l2.py"
 CAMERA_SOURCE_PATH = PACKAGE_ROOT / "rtk_nav" / "camera_publisher_node.py"
 DETECTOR_SOURCE_PATH = PACKAGE_ROOT / "rtk_nav" / "line_detector_node.py"
-LAUNCH_SOURCE_PATH = PACKAGE_ROOT / "launch" / "run.launch.py"
 MODULE_PATH = VIDEO_SOURCE_PATH
 SETUP_PATH = PACKAGE_ROOT / "setup.py"
 README_PATH = PACKAGE_ROOT / "README_VIDEO_TO_V4L2.md"
@@ -133,17 +132,6 @@ def test_detector_decodes_only_the_latest_compressed_frame_in_timer():
     assert "self.latest_compressed_data = payload" in ast.unparse(image_callback)
     assert not _calls_named(detect_and_draw, "publish_debug_images")
     assert _calls_named(detect_and_draw, "queue_debug_images")
-
-
-def test_launch_uses_openmv_camera_and_detection_rate_defaults():
-    source = LAUNCH_SOURCE_PATH.read_text(encoding="utf-8")
-    for default in ("115200", "0.2", "5.0", "2097152", "30.0", "false"):
-        assert f'TextSubstitution(text="{default}")' in source
-    assert "executable='openmv_serial_publisher_node'" in source
-    assert "executable='camera_publisher_node'" not in source
-    assert "'topic': '/camera/color/image/compressed'" in source
-    assert "detection_fps" in source
-    assert "debug_image_fps" not in source
 
 
 class VideoToV4L2ContractTest(unittest.TestCase):

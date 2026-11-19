@@ -1,7 +1,7 @@
 # Video to V4L2 and compressed vision pipeline
 
-This is a legacy offline replay tool. The normal robot launch uses the OpenMV
-serial publisher and does not start camera_publisher_node.
+Use this tool for offline replay. Start `camera_publisher_node` and the grid
+line detector explicitly for this workflow.
 
 The recorded video path is portrait-preserving:
 

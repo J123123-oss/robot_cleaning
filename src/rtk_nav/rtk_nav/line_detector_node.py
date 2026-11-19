@@ -1233,7 +1233,7 @@ class GridLineDetector(Node):
         self.declare_parameter('fallback_path_axis_image_deg', -5.0)
         # 旧版细栅格相机参考轴参数；保留用于兼容配置，检测改用运行轴法向。
         self.declare_parameter('angle_reference_axis_image_deg', 0.0)
-        # OpenMV 发布前的图像旋转角度；180 度时需要反转横向误差符号。
+        # 图像源发布前旋转 180 度时，需要反转横向误差符号。
         self.declare_parameter('image_rotation_deg', 0)
         # 已停用的旧参数声明，仅保留以兼容历史配置文件。
         # self.declare_parameter('target_line_offset_m', float('nan'))
