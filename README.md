@@ -1,38 +1,30 @@
 # RTK 循迹 ROS2
 
-## 当前运行版本
+ROS2 Jazzy 室外清扫系统。`motor_control` 管理底盘状态、进出仓和电机保护，`rtk_nav` 管理航点跟踪和自动清扫时的滚刷指令。整机默认使用 AIMotor 驱动左右轮，步科 Kinco iSMK 驱动两台滚刷。
 
-系统由 `motor_control` 底盘状态机和 `rtk_nav` 航点导航节点组成。AUTO 清扫的有效路径为：
+## 启动与测试
 
-`AUTO_CLEANING` → 航向门控停车 → `INITIAL_MOVE`/`WAYPOINT_MOVE` → 航点原地校准 → `COMPLETED` → `LOADING`。
+先配置设备对应的路径、串口和 `robot_ID`，并初始化 CAN 接口。整机默认启用 `wtrtk_serial_driver` 接收实时 RTK。离线回放使用 `wtrtk_parse_txt`，由回放节点单独提供 RTK 数据。
 
-进入 AUTO 后，`rtk_nav` 必须同时确认定位 Fixed、定向 Fixed 且 GGA 数据有效，然后连续采集 5 秒短窗和 30 秒收敛窗（分别 ≤1°、≤2°）。运行中 Float ≤3 秒桥接已有 Fixed 历史；超过 3 秒清空窗口，重新完整采集 5 秒短窗和 30 秒收敛窗。
+```bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch rtk_nav run.launch.py
+```
 
-自动恢复型暂停保持底盘 `AUTO_CLEANING`，只输出零速度；`calib_stuck`、航向校准失败、边界 GPS 撤退超时、force bearing 极限环，以及航向门控 600 秒超时属于人工介入暂停，底盘切换 `HOLD`。导航状态通过 `/rtk/nav_state` 发布 JSON，包含 `pause_reason`、`auto_resume` 和递增 `seq`。
+仅测清扫、完成后停在 `HOLD` 时使用 `auto_cleaning_finish_to_loading:=false`（整机默认值）。独立运行 `motor_control` 时，此参数默认 `true`，测试时需显式关闭。若有配置返仓航点，RTK 仍会先导航到该航点，然后发出 `COMPLETED`。
 
-暂停协议按结构化字段处理：`auto_resume=true` 时底盘不改变控制模式，只清零左右轮和滚刷速度；`auto_resume=false` 时底盘将 `AUTO_CLEANING` 切换到 `HOLD/NORMAL`，等待人工重新进入 AUTO。底盘按 `seq` 丢弃旧状态，不能仅根据 `nav_state="PAUSE"` 字符串决策。
+室内无 RTK 时可通过 `enable_brush_test:=true` 测试手动滚刷。在其他启停条件满足时，滚刷在手动待机、行驶、遥控或 MQTT 轮速 `HOLD` 中保持测试转速。键盘 `h`、显式失能、进出仓和保护停机优先。进入 RTK 自动模式后由 `rtk_nav` 接管。
 
-1、 打点建图，保存路径，到launch.py中切换对应路径
-    地图通过起始点经纬度，倾角，指定轨迹起点、地图间隔等确定。
+```bash
+ros2 launch rtk_nav run.launch.py enable_brush_test:=true
+```
 
-2、 播放录制bag测试，启动launch中的wtrtk_parse_txt
+键盘指令通过 `/keyboard/control` 发布。例如下面的 `r` 请求进入 RTK 导航。`n` 和兼容指令 `m` 切回 `NORMAL`，`w/s/a/d` 控制手动行驶，`x` 请求使能，`h` 停车，`z` 请求失能。
 
-3、 通过话题发布
-
-    ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'r'}" -1
-    进入RTK导航模式，默认为Normal模式可以键盘发布控制不能RTK导航。
-
-    通过话题发布
-    ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'n'}" -1
-    切换正常模式，键盘控制，发布w/s/a/d控制运动，z停止，x使能
-
-    通过话题发布
-    ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'm'}" -1
-    切换 NORMAL 模式（旧 REMOTE 模式已废弃）
-
-4、 实时导航测试
-    注释wtrtk_parse_txt，启动launch中的wtrtk_serial_driver
-    进入实时导航，提前进行步骤1确定路径
+```bash
+ros2 topic pub /keyboard/control std_msgs/msg/String "{data: 'r'}" -1
+```
 
 ## 路径切换与区域跳转
 
@@ -114,373 +106,104 @@ ros2 service call /query_volt_curr std_srvs/srv/Trigger "{}"
 ros2 topic echo /charging_fault_code std_msgs/msg/Int16
 
 
-## RTK导航流程图
-
-### 自动清扫简化流程
+## 底盘状态机与 RTK 作业
 
 ```mermaid
-graph LR
-    DISABLE["DISABLE<br/>失能"] -->|"ENABLE + START"| START["START<br/>出仓"]
-    START -->|"出仓完成并结算2s"| AUTO_CLEANING["AUTO_CLEANING<br/>航向门控停车"]
-    AUTO_CLEANING -->|"5s≤1°且30s≤2°"| INITIAL_MOVE["INITIAL_MOVE / WAYPOINT_MOVE<br/>RTK巡航清扫"]
-    INITIAL_MOVE -->|"导航完成"| LOADING["LOADING<br/>GPS/激光对位进仓"]
-    LOADING -->|"进仓完成"| DISABLE
-
-    style DISABLE fill:#ff6b6b,stroke:#333,color:#fff
-    style START fill:#6bcb77,stroke:#333
-    style AUTO_CLEANING fill:#9b59b6,stroke:#333,color:#fff
-    style INITIAL_MOVE fill:#9b59b6,stroke:#333,color:#fff
-    style LOADING fill:#4d96ff,stroke:#333,color:#fff
+flowchart TD
+    BOOT["上电零速初始化"] -->|"自动使能且初始化成功"| ENABLE["ENABLE 手动待机或行驶"]
+    BOOT -->|"关闭自动使能或初始化失败"| DISABLE["DISABLE 失能"]
+    DISABLE -->|"ENABLE"| ENABLE
+    ENABLE -->|"START，电量达标"| START["START 出仓"]
+    DISABLE -->|"START，电量达标"| START
+    START -->|"标准出仓，结算 2 秒"| AUTO["AUTO_CLEANING 航向门控与清扫"]
+    START -->|"独立出仓完成"| HOLD["HOLD / NORMAL"]
+    AUTO -->|"自动恢复型暂停"| PAUSE["零速等待，保留 AUTO"]
+    PAUSE -->|"恢复条件满足"| AUTO
+    AUTO -->|"需人工介入"| HOLD
+    AUTO -->|"COMPLETED，默认配置"| HOLD
+    AUTO -->|"COMPLETED，启用自动进仓"| LOAD["LOADING 对位进仓"]
+    LOAD -->|"进仓完成"| DISABLE
 ```
 
-### 主状态机
-```mermaid
-graph TD
-    %% ===== 入口 =====
-    STARTUP["上电启动"] --> DISABLE
+- `motor_auto_enable=true` 时，底盘启动后进入 `ENABLE`，步科滚刷完成初始化并保持失能。`ENABLE` 和 `START` 仅主动使能 AIMotor，步科在接到有效运行指令后按需使能。磁导航确认已在仓时，`ENABLE` 会经进仓完成流程转为 `DISABLE`。
+- `HOLD` 用于停车、接管和续扫准备。Web `MANUAL` 是独占手动控制入口，MQTT `RC_ENABLE` 用于遥控器接管。切回自动模式后，`rtk_nav` 重新检查航向门控与接入航段。
+- `rtk_nav` 经 `/rtk/nav_state` 发送带 `pause_reason`、`auto_resume`、递增 `seq` 的 JSON。底盘丢弃旧序号。`auto_resume=true` 保持 `AUTO_CLEANING` 并停车，`auto_resume=false` 切换到 `HOLD/NORMAL`，等待人工重新进入 AUTO。
+- 底盘仅在仍为 AUTO 且未进入出仓或进仓流程时处理 `COMPLETED`。导航在完成和模式切换时清理上下文，周期重复的非 AUTO 消息只维持停车，避免反复重置和刷屏。
 
-    %% ===== 电机初始化 =====
-    DISABLE -->|"ENABLE"| ENABLE["ENABLE<br/>电机使能"]
-    ENABLE -->|"DISABLE"| DISABLE
+### RTK 执行流程
 
-    %% ===== HOLD 中枢 =====
-    ENABLE -->|"HOLD"| HOLD["HOLD<br/>电机停止，保持使能"]
-    HOLD -->|"DISABLE"| DISABLE
-    HOLD -->|"ENABLE"| ENABLE
+1. **进入 AUTO**。停车等待定位 Fixed、定向 Fixed 和有效 GGA，通过 5 秒短窗与 30 秒收敛窗，两者航向波动上限均为 1°。需要接入既有航段时先做航向对齐。
+2. **巡迹与到点**。`INITIAL_MOVE` 接近首点，`WAYPOINT_MOVE` 跟踪后续航段。进入 0.10 m 范围后先停车，首点需要连续 5 个新可信定位样本，普通点需要 3 个。确认到点后进入 `WAYPOINT_CALIB`，达到目标航向精度再推进索引。切点、恢复和重建航段时同步清理或重算 Stanley 起点及方向。
+3. **定位异常与恢复**。导航用 GGA 原始时间戳识别重复和乱序样本，定位跳变时保留可信位置，等待连续 3 个新样本满足恢复条件。运行中满足条件时可短时使用 IMU/里程计或定向 Float 降级，备用定位和平滑切回期间暂停累计到点确认。超出降级条件后进入相应暂停流程。详见[导航定位与到点确认](docs/navigation_position_safety.md)。
+4. **返仓与任务结算**。到达当前文件最后一个航点后，若有配置返仓航点则追加并行驶到该点，此段关闭滚刷。导航发出 `COMPLETED` 并复位到 `IDLE`，若存在下一条路径则预加载，等待下次任务。底盘按 `auto_cleaning_finish_to_loading` 决定停在 `HOLD/NORMAL` 或进入 `LOADING`。
 
-    %% ===== 全自动清扫 =====
-    HOLD -->|"AUTO_CLEANING"| AUTO_CLEANING["AUTO_CLEANING<br/>RTK导航/航向门控"]
-    ENABLE -->|"AUTO_CLEANING"| AUTO_CLEANING
-    AUTO_CLEANING -->|"自动恢复型 PAUSE<br/>保持AUTO_CLEANING，零速度"| AUTO_GATE["航向/RTK门控暂停"]
-    AUTO_GATE -->|"Fixed+GGA有效，稳定窗口通过"| AUTO_CLEANING
-    AUTO_GATE -->|"600s未通过，错误码64"| HOLD
-    AUTO_CLEANING -->|"人工介入型 PAUSE<br/>底盘切换HOLD"| HOLD
-    AUTO_CLEANING -->|"DISABLE 失能"| DISABLE
-    AUTO_CLEANING -->|"导航完成 COMPLETED<br/>自动触发"| LOADING
+导航行驶中若航向异常持续多个控制周期，先原地重对当前航段；反复校准时可切换到目标实时方位角。门控超时、校准卡滞、边界撤退超时和实时方位角持续背离等情况转人工介入。边界传感器阻挡校准时，可按导航状态执行 GPS 撤退和重新对准。
 
-    %% ===== 出仓/开始作业 =====
-    HOLD -->|"START"| U_CHECK{"电量 ≥ 90%？"}
-    U_CHECK -->|"是"| START["START<br/>出仓流程"]
-    U_CHECK -->|"否，拒绝执行"| HOLD
-    START -->|"出仓完成"| START_DONE["出仓完成<br/>HOLD结算2s"]
-    START -->|"HOLD 强制中断"| HOLD
+## 步科滚刷
 
-    %% ===== 进仓 =====
-    HOLD -->|"LOADING"| L_CHECK{"距进仓点 ≤ 10m？"}
-    L_CHECK -->|"是"| LOADING["LOADING<br/>激光对位进仓"]
-    L_CHECK -->|"否，拒绝执行"| HOLD
-    LOADING -->|"进仓完成"| LOADING_DONE["LOADING 完成<br/>complete_state=True<br/>等待后续指令"]
-    LOADING -->|"HOLD 强制中断"| HOLD
+电机 ID 1、2 使用 AIMotor，ID 3、4 默认使用步科 iSMK，两种协议共用同一 CAN 接口和接收线程。混合协议下，`rtk_nav` 经 `/rtk/motion_command` 在同一带时间戳的消息中发布轮速和滚刷指令；全 AIMotor 配置使用兼容话题 `/rtk/motor_speed`。
 
-    %% ===== 进出仓期间保护 =====
-    START -.->|"仅接受 HOLD / DISABLE"| START
-    LOADING -.->|"仅接受 HOLD / DISABLE"| LOADING
+| 滚刷指令 | 使用场景 | 步科执行 |
+| --- | --- | --- |
+| `RUN` | `#start` 标记航点完成校准并推进后，清扫区间内收到有效运动指令 | 按需使能，实时回读 `6041` 确认全部已配置滚刷使能后才发送非零目标转速 |
+| `HOLD_ZERO` | 清扫区间内暂时零速，例如可以自动恢复的 RTK 暂停 | 按减速斜坡降到零，保持当前使能状态，恢复时可直接下发转速 |
+| `DISABLE` | 清扫开始前、到达 `#stop` 标记后、返仓、结束或人工介入暂停 | 正常流程先送零速，确认停稳后失能。停稳超时或回读失败转故障失能 |
 
-    %% ===== 出仓/进仓完成后续 =====
-    START_DONE -->|"结算完成"| AUTO_CLEANING
-    LOADING_DONE -->|"补发3条完成消息"| DISABLE
+键盘 `z` 和正常关闭服务沿用先减速再失能的流程。故障和异常退出使用紧急失能。步科在速度模式 `6060:00=3` 下应用 `6083:00`、`6084:00` 的加减速。设置方向时先发零速和 `6040:00=0x0006`，实时读取 `6041` 确认失能，再写入并回读 `607E:00`。`+1` 写入 `0`，`-1` 写入 `1`。`brush_direction_mode=opposite` 会另对 ID 4 的目标转速取反。
 
-    %% ===== MQTT 遥控接管流程 =====
-    RC_ENABLE["RC_ENABLE<br/>MQTT启用遥控器"] -->|"保存当前状态<br/>立即停车<br/>rc_control=True"| RC_ACTIVE["遥控接管中<br/>使用NORMAL键盘逻辑<br/>优先级高于AUTO_CLEANING"]
-    RC_ACTIVE -->|"RC_DISABLE<br/>MQTT关闭遥控器"| RESTORE["恢复原控制模式<br/>继续原流程"]
+正常退出服务时，AIMotor 零速并保持使能，重启实时回读确认后可沿用使能状态。步科零速失能并停止节点保护请求。协议、方向配置和 CAN 反馈见[步科滚刷驱动](docs/kinco_brush_driver.md)。
 
-    %% RC_ENABLE 可从任意状态进入（AUTO_CLEANING下也允许）
-    HOLD -.->|"MQTT: RC_ENABLE"| RC_ENABLE
-    AUTO_CLEANING -.->|"MQTT: RC_ENABLE"| RC_ENABLE
-    LOADING_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
-    START_DONE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
-    DISABLE -.->|"MQTT: RC_ENABLE"| RC_ENABLE
+## 关键参数
 
-    RESTORE --> HOLD
+### 整机启动参数
 
-    %% ===== 样式 =====
-    style STARTUP fill:#e1e1e1,stroke:#999
-    style DISABLE fill:#ff6b6b,stroke:#333,color:#fff
-    style HOLD fill:#ffd93d,stroke:#333
-    style START fill:#6bcb77,stroke:#333
-    style START_DONE fill:#b8e6c8,stroke:#6bcb77
-    style LOADING fill:#4d96ff,stroke:#333,color:#fff
-    style LOADING_DONE fill:#a8d1ff,stroke:#4d96ff
-    style AUTO_CLEANING fill:#9b59b6,stroke:#333,color:#fff
-    style AUTO_GATE fill:#9b59b6,stroke:#333,color:#fff
-    style ENABLE fill:#dfe6e9,stroke:#333
-    style U_CHECK fill:#ffeaa7,stroke:#333
-    style L_CHECK fill:#ffeaa7,stroke:#333
-    style RC_ENABLE fill:#e17055,stroke:#333,color:#fff
-    style RC_ACTIVE fill:#fab1a0,stroke:#e17055
-    style RESTORE fill:#74b9ff,stroke:#333
-```
+表中默认值来自 `ros2 launch rtk_nav run.launch.py`，可用 `参数名:=值` 覆盖。
 
-```mermaid
-graph TD
-    subgraph 外部事件中断
-        GPS_NONFIX["定位/定向非Fixed<br/>或GGA无效"] --> PAUSE_AUTO["PAUSE<br/>rtk_not_fixed<br/>auto_resume=true"]
-        RTK_TIMEOUT["RTK断流或零角度>1s"] --> PAUSE_AUTO2["PAUSE<br/>rtk_timeout<br/>auto_resume=true"]
-        HDG_TIMEOUT["运行中航向误差>15°持续15s"] --> PAUSE_AUTO3["PAUSE<br/>heading_timeout<br/>auto_resume=true"]
-        PAUSE_AUTO --> GPS_FIX["定位、定向Fixed且GGA有效"] --> GATE["重新通过5s/30s航向门控"] --> RESUME["恢复pre_pause_state"]
-        PAUSE_AUTO2 --> RTK_FRESH["/wtrtk_data重新新鲜"] --> RTK_QUALITY{"当前仍为双Fixed且GGA有效?"}
-        RTK_QUALITY -- 是 --> RESUME
-        RTK_QUALITY -- 否 --> PAUSE_AUTO
-        PAUSE_AUTO3 --> HDG_NORMAL["航向数据恢复正常"] --> RESUME
+| 参数 | Launch 默认值 | 用途 |
+| --- | --- | --- |
+| `motor_auto_enable` | `true` | 启动零速初始化后进入 `ENABLE` |
+| `enable_brush_test` | `false` | 手动滚刷测试开关，步科测试目标转速为输出轴 100 r/min |
+| `auto_cleaning_finish_to_loading` | `false` | 清扫结束停在 `HOLD`，设为 `true` 后进入 `LOADING` |
+| `cleaning_low_battery_threshold` / `auto_cleaning_low_battery_threshold` | `90.0` / `20.0` | `START` 出仓最低电量与自动清扫运行中低电量阈值，单位 % |
+| `enable_geofence` | `false` | 启用路线电子围栏校验与越界保护 |
+| `magnetic_test_loading_direct` / `magnetic_test_unloading_direct` | `true` / `true` | 允许相关进仓、出仓指令直接进入磁导航测试流程 |
+| `brush_use_kinco` | `true` | 步科与 AIMotor 混合协议，设为 `false` 可使用全 AIMotor |
+| `brush_motor_count` / `brush_direction_mode` | `2` / `same` | 可配置 0、1 或 2 台，单刷使用 ID 3，默认双刷下发同符号转速 |
+| `kinco_motor_direction_3` / `kinco_motor_direction_4` | `-1` / `-1` | 各 ID 的驱动器方向极性 |
+| `kinco_encoder_resolution` / `kinco_reduction_ratio` | `65536` / `10.0` | 编码器每转计数与减速比，按现场设备核对 |
+| `kinco_acceleration_rps2` / `kinco_deceleration_rps2` | `10.0` / `10.0` | 电机轴加速与减速，单位 rps/s |
+| `kinco_brush_speed_rpm` | `110.0` | 滚刷输出轴速度上限，单位 r/min |
+| `kinco_peak_current_a` | `47.9` | 驱动器电流反馈换算用的峰值电流参数，单位 A |
+| `kinco_guard_time_ms` / `kinco_guard_life_factor` | `100` / `5` | 节点保护请求间隔 100 ms，超时倍数 5 |
 
-        HDG_GATE_TIMEOUT["AUTO航向门控600s未通过<br/>错误码64"] --> PAUSE_GATE["PAUSE<br/>auto_heading_gate_timeout<br/>auto_resume=false"]
-        CALIB_STUCK["校准卡滞/初始对准失败"] --> PAUSE_MANUAL["PAUSE<br/>calib_stuck / initial_heading_calib_failed<br/>auto_resume=false"]
-        RETREAT_TIMEOUT["GPS撤退P1/P2或边界周期超时"] --> PAUSE_MANUAL2["PAUSE<br/>boundary_retreat_timeout / boundary_cycle_exhausted<br/>auto_resume=false"]
-        FORCE_LIMIT["force_bearing极限环/持续背离"] --> PAUSE_MANUAL3["PAUSE<br/>force_bearing_*<br/>auto_resume=false"]
-        PAUSE_GATE --> TAKEOVER["底盘切换HOLD<br/>等待人工重新进入AUTO_CLEANING"]
-        PAUSE_MANUAL --> TAKEOVER
-        PAUSE_MANUAL2 --> TAKEOVER
-        PAUSE_MANUAL3 --> TAKEOVER
-        TAKEOVER --> REENTER_AUTO["重新进入AUTO_CLEANING"] --> RESUME_WP["从当前航点重新进入WAYPOINT_MOVE"]
-        HOLD["电机状态HOLD"] --> STOP_NAV["强制停止导航"]
-        MODE_SWITCH["控制模式切换"] --> STOP_NAV
-        ROUTE_CHANGE["路径切换/rtk/route_change"] --> RELOAD["重新加载航点文件<br/>清零航向异常计时器"]
-        RELOAD --> RESET_IDX["重置航点索引为0"]
-    end
-```
+独立运行 `motor_control` 时，`brush_use_kinco` 默认 `false`，ID 3、4 的步科方向默认分别为 `+1`、`-1`。
 
-```mermaid
-graph TD
-    subgraph 定时器驱动 10Hz
-        TIMER["rtk_timer_callback"] --> CHECK_MODE{"控制模式==AUTO_CLEANING?"}
-        CHECK_MODE -- 否 --> IDLE_RESET["重置生成器"]
-        CHECK_MODE -- 是 --> MANUAL_PAUSE{"人工介入暂停?"}
-        MANUAL_PAUSE -- 是 --> STOP_HOLD["清空生成器<br/>发布零速度，等待HOLD/重新AUTO"]
-        MANUAL_PAUSE -- 否 --> DATA_GUARD["检查RTK数据超时、零角度和运行中航向异常"]
-        DATA_GUARD --> QUALITY{"定位/定向Fixed且GGA有效?"}
-        QUALITY -- 否 --> STOP_AUTO["自动恢复型PAUSE<br/>保持AUTO_CLEANING并发布零速度"]
-        QUALITY -- 是 --> WAYPOINTS{"有航点数据?"}
-        WAYPOINTS -- 否 --> ERROR_EXIT["报错并重置为IDLE"]
-        WAYPOINTS -- 是 --> HEADING_GATE{"航向门控通过?"}
-        HEADING_GATE -- 否 --> STOP_GATE["保持PAUSE/门控等待<br/>600s超时错误码64并转HOLD"]
-        HEADING_GATE -- 是 --> ALIGN{"恢复后需要先对齐路径?"}
-        ALIGN -- 是 --> WAYPOINT_CALIB["WAYPOINT_CALIB<br/>原地对齐后再启动巡迹"]
-        ALIGN -- 否 --> CHECK_GENERATOR{"生成器存在且可运行?"}
-        WAYPOINT_CALIB --> CHECK_GENERATOR
-        CHECK_GENERATOR -- 否 --> CREATE_GEN["创建multi_waypoint_nav_generator<br/>resume: IDLE首次，其它从当前状态"]
-        CREATE_GEN --> NEXT_STEP["next()获取速度"]
-        CHECK_GENERATOR -- 是 --> NEXT_STEP
-        NEXT_STEP --> PUB_SPEED["发布motor_speed"]
-    end
-```
-### 导航状态机 
-```mermaid
-graph TD
-    IDLE["IDLE"] --> INIT_MOVE["INITIAL_MOVE"]
-    INIT_MOVE --> MOVE_FIRST["初始点->第一个航点"]
-    MOVE_FIRST --> STANLEY1["Stanley控制器直线行驶"]
-    STANLEY1 --> CHECK_FORCE1{"force_bearing_mode?"}
-    CHECK_FORCE1 -- 是 --> BEARING1["方位角直行: path_dir=bearing→target<br/>抑制固定路径横向项"]
-    BEARING1 --> CHECK_DIST1
-    CHECK_FORCE1 -- 否 --> CHECK_HEADING1{"航向误差>15° 连续5帧?"}
-    CHECK_HEADING1 -- 是 --> INC_COUNT1["waypoint_recalib_count++"]
-    INC_COUNT1 --> CHECK_COUNT1{"同航点校准≥2次?"}
-    CHECK_COUNT1 -- 是 --> SET_FORCE1["force_bearing_mode=True<br/>打滑/位置偏移，改用方位角兜底"]
-    SET_FORCE1 --> STANLEY1
-    CHECK_COUNT1 -- 否 --> RECALIB1_INLINE["内联航向校准 原地旋转至path_dir"]
-    RECALIB1_INLINE --> STANLEY1
-    CHECK_HEADING1 -- 否 --> CHECK_DIST1{"距离<0.1m 连续5帧?"}
-    CHECK_DIST1 -- 否 --> STANLEY1
-    CHECK_DIST1 -- 是 --> CALIB1["WAYPOINT_CALIB 航向校准"]
-    CALIB1 --> TURN1["原地旋转至目标heading"]
-    TURN1 --> CHECK_ANGLE1{"角度误差<1°?"}
-    CHECK_ANGLE1 -- 否 --> TURN1
-    CHECK_ANGLE1 -- 是 --> RESET_COUNT1["清零 waypoint_recalib_count<br/>current_waypoint_idx++"]
-    RESET_COUNT1 --> NEXT_WP["current_waypoint_idx++"]
+### 任务与保护阈值
 
-    NEXT_WP --> WP_MOVE["WAYPOINT_MOVE"]
-    WP_MOVE --> GET_TARGET["获取目标航点"]
-    GET_TARGET --> CHECK_LAST{"到达最后一个航点?"}
-    CHECK_LAST -- 是 --> SWITCH_FILE["自动切换下一路径文件"]
-    SWITCH_FILE --> CHECK_NEXT{"有下一文件?"}
-    CHECK_NEXT -- 是 --> RESET_IDX2["重置索引=0, 返回新文件首航点<br/>清零 waypoint_recalib_count"]
-    RESET_IDX2 --> WP_MOVE
-    CHECK_NEXT -- 否 --> CHECK_LOADING{"有出仓点?"}
-    CHECK_LOADING -- 是 --> APPEND_LOADING["追加出仓点到航点列表"]
-    APPEND_LOADING --> WP_MOVE
-    CHECK_LOADING -- 否 --> COMPLETED["COMPLETED 导航完成"]
+| 项目 | 当前值 | 用途 |
+| --- | --- | --- |
+| 出仓最低电量 / 结算时间 | 90% / 2 s | 标准 `START` 出仓及转入 AUTO 前的结算 |
+| 清扫低电量阈值 | 20% | 清扫中触发低电量保护 |
+| RTK 航向门控 | 5 s ≤ 1°、30 s ≤ 1° | 双 Fixed 且 GGA 有效时采集；等待 600 s 超时转人工介入 |
+| 航点确认 / 校准 | 0.10 m / 1° | 首点 5 个、普通点 3 个新可信样本，再做目标航向校准 |
+| 定位跳变 / 恢复 | `0.35 m/s × min(样本间隔, 1 s) + 0.05 m` / 3 个新样本 | 限制车体中心定位位移，跳变后基于可信参考位置判定恢复 |
+| 行驶基础轮速 / 最大线速度 | 52 r/min / 0.35 m/s | 轮半径 0.05 m，按 `2π × 0.05 / 60` 将轮速换算为 m/s |
+| Stanley 增益 / 横向误差限幅 | 基础 `0.5`、最大 `1.0` / 1.0 m | 横向循迹修正 |
+| 混合协议指令有效期 | 0.5 s | 底盘拒绝过期的自动运动指令 |
+| 步科正常失能等待 | 3 s，停稳阈值 1 r/min | 发零速后回读输出轴速度 |
+| 运行电流保护 | 总电流 8 A、单刷 4 A，持续 5 s | 持续超限触发保护停机 |
+| 自动充电门控 | `DISABLE`、原始磁导航 mask 0.5 s 内至少 6 位触发 | 请求待处理时防重入，请求间隔 30 s |
 
-    CHECK_LAST -- 否 --> STANLEY2["Stanley控制器直线行驶"]
-    STANLEY2 --> CHECK_FORCE{"force_bearing_mode?"}
-    CHECK_FORCE -- 是 --> BEARING2["方位角直行: path_dir=bearing→target<br/>抑制固定路径横向项"]
-    BEARING2 --> CHECK_DIST2
-    CHECK_FORCE -- 否 --> CHECK_HEADING{"航向误差>15° 连续5帧?"}
-    CHECK_HEADING -- 是 --> INC_COUNT["waypoint_recalib_count++"]
-    INC_COUNT --> CHECK_COUNT{"同航点校准≥2次?"}
-    CHECK_COUNT -- 是 --> SET_FORCE["force_bearing_mode=True<br/>打滑/位置偏移，改用方位角兜底"]
-    SET_FORCE --> STANLEY2
-    CHECK_COUNT -- 否 --> RECALIB["WAYPOINT_CALIB 重新校准到当前路径方向"]
-    RECALIB --> STANLEY2
-    CHECK_HEADING -- 否 --> CHECK_DIST2{"距离<0.1m?"}
-    CHECK_DIST2 -- 否 --> CHECK_LOW{"距离<1.5m?"}
-    CHECK_LOW -- 是 --> SLOW_DOWN["线性减速 speed_scale=0.2~0.7"]
-    SLOW_DOWN --> STANLEY2
-    CHECK_LOW -- 否 --> STANLEY2
-    CHECK_DIST2 -- 是 --> CALIB2["WAYPOINT_CALIB 航向校准"]
-    CALIB2 --> TURN2["原地旋转至目标heading"]
-    TURN2 --> CHECK_ANGLE2{"角度误差<1°?"}
-    CHECK_ANGLE2 -- 否 --> TURN2
-    CHECK_ANGLE2 -- 是 --> RESET_COUNT["清零 waypoint_recalib_count<br/>current_waypoint_idx++"]
-    RESET_COUNT --> NEXT_WP
-```
+### 任务故障位
 
-### 航向校准与边界撤退安全分支
-
-```mermaid
-graph TD
-    ENTER["进入 WAYPOINT_CALIB<br/>原地旋转校准"] --> ROTATE["calibrate_heading_at_waypoint"]
-    ROTATE --> SENSOR{"旋转动作被边界禁止?"}
-    SENSOR -- 否 --> ANGLE{"误差小于1°?"}
-    ANGLE -- 是 --> SUCCESS["校准成功<br/>推进或继续当前航点"]
-    ANGLE -- 否 --> ROTATE
-
-    SENSOR -- 是 --> RETREAT["停车一帧、清除固定纠偏锁定<br/>GPS撤退回目标航点"]
-    RETREAT --> P1["P1: 转向远离航点方向<br/>传感器阻挡时先远离"]
-    P1 --> RETREAT_TIMEOUT{"总时长超过30s?"}
-    RETREAT_TIMEOUT -- 否 --> P2["P2: 倒车归位<br/>距离闭环"]
-    P2 --> RETREAT_OK{"距离小于阈值?"}
-    RETREAT_OK -- 是 --> ROTATE
-    RETREAT_OK -- 否 --> RETREAT_TIMEOUT
-    RETREAT_TIMEOUT -- 是 --> PAUSE_RETREAT["PAUSE<br/>boundary_retreat_timeout<br/>持续发布零速度"]
-    PAUSE_RETREAT --> MANUAL["切出AUTO_CLEANING人工处理"]
-    MANUAL --> RESUME_CURRENT["重新进入AUTO_CLEANING<br/>WAYPOINT_MOVE当前航点"]
-
-    ANGLE -- 校准超时/失败 --> RETRY{"重试次数不超过3?"}
-    RETRY -- 否 --> PAUSE_STUCK["PAUSE<br/>calib_stuck"]
-    RETRY -- 是 --> RETRY_NUM{"第2次及以上?"}
-    RETRY_NUM -- 否 --> RESET_CALIB["重建校准生成器"] --> ROTATE
-    RETRY_NUM -- 是 --> BACKUP["后退脱困<br/>速度=+1.0/-1.0，时长=1.5s"]
-    BACKUP --> BACKUP_BLOCKED{"候选后退速度被边界禁止?"}
-    BACKUP_BLOCKED -- 是 --> BOUNDARY_CORRECT["get_boundary_correct_speed"] --> RESET_CALIB
-    BACKUP_BLOCKED -- 否 --> RESET_CALIB
-
-    style PAUSE_RETREAT fill:#e17055,stroke:#333,color:#fff
-    style PAUSE_STUCK fill:#e17055,stroke:#333,color:#fff
-    style SUCCESS fill:#b8e6c8,stroke:#6bcb77
-```
-
-### 边界矫正状态机
-```mermaid
-graph TD
-    SENSOR_TRIG["传感器触发 front/mid"] --> TURNING["TURNING 偏转1.0s"]
-    TURNING --> BACKING["BACKING 后退4.0s"]
-    BACKING --> RETURNING["RETURNING 反向偏转退回2.0s"]
-    RETURNING --> IDLE_BC["IDLE 恢复正常导航"]
-```
-
-### Stanley控制器流程
-```mermaid
-graph TD
-    INPUT["输入: current_pos, current_heading, path_start, path_end, path_direction, velocity"] --> STEP1
-
-    subgraph STEP1["计算横向误差"]
-        UTM1["UTM坐标转换: 当前位置/起点/终点"] --> CROSS["向量叉积 AP x AB"]
-        CROSS --> LATERAL["lateral_error = cross / |AB|"]
-        LATERAL --> CLAMP_LE["clamp ±MAX_LATERAL_ERROR(1.0m)"]
-    end
-
-    STEP1 --> STEP2
-    subgraph STEP2["计算航向误差"]
-        HEADING_ERR["heading_error = path_direction - current_heading"]
-        HEADING_ERR --> NORMALIZE["归一化到-180°~180°"]
-    end
-
-    STEP2 --> STEP3
-    subgraph STEP3["Stanley控制律"]
-        V_RAW["velocity (电机指令)"] --> CONV["real_v = velocity × 0.0345"]
-        CONV --> K["K自适应: <1.3m→0.42, ≥1.3m→0.45"]
-        K --> STEERING
-        LE["lateral_error"] --> STEERING
-        HE["heading_error"] --> STEERING
-        STEERING["st_corr = atan(K × lat_err / max(real_v, 0.15))"]
-        STEERING --> TOTAL["total_steering = st_corr - heading_error"]
-        TOTAL --> CLAMP["clamp ±45°"]
-    end
-
-    STEP3 --> STEP4
-    subgraph STEP4["差速分配"]
-        FACTOR["steering_factor = clamped / 45°"] --> DIFF["speed_diff = factor × 1.5"]
-        DIFF --> LEFT["left = -velocity + speed_diff"]
-        DIFF --> RIGHT["right = velocity + speed_diff"]
-    end
-
-    STEP4 --> OUTPUT["输出: left_speed, right_speed + real_velocity发布到/rtk/velocity"]
-```
-
-### 航向异常保护
-
-- **局部重校准**: 导航行驶中航向误差超过 15° 连续 5 帧（0.5s），先在当前航点触发重校准；同一航点反复校准后进入 `force_bearing_mode` 兜底。
-- **force bearing**: 使用当前位置到目标的实时方位角，关闭固定路径段的横向项；误差超过 15° 仍先原地对准。极限环或持续背离时发布人工介入暂停并使用错误码 128。
-- **全局航向异常**: 航向异常连续超过 15s 时设置错误码 8，进入 `heading_timeout` 自动恢复型 PAUSE；恢复判据是航向数据恢复正常，不等同于 AUTO 航向稳定门控通过。
-- **RTK 数据超时**: `/wtrtk_data` 超过 1s 未更新，或 `angle_x/angle_y` 持续为 0 超过 1s，设置错误码 8 并停车；数据恢复且质量仍为双Fixed时回到原导航阶段，若仍非Fixed则转入 `rtk_not_fixed` 并重新经过航向门控。
-- **模式切入清理**: 进入 `AUTO_CLEANING` 或切换路径时清零 `heading_abnormal_start_time` 和 `heading_timed_out`，防止旧任务污染。
-- 单帧跳变只累计一次，下一帧恢复到阈值内会清零计数，避免 RTK/IMU 瞬时抖动误判。
-- 异常重校准完成后不推进航点索引，继续前往当前航点；正常到达航点后的校准才推进到下一个航点。
-
-### 航点切换与跨文件处理
-```mermaid
-graph TD
-    WP_SWITCH["航点索引切换"] --> CHECK_CALIB{"当前是校准状态?"}
-    CHECK_CALIB -- 是 --> KEEP_CALIB["保持WAYPOINT_CALIB状态"]
-    CHECK_CALIB -- 否 --> RESET_MOVE["重置为WAYPOINT_MOVE"]
-
-    RESET_MOVE --> CHECK_CROSS{"current_waypoint_idx==0 且有跨文件缓存?"}
-    CHECK_CROSS -- 是 --> USE_CROSS["last_waypoint_cache = cross_file_last_waypoint"]
-    CHECK_CROSS -- 否 --> CHECK_SAME{"idx-1 >= 0?"}
-    CHECK_SAME -- 是 --> USE_SAME["last_waypoint_cache = waypoints[idx-1]"]
-    CHECK_SAME -- 否 --> NO_CACHE["无上一个航点缓存"]
-
-    USE_CROSS --> INIT_STANLEY["初始化Stanley路径参数"]
-    USE_SAME --> INIT_STANLEY
-    INIT_STANLEY --> CALC_BEARING["calculate_path_bearing 预计算路径方向"]
-    CALC_BEARING --> SAVE_PATH["保存 stanley_path_start, stanley_path_direction"]
-```
-
-### 关键参数
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| LINEAR_SPEED_BASE | 10.0 | 基础行驶速度（电机指令值，约0.35m/s） |
-| SPEED_LIMIT | 1.3 × BASE | 最大速度限制 |
-| SPEED_CMD_TO_MPS | 0.0345 | 电机指令→真实速度(m/s)转换系数 |
-| RTK_WAYPOINT_TOLERANCE | 0.10 m | 到达航点距离阈值 |
-| INITIAL_MOVE_TOLERANCE | 0.10 m | 初始移动到达阈值 |
-| LOW_DISTANCE | 1.5 m | 减速触发距离 |
-| RTK_HEADING_TOLERANCE | 1.0° | 航向校准精度 |
-| STANLEY_K_NEAR (<1.3m) | 0.42 | 近距离自适应 K |
-| STANLEY_K_FAR (≥1.3m) | 0.45 | 远距离自适应 K |
-| STANLEY_MIN_SPEED | 0.15 m/s | Stanley 计算最小速度（防除零+限幅） |
-| MAX_LATERAL_ERROR | 1.0 m | 横向误差钳位上限 |
-| STRAIGHT_MAX_CORRECTION | 1.5 | 直线最大差速修正 |
-| HEADING_ABNORMAL_THRESHOLD | 15.0° | 航向异常阈值 |
-| ANGLE_ABNORMAL_COUNT | 5 | 连续异常帧数（0.5s） |
-| RTK_DATA_TIMEOUT | 1.0 s | RTK 数据断流超时停车 |
-| RTK_ZERO_ANGLE_TIMEOUT | 1.0 s | angle_x/angle_y持续为0的异常超时 |
-| HEADING_ABNORMAL_TIMEOUT | 15.0 s | 运行中航向误差持续超时，错误码8 |
-| HEADING_STABILITY_WINDOW | 5.0 s | AUTO门控短窗，波动≤1° |
-| HEADING_STABILITY_RANGE | 1.0° | 5秒短窗最大允许波动 |
-| HEADING_STABILITY_SETTLE_WINDOW | 30.0 s | AUTO门控收敛窗口 |
-| HEADING_STABILITY_SETTLE_RANGE | 2.0° | 30秒收敛窗口最大允许跨度 |
-| HEADING_QUALITY_GAP_MAX | 3.0 s | Float/非Fixed最长桥接间隔；超时清空窗口 |
-| HEADING_FIXED_CONFIRM_WINDOW | 1.0 s | 短时恢复双Fixed后的确认停车时间 |
-| AUTO_HEADING_GATE_TIMEOUT | 600.0 s | AUTO航向门控超时，错误码64并转HOLD |
-| UNLOADING_MIN_BATTERY | 90% | START出仓最低电量 |
-| UNLOADING_SETTLE_DURATION | 2.0 s | 出仓完成后HOLD结算时间 |
-| force_bearing_mode | ≥2次 | 同航点重校准后启用实时方位角兜底 |
-| FORCE_BEARING_REALIGN_THRESHOLD | 15.0° | force_bearing_mode 下航向偏差超此值触发原地重新对准 |
-
-### 当前运行时故障码
-
-以下为导航/任务故障码，按位或组合发布；底盘另有电机故障码 `1` 和激光超时码 `2`。
-
-| 故障码 | 当前含义 | 处理方式 |
-|---:|---|---|
-| 4 | RTK 定位或定向不是 Fixed，或 GGA 数据无效 | 自动停车并保持 `AUTO_CLEANING`，等待质量恢复后重新通过航向门控 |
-| 8 | `/wtrtk_data` 断流超过 1s、`angle_x/angle_y` 持续为 0 超过 1s，或运行中航向误差超过 15° 持续 15s | 自动停车暂停；RTK/航向数据恢复后自动恢复，恢复判据不等同于航向稳定 |
-| 16 | START 时电量低于 90% | 拒绝出仓，保持当前状态 |
-| 32 | 进仓导航/激光对位流程超时或前置条件失败 | 停车并进入 HOLD，检查位置和进仓状态 |
-| 64 | AUTO 航向门控等待 600s 仍未通过 | 设置错误码并进入人工介入 HOLD；重新进入 AUTO 后重新采集稳定窗口 |
-| 128 | 航向校准卡滞/超时、初始对准失败、边界 GPS 撤退超时、force bearing 极限环或持续背离 | 停车并进入人工介入 HOLD；人工处理后从当前航点续扫 |
+| 故障位 | 含义 |
+| ---: | --- |
+| 1 / 2 | 电机故障 / 激光数据超时 |
+| 4 | RTK 定位或定向质量异常，或 GGA 无效 |
+| 8 | RTK 数据断流、持续零角度或运行航向异常超时 |
+| 16 / 32 | `START` 电量不足 / 进仓前置条件失败或流程超时 |
+| 64 / 128 | AUTO 航向门控超时 / 校准、边界撤退或方位角兜底失败 |
+| 256 / 512 / 1024 | 持续过流 / 清扫中低电量 / 围栏持续越界 |
 
 ## 批量生成清扫路径
 
