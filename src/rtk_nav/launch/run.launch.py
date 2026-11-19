@@ -48,7 +48,12 @@ def generate_launch_description():
     declare_motor_auto_enable_arg = DeclareLaunchArgument(
         "motor_auto_enable",
         default_value=TextSubstitution(text="true"),
-        description="初始状态设为ENABLE并自动零速使能AIMotor和Kinco，磁导航确认在仓后转DISABLE",
+        description="初始状态设为ENABLE，零速初始化电机，磁导航确认在仓后转DISABLE",
+    )
+    declare_enable_brush_test_arg = DeclareLaunchArgument(
+        "enable_brush_test",
+        default_value=TextSubstitution(text="false"),
+        description="在NORMAL/ENABLE状态下以零轮速启动滚刷测试",
     )
     kinco_parameters = (
         ("kinco_encoder_resolution", "65536", int, "步科编码器每转计数，默认取手册示例，现场需确认"),
@@ -186,6 +191,9 @@ def generate_launch_description():
                 ),
                 'motor_auto_enable': ParameterValue(
                     LaunchConfiguration('motor_auto_enable'), value_type=bool
+                ),
+                'enable_brush_test': ParameterValue(
+                    LaunchConfiguration('enable_brush_test'), value_type=bool
                 ),
                 **{
                     name: ParameterValue(
@@ -361,6 +369,7 @@ def generate_launch_description():
     ld.add_action(declare_brush_direction_mode_arg)
     ld.add_action(declare_brush_use_kinco_arg)
     ld.add_action(declare_motor_auto_enable_arg)
+    ld.add_action(declare_enable_brush_test_arg)
     for declare_kinco_arg in declare_kinco_args:
         ld.add_action(declare_kinco_arg)
     ld.add_action(declare_profile_acceleration_arg)

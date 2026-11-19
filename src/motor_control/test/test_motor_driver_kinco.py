@@ -733,6 +733,7 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     }
     assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "true"
     assert arguments["motor_auto_enable"]["default_value"].kwargs["text"] == "true"
+    assert arguments["enable_brush_test"]["default_value"].kwargs["text"] == "false"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
     assert arguments["kinco_acceleration_rps2"]["default_value"].kwargs["text"] == "80000.0"
@@ -754,12 +755,13 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     }
     assert parameters["brush_use_kinco"].kwargs["value_type"] is bool
     assert parameters["motor_auto_enable"].kwargs["value_type"] is bool
+    assert parameters["enable_brush_test"].kwargs["value_type"] is bool
     for motor_id in (3, 4):
         parameter = parameters[f"kinco_motor_direction_{motor_id}"]
         assert parameter.kwargs["value_type"] is int
         assert parameter.args[0].args == (f"kinco_motor_direction_{motor_id}",)
     for name in (
-        "motor_auto_enable", "brush_use_kinco", "kinco_encoder_resolution",
+        "motor_auto_enable", "enable_brush_test", "brush_use_kinco", "kinco_encoder_resolution",
         "kinco_reduction_ratio", "kinco_acceleration_rps2",
         "kinco_deceleration_rps2", "kinco_peak_current_a",
         "kinco_brush_speed_rpm",

@@ -40,7 +40,15 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 `brush_motor_count` 原有默认值仍为 `0`，因此仅打开协议开关不会自动增加电机。
 数量为 `1` 时只控制 ID 3，为 `2` 时控制 ID 3、4。
 
-室内仅测试滚刷时，可独立启动底盘节点并显式开启 `enable_brush_test`。固定车体并隔离滚刷后执行：
+室内仅测试滚刷时，固定车体并隔离滚刷后，可通过 launch 显式开启 `enable_brush_test`：
+
+```bash
+ros2 launch rtk_nav run.launch.py \
+  brush_use_kinco:=true brush_motor_count:=2 \
+  enable_brush_test:=true kinco_brush_speed_rpm:=10.0
+```
+
+也可单独启动底盘节点：
 
 ```bash
 ros2 run motor_control motor_control --ros-args \
