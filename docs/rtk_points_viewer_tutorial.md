@@ -2,7 +2,7 @@
 
 ## 1. 启动
 
-- 在仓库根目录双击 `启动RTK图纸预览.bat` 或 `启动RTK布置图1112预览.bat`，打开同一个布置图 1112 页面。
+- 在仓库根目录双击 `启动RTK图纸预览.bat`，打开布置图 1112 页面。
 - 手动启动时，在仓库根目录执行 `python -m http.server 8766 --bind 127.0.0.1`，浏览器访问 `http://localhost:8766/tools/rtk_preview/rtk_points_1112.html`。
 - 页面需要联网加载 Leaflet 1.9.4；`file://` 直接打开可能一直显示“加载中”。
 
