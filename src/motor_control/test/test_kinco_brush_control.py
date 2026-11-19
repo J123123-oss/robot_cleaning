@@ -1,4 +1,5 @@
 import ast
+import json
 import math
 import sys
 import threading
@@ -197,53 +198,81 @@ def test_motion_callback_validates_freshness_and_keeps_pause_precedence(paused, 
 
 @pytest.mark.parametrize("overrides", [
     {"enable_brush_test": False},
+    {"_brush_test_armed": False, "current_status": "FORWARD"},
     {"current_status": "HOLD"},
     {"current_status": "DISABLE"},
     {"current_control_mode": "AUTO_CLEANING"},
-    {"web_control_active": True},
-    {"rc_control": True},
+    {"rc_control": True, "current_status": "RC_ENABLE", "rc_previous_status": "DISABLE"},
+    {"rc_control": True, "current_status": "RC_ENABLE", "rc_previous_status": "HOLD"},
+    {"current_status": "FORWARD", "blocked_directions": {"FORWARD"}},
     {"boundary_test_control_active": True},
     {"is_in_bin_process": True},
     {"current_stall_fault": True},
     {"geofence_fault_latched": True},
-    {},
 ])
 def test_enable_brush_test_uses_separate_kinco_source(overrides):
+    controller = make_enable_brush_test_controller(**overrides)
+    controller._service_enable_brush_test()
+    assert not controller._kinco_brush_can_run("enable_test")
+    controller._kinco_brush.request.assert_not_called()
+    controller.set_motors_speed.assert_not_called()
+
+
+def make_enable_brush_test_controller(**overrides):
     path = Path(__file__).parents[1] / "motor_control" / "motor_control.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = {
         "_enable_brush_test_can_run", "_service_enable_brush_test",
         "_kinco_brush_can_run", "set_brush_speed", "limit_kinco_brush_speed",
+        "status_callback", "switch_state", "rtk_nav_status_callback", "timer_callback",
     }
     methods = [node for node in ast.walk(tree)
                if isinstance(node, ast.FunctionDef) and node.name in names]
     namespace = dict(
-        BrushAction=BrushAction, math=math, time=time,
+        BrushAction=BrushAction, math=math, time=time, json=json, String=SimpleNamespace,
+        STATE_DICT={"h": "HOLD", "w": "FORWARD", "x": "ENABLE", "r": "AUTO_CLEANING"},
+        MANUAL_TURN_SPEED_SCALE=0.25,
         KINCO_DEFAULT_BRUSH_SPEED_RPM=100.0, AIMOTOR_DEFAULT_BRUSH_SPEED_RPM=70.0,
         ENABLE_BRUSH_TEST_MAX_AGE=0.5,
     )
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"), namespace)
     controller = SimpleNamespace(
-        enable_brush_test=True, _enable_brush_test_active=False,
+        enable_brush_test=True, _enable_brush_test_active=False, _brush_test_armed=True,
         current_status="ENABLE", current_control_mode="NORMAL",
         web_control_active=False, rc_control=False, boundary_test_control_active=False,
+        rc_previous_status="ENABLE", _brush_test_wheel_hold=False, blocked_directions=set(),
         is_in_bin_process=False, current_stall_fault=False, geofence_fault_latched=False,
         brush_motor_ids=[3], brush_use_kinco=True, kinco_brush_speed_rpm=25.0,
         web_rc_last_update=0.0, web_rc_timeout=1.0, _kinco_brush=Mock(),
+        web_rc_left_speed=0.0, web_rc_right_speed=0.0,
+        _wheel_command_blocked_by_sensors=Mock(return_value=False),
         set_motors_speed=Mock(), motor_ctrl=Mock(), brush_direction_mode="same",
+        motor_auto_enable=True, get_logger=Mock(), publish_state=Mock(), state_pub=Mock(),
+        _cancel_kinco_motion=Mock(), _check_auto_cleaning_entry=Mock(return_value=True),
+        _clear_current_stall_fault=Mock(), _initialize_control_motors=Mock(),
+        direction_timer=None, create_timer=Mock(), mqtt_control_speed=20.0,
+        manual_drive_speed_scale=1.0, _last_rtk_nav_state_seq=-1,
+        brush_speed=0.0, status_list=["ENABLE", "HOLD", "FORWARD", "AUTO_CLEANING"],
     )
+    controller.motor_ctrl.motors = [{"id": 1}, {"id": 2}, {"id": 3}]
     for name in names - {"limit_kinco_brush_speed"}:
         setattr(controller, name, namespace[name].__get__(controller))
     vars(controller).update(overrides)
+    return controller
 
-    controller._service_enable_brush_test()
 
-    assert controller._kinco_brush_can_run("enable_test") is (not overrides)
-    if overrides:
-        controller._kinco_brush.request.assert_not_called()
-        controller.set_motors_speed.assert_not_called()
-        return
-    controller.set_motors_speed.assert_called_once_with(0.0, 0.0)
+@pytest.mark.parametrize("overrides", [
+    {},
+    {"rc_control": True, "current_status": "RC_ENABLE"},
+    {"web_control_active": True, "current_control_mode": "WEB_REMOTE"},
+    {"current_status": "FORWARD"},
+    {"current_status": "HOLD", "_brush_test_wheel_hold": True},
+])
+def test_manual_wheel_control_keeps_configured_brush(overrides):
+    controller = make_enable_brush_test_controller(**overrides)
+    assert controller._service_enable_brush_test()
+    assert controller._kinco_brush_can_run("enable_test")
+    controller.set_motors_speed.assert_not_called()
     controller._kinco_brush.request.assert_called_once_with(
         BrushAction.RUN, 25.0, source="enable_test", valid_for=0.5,
     )
@@ -257,3 +286,61 @@ def test_enable_brush_test_uses_separate_kinco_source(overrides):
     controller.current_control_mode = "AUTO_CLEANING"
     controller._service_enable_brush_test()
     controller.motor_ctrl.motor_set_speed.assert_called_with(3, 0.0)
+
+
+def test_mqtt_remote_and_wheel_hold_do_not_cancel_brush_until_explicit_stop():
+    controller = make_enable_brush_test_controller()
+    assert controller._service_enable_brush_test()
+
+    for command, expected_status in (
+        ("RC_ENABLE", "RC_ENABLE"), ("RC_DISABLE", "ENABLE"),
+        ("RC_ENABLE", "RC_ENABLE"), ("FORWARD", "FORWARD"), ("HOLD", "HOLD"),
+        ("FORWARD", "FORWARD"), ("HOLD", "HOLD"),
+    ):
+        controller.status_callback(SimpleNamespace(data=json.dumps({"command": command})))
+        assert controller.current_status == expected_status
+        assert controller._service_enable_brush_test()
+
+    controller._cancel_kinco_motion.assert_not_called()
+    controller._initialize_control_motors.assert_not_called()
+    assert all(call.args[0] == BrushAction.RUN for call in controller._kinco_brush.request.call_args_list)
+    assert all(call.args[0] != 3 for call in controller.motor_ctrl.motor_set_speed.call_args_list)
+
+    pause = SimpleNamespace(data=json.dumps({"nav_state": "PAUSE", "seq": 1, "auto_resume": True}))
+    controller.rtk_nav_status_callback(pause)
+    assert controller._kinco_brush.request.call_args.args[0] == BrushAction.RUN
+
+    controller.switch_state("h")
+    assert not controller._service_enable_brush_test()
+    controller._cancel_kinco_motion.assert_called_once()
+    controller._kinco_brush.request.assert_called_with(BrushAction.DISABLE)
+
+
+def test_rtk_mode_ends_manual_brush_test():
+    controller = make_enable_brush_test_controller()
+    assert controller._service_enable_brush_test()
+    controller.switch_state("r")
+    assert controller.current_control_mode == "AUTO_CLEANING"
+    assert not controller._service_enable_brush_test()
+    controller._cancel_kinco_motion.assert_called_once()
+
+
+@pytest.mark.parametrize("web_active", [False, True])
+@pytest.mark.parametrize("fresh", [False, True])
+def test_remote_timer_controls_wheels_and_keeps_launch_brush_speed(web_active, fresh):
+    controller = make_enable_brush_test_controller(
+        web_control_active=web_active, rc_control=not web_active,
+        current_status="ENABLE" if web_active else "RC_ENABLE",
+        web_rc_last_update=time.time() if fresh else 0.0,
+        web_rc_left_speed=-8.0, web_rc_right_speed=8.0, web_rc_brush_speed=0.0,
+        current_left_speed=0.0, current_right_speed=0.0,
+        _service_kinco_motion=Mock(), _check_current_protection=Mock(),
+        is_laser_timeout=Mock(return_value=False), mode_pub=Mock(),
+    )
+    controller.timer_callback()
+
+    expected_wheels = (-8.0, 8.0) if fresh else (0.0, 0.0)
+    controller.set_motors_speed.assert_called_once_with(*expected_wheels)
+    controller._kinco_brush.request.assert_called_once_with(
+        BrushAction.RUN, 25.0, source="enable_test", valid_for=0.5,
+    )
