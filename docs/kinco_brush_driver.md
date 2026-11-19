@@ -40,6 +40,19 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 `brush_motor_count` 原有默认值仍为 `0`，因此仅打开协议开关不会自动增加电机。
 数量为 `1` 时只控制 ID 3，为 `2` 时控制 ID 3、4。
 
+室内仅测试滚刷时，可独立启动底盘节点并显式开启 `enable_brush_test`。固定车体并隔离滚刷后执行：
+
+```bash
+ros2 run motor_control motor_control --ros-args \
+  -p brush_use_kinco:=true -p brush_motor_count:=2 \
+  -p enable_brush_test:=true -p kinco_brush_speed_rpm:=10.0
+```
+
+开关默认关闭。开启后，节点进入 `NORMAL/ENABLE` 即给左右轮发零速并启动滚刷。
+步科测试目标为 100 r/min，受 `kinco_brush_speed_rpm` 限制，示例限为 10 r/min。
+使用 AIMotor 协议时测试转速为 70 r/min。发 `h` 停止测试，发 `z` 整机失能。
+测试不需要 RTK 或遥控器，遥控接管、进出仓及保护锁存优先于测试。
+
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
 | `brush_use_kinco` | launch 为 `true`，独立节点为 `false` | true 时使用步科滚刷协议 |
@@ -47,8 +60,8 @@ ros2 launch rtk_nav run.launch.py brush_use_kinco:=true brush_motor_count:=2
 | `kinco_motor_direction_4` | `1` | 步科 4 号速度指令方向，1 正常，-1 反向 |
 | `kinco_encoder_resolution` | `65536` | 每个电机轴转动一圈的编码器计数 |
 | `kinco_reduction_ratio` | `10.0` | 电机轴转速/滚刷输出轴转速 |
-| `kinco_acceleration_rps2` | `800.0` | 电机侧加速度，rps/s |
-| `kinco_deceleration_rps2` | `800.0` | 电机侧减速度，rps/s |
+| `kinco_acceleration_rps2` | `80000.0` | 电机侧加速度，rps/s |
+| `kinco_deceleration_rps2` | `80000.0` | 电机侧减速度，rps/s |
 | `kinco_brush_speed_rpm` | `110.0` | 滚刷输出轴转速上限，r/min |
 | `kinco_guard_time_ms` | `100` | 节点保护 RTR 请求周期，ms，范围 50～65535 |
 | `kinco_guard_life_factor` | `5` | 节点保护超时倍数，范围 2～255 |
@@ -256,7 +269,7 @@ ramp_DEC = round(rps_per_second * 65536 * encoder_resolution / 4000000)
 603  23 FF 60 00 7E B1 E4 FF
 ```
 
-编码器分辨率为 65536 时，800 rps/s 对应 `23 83 60 00 71 1B 0D 00`。
+编码器分辨率为 65536 时，80000 rps/s 的加速度写入 `23 83 60 00 52 B8 1E 05`，减速度写入 `23 84 60 00 52 B8 1E 05`。
 初始化配置步科速度模式 `6060=3` 并保持滚刷失能。按需使能时，控制字按
 `0006→0007→000F` 完成状态机使能，并保持 `6040h=000F`；发送 `0006` 仅用于失能；
 加速度与减速度均通过 SDO 回读确认。

@@ -432,8 +432,8 @@ def test_mixed_startup_configures_brush_without_enabling_it():
     assert (0x603, enable) not in frames
     assert any(can_id == 0x603 and data[1:3] == b"\x7e\x60"
                for can_id, data in frames)
-    assert driver.kinco_acceleration_rps2 == driver.kinco_deceleration_rps2 == 800.0
-    ramp = (858993).to_bytes(4, "little")
+    assert driver.kinco_acceleration_rps2 == driver.kinco_deceleration_rps2 == 80000.0
+    ramp = bytes.fromhex("52 B8 1E 05")
     assert (0x603, bytes.fromhex("23 83 60 00") + ramp) in frames
     assert (0x603, bytes.fromhex("23 84 60 00") + ramp) in frames
 
@@ -663,13 +663,13 @@ def test_initialization_disables_brushes_before_polarity_and_zeroes_before_enabl
 @pytest.mark.parametrize("setting, index", [("acceleration", 0x83), ("deceleration", 0x84)])
 def test_ramp_readback_checks_kinco_raw_units(setting, index):
     driver, _ = make_driver()
-    setattr(driver, f"kinco_{setting}_rps2", 800.0)
+    setattr(driver, f"kinco_{setting}_rps2", 80000.0)
     write_ramp = getattr(driver, f"motor_set_{setting}")
     driver.receive_thread = Mock()
     driver.receive_thread.is_alive.return_value = True
     response_header = bytes((0x43, index, 0x60, 0x00))
     driver._read_sdo_response = Mock(
-        return_value=response_header + bytes.fromhex("71 1B 0D 00")
+        return_value=response_header + bytes.fromhex("52 B8 1E 05")
     )
     assert write_ramp(3)
     driver._read_sdo_response.return_value = response_header + bytes(4)
@@ -735,8 +735,8 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     assert arguments["motor_auto_enable"]["default_value"].kwargs["text"] == "true"
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
-    assert arguments["kinco_acceleration_rps2"]["default_value"].kwargs["text"] == "800.0"
-    assert arguments["kinco_deceleration_rps2"]["default_value"].kwargs["text"] == "800.0"
+    assert arguments["kinco_acceleration_rps2"]["default_value"].kwargs["text"] == "80000.0"
+    assert arguments["kinco_deceleration_rps2"]["default_value"].kwargs["text"] == "80000.0"
     assert arguments["kinco_peak_current_a"]["default_value"].kwargs["text"] == "47.9"
     assert arguments["kinco_brush_speed_rpm"]["default_value"].kwargs["text"] == "110.0"
     for motor_id, default in ((3, "-1"), (4, "1")):

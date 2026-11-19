@@ -193,3 +193,67 @@ def test_motion_callback_validates_freshness_and_keeps_pause_precedence(paused, 
     assert controller._kinco_brush.request.call_count == 1
     assert (controller.rtk_left_speed, controller.rtk_right_speed,
             *controller._kinco_brush.request.call_args.args) == expected
+
+
+@pytest.mark.parametrize("overrides", [
+    {"enable_brush_test": False},
+    {"current_status": "HOLD"},
+    {"current_status": "DISABLE"},
+    {"current_control_mode": "AUTO_CLEANING"},
+    {"web_control_active": True},
+    {"rc_control": True},
+    {"boundary_test_control_active": True},
+    {"is_in_bin_process": True},
+    {"current_stall_fault": True},
+    {"geofence_fault_latched": True},
+    {},
+])
+def test_enable_brush_test_uses_separate_kinco_source(overrides):
+    path = Path(__file__).parents[1] / "motor_control" / "motor_control.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names = {
+        "_enable_brush_test_can_run", "_service_enable_brush_test",
+        "_kinco_brush_can_run", "set_brush_speed", "limit_kinco_brush_speed",
+    }
+    methods = [node for node in ast.walk(tree)
+               if isinstance(node, ast.FunctionDef) and node.name in names]
+    namespace = dict(
+        BrushAction=BrushAction, math=math, time=time,
+        KINCO_DEFAULT_BRUSH_SPEED_RPM=100.0, AIMOTOR_DEFAULT_BRUSH_SPEED_RPM=70.0,
+        ENABLE_BRUSH_TEST_MAX_AGE=0.5,
+    )
+    exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"), namespace)
+    controller = SimpleNamespace(
+        enable_brush_test=True, _enable_brush_test_active=False,
+        current_status="ENABLE", current_control_mode="NORMAL",
+        web_control_active=False, rc_control=False, boundary_test_control_active=False,
+        is_in_bin_process=False, current_stall_fault=False, geofence_fault_latched=False,
+        brush_motor_ids=[3], brush_use_kinco=True, kinco_brush_speed_rpm=25.0,
+        web_rc_last_update=0.0, web_rc_timeout=1.0, _kinco_brush=Mock(),
+        set_motors_speed=Mock(), motor_ctrl=Mock(), brush_direction_mode="same",
+    )
+    for name in names - {"limit_kinco_brush_speed"}:
+        setattr(controller, name, namespace[name].__get__(controller))
+    vars(controller).update(overrides)
+
+    controller._service_enable_brush_test()
+
+    assert controller._kinco_brush_can_run("enable_test") is (not overrides)
+    if overrides:
+        controller._kinco_brush.request.assert_not_called()
+        controller.set_motors_speed.assert_not_called()
+        return
+    controller.set_motors_speed.assert_called_once_with(0.0, 0.0)
+    controller._kinco_brush.request.assert_called_once_with(
+        BrushAction.RUN, 25.0, source="enable_test", valid_for=0.5,
+    )
+    controller.set_brush_speed(25.0)
+    controller._kinco_brush.request.assert_called_with(BrushAction.DISABLE)
+
+    controller.brush_use_kinco = False
+    controller.motor_ctrl.motor_set_speed.return_value = True
+    controller._service_enable_brush_test()
+    controller.motor_ctrl.motor_set_speed.assert_called_with(3, 70.0)
+    controller.current_control_mode = "AUTO_CLEANING"
+    controller._service_enable_brush_test()
+    controller.motor_ctrl.motor_set_speed.assert_called_with(3, 0.0)

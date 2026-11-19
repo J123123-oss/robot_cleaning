@@ -68,6 +68,7 @@ MAX_MANUAL_DRIVE_SPEED_SCALE = 1.0  # 参数允许的最大比例；默认仍为
 MANUAL_TURN_SPEED_SCALE = 0.25  # 普通模式原地转向速度相对最大轮速的比例。
 AIMOTOR_DEFAULT_BRUSH_SPEED_RPM = 70.0
 KINCO_DEFAULT_BRUSH_SPEED_RPM = 100.0
+ENABLE_BRUSH_TEST_MAX_AGE = 0.5
 RTK_MOTION_MAX_AGE = 0.5
 # 保留旧名称作为兼容别名；当前输入单位已是轮子输出轴 r/min。
 SPEED_CMD_TO_MPS = WHEEL_RPM_TO_MPS  # 轮子输出轴 r/min -> m/s。
@@ -454,11 +455,14 @@ class MotorControlNode(Node):
         self.motor_auto_enable = bool(
             self.get_parameter("motor_auto_enable").value
         )
+        self.declare_parameter("enable_brush_test", False)
+        self.enable_brush_test = self.get_parameter("enable_brush_test").value
+        self._enable_brush_test_active = False
         kinco_defaults = {
             "kinco_encoder_resolution": 65536,
             "kinco_reduction_ratio": 10.0,
-            "kinco_acceleration_rps2": 800.0,
-            "kinco_deceleration_rps2": 800.0,
+            "kinco_acceleration_rps2": 80000.0,
+            "kinco_deceleration_rps2": 80000.0,
             "kinco_peak_current_a": 47.9,
             "kinco_guard_time_ms": 100,
             "kinco_guard_life_factor": 5,
@@ -1576,6 +1580,7 @@ class MotorControlNode(Node):
             state_msg.data = str(self.current_status)
             self.state_pub.publish(state_msg)
             return
+        self._service_enable_brush_test()
         if self.is_laser_timeout():
             now = time.time()
             if now - self.last_laser_timeout_log_time >= 10.0:
@@ -1791,14 +1796,6 @@ class MotorControlNode(Node):
                 left_speed = 0.0
                 right_speed = 0.0
                 self.set_motors_speed(left_speed, right_speed)
-            # self.set_brush_speed(
-            #     KINCO_DEFAULT_BRUSH_SPEED_RPM
-            #     if self.brush_use_kinco
-            #     else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM
-            # )
-            # self.set_motors_speed(left_speed, right_speed)
-            # stop brush
-
         elif self.current_control_mode == "AUTO_CLEANING":
             if self._rtk_auto_pause:
                 left_speed = 0.0
@@ -1887,7 +1884,36 @@ class MotorControlNode(Node):
             self.set_brush_speed(float(msg.z))
         self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}，刷：{msg.z:.2f}")
 
+    def _enable_brush_test_can_run(self):
+        return (
+            self.enable_brush_test
+            and self.current_status == "ENABLE"
+            and self.current_control_mode == "NORMAL"
+            and not self.web_control_active
+            and not self.rc_control
+            and not self.boundary_test_control_active
+            and not self.is_in_bin_process
+            and not self.current_stall_fault
+            and not self.geofence_fault_latched
+        )
+
+    def _service_enable_brush_test(self):
+        if self._enable_brush_test_can_run():
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(
+                KINCO_DEFAULT_BRUSH_SPEED_RPM if self.brush_use_kinco
+                else AIMOTOR_DEFAULT_BRUSH_SPEED_RPM,
+                enable_test=True,
+            )
+            self._enable_brush_test_active = True
+        elif self._enable_brush_test_active:
+            self._enable_brush_test_active = False
+            if not self.brush_use_kinco:
+                self.set_brush_speed(0.0)
+
     def _kinco_brush_can_run(self, source):
+        if source == "enable_test":
+            return self._enable_brush_test_can_run()
         if (
             self.current_status in ("DISABLE", "START", "LOADING")
             or self.is_in_bin_process or self.current_stall_fault
@@ -4579,7 +4605,7 @@ class MotorControlNode(Node):
         msg.data.extend([float(v) for v in norm_channels[:16]])
         self.rc_channels_pub.publish(msg)
 
-    def set_brush_speed(self, brush_speed: float) -> None:
+    def set_brush_speed(self, brush_speed: float, *, enable_test=False) -> None:
         """按配置向一个或两个滚刷下发同一输入速度。
 
         ``same``模式下3、4号使用相同速度；``opposite``模式下4号速度取反。
@@ -4595,11 +4621,20 @@ class MotorControlNode(Node):
             self.brush_speed = 0.0
             return
 
+        if enable_test and not self._enable_brush_test_can_run():
+            return
+
         if self.brush_use_kinco:
             brush_speed = limit_kinco_brush_speed(
                 brush_speed, self.kinco_brush_speed_rpm
             )
             if self._kinco_brush is not None:
+                if enable_test and brush_speed:
+                    self._kinco_brush.request(
+                        BrushAction.RUN, brush_speed, source="enable_test",
+                        valid_for=ENABLE_BRUSH_TEST_MAX_AGE,
+                    )
+                    return
                 auto_mode = self.current_control_mode == "AUTO_CLEANING"
                 manual_lifetime = self.web_rc_timeout - (
                     time.time() - self.web_rc_last_update
