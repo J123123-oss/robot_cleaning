@@ -137,6 +137,12 @@ src/
 
 - `publish_state()` 的 `state_msg` 中，除 `current_lon/current_lat` 保留原始精度外，所有层级的浮点数统一四舍五入至两位小数；保持数字类型，整数、布尔值、字符串和空值不转换，不修改内部采样数据。
 
+## 充电启动约定
+
+- 进仓完成、磁导航到位和低电量恢复均通过 `_request_charge_if_docked()` 请求充电；统一入口必须检查 `DISABLE` 及 `/magnetic/mask` 最新原始样本至少 6 位触发，不能只由调用方判断到位。
+- 原始 mask 与接收时间单独保存，不使用后退纠偏复用的历史 mask 或 MQTT 显示字段作为充电依据；未收到样本或样本超过 0.5 秒时禁止启动。
+- 保留充电请求 pending 保护与 30 秒节流；充电异常由充电器故障码上报，不增加低电流看门狗。
+
 ## 清扫测试与导航收尾约定
 
 - 仅测试清扫、不自动进仓时使用 `auto_cleaning_finish_to_loading:=false`（当前 launch 默认值）；设为 true 时清扫完成后进入 LOADING。独立运行 motor_control 节点时该参数默认 true，测试时须显式关闭。

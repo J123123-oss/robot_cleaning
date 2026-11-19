@@ -354,6 +354,9 @@ class MotorControlNode(Node):
         )
         self.magnetic_error = None
         self.magnetic_mask = 0
+        # 充电只使用话题原始采样；后退纠偏会复用magnetic_mask，不能作为到位证据。
+        self.magnetic_raw_mask = 0
+        self.magnetic_mask_update_time = None  # monotonic秒；未收到样本时禁止充电。
         self.magnetic_valid = False
         self.magnetic_center_count = 0
         self.magnetic_tracking_ready = False
@@ -1343,6 +1346,8 @@ class MotorControlNode(Node):
 
     def magnetic_mask_callback(self, msg: UInt16):
         raw_mask = int(msg.data) & 0xFF
+        self.magnetic_raw_mask = raw_mask
+        self.magnetic_mask_update_time = time.monotonic()
         if self.current_status == "LOADING" and self.loading_countdown_started:
             if raw_mask == 0:
                 # 后退阶段复用最近一次有效磁条状态，持续后退纠偏；
@@ -1536,7 +1541,7 @@ class MotorControlNode(Node):
                             else:
                                 self.get_logger().info(
                                     f"[ROSNode] 电量{self.battery_remaining}%低于阈值"
-                                    f"{self.charge_resume_threshold}%，车体到位，恢复充电"
+                                    f"{self.charge_resume_threshold}%，检查磁导航到位条件后尝试恢复充电"
                                     f"（第{self.charge_resume_count + 1}次）"
                                 )
                                 if self._request_charge_if_docked("电量恢复"):
@@ -3546,9 +3551,18 @@ class MotorControlNode(Node):
         else:
             self.get_logger().warn("[RTK采点] 当前经纬度无效，未记录")
             return False
+
     def _request_charge_if_docked(self, source: str) -> bool:
-        """在DISABLE且检测到末端磁条时，以节流方式请求开始充电。"""
+        """仅在DISABLE且0.5秒内原始磁导航至少6位触发时请求充电。"""
         if self.current_status != "DISABLE":
+            return False
+        # 所有启动路径都在此检查，低电量恢复不能绕过磁导航到位条件。
+        # 不使用magnetic_last_time：它是error话题时间，并非mask的采样时间。
+        if (
+            self.magnetic_mask_update_time is None
+            or not 0.0 <= time.monotonic() - self.magnetic_mask_update_time <= 0.5
+            or self.magnetic_raw_mask.bit_count() < self.magnetic_loading_end_active_bits
+        ):
             return False
         if self.is_charging is True:
             return False
