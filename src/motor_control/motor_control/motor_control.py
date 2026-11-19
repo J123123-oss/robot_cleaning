@@ -1512,7 +1512,7 @@ class MotorControlNode(Node):
         # 充电停止条件判断（使用存储的传感器状态）
         if self.is_charging:
             # 条件1：电压电流条件
-            if self.charging_v >= 54.0 and 1.0 <= self.charging_i <= 1.6:
+            if self.charging_v >= 54.2 and 1.0 <= self.charging_i <= 2.7:
                 self.get_logger().info("[ROSNode] 充电完成（电压电流条件）")
                 self.stop_charge_async()
                 self.is_charge_paused = True
