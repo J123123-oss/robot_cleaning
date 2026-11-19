@@ -180,7 +180,7 @@ flowchart TD
 | `kinco_peak_current_a` | `47.9` | 驱动器电流反馈换算用的峰值电流参数，单位 A |
 | `kinco_guard_time_ms` / `kinco_guard_life_factor` | `100` / `5` | 节点保护请求间隔 100 ms，超时倍数 5 |
 
-独立运行 `motor_control` 时，`brush_use_kinco` 默认 `false`，ID 3、4 的步科方向默认分别为 `+1`、`-1`。
+独立运行 `motor_control` 时，`brush_use_kinco` 默认 `false`。启用步科后，ID 3、4 的默认方向均为 `-1`，与 Launch 一致。
 
 ### 任务与保护阈值
 

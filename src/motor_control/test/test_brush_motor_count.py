@@ -66,11 +66,10 @@ def test_kinco_direction_parameters_are_declared_for_both_brush_ids():
         "self": SimpleNamespace(
             declare_parameter=lambda name, default: declared.update({name: default})
         ),
-        "CanMotorDriver": SimpleNamespace(DEFAULT_MOTOR_DIRECTION=1),
     }
     exec(compile(ast.Module(body=declarations, type_ignores=[]),
                  str(SOURCE_PATH), "exec"), namespace)
-    assert declared == {"kinco_motor_direction_3": 1, "kinco_motor_direction_4": -1}
+    assert declared == {"kinco_motor_direction_3": -1, "kinco_motor_direction_4": -1}
 
 
 def test_startup_configures_kinco_without_enabling_brushes():

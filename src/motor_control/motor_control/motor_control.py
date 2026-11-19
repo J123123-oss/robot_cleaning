@@ -521,7 +521,7 @@ class MotorControlNode(Node):
         for motor_id in (3, 4):
             self.declare_parameter(
                 f"kinco_motor_direction_{motor_id}",
-                -1 if motor_id == 4 else CanMotorDriver.DEFAULT_MOTOR_DIRECTION,
+                -1,
             )
 
         # UNLOADING parameters
