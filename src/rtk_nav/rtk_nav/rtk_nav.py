@@ -475,6 +475,12 @@ class RTKNavControlNode(Node):
         self.geofence_confirm_frames = 3
         self.geofence_latched = False
         self.geofence_recovery_ready = False
+        self.declare_parameter("enable_io_timeout_protection", True)
+        self.enable_io_timeout_protection = self.get_parameter(
+            "enable_io_timeout_protection"
+        ).value
+        if not self.enable_io_timeout_protection:
+            self.get_logger().warn("[边界IO] 断流停车已关闭，仅用于受控台架测试")
         self.declare_parameter("enable_imu_odom_fallback", False)
         self.enable_imu_odom_fallback = bool(
             self.get_parameter("enable_imu_odom_fallback").value
@@ -1318,9 +1324,16 @@ class RTKNavControlNode(Node):
             and abs(angular) <= BOUNDARY_STOP_ANGULAR_RAD_S
         )
 
+    def _boundary_io_timed_out(self, now: float) -> bool:
+        """断流保护开启时，缺帧或过期均视为超时。"""
+        return (
+            self.enable_io_timeout_protection
+            and self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE
+        )
+
     def _boundary_motion_inhibited(self, now: float) -> bool:
         """断流或触发后尚未停稳时，阻止下一条非零指令。"""
-        if self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE:
+        if self._boundary_io_timed_out(now):
             return True
         if self._boundary_stop_until is not None:
             if now < self._boundary_stop_until or not self._boundary_chassis_stopped():
@@ -1330,6 +1343,10 @@ class RTKNavControlNode(Node):
 
     def _stop_on_boundary_io_loss(self) -> None:
         """停车等待 IO 恢复，已启动的脱困转入人工处理。"""
+        self.get_logger().warn(
+            f"[边界IO] 未收到 /io_data 或已超过 {BOUNDARY_IO_MAX_AGE:.2f} 秒未更新，停车",
+            throttle_duration_sec=5.0,
+        )
         self._arrival_confirmation.reset()
         self._reset_boundary_debounce()
         if self.boundary_correct_locked or self.nav_context.get("retreat_active"):
@@ -1869,7 +1886,10 @@ class RTKNavControlNode(Node):
         if (self.current_control_mode == ControlMode.AUTO_CLEANING
                 and self.last_io_time is not None
                 and now - self.last_io_time > BOUNDARY_IO_MAX_AGE):
-            self._stop_on_boundary_io_loss()
+            if self.enable_io_timeout_protection:
+                self._stop_on_boundary_io_loss()
+            else:
+                self._reset_boundary_debounce()
         # 4路传感器低电平有效：mid_left, mid_right, back_left, back_right。
         self.last_io_time = now
         self.mid_left = (msg.data & 0x01) == 0x00
@@ -6472,7 +6492,7 @@ class RTKNavControlNode(Node):
             now = time.monotonic()
             if self._process_imu_odom_fallback(now):
                 return
-            if self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE:
+            if self._boundary_io_timed_out(now):
                 self._stop_on_boundary_io_loss()
                 return
             if self._boundary_motion_inhibited(now):

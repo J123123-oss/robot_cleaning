@@ -734,6 +734,18 @@ def test_launch_exposes_default_off_switch_and_kinco_units():
     assert arguments["brush_use_kinco"]["default_value"].kwargs["text"] == "true"
     assert arguments["motor_auto_enable"]["default_value"].kwargs["text"] == "true"
     assert arguments["enable_brush_test"]["default_value"].kwargs["text"] == "false"
+    for name in ("enable_sensors_485", "enable_io_timeout_protection"):
+        assert arguments[name]["default_value"].kwargs["text"] == "true"
+    sensors = next(action for action in launch.actions
+                   if action.kwargs.get("executable") == "sensors_485")
+    assert sensors.kwargs["condition"].args[0].args == ("enable_sensors_485",)
+    navigator = next(action for action in launch.actions
+                     if action.kwargs.get("executable") == "rtk_nav")
+    io_guard = next(group["enable_io_timeout_protection"]
+                    for group in navigator.kwargs["parameters"]
+                    if "enable_io_timeout_protection" in group)
+    assert io_guard.args[0].args == ("enable_io_timeout_protection",)
+    assert io_guard.kwargs["value_type"] is bool
     assert arguments["kinco_encoder_resolution"]["default_value"].kwargs["text"] == "65536"
     assert arguments["kinco_reduction_ratio"]["default_value"].kwargs["text"] == "10.0"
     assert arguments["kinco_acceleration_rps2"]["default_value"].kwargs["text"] == "10.0"

@@ -37,7 +37,7 @@ def boundary_node():
         "_fallback_entry_block_reason", "_fallback_age", "_process_imu_odom_fallback",
         "_update_blocked_directions", "io_data_rtk_callback", "_boundary_motion_inhibited",
         "_boundary_chassis_stopped", "_stop_on_boundary_io_loss", "_publish_motor_speed",
-        "_boundary_blocks_motion",
+        "_boundary_blocks_motion", "_boundary_io_timed_out",
         "_reset_boundary_debounce", "drive_twist_callback", "rtk_timer_callback",
     }
     body = [item for item in source_class.body
@@ -75,6 +75,7 @@ def boundary_node():
     node._boundary_drive_stamp_ns = 0
     node._boundary_drive_velocity = (0.0, 0.0)
     node.last_io_time = 10.0
+    node.enable_io_timeout_protection = True
     node._arrival_confirmation = Mock()
     node.get_clock = Mock()
     node.get_clock().now.side_effect = lambda: SimpleNamespace(
@@ -272,7 +273,8 @@ def test_bridge_suppression_allows_new_raw_hit_without_disabling_io_watchdog(bou
     assert node.motor_speed_pub.publish.call_args.args[0].x == 0
 
 
-def test_io_timeout_stops_without_advancing_navigation_generator(boundary_node):
+@pytest.mark.parametrize("protection_enabled", [True, False])
+def test_io_timeout_controls_progress_of_navigation_timer(boundary_node, protection_enabled):
     node = boundary_node
     node._fallback_diagnostics_active = Mock(return_value=False)
     node._last_nav_context_publish = 10.0
@@ -286,12 +288,13 @@ def test_io_timeout_stops_without_advancing_navigation_generator(boundary_node):
     node._is_manual_intervention_pause = Mock(return_value=False)
     node.waiting_for_next_unloading = False
     node.enable_imu_odom_fallback = False
-    node.multi_waypoint_generator = iter([(-10, 10)])
-    node.nav_running = True
+    node.enable_io_timeout_protection = protection_enabled
+    node.handle_rtk_data_timeout = Mock(return_value=True)
     node.clock.monotonic.return_value = 10.3
     node.rtk_timer_callback()
-    node.publish_stop_speed.assert_called_once()
-    assert next(node.multi_waypoint_generator) == (-10, 10)
+    assert node.publish_stop_speed.called is protection_enabled
+    assert node.handle_rtk_data_timeout.called is not protection_enabled
+    assert node.get_logger.return_value.warn.called is protection_enabled
 
 
 @pytest.mark.parametrize("io_time", [None, 9.7])
@@ -303,6 +306,30 @@ def test_missing_or_stale_io_blocks_both_motion_topics(boundary_node, io_time):
     stamped = node.motion_command_pub.publish.call_args.args[0]
     assert (legacy.x, legacy.y, legacy.z) == (0, 0, 0)
     assert (stamped.left_rpm, stamped.right_rpm, stamped.brush_rpm) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("io_time", [None, 9.7])
+def test_disabled_watchdog_allows_both_motion_topics_without_fresh_io(boundary_node, io_time):
+    node = boundary_node
+    node.enable_io_timeout_protection = False
+    node.last_io_time = io_time
+    node._publish_motor_speed(-10, 10)
+    legacy = node.motor_speed_pub.publish.call_args.args[0]
+    stamped = node.motion_command_pub.publish.call_args.args[0]
+    assert (legacy.x, legacy.y) == (-10, 10)
+    assert (stamped.left_rpm, stamped.right_rpm) == (-10, 10)
+
+
+def test_disabled_watchdog_still_stops_for_raw_hit_after_io_gap(boundary_node):
+    node = boundary_node
+    node.enable_io_timeout_protection = False
+    node._publish_motor_speed(-10, 10)
+    node.clock.monotonic.return_value = 10.4
+    node.io_data_rtk_callback(SimpleNamespace(data=0b1111))
+    node.publish_stop_speed.assert_not_called()
+    node.io_data_rtk_callback(SimpleNamespace(data=0b1110))
+    node.publish_stop_speed.assert_called_once()
+    assert node.motion_command_pub.publish.call_args.args[0].left_rpm == 0
 
 
 def test_raw_pulse_stops_immediately_and_survives_a_clear_frame(boundary_node):

@@ -21,6 +21,18 @@ def generate_launch_description():
         default_value=TextSubstitution(text="false"),
         description="Enable electronic fence file checks and outside-region stops",
     )
+    declare_enable_sensors_485_arg = DeclareLaunchArgument(
+        "enable_sensors_485",
+        default_value=TextSubstitution(text="true"),
+        choices=["true", "false"],
+        description="Start the onboard /io_data publisher",
+    )
+    declare_enable_io_timeout_protection_arg = DeclareLaunchArgument(
+        "enable_io_timeout_protection",
+        default_value=TextSubstitution(text="true"),
+        choices=["true", "false"],
+        description="Stop RTK navigation when /io_data is absent or stale (disable only for bench tests)",
+    )
 
     # 声明robot_ID参数，默认值可自定义（比如"GF-HZ-TEST"）
     declare_robot_id_arg = DeclareLaunchArgument(
@@ -250,6 +262,7 @@ def generate_launch_description():
     sensors_485_node = Node(
         package='motor_control',  # 对应 ROS1 的 pkg，包名不变
         executable='sensors_485',  # 对应 ROS1 的 type，可执行文件名称
+        condition=IfCondition(LaunchConfiguration('enable_sensors_485')),
         # name='sensors_485',  # 对应 ROS1 的 name，节点名称
         # output='screen',  # 对应 ROS1 的 output，输出到终端
         parameters=[
@@ -299,6 +312,9 @@ def generate_launch_description():
             )},
             {'loading_gps': loading_gps},
             {
+                'enable_io_timeout_protection': ParameterValue(
+                    LaunchConfiguration('enable_io_timeout_protection'), value_type=bool
+                ),
                 'brush_use_kinco': ParameterValue(
                     LaunchConfiguration('brush_use_kinco'), value_type=bool
                 ),
@@ -376,6 +392,8 @@ def generate_launch_description():
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
     ld.add_action(declare_enable_geofence_arg)
+    ld.add_action(declare_enable_sensors_485_arg)
+    ld.add_action(declare_enable_io_timeout_protection_arg)
     ld.add_action(declare_robot_id_arg)
     ld.add_action(declare_brush_motor_count_arg)
     ld.add_action(declare_aimotor_brush_direction_mode_arg)
