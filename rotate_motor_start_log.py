@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Split motor_start stdout/stderr by actual date and bounded file size."""
+"""Write motor_start stdout/stderr as plain UTF-8 logs split by date and size."""
 
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 
 LOG_DIR = Path(os.environ.get("MOTOR_START_LOG_DIR", "/home/forlinx/robot_cleaning/motor_start_log"))
 MAX_BYTES = int(os.environ.get("MOTOR_START_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+ANSI_SGR = re.compile(rb"\x1b\[[0-9;:]*m")
 
 
 def log_path(day: str, previous: Path | None = None, incoming_bytes: int = 0) -> Path:
@@ -39,7 +41,9 @@ def main() -> None:
     active_size = 0
 
     try:
-        for line in sys.stdin.buffer:
+        for raw_line in sys.stdin.buffer:
+            plain_line = ANSI_SGR.sub(b"", raw_line)
+            line = plain_line.decode("utf-8", errors="backslashreplace").encode("utf-8")
             now_day = datetime.now().strftime("%Y%m%d")
 
             if now_day != active_day or active_size + len(line) > MAX_BYTES:

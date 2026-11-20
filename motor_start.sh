@@ -1,6 +1,9 @@
 #!/bin/bash
 set -o pipefail
 export PYTHONDONTWRITEBYTECODE=1
+export LC_ALL=C.UTF-8
+export PYTHONIOENCODING=utf-8:backslashreplace
+export RCUTILS_COLORIZED_OUTPUT=0
 # export ROS_LOCALHOST_ONLY=1
 # GPIO_0控制开启风扇
 sudo gpioset gpiochip6 0=1
