@@ -325,7 +325,7 @@ class RTKNavControlNode(Node):
         self.ultrasonic_suppression_area = ""
         self.current_gps: Optional[Tuple[float, float]] = [0.0, 0.0]
         self.gps_update_sequence = 0
-        self._position_guard = PositionJumpGuard(max_speed=MAX_LINEAR_SPEED_MPS)
+        self._position_guard = PositionJumpGuard()
         self._arrival_confirmation = ArrivalConfirmation()
         self._position_sample_trusted = False
         self._last_wtrtk_stamp_ns = 0
@@ -3424,12 +3424,15 @@ class RTKNavControlNode(Node):
         was_blocked = self._position_guard.blocked
         episode = getattr(self, "_fallback_episode", None)
         reference = None
-        odom_time = getattr(self, "last_odom_time", None)
+        odom_time = self.last_odom_time
+        odom_is_fresh = (
+            odom_time is not None
+            and 0.0 <= now - odom_time <= RTK_FALLBACK_SENSOR_MAX_AGE
+        )
         if (
             self.enable_imu_odom_fallback and episode
             and episode.get("integrating") and episode.get("estimator_valid")
-            and odom_time is not None
-            and 0.0 <= now - odom_time <= RTK_FALLBACK_SENSOR_MAX_AGE
+            and odom_is_fresh
         ):
             reference = (
                 episode["anchor_xy"][0] + episode["east_m"],
@@ -3439,6 +3442,7 @@ class RTKNavControlNode(Node):
             position, stamp_ns,
             active=self.current_control_mode == ControlMode.AUTO_CLEANING,
             reference=reference, reference_tolerance=RTK_FALLBACK_RECOVERY_TOLERANCE_M,
+            linear_velocity_mps=self.odom_linear_velocity_mps if odom_is_fresh else 0.0,
         ):
             if self._position_guard.blocked:
                 self._position_sample_trusted = False

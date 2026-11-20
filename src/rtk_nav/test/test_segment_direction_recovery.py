@@ -68,7 +68,7 @@ def make_node():
     node.brush_active = False
     node.blocked_directions = set()
     node._arrival_confirmation = ArrivalConfirmation()
-    node._position_guard = PositionJumpGuard(max_speed=0.35)
+    node._position_guard = PositionJumpGuard()
     node._position_sample_trusted = True
     node.gps_update_sequence = 1
     node.current_control_mode = namespace["ControlMode"].AUTO_CLEANING

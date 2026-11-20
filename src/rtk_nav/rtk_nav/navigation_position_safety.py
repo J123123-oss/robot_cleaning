@@ -6,8 +6,7 @@ import math
 class PositionJumpGuard:
     """在米制平面坐标上检查位移；跳变后冻结界限并等待可信位置恢复。"""
 
-    def __init__(self, max_speed, tolerance=0.05, max_interval=1.0, recovery_samples=3):
-        self.max_speed = max_speed
+    def __init__(self, tolerance=0.30, max_interval=1.0, recovery_samples=3):
         self.tolerance = tolerance
         self.max_interval = max_interval
         self.recovery_samples = recovery_samples
@@ -28,7 +27,10 @@ class PositionJumpGuard:
             self.last_seen_stamp = stamp_ns
         self.recovery_count = 0
 
-    def update(self, position, stamp_ns, active, reference=None, reference_tolerance=0.30):
+    def update(
+        self, position, stamp_ns, active, reference=None, reference_tolerance=0.30,
+        *, linear_velocity_mps=0.0,
+    ):
         """只接受递增时间戳；自动模式中的异常坐标不更新可信锚点。"""
         if stamp_ns <= 0:
             if not self.blocked:
@@ -52,9 +54,9 @@ class PositionJumpGuard:
         if not self.blocked:
             if reference is not None:
                 self.allowed_distance = reference_tolerance
-            elif self.anchor_stamp is not None:
+            elif self.anchor_stamp is not None and math.isfinite(linear_velocity_mps):
                 elapsed = min((stamp_ns - self.anchor_stamp) / 1e9, self.max_interval)
-                self.allowed_distance = self.max_speed * elapsed + self.tolerance
+                self.allowed_distance = abs(linear_velocity_mps) * elapsed + self.tolerance
             else:
                 self.allowed_distance = self.tolerance
         if position is None or not all(math.isfinite(value) for value in position):

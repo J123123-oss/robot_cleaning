@@ -14,34 +14,39 @@ from rtk_nav.imu_odom_fallback import position_residual_m
 
 
 def test_guard_allows_valid_motion_and_centimeter_noise():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     assert guard.update((0.0, 0.0), 1_000_000_000, active=True)
     assert guard.update((0.05, 0.0), 1_100_000_000, active=True)
     assert guard.update((0.08, 0.01), 1_200_000_000, active=True)
     assert not guard.blocked
 
 
-def test_logged_low_speed_position_jump_is_rejected():
-    guard = PositionJumpGuard(max_speed=0.35)
+@pytest.mark.parametrize("distance, accepted", [
+    (0.142, True),
+    (0.300, True),
+    (0.301, False),
+])
+def test_rtk_jump_limit_at_rest(distance, accepted):
+    guard = PositionJumpGuard()
     assert guard.update((0.0, 0.0), 1_000_000_000, active=True)
 
-    assert not guard.update((0.205, 0.0), 1_423_000_000, active=True)
-    assert guard.blocked
+    assert guard.update((distance, 0.0), 1_103_000_000, active=True) is accepted
+    assert guard.blocked is not accepted
 
 
 def test_waiting_does_not_make_a_rejected_jump_acceptable():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
-    assert not guard.update((0.3, 0.0), 1_100_000_000, active=True)
+    assert not guard.update((0.5, 0.0), 1_100_000_000, active=True)
     for stamp in (2_000_000_000, 10_000_000_000, 60_000_000_000):
-        assert not guard.update((0.3, 0.0), stamp, active=True)
+        assert not guard.update((0.5, 0.0), stamp, active=True, linear_velocity_mps=0.35)
         assert guard.blocked
 
 
 def test_jump_recovery_requires_three_distinct_samples_near_trusted_anchor():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
-    guard.update((0.3, 0.0), 1_100_000_000, active=True)
+    guard.update((0.6, 0.0), 1_100_000_000, active=True)
     assert not guard.update((0.01, 0.0), 1_200_000_000, active=True)
     for _ in range(10):
         assert not guard.update((0.01, 0.0), 1_200_000_000, active=True)
@@ -51,11 +56,11 @@ def test_jump_recovery_requires_three_distinct_samples_near_trusted_anchor():
 
 
 def test_bad_recovery_sample_restarts_confirmation():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
     for position, stamp in [
-        ((0.3, 0.0), 1_100_000_000), ((0.01, 0.0), 1_200_000_000),
-        ((0.3, 0.0), 1_300_000_000), ((0.01, 0.0), 1_400_000_000),
+        ((0.6, 0.0), 1_100_000_000), ((0.01, 0.0), 1_200_000_000),
+        ((0.6, 0.0), 1_300_000_000), ((0.01, 0.0), 1_400_000_000),
         ((0.01, 0.0), 1_500_000_000),
     ]:
         assert not guard.update(position, stamp, active=True)
@@ -64,14 +69,14 @@ def test_bad_recovery_sample_restarts_confirmation():
 
 @pytest.mark.parametrize("position", [None, (math.nan, 0.0), (0.0, math.inf)])
 def test_invalid_positions_cannot_become_trusted(position):
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
     assert not guard.update(position, 1_100_000_000, active=True)
     assert guard.blocked
 
 
 def test_manual_mode_can_reanchor_after_operator_checks_position():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
     guard.update((1.0, 0.0), 1_100_000_000, active=True)
     assert guard.update((1.0, 0.0), 1_200_000_000, active=False)
@@ -80,13 +85,13 @@ def test_manual_mode_can_reanchor_after_operator_checks_position():
 
 
 def test_long_sample_gap_cannot_allow_arbitrary_relocalization():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
     assert not guard.update((3.0, 0.0), 61_000_000_000, active=True)
 
 
 def test_duplicate_and_out_of_order_samples_do_not_move_anchor():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
     assert not guard.update((5.0, 0.0), 1_000_000_000, active=True)
     assert not guard.update((5.0, 0.0), 900_000_000, active=True)
@@ -106,19 +111,18 @@ def test_arrival_requires_distinct_samples_and_resets_on_outside_sample():
     assert confirmation.update("point8", 6, 0.05)
 
 
-def test_invalid_sample_freezes_current_limit_instead_of_previous_wide_limit():
-    guard = PositionJumpGuard(max_speed=0.35)
+def test_invalid_sample_freezes_fallback_limit_during_recovery():
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
-    guard.update((0.0, 0.0), 2_000_000_000, active=True)
-    assert not guard.update(None, 2_100_000_000, active=True)
+    assert not guard.update(None, 2_100_000_000, active=True, reference=(0.0, 0.0))
     for stamp in (2_200_000_000, 2_300_000_000, 2_400_000_000):
-        assert not guard.update((0.30, 0.0), stamp, active=True)
+        assert not guard.update((0.40, 0.0), stamp, active=True)
 
 
 def test_recovery_accepts_three_samples_inside_frozen_trusted_range():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     guard.update((0.0, 0.0), 1_000_000_000, active=True)
-    guard.update((0.30, 0.0), 1_100_000_000, active=True)
+    guard.update((0.60, 0.0), 1_100_000_000, active=True)
     assert not guard.update((0.04, 0.0), 1_200_000_000, active=True)
     assert not guard.update((-0.04, 0.0), 1_300_000_000, active=True)
     assert guard.update((0.04, 0.0), 1_400_000_000, active=True)
@@ -136,7 +140,7 @@ def test_missing_source_position_stamp_blocks_motion():
 
 
 def test_first_invalid_position_needs_a_consistent_recovery_location():
-    guard = PositionJumpGuard(max_speed=0.35)
+    guard = PositionJumpGuard()
     assert not guard.update(None, 1_000_000_000, active=True)
     assert not guard.update((0.0, 0.0), 1_100_000_000, active=True)
     assert not guard.update((1.0, 0.0), 1_200_000_000, active=True)
@@ -200,7 +204,7 @@ def load_position_node():
 def make_position_node():
     namespace = load_position_node()
     node = namespace["PositionNode"]()
-    node._position_guard = PositionJumpGuard(max_speed=0.35)
+    node._position_guard = PositionJumpGuard()
     node._arrival_confirmation = ArrivalConfirmation()
     node._position_sample_trusted = False
     node.current_control_mode = namespace["ControlMode"].AUTO_CLEANING
@@ -210,6 +214,8 @@ def make_position_node():
     node.imu_yaw = 0.0
     node.antenna_offset_front = node.antenna_offset_left = 0.0
     node.enable_imu_odom_fallback = False
+    node.last_odom_time = None
+    node.odom_linear_velocity_mps = math.nan
     node._last_dual_fixed_position_xy = None
     node._last_dual_fixed_position_lonlat = None
     node._apply_fallback_position_blend = lambda lon, lat, now: (lon, lat)
@@ -247,13 +253,38 @@ def message(stamp, lon=120.0, lat=30.0):
     )
 
 
+@pytest.mark.parametrize("velocity, odom_age, interval_ns, expected_limit", [
+    (0.35, 0.10, 103_000_000, 0.33605),
+    (-0.20, 0.10, 2_000_000_000, 0.50),
+    (0.35, 0.30, 103_000_000, 0.30),
+    (0.35, None, 103_000_000, 0.30),
+    (math.nan, 0.10, 103_000_000, 0.30),
+])
+def test_navigation_jump_limit_uses_fresh_odometry(
+    velocity, odom_age, interval_ns, expected_limit
+):
+    node, _ = make_position_node()
+    node._update_navigation_position(message(0), 10.0, True, True)
+    now = 10.0 + interval_ns / 1e9
+    node.last_odom_time = None if odom_age is None else now - odom_age
+    node.odom_linear_velocity_mps = velocity
+    # 约 0.33 米的位移，可区分 0.30 米基础阈值与有效速度提供的余量。
+    node._update_navigation_position(
+        message(interval_ns, lon=120.0000034), now, True, True
+    )
+
+    assert node._position_guard.allowed_distance == pytest.approx(expected_limit)
+    assert node._position_guard.blocked is (expected_limit == 0.30)
+    assert (node.stop_count > 0) is node._position_guard.blocked
+
+
 def test_rejected_jump_never_updates_published_pose_or_fallback_anchor():
     node, _ = make_position_node()
     node._update_navigation_position(message(0), 10.0, True, True)
     trusted_pose = node.current_gps
     trusted_anchor = node._last_dual_fixed_position_xy
 
-    node._update_navigation_position(message(100_000_000, lon=120.000003), 10.1, True, True)
+    node._update_navigation_position(message(100_000_000, lon=120.000006), 10.1, True, True)
 
     assert node.current_gps == trusted_pose
     assert node._last_dual_fixed_position_xy == trusted_anchor
@@ -361,7 +392,7 @@ def test_fallback_recovery_uses_only_fresh_valid_odometry_reference(fresh, match
 def test_timer_does_not_send_motion_while_position_guard_is_blocked():
     node, _ = make_position_node()
     node._update_navigation_position(message(0), 10.0, True, True)
-    node._update_navigation_position(message(100_000_000, lon=120.000003), 10.1, True, True)
+    node._update_navigation_position(message(100_000_000, lon=120.000006), 10.1, True, True)
     node._fallback_diagnostics_active = lambda: False
     node._last_nav_context_publish = 10.0
     node.update_cleaning_area = lambda: None
@@ -427,7 +458,7 @@ def test_first_point_generator_holds_until_five_fresh_samples_then_turns():
 def test_quality_loss_breaks_position_jump_recovery_sequence(position_fixed):
     node, _ = make_position_node()
     node._update_navigation_position(message(0), 10.0, True, True)
-    node._update_navigation_position(message(100_000_000, lon=120.000003), 10.1, True, True)
+    node._update_navigation_position(message(100_000_000, lon=120.000006), 10.1, True, True)
     node._update_navigation_position(message(200_000_000), 10.2, True, True)
     node._update_navigation_position(message(300_000_000), 10.3, position_fixed, False)
     for stamp in (400_000_000, 500_000_000):

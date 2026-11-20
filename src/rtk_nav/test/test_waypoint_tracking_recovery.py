@@ -79,7 +79,7 @@ def _make_node():
     node.imu_calibration_offset = 0.0
     node.nav_running = True
     node._arrival_confirmation = ArrivalConfirmation()
-    node._position_guard = PositionJumpGuard(max_speed=0.35)
+    node._position_guard = PositionJumpGuard()
     node._position_sample_trusted = True
     node.gps_update_sequence = 1
     node.current_control_mode = ns["ControlMode"].AUTO_CLEANING
