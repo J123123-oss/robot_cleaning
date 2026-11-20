@@ -19,7 +19,7 @@ from typing import Optional
 
 import can
 import rclpy
-from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Quaternion, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
@@ -321,6 +321,7 @@ class CanMotorDriver(Node):
                 "id": motor_id,
                 "velocity": 0.0,
                 "actual_velocity": 0.0,
+                "actual_velocity_stamp_ns": 0,
                 "actual_position": 0.0,
                 "actual_torque": 0.0,
                 "actual_temperature": 0.0,
@@ -408,6 +409,7 @@ class CanMotorDriver(Node):
             Float32MultiArray, "motor_fault_codes", 10
         )
         self.odom_publisher = self.create_publisher(Odometry, "odom", 10)
+        self.drive_twist_publisher = self.create_publisher(TwistStamped, "motor/drive_twist", 1)
         self.timer = self.create_timer(0.1, self.timer_callback)
 
         # 等接收线程启动后再执行初始化，这样可以等待 SDO 参数回读结果。
@@ -1707,6 +1709,7 @@ class CanMotorDriver(Node):
                         * 60.0
                         / (self.pulses_per_motor_rev * reduction_ratio)
                     )
+                    motor["actual_velocity_stamp_ns"] = self.get_clock().now().nanoseconds
                     self._log_velocity_feedback(motor_id, pulses_per_sec)
                     if motor_id in getattr(self, "drive_motor_ids", ()):
                         velocity_feedback = (
@@ -1791,6 +1794,7 @@ class CanMotorDriver(Node):
                         * 60.0
                         / (self.pulses_per_motor_rev * reduction_ratio)
                     )
+                    motor["actual_velocity_stamp_ns"] = self.get_clock().now().nanoseconds
                     self._log_velocity_feedback(node_id, velocity)
                 if len(data) >= 6:
                     motor["actual_torque"] = int.from_bytes(
@@ -1816,8 +1820,12 @@ class CanMotorDriver(Node):
         self.last_time = current_time
         if dt <= 0 or len(self.motors) < 2:
             return
-        left_vel = self.motors[0]["actual_velocity"]
-        right_vel = self.motors[1]["actual_velocity"]
+        with self._feedback_lock:
+            left, right = self.motors[:2]
+            left_vel, right_vel = left["actual_velocity"], right["actual_velocity"]
+            # 两个速度都应是停车之后采集的，因此使用较早的一路。
+            velocity_stamp_ns = min(left["actual_velocity_stamp_ns"],
+                                    right["actual_velocity_stamp_ns"])
         rpm_to_mps = 2.0 * math.pi * self.wheel_radius / 60.0
         left_linear = left_vel * rpm_to_mps
         right_linear = right_vel * rpm_to_mps
@@ -1827,6 +1835,15 @@ class CanMotorDriver(Node):
         self.y += linear_velocity * dt * math.sin(self.th)
         self.th += angular_velocity * dt
         self.publish_odometry(linear_velocity, angular_velocity)
+        if velocity_stamp_ns > 0:
+            feedback = TwistStamped()
+            feedback.header.stamp.sec, feedback.header.stamp.nanosec = divmod(
+                velocity_stamp_ns, 1_000_000_000
+            )
+            feedback.header.frame_id = "base_link"
+            feedback.twist.linear.x = linear_velocity
+            feedback.twist.angular.z = angular_velocity
+            self.drive_twist_publisher.publish(feedback)
 
     def publish_odometry(self, linear_velocity, angular_velocity):
         """使用 SI 单位（m/s 和 rad/s）发布当前位姿和速度。"""

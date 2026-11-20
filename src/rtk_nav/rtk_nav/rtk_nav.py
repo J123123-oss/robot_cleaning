@@ -11,7 +11,7 @@ import rclpy
 import re
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from geometry_msgs.msg import Vector3  # 用于发布左右轮速度
+from geometry_msgs.msg import TwistStamped, Vector3
 from nav_msgs.msg import Odometry
 from std_msgs.msg import (
     String,
@@ -166,6 +166,12 @@ def combine_rtk_correction(
 # 边界去抖时间窗；不依赖 /io_data 的发布频率。
 BOUNDARY_TRIGGER_CONFIRM_SEC = 0.3
 BOUNDARY_CLEAR_CONFIRM_SEC = 0.2
+BOUNDARY_IO_MAX_AGE = 0.25  # IO 接收时效（秒），包括桥架区域。
+BOUNDARY_STOP_MIN_SEC = 0.2  # 原始短触发停车的最短保持时间。
+BOUNDARY_DRIVE_FEEDBACK_MAX_AGE = 0.25  # 停稳确认所用实测轮速的时效（秒）。
+BOUNDARY_STOP_LINEAR_MPS = 0.01
+BOUNDARY_STOP_ANGULAR_RAD_S = 0.05
+BOUNDARY_TIGHT_ARC_WHEEL_RATIO = 0.5
 # 边界航向角闭环矫正
 BOUNDARY_SLOW_PERSIST_SEC = 1.5  # 单传感器慢速通道持续时间（秒）
 BOUNDARY_CORRECTION_TIMEOUT = 15.0 # 整体纠偏超时（秒）
@@ -414,6 +420,10 @@ class RTKNavControlNode(Node):
         self.blocked_directions = set()              # 基于confirmed_sensors计算的禁止方向
         self._last_motor_left = 0.0                  # 最近发布的左轮速度
         self._last_motor_right = 0.0                 # 最近发布的右轮速度
+        self._boundary_stop_until = None
+        self._boundary_stop_stamp_ns = None
+        self._boundary_drive_stamp_ns = 0
+        self._boundary_drive_velocity = (float("nan"), float("nan"))
 
         self.gps_cache = []
         # 距离历史缓存（用于异常检测）
@@ -620,6 +630,9 @@ class RTKNavControlNode(Node):
         self.heading_sub = self.create_subscription(WTRTK, '/wtrtk_data', self.heading_callback, 10)
         self.odom_sub = self.create_subscription(
             Odometry, "/odom", self.odom_callback, 10
+        )
+        self.drive_twist_sub = self.create_subscription(
+            TwistStamped, "/motor/drive_twist", self.drive_twist_callback, 1
         )
         self.io_data_rtk_sub = self.create_subscription(UInt8, '/io_data', self.io_data_rtk_callback, 10)
         self.state_sub = self.create_subscription(String, "/motor/state", self.state_callback, 10)
@@ -1082,6 +1095,11 @@ class RTKNavControlNode(Node):
                 self._reset_boundary_correction()
                 self._pause_boundary_retreat_timeout(RetreatResult.P2_BACK_BLOCKED, "边界矫正")
                 return (0.0, 0.0)
+            waiting_to_move = (
+                self.boundary_correct_start_time is None or self._boundary_stop_stamp_ns is not None
+            )
+            if waiting_to_move and not self._boundary_chassis_stopped():
+                return (0.0, 0.0)
             if self.boundary_correct_start_time is None:
                 self.boundary_correct_start_time = now
             if now - self.boundary_correct_start_time >= self.BOUNDARY_BACK_DURATION:
@@ -1092,13 +1110,16 @@ class RTKNavControlNode(Node):
 
         heading_error = self.get_heading_error(self.boundary_trigger_yaw)
         if abs(heading_error) <= RTK_HEADING_TOLERANCE:
+            if not self._boundary_chassis_stopped():
+                return (0.0, 0.0)
             self.get_logger().info("[RTKNav] 边界矫正完成，恢复正常导航")
             cycle_exhausted = self._record_boundary_cycle()
             self._reset_boundary_correction()
             if cycle_exhausted:
                 self._pause_boundary_cycle_exhausted("边界矫正")
             return (0.0, 0.0)
-        if "TURN" in blocked:
+        if ("TURN" in blocked or (self._boundary_stop_stamp_ns is not None
+                                  and not self._boundary_chassis_stopped())):
             return (0.0, 0.0)
         turn_speed = self.get_adaptive_turn_speed(abs(heading_error))
         correction = self.get_speed_correction(self.boundary_trigger_yaw)
@@ -1271,12 +1292,67 @@ class RTKNavControlNode(Node):
         return (left_speed, right_speed)
 
     def _get_motion_direction_from_speed(self, left_speed: float, right_speed: float) -> Optional[str]:
-        """按轮速识别平移。双轮同号及单轮支点动作均按转向保护。"""
+        """轻微差速沿平移方向保护，急弯也检查车身两端的扫掠区域。"""
+        slow, fast = sorted((abs(left_speed), abs(right_speed)))
+        if not fast:
+            return None
+        if slow <= fast * BOUNDARY_TIGHT_ARC_WHEEL_RATIO:
+            return "TURN"
         if left_speed < 0 < right_speed:
             return "FORWARD"
         if right_speed < 0 < left_speed:
             return "BACKWARD"
-        return "TURN" if left_speed or right_speed else None
+        return "TURN"
+
+    def _boundary_chassis_stopped(self) -> bool:
+        """仅用停车后且仍新鲜的实际轮速反馈确认线速度和角速度。"""
+        stop_stamp = self._boundary_stop_stamp_ns
+        sample_stamp = self._boundary_drive_stamp_ns
+        if stop_stamp is None or sample_stamp <= stop_stamp:
+            return False
+        age = (self.get_clock().now().nanoseconds - sample_stamp) / 1e9
+        linear, angular = self._boundary_drive_velocity
+        return (
+            0.0 <= age <= BOUNDARY_DRIVE_FEEDBACK_MAX_AGE
+            and abs(linear) <= BOUNDARY_STOP_LINEAR_MPS
+            and abs(angular) <= BOUNDARY_STOP_ANGULAR_RAD_S
+        )
+
+    def _boundary_motion_inhibited(self, now: float) -> bool:
+        """断流或触发后尚未停稳时，阻止下一条非零指令。"""
+        if self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE:
+            return True
+        if self._boundary_stop_until is not None:
+            if now < self._boundary_stop_until or not self._boundary_chassis_stopped():
+                return True
+            self._boundary_stop_until = None
+        return False
+
+    def _stop_on_boundary_io_loss(self) -> None:
+        """停车等待 IO 恢复，已启动的脱困转入人工处理。"""
+        self._arrival_confirmation.reset()
+        self._reset_boundary_debounce()
+        if self.boundary_correct_locked or self.nav_context.get("retreat_active"):
+            self._reset_boundary_correction()
+            self._clear_retreat_context()
+            self._pause_boundary_retreat_timeout(RetreatResult.P1_SENSOR_BLOCKED, "边界IO断流")
+        else:
+            self.publish_stop_speed()
+
+    def _reset_boundary_debounce(self) -> None:
+        self.boundary_active_since = None
+        self.boundary_active_signature = None
+        self.boundary_slow_since = None
+        self.boundary_slow_sensor = None
+        self.boundary_clear_since = None
+
+    def _boundary_blocks_motion(self, motion) -> bool:
+        if self._boundary_sensors_for_motion(motion, self.confirmed_sensors):
+            return True
+        return (
+            bool(self._boundary_sensors_for_motion(motion, self._raw_boundary_sensor_names()))
+            and not self._is_ultrasonic_suppression_allowed()
+        )
 
     def _clear_retreat_context(self) -> None:
         self.nav_context["retreat_active"] = False
@@ -1401,6 +1477,9 @@ class RTKNavControlNode(Node):
 
             phase = self.nav_context.get("retreat_phase")
             if phase == RetreatPhase.P1_PLAN:
+                if not self._boundary_chassis_stopped():
+                    yield (0.0, 0.0)
+                    continue
                 if self.calc_distance_to_waypoint(anchor_waypoint) < distance_threshold:
                     # 到达锚点但边界仍在触发时不能伪造 SUCCESS：调用方若立即
                     # 重建校准生成器，会在下一帧再次进入撤退并形成零速死循环。
@@ -1475,6 +1554,10 @@ class RTKNavControlNode(Node):
                     return RetreatResult.P1_NO_SAFE_CANDIDATE
 
                 speed = abs(retreat_speed)
+                waiting_to_move = escape_start is None or self._boundary_stop_stamp_ns is not None
+                if waiting_to_move and not self._boundary_chassis_stopped():
+                    yield (0.0, 0.0)
+                    continue
                 if escape_start is None:
                     self.nav_context["retreat_escape_start_time"] = now
                 if drive_mode == "FORWARD":
@@ -1519,6 +1602,7 @@ class RTKNavControlNode(Node):
                         self.nav_context["retreat_phase"] = RetreatPhase.P2_DRIVE
                         self.get_logger().info(
                             f"[RTKNav] 撤退P1完成: mode={self.nav_context['retreat_drive_mode']}")
+                        yield (0.0, 0.0)
                         break
                     if (left_speed or right_speed) and "TURN" in self._get_live_blocked_directions():
                         break
@@ -1538,6 +1622,7 @@ class RTKNavControlNode(Node):
             break
 
         last_dist = float('inf')
+        drive_started = False
         while True:
             if self.nav_context.get("nav_state") == NavState.PAUSE:
                 self.nav_context["retreat_resume_pending"] = True
@@ -1551,7 +1636,14 @@ class RTKNavControlNode(Node):
                                                               distance_threshold, timeout))
 
             dist = self.calc_distance_to_waypoint(anchor_waypoint)
+            if time.monotonic() - start_time > timeout:
+                self.get_logger().warn(f"[RTKNav] 撤退P2超时: dist={dist:.3f}m")
+                yield (0.0, 0.0)
+                return RetreatResult.P2_TIMEOUT
             if dist < distance_threshold:
+                if not self._boundary_chassis_stopped():
+                    yield (0.0, 0.0)
+                    continue
                 self.get_logger().info(f"[RTKNav] 撤退P2完成: dist={dist:.3f}m")
                 self._clear_retreat_context()
                 yield (0.0, 0.0)
@@ -1560,10 +1652,10 @@ class RTKNavControlNode(Node):
             if dist > last_dist + 0.05:
                 self.get_logger().warn(f"[RTKNav] 撤退距离反向增长({last_dist:.3f}→{dist:.3f})，降速")
             last_dist = dist
-            if time.monotonic() - start_time > timeout:
-                self.get_logger().warn(f"[RTKNav] 撤退P2超时: dist={dist:.3f}m")
+            waiting_to_move = not drive_started or self._boundary_stop_stamp_ns is not None
+            if waiting_to_move and not self._boundary_chassis_stopped():
                 yield (0.0, 0.0)
-                return RetreatResult.P2_TIMEOUT
+                continue
             # 距离比例速度缩放（参考LOW_DISTANCE逻辑，避免打滑/过冲）
             if dist < LOW_DISTANCE:
                 speed_scale = max(0.5, dist / LOW_DISTANCE)
@@ -1604,6 +1696,10 @@ class RTKNavControlNode(Node):
                 min_drive_speed = 2.005352  # 撤退时的最小驱动轮速（r/min）。
                 left_speed = max(min_drive_speed, left_speed)
                 right_speed = min(-min_drive_speed, right_speed)
+            if self._get_motion_direction_from_speed(left_speed, right_speed) in blocked_directions:
+                yield (0.0, 0.0)
+                return RetreatResult.P2_BACK_BLOCKED
+            drive_started = True
             yield (left_speed, right_speed)
             self.get_logger().debug(f"[RTKNav] 撤退: dist={dist:.3f}m, speed={effective_speed:.1f}, blocked={sorted(blocked_directions)}")
 
@@ -1770,8 +1866,12 @@ class RTKNavControlNode(Node):
 
     def io_data_rtk_callback(self, msg: UInt8):
         now = time.monotonic()
+        if (self.current_control_mode == ControlMode.AUTO_CLEANING
+                and self.last_io_time is not None
+                and now - self.last_io_time > BOUNDARY_IO_MAX_AGE):
+            self._stop_on_boundary_io_loss()
         # 4路传感器低电平有效：mid_left, mid_right, back_left, back_right。
-        self.last_io_time = time.monotonic()
+        self.last_io_time = now
         self.mid_left = (msg.data & 0x01) == 0x00
         self.mid_right = (msg.data & 0x02) == 0x00
         self.back_left = (msg.data & 0x04) == 0x00
@@ -1782,6 +1882,12 @@ class RTKNavControlNode(Node):
             | (int(self.back_left) << 2)
             | (int(self.back_right) << 3)
         )
+        motion = self._get_motion_direction_from_speed(self._last_motor_left, self._last_motor_right)
+        if (self.current_control_mode == ControlMode.AUTO_CLEANING
+                and motion and self._boundary_blocks_motion(motion)):
+            self._boundary_stop_until = now + BOUNDARY_STOP_MIN_SEC
+            self._arrival_confirmation.reset()
+            self.publish_stop_speed()
         episode = getattr(self, "_fallback_episode", None)
         if episode and episode.get("active") and (
             self.boundary_correct_locked
@@ -2343,6 +2449,12 @@ class RTKNavControlNode(Node):
                         episode["last_active_update"] = now
                         self._fallback_localization_mode = "IMU_ODOM_HOLD"
 
+    def drive_twist_callback(self, msg: TwistStamped):
+        """缓存带实际采集时间的底盘速度，供脱困前停稳确认。"""
+        stamp = msg.header.stamp
+        self._boundary_drive_stamp_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+        self._boundary_drive_velocity = (msg.twist.linear.x, msg.twist.angular.z)
+
     def odom_callback(self, msg: Odometry):
         now = time.monotonic()
         try:
@@ -2476,7 +2588,6 @@ class RTKNavControlNode(Node):
         self.nav_context["pause_reason"] = reason
         self.nav_context["brush_active"] = self.brush_active
         self._fallback_last_exit_reason = reason
-        self._last_motor_left = self._last_motor_right = 0.0
         self.publish_nav_state(NavState.PAUSE)
         self.publish_stop_speed()
         self.get_logger().warn(f"[RTK备用定位] 停车并暂停：{reason}")
@@ -2554,7 +2665,6 @@ class RTKNavControlNode(Node):
             episode["heading_target_deg"], self.imu_yaw
         )
         self._fallback_last_heading_correction_rpm = (left_speed + right_speed) / 2.0
-        self._last_motor_left, self._last_motor_right = left_speed, right_speed
         self._publish_motor_speed(left_speed, right_speed)
         velocity_msg = Float32()
         velocity_msg.data = fallback_base_rpm * WHEEL_RPM_TO_MPS
@@ -5347,18 +5457,32 @@ class RTKNavControlNode(Node):
         self, left_rpm: float, right_rpm: float, *,
         stop: bool = False, publish_legacy: bool = True,
     ) -> None:
-        """统一发布速度，保留旧话题的显式停车与生成器零速输出语义。"""
+        """校验并发布两种底盘协议共用的安全轮速。"""
+        now = self.get_clock().now()
+        if self.nav_context.get("nav_state") == NavState.PAUSE:
+            left_rpm = right_rpm = 0.0
+            stop = True
+        elif (left_rpm or right_rpm) and self.current_control_mode == ControlMode.AUTO_CLEANING:
+            motion = self._get_motion_direction_from_speed(left_rpm, right_rpm)
+            if self._boundary_motion_inhibited(time.monotonic()) or (
+                motion and self._boundary_blocks_motion(motion)
+            ):
+                left_rpm = right_rpm = 0.0
+                stop = True
         if publish_legacy:
+            self._last_motor_left, self._last_motor_right = left_rpm, right_rpm
+            if left_rpm or right_rpm:
+                self._boundary_stop_stamp_ns = None
+            elif self._boundary_stop_stamp_ns is None:
+                self._boundary_stop_stamp_ns = now.nanoseconds
             legacy = Vector3()
             legacy.x = float(left_rpm)
             legacy.y = float(right_rpm)
             legacy.z = self.brush_speed_rpm if self.brush_active and not stop else 0.0
             self.motor_speed_pub.publish(legacy)
 
-        if self.nav_context.get("nav_state") == NavState.PAUSE:
-            left_rpm = right_rpm = 0.0
         command = RtkMotionCommand()
-        command.stamp = self.get_clock().now().to_msg()
+        command.stamp = now.to_msg()
         command.left_rpm = float(left_rpm)
         command.right_rpm = float(right_rpm)
         command.brush_action = self._motion_brush_action(bool(left_rpm or right_rpm))
@@ -6345,7 +6469,14 @@ class RTKNavControlNode(Node):
                 self.publish_nav_state(NavState.IDLE)
                 return
 
-            if self._process_imu_odom_fallback(time.monotonic()):
+            now = time.monotonic()
+            if self._process_imu_odom_fallback(now):
+                return
+            if self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE:
+                self._stop_on_boundary_io_loss()
+                return
+            if self._boundary_motion_inhibited(now):
+                self.publish_stop_speed()
                 return
 
             if self.handle_rtk_data_timeout():
@@ -6508,9 +6639,6 @@ class RTKNavControlNode(Node):
                     if self.rtk_orientation_degraded:
                         left_speed *= ORIENTATION_FLOAT_SPEED_SCALE
                         right_speed *= ORIENTATION_FLOAT_SPEED_SCALE
-                    # 缓存最近发布的电机速度（供边界方向判断用）
-                    self._last_motor_left = float(left_speed)
-                    self._last_motor_right = float(right_speed)
                     self._publish_motor_speed(left_speed, right_speed)
                     velocity_msg = Float32()
                     velocity_msg.data = float(getattr(self, 'real_velocity', 0.0))

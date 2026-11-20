@@ -106,6 +106,10 @@ def _load_module():
     geometry_msgs = types.ModuleType("geometry_msgs")
     geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
     geometry_msgs_msg.Quaternion = type("Quaternion", (), {})
+    geometry_msgs_msg.TwistStamped = lambda: types.SimpleNamespace(
+        header=types.SimpleNamespace(stamp=types.SimpleNamespace()),
+        twist=types.SimpleNamespace(linear=types.SimpleNamespace(), angular=types.SimpleNamespace()),
+    )
     geometry_msgs.msg = geometry_msgs_msg
 
     can = types.ModuleType("can")
@@ -161,6 +165,7 @@ def _make_driver(module):
             "id": motor_id,
             "velocity": 0.0,
             "actual_velocity": 0.0,
+            "actual_velocity_stamp_ns": 0,
             "actual_position": 0.0,
             "actual_torque": 0.0,
             "actual_temperature": 0.0,
@@ -185,7 +190,31 @@ def _make_driver(module):
     driver._feedback_log_last_time = {}
     driver._feedback_log_last_signature = {}
     driver.get_logger = Mock(return_value=Mock())
+    driver.get_clock = Mock()
+    driver.get_clock().now().nanoseconds = 1_000_000_000
     return driver
+
+
+def test_drive_twist_uses_older_actual_wheel_sample_on_every_publication():
+    driver = _make_driver(_load_module())
+    clock = types.SimpleNamespace(nanoseconds=1_000_000_000)
+    driver.get_clock().now.side_effect = lambda: types.SimpleNamespace(nanoseconds=clock.nanoseconds)
+    driver.last_time = types.SimpleNamespace(nanoseconds=0)
+    driver.wheel_radius, driver.wheel_base = (0.05, 0.30)
+    driver.x = driver.y = driver.th = 0.0
+    driver.publish_odometry = Mock()
+    driver.drive_twist_publisher = Mock()
+    driver._parse_tpdo_feedback(0x281, bytes(4))
+    clock.nanoseconds = 1_050_000_000
+    driver.update_odometry()
+    driver.drive_twist_publisher.publish.assert_not_called()
+    driver._parse_tpdo_feedback(0x282, bytes(4))
+    for now in (1_100_000_000, 1_200_000_000):
+        clock.nanoseconds = now
+        driver.update_odometry()
+        feedback = driver.drive_twist_publisher.publish.call_args.args[0]
+        assert (feedback.header.stamp.sec, feedback.header.stamp.nanosec) == (1, 0)
+    assert driver.drive_twist_publisher.publish.call_count == 2
 
 
 def test_feedback_snapshot_is_detached_from_driver_cache():

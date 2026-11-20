@@ -38,6 +38,7 @@ def navigator():
         "publish_stop_speed", "publish_brush_speed", "check_and_control_brush",
         "get_target_waypoint", "finish_navigation_task", "load_waypoints_from_file",
         "resume_progress_callback", "_apply_skip_to_area", "_publish_imu_odom_fallback_speed",
+        "_get_motion_direction_from_speed",
     }
     node_class.bases = []
     node_class.body = [item for item in node_class.body
@@ -71,9 +72,14 @@ def navigator():
     node.get_logger = Mock()
     node.get_next_path_file = Mock(return_value=None)
     node.get_clock = Mock()
+    node.get_clock().now().nanoseconds = 10_000_000_023
     node.get_clock().now().to_msg.return_value = SimpleNamespace(sec=10, nanosec=23)
     node.motor_speed_pub = Mock()
     node.motion_command_pub = Mock()
+    node._boundary_stop_stamp_ns = None
+    node._boundary_motion_inhibited = Mock(return_value=False)
+    node._boundary_blocks_motion = Mock(return_value=False)
+    namespace["time"] = Mock()
     return node, namespace
 
 
@@ -160,13 +166,13 @@ def test_active_interval_runs_during_moving_calibration_and_disables_outside_aut
     assert last_message(node.motion_command_pub).brush_action == MotionCommand.DISABLE
 
 
-def test_pause_suppresses_structured_motion_even_with_nonzero_generator_output(navigator):
+def test_pause_suppresses_both_motion_topics_even_with_nonzero_generator_output(navigator):
     node, _ = navigator
     node.nav_context.update(nav_state="PAUSE", pre_pause_state="WAYPOINT_CALIB",
                             pause_reason="rtk_timeout")
     node._publish_motor_speed(12.0, -10.0)
 
-    assert vars(last_message(node.motor_speed_pub)) == dict(x=12.0, y=-10.0, z=70.0)
+    assert vars(last_message(node.motor_speed_pub)) == dict(x=0.0, y=0.0, z=0.0)
     command = last_message(node.motion_command_pub)
     assert command.brush_action == MotionCommand.HOLD_ZERO
     assert (command.left_rpm, command.right_rpm, command.brush_rpm) == (0.0, 0.0, 0.0)

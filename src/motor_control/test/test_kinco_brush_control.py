@@ -213,6 +213,7 @@ def test_motion_callback_validates_freshness_and_keeps_pause_precedence(paused, 
         current_stall_fault=False, geofence_fault_latched=False,
         _rtk_motion_stamp=-1, _rtk_auto_pause=paused,
         get_clock=Mock(), _kinco_brush=Mock(), kinco_brush_speed_rpm=95.0,
+        set_motors_speed=Mock(),
     )
     controller.get_clock().now().nanoseconds = 10_100_000_000
     command = SimpleNamespace(
@@ -227,6 +228,41 @@ def test_motion_callback_validates_freshness_and_keeps_pause_precedence(paused, 
     assert controller._kinco_brush.request.call_count == 1
     assert (controller.rtk_left_speed, controller.rtk_right_speed,
             *controller._kinco_brush.request.call_args.args) == expected
+    if paused:
+        controller.set_motors_speed.assert_called_once_with(0.0, 0.0)
+    else:
+        controller.set_motors_speed.assert_not_called()
+
+
+def test_legacy_rtk_speed_expires_and_zero_stops_before_the_next_timer():
+    path = Path(__file__).parents[1] / "motor_control" / "motor_control.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names = {"rtk_speed_callback", "_service_legacy_rtk_motion"}
+    methods = [node for node in ast.walk(tree)
+               if isinstance(node, ast.FunctionDef) and node.name in names]
+    clock = Mock(return_value=10.0)
+    namespace = dict(Vector3=SimpleNamespace, time=SimpleNamespace(monotonic=clock),
+                     math=math, RTK_MOTION_MAX_AGE=0.5)
+    exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"), namespace)
+    controller = SimpleNamespace(
+        current_status="AUTO_CLEANING", current_control_mode="AUTO_CLEANING",
+        web_control_active=False, rc_control=False, is_in_bin_process=False,
+        current_stall_fault=False, geofence_fault_latched=False,
+        _rtk_auto_pause=False, _rtk_motion_deadline=None,
+        get_logger=Mock(), set_motors_speed=Mock(), set_brush_speed=Mock(),
+    )
+    receive = namespace["rtk_speed_callback"]
+    receive(controller, SimpleNamespace(x=-12.0, y=12.0, z=40.0))
+    assert controller._rtk_motion_deadline == 10.5
+    clock.return_value = 10.51
+    namespace["_service_legacy_rtk_motion"](controller)
+    assert (controller.rtk_left_speed, controller.rtk_right_speed) == (0.0, 0.0)
+    controller.set_motors_speed.assert_called_with(0.0, 0.0)
+    controller.set_brush_speed.assert_called_with(0.0)
+    controller.set_motors_speed.reset_mock()
+    receive(controller, SimpleNamespace(x=-12.0, y=12.0, z=40.0))
+    receive(controller, SimpleNamespace(x=0.0, y=0.0, z=0.0))
+    controller.set_motors_speed.assert_called_once_with(0.0, 0.0)
 
 
 @pytest.mark.parametrize("overrides", [

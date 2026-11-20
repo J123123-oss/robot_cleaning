@@ -1582,6 +1582,8 @@ class MotorControlNode(Node):
     def timer_callback(self):
         if getattr(self, "brush_use_kinco", False):
             self._service_kinco_motion()
+        elif getattr(self, "_rtk_motion_deadline", None) is not None:
+            self._service_legacy_rtk_motion()
         # 检查CAN串口是否正常打开
         if not self.motor_ctrl.bus:
             self.get_logger().warn("[ROSNode] CAN串口连接断开，尝试重连...")
@@ -1869,9 +1871,12 @@ class MotorControlNode(Node):
                     self.get_logger().info(
                         "[MotorProtection] 重新进入AUTO_CLEANING，清除电流保护锁存并恢复清扫"
                     )
-                if (getattr(self, "brush_use_kinco", False)
-                        and self.current_control_mode != "AUTO_CLEANING"):
-                    self._cancel_kinco_motion()
+                if self.current_control_mode != "AUTO_CLEANING":
+                    if getattr(self, "brush_use_kinco", False):
+                        self._cancel_kinco_motion()
+                    else:
+                        self._rtk_motion_deadline = None
+                        self.rtk_left_speed = self.rtk_right_speed = 0.0
                 self._brush_test_wheel_hold = False
                 self.current_control_mode = "AUTO_CLEANING"
                 self.get_logger().info(f"[ROSNode] 控制模式切换：→ AUTO_CLEANING")
@@ -1901,12 +1906,37 @@ class MotorControlNode(Node):
             self.get_logger().warn(f"[ROSNode] 无效键盘指令：{key}，支持指令：{list(STATE_DICT.keys()) + ['r(RTK)', 'n(普通)', 'm(遥控)']}")
 
     def rtk_speed_callback(self, msg: Vector3):
-        """订阅RTK节点的速度指令，更新本地速度变量"""
-        self.rtk_left_speed = msg.x
-        self.rtk_right_speed = msg.y
-        if self.current_control_mode == "AUTO_CLEANING":
-            self.set_brush_speed(float(msg.z))
-        self.get_logger().debug(f"[RTKSpeed] 左轮：{self.rtk_left_speed:.2f}，右轮：{self.rtk_right_speed:.2f}，刷：{msg.z:.2f}")
+        """传统 RTK 指令从接收时刻起限时有效，零轮速立即下发。"""
+        if (
+            self.current_control_mode != "AUTO_CLEANING"
+            or self.current_status in ("DISABLE", "START", "LOADING") or self.is_in_bin_process
+            or self.web_control_active or self.rc_control
+            or self.current_stall_fault or self.geofence_fault_latched
+        ):
+            return
+        left, right, brush = float(msg.x), float(msg.y), float(msg.z)
+        if self._rtk_auto_pause or not all(math.isfinite(speed) for speed in (left, right, brush)):
+            left = right = brush = 0.0
+        self.rtk_left_speed, self.rtk_right_speed = left, right
+        self._rtk_motion_deadline = time.monotonic() + RTK_MOTION_MAX_AGE
+        if not (left or right):
+            self.set_motors_speed(0.0, 0.0)
+        self.set_brush_speed(brush)
+
+    def _service_legacy_rtk_motion(self):
+        """终止过期指令，或在清扫交出底盘控制权时清除旧指令。"""
+        auto_active = (
+            self.current_control_mode == "AUTO_CLEANING"
+            and self.current_status not in ("DISABLE", "START", "LOADING") and not self.is_in_bin_process
+            and not self.web_control_active and not self.rc_control
+        )
+        if auto_active and time.monotonic() < self._rtk_motion_deadline:
+            return
+        self._rtk_motion_deadline = None
+        self.rtk_left_speed = self.rtk_right_speed = 0.0
+        if auto_active:
+            self.set_motors_speed(0.0, 0.0)
+            self.set_brush_speed(0.0)
 
     def _enable_brush_test_can_run(self):
         if (
@@ -2005,6 +2035,8 @@ class MotorControlNode(Node):
         else:
             self.rtk_left_speed = max(MIN_SPEED, min(MAX_SPEED, msg.left_rpm))
             self.rtk_right_speed = max(MIN_SPEED, min(MAX_SPEED, msg.right_rpm))
+        if not (self.rtk_left_speed or self.rtk_right_speed):
+            self.set_motors_speed(0.0, 0.0)
         if self._kinco_brush is not None:
             speed = limit_kinco_brush_speed(msg.brush_rpm, self.kinco_brush_speed_rpm)
             if action == BrushAction.RUN and speed == 0.0:
@@ -2853,6 +2885,10 @@ class MotorControlNode(Node):
         if (getattr(self, "brush_use_kinco", False)
                 and new_state != "AUTO_CLEANING" and not keep_brush_test):
             self._cancel_kinco_motion(urgent=urgent)
+        elif (not getattr(self, "brush_use_kinco", False)
+              and (new_state != "AUTO_CLEANING" or self.current_control_mode != "AUTO_CLEANING")):
+            self._rtk_motion_deadline = None
+            self.rtk_left_speed = self.rtk_right_speed = 0.0
         self.get_logger().info(f"[ROSNode] 状态切换：{self.current_status} → {new_state}")
         self.current_status = new_state
         self._brush_test_wheel_hold = new_state == "HOLD" and keep_brush_test
