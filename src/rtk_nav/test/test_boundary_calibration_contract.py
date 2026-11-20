@@ -91,7 +91,7 @@ def test_geometric_p1_rejects_stop_iteration_while_sensor_active():
     ]
     assert any(
         "_is_retreat_turn_blocked(target_heading)" in ast.unparse(handler)
-        and "P1_SENSOR_BLOCKED" in ast.unparse(handler)
+        and any(isinstance(node, ast.Break) for node in ast.walk(handler))
         for handler in stop_handlers
     )
 
@@ -236,7 +236,7 @@ def test_bridge_suppression_covers_immediate_calibration_sensor_guard():
     assert "_is_ultrasonic_suppression_allowed" in source
     assert "not suppression_active" in source
     assert "confirmed_sensors" in source
-    assert "mid_left" in source
+    assert "_raw_boundary_sensor_names()" in source
 
 
 def test_bridge_suppression_has_no_configured_time_or_distance_limit():

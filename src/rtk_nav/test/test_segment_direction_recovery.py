@@ -66,6 +66,7 @@ def make_node():
     node.heading_abnormal_start_time = None
     node.heading_timed_out = False
     node.brush_active = False
+    node.boundary_correct_locked = False
     node.blocked_directions = set()
     node._arrival_confirmation = ArrivalConfirmation()
     node._position_guard = PositionJumpGuard()

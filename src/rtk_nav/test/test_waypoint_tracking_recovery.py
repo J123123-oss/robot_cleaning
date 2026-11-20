@@ -121,9 +121,8 @@ def _make_node():
     node._clear_retreat_context = Mock()
     node._persist_progress = Mock()
     node._is_ultrasonic_suppression_allowed = Mock(return_value=False)
-    node._has_raw_boundary_trigger = Mock(return_value=False)
     node._is_calibration_boundary_active = Mock(return_value=False)
-    node._is_motion_blocked = Mock(return_value=False)
+    node._apply_travel_boundary = lambda left, right: (left, right)
     node.get_boundary_correct_speed = Mock(return_value=(0.0, 0.0))
     node.get_target_waypoint = lambda idx: node.waypoints[idx]
     node.calc_distance_to_waypoint = Mock(return_value=7.0)
