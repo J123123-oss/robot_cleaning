@@ -1,122 +1,120 @@
-# WAIT_RTK 现场采点记录
-# 每次向 robot/<robot_ID>/cmd 发布 WAIT_RTK 追加一条记录。
-- seq: 1
-  point: {lon: 120.19479750038246, lat: 29.74467834972038}
+- seq: 24
+  point: {lon: 111.47167779189891, lat: 35.68282721750595}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 15:04:02"
-- seq: 2
-  point: {lon: 120.19479889554817, lat: 29.744712173548738}
+  time: "2026-11-24 10:35:52"
+- seq: 25
+  point: {lon: 111.47167495823255, lat: 35.68281805000594}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 15:05:10"
-- seq: 3
-  point: {lon: 120.19475959219794, lat: 29.744713650802307}
+  time: "2026-11-24 10:57:03"
+- seq: 26
+  point: {lon: 111.47173034071379, lat: 35.68334187167262}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 15:08:36"
-- seq: 4
-  point: {lon: 120.19475756734141, lat: 29.744679760034458}
+  time: "2026-11-24 10:59:14"
+- seq: 27
+  point: {lon: 111.47149471971319, lat: 35.68335863933927}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 15:10:15"
-- seq: 5
-  point: {lon: 120.19485018777704, lat: 29.744584261265953}
+  time: "2026-11-24 11:00:26"
+- seq: 28
+  point: {lon: 111.47147878971316, lat: 35.68335960267261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:45:31"
-- seq: 6
-  point: {lon: 120.19484825450083, lat: 29.744553624013726}
+  time: "2026-11-24 11:01:05"
+- seq: 29
+  point: {lon: 111.47129285154602, lat: 35.68337270767261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:46:20"
-- seq: 7
-  point: {lon: 120.19568275394235, lat: 29.74451552025329}
+  time: "2026-11-24 11:01:42"
+- seq: 30
+  point: {lon: 111.47123792906477, lat: 35.68284916200595}
+  valid: true
+  position_status: 4
+  orientation_status: 5
+  time: "2026-11-24 11:03:10"
+- seq: 31
+  point: {lon: 111.47142431356525, lat: 35.68283604317261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:51:07"
-- seq: 8
-  point: {lon: 120.19568331166575, lat: 29.74454603030296}
+  time: "2026-11-24 11:03:59"
+- seq: 32
+  point: {lon: 111.47143981673197, lat: 35.68283477583928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:52:14"
-- seq: 9
-  point: {lon: 120.19568342605389, lat: 29.744527774764467}
+  time: "2026-11-24 11:04:45"
+- seq: 33
+  point: {lon: 111.47135153323232, lat: 35.68282510567261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:53:20"
-- seq: 10
-  point: {lon: 120.19569407280193, lat: 29.74452626390456}
+  time: "2026-11-24 11:06:43"
+- seq: 34
+  point: {lon: 111.47115245356513, lat: 35.68283975683928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:55:25"
-- seq: 11
-  point: {lon: 120.1956934803931, lat: 29.744514515988772}
+  time: "2026-11-24 11:07:45"
+- seq: 35
+  point: {lon: 111.47108416375467, lat: 35.68220172733928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:56:19"
-- seq: 12
-  point: {lon: 120.19570625199579, lat: 29.74451389991689}
+  time: "2026-11-24 11:10:08"
+- seq: 36
+  point: {lon: 111.47128269542182, lat: 35.68218760333928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:56:56"
-- seq: 13
-  point: {lon: 120.19570983796977, lat: 29.744569005924333}
+  time: "2026-11-24 11:11:42"
+- seq: 37
+  point: {lon: 111.47122133756478, lat: 35.68284920817261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:57:41"
-- seq: 14
-  point: {lon: 120.19569743950798, lat: 29.744568154479918}
+  time: "2026-11-24 11:14:51"
+- seq: 38
+  point: {lon: 111.47127835254572, lat: 35.68338075800595}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:58:09"
-- seq: 15
-  point: {lon: 120.19569477637094, lat: 29.744490143124626}
+  time: "2026-11-24 11:19:29"
+- seq: 39
+  point: {lon: 111.47110148987859, lat: 35.68339334817261}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:59:35"
-- seq: 16
-  point: {lon: 120.19570455089745, lat: 29.744489573033498}
+  time: "2026-11-24 11:20:24"
+- seq: 40
+  point: {lon: 111.47108637987859, lat: 35.68339437183928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 16:59:48"
-- seq: 17
-  point: {lon: 120.1957051854872, lat: 29.744499382000708}
+  time: "2026-11-24 11:21:16"
+- seq: 41
+  point: {lon: 111.47090906104476, lat: 35.68340721100595}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-04 17:00:23"
-- seq: 18
-  point: {lon: 120.06973436714118, lat: 30.3202570387155}
+  time: "2026-11-24 11:21:51"
+- seq: 42
+  point: {lon: 111.47085251073030, lat: 35.68288143883928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-06 14:32:26"
-- seq: 19
-  point: {lon: 120.06963289779037, lat: 30.32024466213931}
+  time: "2026-11-24 11:23:31"
+- seq: 43
+  point: {lon: 111.47102985023075, lat: 35.68286857333928}
   valid: true
   position_status: 4
   orientation_status: 4
-  time: "2026-11-06 14:33:23"
-- seq: 20
-  point: {lon: 120.06963892212973, lat: 30.320207170843084}
-  valid: true
-  position_status: 4
-  orientation_status: 4
-  time: "2026-11-06 14:34:40"
+  time: "2026-11-24 11:24:39"

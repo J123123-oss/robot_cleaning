@@ -2,6 +2,10 @@
 
 按日期记录已提交的功能、修复与现场配置。最新条目放在前面。每次更新写明影响范围、行为变化与实际验证结果。对已提交的工作可附 Git 短哈希。
 
+## 2026-11-24
+
+- **RTK 图纸点位仿射标定**：修正 `tools/plot_rtk_points.py` 中仅用相似变换拟合导致的横纵比例不一致、三点 RMSE 异常和两点方向反转问题。三个及以上不共线控制点使用二维仿射模型，两个控制点仅作为临时定位；不共线检查失败或 RMSE 超过 `20 px` 时回退近似摆放。标定 JSON 增加 `model` 字段，拾取坐标支持仿射反算。教程补充控制点选择、第四点交叉验证和 RMSE 判断规则。重新生成 `tools/rtk_preview/rtk_points_1112.html`。`tools/test_plot_rtk_points.py` 回归测试 3 项通过，Python 编译检查和内嵌 JavaScript 语法检查通过，本地浏览器加载页面正常。
+
 ## 2026-11-20
 
 - **IO 断流测试开关**：`run.launch.py` 新增 `enable_sensors_485` 和 `enable_io_timeout_protection`，默认均为 `true`。受控台架且没有 `/io_data` 时可执行 `ros2 launch rtk_nav run.launch.py enable_sensors_485:=false enable_io_timeout_protection:=false`；如果由其他节点提供 `/io_data`，只需关闭内置 `sensors_485`，保留断流保护。关闭断流保护不会屏蔽已收到的传感器触发。重点离线测试 153 项通过，全量回归新增测试后 617 项通过；剩余失败和收集错误与基线一致。未做 Forlinx 现场验证。

@@ -141,6 +141,95 @@ def solve_linear(matrix, vector):
     return [rows[i][size] for i in range(size)]
 
 
+def solve_three(matrix, vector):
+    """Solve a small dense 3x3 system with Gauss-Jordan elimination."""
+    rows = [list(matrix[i]) + [vector[i]] for i in range(3)]
+    for column in range(3):
+        pivot = max(range(column, 3), key=lambda row: abs(rows[row][column]))
+        if abs(rows[pivot][column]) < 1e-12:
+            return None
+        rows[column], rows[pivot] = rows[pivot], rows[column]
+        divisor = rows[column][column]
+        for index in range(column, 4):
+            rows[column][index] /= divisor
+        for row in range(3):
+            if row == column:
+                continue
+            factor = rows[row][column]
+            if abs(factor) < 1e-15:
+                continue
+            for index in range(column, 4):
+                rows[row][index] -= factor * rows[column][index]
+    return [rows[i][3] for i in range(3)]
+
+
+def apply_affine(point, model):
+    """Map a UTM point into drawing pixels with an affine model."""
+    east = float(point["utm_e"]) - model["e0"]
+    north = float(point["utm_n"]) - model["n0"]
+    return {
+        "u": model["u_e"] * east + model["u_n"] * north + model["u_offset"],
+        "v": model["v_e"] * east + model["v_n"] * north + model["v_offset"],
+    }
+
+
+def fit_affine(control_points):
+    """Fit UTM -> pixel affine mapping for three or more controls."""
+    if len(control_points) < 3:
+        return None
+    controls = [with_utm(point) for point in control_points]
+    east0 = sum(point["utm_e"] for point in controls) / len(controls)
+    north0 = sum(point["utm_n"] for point in controls) / len(controls)
+    ata = [[0.0] * 3 for _ in range(3)]
+    at_u = [0.0] * 3
+    at_v = [0.0] * 3
+    for point in controls:
+        row = [point["utm_e"] - east0, point["utm_n"] - north0, 1.0]
+        for i in range(3):
+            for j in range(3):
+                ata[i][j] += row[i] * row[j]
+            at_u[i] += row[i] * float(point["px"])
+            at_v[i] += row[i] * float(point["py"])
+    u_solution = solve_three(ata, at_u)
+    v_solution = solve_three(ata, at_v)
+    if u_solution is None or v_solution is None:
+        return None
+    u_e, u_n, u_offset = u_solution
+    v_e, v_n, v_offset = v_solution
+    determinant = u_e * v_n - u_n * v_e
+    if abs(determinant) < 1e-12:
+        return None
+    residuals = []
+    for point in controls:
+        pixel = apply_affine(point, {
+            "e0": east0,
+            "n0": north0,
+            "u_e": u_e,
+            "u_n": u_n,
+            "u_offset": u_offset,
+            "v_e": v_e,
+            "v_n": v_n,
+            "v_offset": v_offset,
+        })
+        residuals.append(math.hypot(pixel["u"] - point["px"], pixel["v"] - point["py"]))
+    return {
+        "type": "affine",
+        "u_e": u_e,
+        "u_n": u_n,
+        "u_offset": u_offset,
+        "v_e": v_e,
+        "v_n": v_n,
+        "v_offset": v_offset,
+        "det": determinant,
+        "e0": east0,
+        "n0": north0,
+        "pixels_per_meter": math.sqrt(abs(determinant)),
+        "residuals": residuals,
+        "rmse": math.sqrt(sum(value * value for value in residuals) / len(residuals)),
+        "count": len(controls),
+    }
+
+
 def fit_similarity(control_points):
     """Fit pixel -> UTM: x = a*u - b*v + tx, y = b*u + a*v + ty."""
     if len(control_points) < 2:
@@ -381,7 +470,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
 <div id="banner" class="warn"></div>
 <div id="holdout" class="hint"></div>
 <div id="pairs"></div>
-<div class="hint">标定方法：在下方选择一条采点，点击“在图纸上拾取”，再点击图纸上对应的位置。至少 2 个控制点即可对齐。</div>
+<div class="hint">标定方法：先重置底图调整，在下方选择采点并点击“在图纸上拾取”，再点击图纸上对应的位置。至少 3 个不共线控制点才能完成可信仿射标定。</div>
 <select id="point-select" size="10"></select>
 <button id="pick-btn">在图纸上拾取所选点位</button>
 <button id="export-btn">导出标定 JSON</button>
@@ -419,7 +508,7 @@ button:disabled{color:#9aa5b1;background:#f0f4f8;cursor:not-allowed}
     <button id="reset-adjust">重置</button>
   </div>
   <div class="vc-hint" id="view-state"></div>
-  <div class="vc-hint">滑动条和镜像按钮只调整底图显示，点位保持不动；不写入标定 JSON。</div>
+  <div class="vc-hint">滑动条和镜像按钮只调整底图显示，点位保持不动；导出标定 JSON 时会保存。精确拾取前请先重置这些调整。</div>
   </div>
 </div>
 </div>
@@ -544,6 +633,7 @@ let pairs = INITIAL_PAIRS.map(pair => {
 });
 let transform = null;
 let rawTransform = null;
+let provisionalTransform = null;
 let picking = false;
 let coordPicking = false;
 let labelEntries = [];
@@ -607,6 +697,26 @@ function solve4(matrix, vector) {
   }
   return rows.map(row => row[size]);
 }
+function solve3(matrix, vector) {
+  const rows = matrix.map((row, index) => row.concat([vector[index]]));
+  for (let column = 0; column < 3; column++) {
+    let pivot = column;
+    for (let row = column + 1; row < 3; row++) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) pivot = row;
+    }
+    if (Math.abs(rows[pivot][column]) < 1e-12) return null;
+    [rows[column], rows[pivot]] = [rows[pivot], rows[column]];
+    const divisor = rows[column][column];
+    for (let index = column; index <= 3; index++) rows[column][index] /= divisor;
+    for (let row = 0; row < 3; row++) {
+      if (row === column) continue;
+      const factor = rows[row][column];
+      if (Math.abs(factor) < 1e-15) continue;
+      for (let index = column; index <= 3; index++) rows[row][index] -= factor * rows[column][index];
+    }
+  }
+  return rows.map(row => row[3]);
+}
 function fitSimilarity(controls) {
   if (controls.length < 2) return null;
   const east0 = mean(controls.map(point => Number(point.utm_e)));
@@ -646,7 +756,54 @@ function fitSimilarity(controls) {
     count: controls.length
   };
 }
+function applyAffine(point, model) {
+  const local = utmLocal(point, model.east0, model.north0);
+  return {
+    u: model.uEast * local[0] + model.uNorth * local[1] + model.uOffset,
+    v: model.vEast * local[0] + model.vNorth * local[1] + model.vOffset
+  };
+}
+function fitAffine(controls) {
+  if (controls.length < 3) return null;
+  const east0 = mean(controls.map(point => Number(point.utm_e)));
+  const north0 = mean(controls.map(point => Number(point.utm_n)));
+  const ata = [[0,0,0],[0,0,0],[0,0,0]];
+  const atU = [0,0,0], atV = [0,0,0];
+  controls.forEach(point => {
+    const local = utmLocal(point, east0, north0);
+    const row = [local[0], local[1], 1];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) ata[i][j] += row[i] * row[j];
+      atU[i] += row[i] * Number(point.px);
+      atV[i] += row[i] * Number(point.py);
+    }
+  });
+  const uSolution = solve3(ata, atU);
+  const vSolution = solve3(ata, atV);
+  if (!uSolution || !vSolution) return null;
+  const [uEast, uNorth, uOffset] = uSolution;
+  const [vEast, vNorth, vOffset] = vSolution;
+  const det = uEast * vNorth - uNorth * vEast;
+  if (Math.abs(det) < 1e-12) return null;
+  const model = {
+    type: 'affine',
+    uEast, uNorth, uOffset, vEast, vNorth, vOffset,
+    det, east0, north0,
+    zone: controls[0].utm_zone || '',
+    pixelsPerMeter: Math.sqrt(Math.abs(det)),
+    residuals: [],
+    rmse: 0,
+    count: controls.length
+  };
+  model.residuals = controls.map(point => {
+    const pixel = applyAffine(point, model);
+    return Math.hypot(pixel.u - Number(point.px), pixel.v - Number(point.py));
+  });
+  model.rmse = Math.sqrt(model.residuals.reduce((sum, value) => sum + value * value, 0) / model.residuals.length);
+  return model;
+}
 function pointPixel(point, model) {
+  if (model.type === 'affine') return applyAffine(point, model);
   const local = utmLocal(point, model.east0, model.north0);
   const dx = local[0] - model.tx, dy = local[1] - model.ty;
   return {
@@ -655,6 +812,13 @@ function pointPixel(point, model) {
   };
 }
 function pixelToUtm(u, v, model) {
+  if (model.type === 'affine') {
+    const du = u - model.uOffset;
+    const dv = v - model.vOffset;
+    const localEast = (du * model.vNorth - model.uNorth * dv) / model.det;
+    const localNorth = (model.uEast * dv - du * model.vEast) / model.det;
+    return {e: localEast + model.east0, n: localNorth + model.north0};
+  }
   const x = model.a * u - model.b * v + model.tx;
   const y = model.b * u + model.a * v + model.ty;
   return {e: x + model.east0, n: y + model.north0};
@@ -843,8 +1007,10 @@ function popupHtml(records) {
 function renderPoints() {
   pointLayer.clearLayers();
   labelEntries = [];
+  const displayTransform = transform || provisionalTransform;
   POINTS.forEach(point => {
-    const base = transform ? pointPixel(point, transform) : (approx ? approxPixel(point, approx) : null);
+    const base = displayTransform ? pointPixel(point, displayTransform)
+      : (approx ? approxPixel(point, approx) : null);
     if (!base || !Number.isFinite(base.u) || !Number.isFinite(base.v)) return;
     const pixel = base;
     const latlng = [IMAGE_H - pixel.v, pixel.u];
@@ -930,6 +1096,11 @@ function renderPairs() {
       value.className = 'res' + (residual > 2 || !transform ? ' bad' : '');
       value.textContent = residual.toFixed(2) + ' px';
       right.appendChild(value);
+    } else if (provisionalTransform) {
+      const value = document.createElement('span');
+      value.className = 'res bad';
+      value.textContent = '临时';
+      right.appendChild(value);
     }
     const remove = document.createElement('button');
     remove.textContent = '删除';
@@ -965,21 +1136,28 @@ function updateStatus() {
   if (transform) {
     bannerEl.className = 'ok';
     bannerEl.textContent = '已标定：' + transform.count + ' 个控制点，所有点位按图纸像素精确摆放。';
-    statusEl.textContent = '比例 ' + transform.pixelsPerMeter.toFixed(2) + ' px/m' +
-      ' · 旋转 ' + transform.rotation.toFixed(1) + '°' +
+    statusEl.textContent = '仿射模型 · 平均比例 ' + transform.pixelsPerMeter.toFixed(2) + ' px/m' +
       ' · RMSE ' + transform.rmse.toFixed(2) + ' px';
   } else if (rawTransform) {
     bannerEl.className = 'error';
     bannerEl.textContent = '标定不可信：RMSE ' + rawTransform.rmse.toFixed(1) +
       ' px，控制点与图上位置不匹配，已回退近似摆放。请删除偏差大的点后重试。';
     statusEl.textContent = '标定不可信 · 已回退近似摆放';
+  } else if (pairs.length >= 3) {
+    bannerEl.className = 'error';
+    bannerEl.textContent = '控制点无法求解：至少需要 3 个不共线控制点，请删除后重试。';
+    statusEl.textContent = '标定失败';
+  } else if (provisionalTransform) {
+    bannerEl.className = 'warn';
+    bannerEl.textContent = '临时两点定位：方向和比例尚未验证，请再添加至少 1 个不共线控制点。';
+    statusEl.textContent = '临时定位 · 不可作为可信标定';
   } else if (pairs.length >= 2) {
     bannerEl.className = 'error';
-    bannerEl.textContent = '控制点无法求解（可能重合或像素/经纬度顺序有误），请删除后重试。';
+    bannerEl.textContent = '两点无法建立临时定位，请删除后重试。';
     statusEl.textContent = '标定失败';
   } else {
     bannerEl.className = 'warn';
-    bannerEl.textContent = '未标定：当前为近似摆放，请选择点位并在图纸上拾取至少 2 个已知位置。';
+    bannerEl.textContent = '未标定：当前为近似摆放，请选择至少 3 个不共线点位进行仿射标定。';
     statusEl.textContent = '未标定 · 近似摆放';
   }
 }
@@ -1017,12 +1195,14 @@ function renderCalibrationPoints() {
 }
 function renderReferencePoints() {
   referenceLayer.clearLayers();
-  locateReferencesBtn.disabled = !REFERENCE_POINTS.length || !(transform || approx);
+  const displayTransform = transform || provisionalTransform;
+  locateReferencesBtn.disabled = !REFERENCE_POINTS.length || !(displayTransform || approx);
   REFERENCE_POINTS.forEach(reference => {
     const wgs = toWgs84(Number(reference.lon), Number(reference.lat), 'wgs84');
     const utm = lonLatToUtm(wgs[0], wgs[1]);
     const point = {utm_e: utm.e, utm_n: utm.n};
-    const pixel = transform ? pointPixel(point, transform) : (approx ? approxPixel(point, approx) : null);
+    const pixel = displayTransform ? pointPixel(point, displayTransform)
+      : (approx ? approxPixel(point, approx) : null);
     if (!pixel || !Number.isFinite(pixel.u) || !Number.isFinite(pixel.v)) return;
     const marker = L.circleMarker([IMAGE_H - pixel.v, pixel.u], {
       radius: 8, color: '#00a6b2', fillColor: '#fff', fillOpacity: 1,
@@ -1089,7 +1269,8 @@ function applyImageTransform() {
     'deg) scale(' + scaleX + ',' + scaleY + ')';
 }
 function refresh() {
-  rawTransform = pairs.length >= 2 ? fitSimilarity(pairs) : null;
+  provisionalTransform = pairs.length === 2 ? fitSimilarity(pairs) : null;
+  rawTransform = pairs.length >= 3 ? fitAffine(pairs) : null;
   transform = rawTransform && rawTransform.rmse <= CALIBRATION_MAX_RMSE_PX ? rawTransform : null;
   renderPoints();
   renderCalibrationPoints();
@@ -1129,14 +1310,15 @@ map.on('click', event => {
   const v = IMAGE_H - event.latlng.lat;
   const name = (point.area ? point.area + '-' : '') + (point.label || point.seq);
   let holdout = null;
-  if (transform && pairs.length >= 2) {
-    const predicted = pointPixel(point, transform);
+  const predictionModel = transform || provisionalTransform;
+  if (predictionModel && pairs.length >= 2) {
+    const predicted = pointPixel(point, predictionModel);
     const errorPx = Math.hypot(predicted.u - u, predicted.v - v);
     holdout = {
       name,
       seq: point.seq,
       errorPx,
-      errorMeters: errorPx / transform.pixelsPerMeter
+      errorMeters: errorPx / predictionModel.pixelsPerMeter
     };
   }
   const existing = pairs.findIndex(pair => pair.seq === point.seq);
@@ -1167,6 +1349,7 @@ exportBtn.onclick = () => {
     image_width: IMAGE_W,
     image_height: IMAGE_H,
     coord_system: 'wgs84',
+    model: transform ? 'affine' : (provisionalTransform ? 'similarity_provisional' : null),
     control_points: pairs.map(pair => ({
       name: pair.name,
       seq: pair.seq,
@@ -1287,8 +1470,10 @@ viewCollapseBtn.onclick = () => {
 };
 locateBtn.onclick = () => {
   const latlngs = [];
+  const displayTransform = transform || provisionalTransform;
   POINTS.forEach(point => {
-    const pixel = transform ? pointPixel(point, transform) : (approx ? approxPixel(point, approx) : null);
+    const pixel = displayTransform ? pointPixel(point, displayTransform)
+      : (approx ? approxPixel(point, approx) : null);
     if (pixel && Number.isFinite(pixel.u) && Number.isFinite(pixel.v)) {
       latlngs.push([IMAGE_H - pixel.v, pixel.u]);
     }
@@ -1322,14 +1507,18 @@ function setCoordPicking(value) {
   coordPickBtn.textContent = coordPicking ? '退出坐标拾取' : '拾取坐标（估算经纬度）';
   map.getContainer().style.cursor = coordPicking ? 'crosshair' : '';
   if (!coordPicking) coordPanelEl.classList.remove('visible');
-  if (coordPicking && !transform && !approx) showCoordMessage('没有可用的坐标基准');
+  if (coordPicking && !transform && !provisionalTransform && !approx) {
+    showCoordMessage('没有可用的坐标基准');
+  }
 }
 function updateCoordState() {
-  coordPickBtn.disabled = !(transform || approx);
+  const displayTransform = transform || provisionalTransform;
+  coordPickBtn.disabled = !(displayTransform || approx);
   coordPickBtn.title = transform ? ''
-    : (rawTransform ? '标定不可信，使用近似摆放估算'
-      : (approx ? '未标定，将使用近似摆放估算' : '没有可用的坐标基准'));
-  if (!transform && !approx && coordPicking) setCoordPicking(false);
+    : (provisionalTransform ? '当前为两点临时定位，坐标仅供参考'
+      : (rawTransform ? '标定不可信，使用近似摆放估算'
+        : (approx ? '未标定，将使用近似摆放估算' : '没有可用的坐标基准')));
+  if (!displayTransform && !approx && coordPicking) setCoordPicking(false);
 }
 coordPickBtn.onclick = () => setCoordPicking(!coordPicking);
 coordCloseBtn.onclick = () => {
@@ -1346,18 +1535,23 @@ coordCopyBtn.onclick = () => {
   setTimeout(() => { coordCopyBtn.textContent = '复制'; }, 1200);
 };
 map.on('click', event => {
-  if (!coordPicking || (!transform && !approx)) return;
+  const displayTransform = transform || provisionalTransform;
+  if (!coordPicking || (!displayTransform && !approx)) return;
   const u = event.latlng.lng;
   const v = IMAGE_H - event.latlng.lat;
-  const utm = transform ? pixelToUtm(u, v, transform) : approxPixelToUtm(u, v, approx);
-  const zoneText = String((transform && transform.zone) || (POINTS[0] && POINTS[0].utm_zone) || '49N');
+  const utm = displayTransform ? pixelToUtm(u, v, displayTransform)
+    : approxPixelToUtm(u, v, approx);
+  const zoneText = String((displayTransform && displayTransform.zone) ||
+    (POINTS[0] && POINTS[0].utm_zone) || '49N');
   const match = zoneText.match(/(\d+)\s*([NS])/);
   const zone = match ? Number(match[1]) : 49;
   const hemisphere = match && match[2] === 'S' ? 'S' : 'N';
   const geo = utmToLonLat(utm.e, utm.n, zone, hemisphere);
   coordValueEl.textContent = geo.lat.toFixed(6) + ',' + geo.lon.toFixed(6);
   coordUtmEl.textContent = 'UTM: E ' + utm.e.toFixed(2) + ' N ' + utm.n.toFixed(2) + ' (' + zoneText + ')' +
-    (transform ? '' : ' · 近似摆放估算，标定后更准确');
+    (transform ? '' : (provisionalTransform
+      ? ' · 两点临时定位，增加控制点后再使用'
+      : ' · 近似摆放估算，标定后更准确'));
   coordPanelEl.classList.add('visible');
   coordLayer.clearLayers();
   L.circleMarker(event.latlng, {
@@ -1475,10 +1669,11 @@ def render_sheet(points, background_image, control_points=None, default_view=Non
     print(f"底图: {background_image} ({width}×{height}), 内容区: {content}")
     for dataset in datasets:
         print(f"点位序列: {dataset['label']} ({len(dataset['points'])} 点)")
-    transform = fit_similarity(control_points)
+    transform = fit_affine(control_points) if len(control_points) >= 3 else fit_similarity(control_points)
     if transform:
-        print(f"标定: {transform['count']} 点, {transform['pixels_per_meter']:.2f} px/m, "
-              f"旋转 {transform['rotation_deg']:.1f}°, RMSE {transform['rmse']:.2f} px")
+        model_name = "仿射" if transform.get("type") == "affine" else "两点临时相似"
+        print(f"标定: {model_name}, {transform['count']} 点, "
+              f"{transform['pixels_per_meter']:.2f} px/m, RMSE {transform['rmse']:.2f} px")
         for index, point in enumerate(control_points):
             print(f"  {point['name']}: 残差 {transform['residuals'][index]:.2f} px")
     elif len(control_points) >= 2:
