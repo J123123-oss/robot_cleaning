@@ -2,8 +2,8 @@
 
 ## 1. 启动
 
-- 在仓库根目录双击 `启动RTK图纸预览.bat`，打开布置图 1112 页面。
-- 手动启动时，在仓库根目录执行 `python -m http.server 8766 --bind 127.0.0.1`，浏览器访问 `http://localhost:8766/tools/rtk_preview/rtk_points_1112.html`。
+- 在仓库根目录双击 `启动RTK图纸预览.bat`。启动时会读取当前采点和默认标定文件，重新生成并打开布置图 1112 页面；生成失败时会提示错误并停止。
+- 手动启动时，先执行第 3 节的生成命令，再在仓库根目录执行 `python -m http.server 8766 --bind 127.0.0.1`，浏览器访问 `http://localhost:8766/tools/rtk_preview/rtk_points_1112.html`。单独运行 HTTP 服务不会读取 JSON 或重新生成页面。
 - 页面需要联网加载 Leaflet 1.9.4；`file://` 直接打开可能一直显示“加载中”。
 
 ## 2. 文件位置
@@ -12,16 +12,17 @@
 |------|------|
 | 点位序列 | `src/rtk_nav/rtk_nav/config/rtk_points.md` |
 | 矢量底图 | 仓库根目录 `布置图1112.svg` |
+| 默认标定 | `src/rtk_nav/rtk_nav/config/rtk_calibration.json` |
 | 对齐页面 | `tools/rtk_preview/rtk_points_1112.html`（内嵌底图和生成时的点位） |
 
 `rtk_points.md` 由机器人 `WAIT_RTK` 自动追加，不要手改；混合场地按 `seq` 拆成独立文件。
 
 ## 3. 重新生成布置图 1112 页面
 
-`WAIT_RTK` 追加采点后，在仓库根目录运行下面的命令，再刷新浏览器。页面按 WGS84 读取现场采点，初次打开会近似摆放点位。
+`WAIT_RTK` 追加采点后，重新双击启动文件，或在仓库根目录运行下面的命令，再刷新浏览器。页面按 WGS84 读取现场采点并载入默认标定。
 
 ```powershell
-python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md --output tools/rtk_preview/rtk_points_1112.html --background-image "布置图1112.svg"
+python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md --output tools/rtk_preview/rtk_points_1112.html --background-image "布置图1112.svg" --calibration src/rtk_nav/rtk_nav/config/rtk_calibration.json
 ```
 
 页面左侧“源坐标系”可切换 WGS84 / GCJ02 / BD09：选中的坐标系会先转换为 WGS84，再计算 UTM、标定和显示。BD09/GCJ02 数据选错会导致点位整体偏移数百米到 1 km。
@@ -41,6 +42,8 @@ python tools/plot_rtk_points.py --input src/rtk_nav/rtk_nav/config/rtk_points.md
 5. **判断 RMSE**：4 个及以上控制点参与拟合时，RMSE 应小于 20 px，控制点残差也应保持较小。超过阈值时页面回退近似摆放，绿色点位不是可信标定结果。
 6. **导出**：需要保存本次标定时，点“导出标定 JSON”，自行选择保存位置。JSON 会保存控制点、模型类型和底图显示设置。
 7. **恢复**：用自己的标定文件重新生成时，加 `--calibration 标定.json`。页面会读取控制点并恢复底图的缩放、旋转、镜像和平移。若 `control_points` 为空，页面会恢复底图设置，点位仍按近似位置显示。
+
+**更新默认标定**：完成控制点检查并用额外点验证后，点击“导出标定 JSON”，将下载的文件保存或复制到 `src/rtk_nav/rtk_nav/config/rtk_calibration.json`，替换旧文件。重新双击启动文件或执行第 3 节的生成命令，然后刷新浏览器。页面内的修改不会自动写回 JSON；关闭或刷新前请先导出。该标定对应布置图 1112 及其图纸尺寸，换场地、底图或尺寸时需重新标定；它只用于图纸预览，不改变机器人导航坐标。
 
 辅助功能：点“拾取坐标（估算经纬度）”，再点图纸任意位置，左下角显示该点的 `lat,lon` 与 UTM，可复制。已完成标定时用标定反算；未标定时用近似摆放估算（结果仅供参考）。
 

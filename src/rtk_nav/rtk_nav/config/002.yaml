@@ -1,0 +1,49 @@
+areas:
+  # hangzhou001
+  - name: "bridge-home-2Bay"
+    calib_point_a: {lon: 111.47167495823255, lat: 35.68281805000594}
+    calib_point_b: {lon: 111.47173034071379, lat: 35.68334187167262}
+    calib_point_c: {lon: 111.47167495823255, lat: 35.68281805000594}
+
+  - name: "bridge-2Bay-bridge1"
+    calib_point_a: {lon: 111.47173034071379, lat: 35.68334187167262}
+    calib_point_b: {lon: 111.47129285154602, lat: 35.68337270767261}
+    calib_point_c: {lon: 111.47173034071379, lat: 35.68334187167262}
+
+  - name: "2Bay-W-E"
+    calib_point_a: {lon: 111.47122133756478, lat: 35.68284920817261}
+    calib_point_b: {lon: 111.47127835254572, lat: 35.68338075800595}
+    calib_point_c: {lon: 111.47110148987859, lat: 35.68339334817261}
+
+  - name: "2Bay-W-W"
+    calib_point_a: {lon: 111.47102985023075, lat: 35.68286857333928}
+    calib_point_b: {lon: 111.47108637987859, lat: 35.68339437183928}
+    calib_point_c: {lon: 111.47090906104476, lat: 35.68340721100595}
+
+
+  - name: "bridge-2Bay-bridge1"
+    calib_point_a: {lon: 111.47090906104476, lat: 35.68340721100595}
+    calib_point_b: {lon: 111.47108637987859, lat: 35.68339437183928}
+    calib_point_c: {lon: 111.47090906104476, lat: 35.68340721100595}
+  - name: "bridge-2Bay-bridge1"
+    calib_point_a: {lon: 111.47110148987859, lat: 35.68339334817261}
+    calib_point_b: {lon: 111.47127835254572, lat: 35.68338075800595}
+    calib_point_c: {lon: 111.47110148987859, lat: 35.68339334817261}
+
+
+  - name: "bridge-29-28"
+    calib_point_a: {lon: 111.47129285154602, lat: 35.68337270767261}
+    calib_point_b: {lon: 111.47147878971316, lat: 35.68335960267261}
+    calib_point_c: {lon: 111.47129285154602, lat: 35.68337270767261}
+  - name: "bridge-27-26"
+    calib_point_a: {lon: 111.47149471971319, lat: 35.68335863933927}
+    calib_point_b: {lon: 111.47173034071379, lat: 35.68334187167262}
+    calib_point_c: {lon: 111.47149471971319, lat: 35.68335863933927}
+default:
+  interval: 0.8
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.0
+  edge_distance_lat: 0.0
+  reverse_end_point: True
+  headless: False

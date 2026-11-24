@@ -7,15 +7,24 @@ set "PORT=8766"
 set "PAGE=%~1"
 if "%PAGE%"=="" set "PAGE=tools/rtk_preview/rtk_points_1112.html"
 
-if not exist "%PAGE%" (
-    echo [错误] 找不到页面文件：%PAGE%
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [错误] 未找到 Python，请先安装 Python 并加入 PATH。
     pause
     exit /b 1
 )
 
-where python >nul 2>&1
-if errorlevel 1 (
-    echo [错误] 未找到 Python，请先安装 Python 并加入 PATH。
+if "%~1"=="" (
+    python tools/plot_rtk_points.py --input "src/rtk_nav/rtk_nav/config/rtk_points.md" --output "%PAGE%" --background-image "布置图1112.svg" --calibration "src/rtk_nav/rtk_nav/config/rtk_calibration.json"
+    if errorlevel 1 (
+        echo [错误] 生成默认标定页面失败，请检查采点、底图和标定文件。
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%PAGE%" (
+    echo [错误] 找不到页面文件：%PAGE%
     pause
     exit /b 1
 )

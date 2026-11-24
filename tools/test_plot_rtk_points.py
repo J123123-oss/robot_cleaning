@@ -1,4 +1,8 @@
 import math
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -66,3 +70,23 @@ def test_affine_fit_reports_residual_for_inconsistent_control():
 
     assert model is not None
     assert model["rmse"] > 20.0
+
+
+def test_default_preview_launcher_generates_page_with_calibration(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "start_rtk_preview.bat").read_text(encoding="utf-8")
+    assert '"%~1"==""' in launcher
+    assert '--calibration "src/rtk_nav/rtk_nav/config/rtk_calibration.json"' in launcher
+    output = tmp_path / "preview.html"
+    subprocess.run([
+        sys.executable, str(root / "tools/plot_rtk_points.py"),
+        "--input", str(root / "src/rtk_nav/rtk_nav/config/rtk_points.md"),
+        "--output", str(output),
+        "--background-image", str(root / "布置图1112.svg"),
+        "--calibration", str(root / "src/rtk_nav/rtk_nav/config/rtk_calibration.json"),
+    ], cwd=root, check=True, capture_output=True)
+    html = output.read_text(encoding="utf-8")
+    initial_pairs = html.split("const INITIAL_PAIRS = ", 1)[1].split(";", 1)[0]
+    controls = json.loads(initial_pairs)
+    assert [point["name"] for point in controls] == ["25", "52", "78", "96"]
+    assert fit_affine(controls)["rmse"] < 20

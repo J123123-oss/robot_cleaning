@@ -1,0 +1,19 @@
+areas:
+  # hangzhou001
+  - name: "2Bay-E-E"
+    calib_point_a: {lon: 111.47167495823255, lat: 35.68281805000594}
+    calib_point_b: {lon: 111.47173034071379, lat: 35.68334187167262}
+    calib_point_c: {lon: 111.47149471971319, lat: 35.68335863933927}
+
+  - name: "2Bay-E-W"
+    calib_point_a: {lon: 111.47142431356525, lat: 35.68283604317261}
+    calib_point_b: {lon: 111.47147878971316, lat: 35.68335960267261}
+    calib_point_c: {lon: 111.47129285154602, lat: 35.68337270767261}
+default:
+  interval: 0.8
+  start_corner: "top_left"
+  swap_wh_select: False
+  edge_distance_lon: 0.0
+  edge_distance_lat: 0.0
+  reverse_end_point: True
+  headless: False

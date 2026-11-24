@@ -118,3 +118,333 @@
   position_status: 4
   orientation_status: 4
   time: "2026-11-24 11:24:39"
+- seq: 44
+  point: {lon: 111.47090590104655, lat: 35.68335738250594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:27:22"
+- seq: 45
+  point: {lon: 111.47087951171316, lat: 35.68335954000595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:28:14"
+- seq: 46
+  point: {lon: 111.47089231154416, lat: 35.68342396667261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:29:03"
+- seq: 47
+  point: {lon: 111.47143950454576, lat: 35.68337979567261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:30:46"
+- seq: 48
+  point: {lon: 111.47142674137905, lat: 35.68338059467261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:31:52"
+- seq: 49
+  point: {lon: 111.47143269737690, lat: 35.68344076500595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:32:36"
+- seq: 50
+  point: {lon: 111.47143356004312, lat: 35.68345298567262}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:33:03"
+- seq: 51
+  point: {lon: 111.47144012504096, lat: 35.68351386517261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:33:25"
+- seq: 52
+  point: {lon: 111.47079978570606, lat: 35.68355695783928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:35:00"
+- seq: 53
+  point: {lon: 111.47079383770826, lat: 35.68349644083928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:35:39"
+- seq: 54
+  point: {lon: 111.47079255154200, lat: 35.68348386983927}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:36:02"
+- seq: 55
+  point: {lon: 111.47078647087750, lat: 35.68342400617261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 11:36:32"
+- seq: 56
+  point: {lon: 111.47088114437828, lat: 35.68340252983928}
+  valid: true
+  position_status: 4
+  orientation_status: 5
+  time: "2026-11-24 14:05:59"
+- seq: 57
+  point: {lon: 111.47080470171127, lat: 35.68341135717261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:07:33"
+- seq: 58
+  point: {lon: 111.47078989171126, lat: 35.68341212267261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:08:47"
+- seq: 59
+  point: {lon: 111.47070311271106, lat: 35.68341818533928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:10:58"
+- seq: 60
+  point: {lon: 111.47064699289650, lat: 35.68289437600594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:13:38"
+- seq: 61
+  point: {lon: 111.47073354723014, lat: 35.68288601017261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:14:32"
+- seq: 62
+  point: {lon: 111.47073381839672, lat: 35.68288820500594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:15:46"
+- seq: 63
+  point: {lon: 111.47074854406344, lat: 35.68288714867261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:16:39"
+- seq: 64
+  point: {lon: 111.47081148856358, lat: 35.68288255083927}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:20:31"
+- seq: 65
+  point: {lon: 111.47083658573030, lat: 35.68288184917261}
+  valid: true
+  position_status: 4
+  orientation_status: 5
+  time: "2026-11-24 14:22:49"
+- seq: 66
+  point: {lon: 111.47097922939804, lat: 35.68285114083928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:32:45"
+- seq: 67
+  point: {lon: 111.47066092639712, lat: 35.68287732517261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:34:40"
+- seq: 68
+  point: {lon: 111.47065041506740, lat: 35.68277623200594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:35:39"
+- seq: 69
+  point: {lon: 111.47064919106784, lat: 35.68276429350595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:36:26"
+- seq: 70
+  point: {lon: 111.47063883790459, lat: 35.68266859633928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:37:02"
+- seq: 71
+  point: {lon: 111.47063730623840, lat: 35.68265569917261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:37:57"
+- seq: 72
+  point: {lon: 111.47062712574180, lat: 35.68256047733927}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:38:56"
+- seq: 73
+  point: {lon: 111.47062575107554, lat: 35.68254867650595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:39:42"
+- seq: 74
+  point: {lon: 111.47061557091234, lat: 35.68245282267261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:40:29"
+- seq: 75
+  point: {lon: 111.47061409974611, lat: 35.68244005350594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:41:16"
+- seq: 76
+  point: {lon: 111.47060374991622, lat: 35.68234429200594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:42:07"
+- seq: 77
+  point: {lon: 111.47060273224999, lat: 35.68233233267262}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:42:36"
+- seq: 78
+  point: {lon: 111.47059179592026, lat: 35.68223169017261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:43:54"
+- seq: 79
+  point: {lon: 111.47090754608791, lat: 35.68220428850594}
+  valid: true
+  position_status: 4
+  orientation_status: 5
+  time: "2026-11-24 14:46:21"
+- seq: 80
+  point: {lon: 111.47091776225096, lat: 35.68230515100594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:47:29"
+- seq: 81
+  point: {lon: 111.47091909758387, lat: 35.68231700167262}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:48:09"
+- seq: 82
+  point: {lon: 111.47092951108044, lat: 35.68241282567261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:49:05"
+- seq: 83
+  point: {lon: 111.47093098674665, lat: 35.68242533950595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:49:30"
+- seq: 84
+  point: {lon: 111.47094095840987, lat: 35.68252131950594}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:49:57"
+- seq: 85
+  point: {lon: 111.47094260740944, lat: 35.68253316650595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:50:15"
+- seq: 86
+  point: {lon: 111.47095339690604, lat: 35.68262871233928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:50:37"
+- seq: 87
+  point: {lon: 111.47096324573893, lat: 35.68264091567261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:50:56"
+- seq: 88
+  point: {lon: 111.47096443173547, lat: 35.68273700783928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:51:18"
+- seq: 89
+  point: {lon: 111.47096566023505, lat: 35.68274911617261}
+  valid: true
+  position_status: 4
+  orientation_status: 5
+  time: "2026-11-24 14:51:40"
+- seq: 90
+  point: {lon: 111.47097664706477, lat: 35.68284985650595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:52:19"
+- seq: 91
+  point: {lon: 111.47113459306513, lat: 35.68283912133928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:57:17"
+- seq: 92
+  point: {lon: 111.47099544156478, lat: 35.68284905033928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 14:58:29"
+- seq: 93
+  point: {lon: 111.47091992158764, lat: 35.68221142783928}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:00:24"
+- seq: 94
+  point: {lon: 111.47105894258799, lat: 35.68220157850595}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:01:14"
+- seq: 95
+  point: {lon: 111.47107813308799, lat: 35.68220190567261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:02:35"
+- seq: 96
+  point: {lon: 111.47127614525517, lat: 35.68218767317261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:03:36"
+- seq: 97
+  point: {lon: 111.47135085539900, lat: 35.68282505367261}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:05:18"
+- seq: 98
+  point: {lon: 111.47115271356513, lat: 35.68283951333927}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-24 15:06:46"
