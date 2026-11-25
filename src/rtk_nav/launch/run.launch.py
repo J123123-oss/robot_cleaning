@@ -13,13 +13,12 @@ def generate_launch_description():
     # 全局路径配置
     rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
-    # loading_gps = [120.06972100,30.32028289,-35.0]
-    loading_gps = [111.47167779189891,35.68282721750595,0.0]
+    loading_gps = [111.47168251297174,35.68282245312608,-86.0]
 
     # 两个节点共用此启动开关，避免入口门控与导航运行检查配置不一致。
     declare_enable_geofence_arg = DeclareLaunchArgument(
         "enable_geofence",
-        default_value=TextSubstitution(text="false"),
+        default_value=TextSubstitution(text="true"),
         description="Enable electronic fence file checks and outside-region stops",
     )
     declare_enable_sensors_485_arg = DeclareLaunchArgument(
