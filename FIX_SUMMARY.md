@@ -4,6 +4,7 @@
 
 ## 2026-11-25
 
+- **虚拟机 DDS 网卡**：修正 `/home/ubuntu/cyclonedds.xml` 将不存在的 `192.168.0.245` 改为当前接口 `ens37`。在虚拟机交互式 shell 中使用 `/usr/bin/python src/rtk_nav/rtk_nav/full_path_planner_dense.py` 验证通过，成功生成 261 个路径点；原配置已备份为 `cyclonedds.xml.bak-20261125-stale`。
 - **多区域路径规划启动**：修正 `full_path_planner` ROS 入口指向已不存在的模块，改为当前稠密规划器；配置和输出目录基于脚本位置解析，避免因 Linux 用户名不同而启动失败。新增入口回归测试通过；虚拟机重建 `rtk_nav` 并运行 `ros2 run rtk_nav full_path_planner`，成功读取 `001.yaml`、生成 144 个路径点和围栏，几何校验通过。运行同时产生路径、围栏及 PNG 预览文件。
 - **001 清扫路径生成**：在虚拟机按两区域 `001.yaml` 生成 261 个路径点，电子围栏检查通过；将 `001.txt` 和 `001.fence.json` 传回并纳入版本控制，PNG 预览仅保留本地。规划器报告区域 0 终点至区域 1 起点约 58.68 m，路径文件在两区域间插入桥接段；部署前仍需确认现场路线是否允许该衔接。
 - **启动配置**：更新固定进仓 RTK 航点及航向，默认启用电子围栏；可通过 `enable_geofence:=false` 关闭。离线检查启动文件 Python 语法和提交差异；尚未现场验证进仓点位及围栏行为。
