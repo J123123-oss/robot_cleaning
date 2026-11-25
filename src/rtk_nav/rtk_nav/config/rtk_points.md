@@ -448,3 +448,82 @@
   position_status: 4
   orientation_status: 4
   time: "2026-11-24 15:06:46"
+# 2026-11-25 新一批现场采点，序号从 1 重新计数
+- seq: 1
+  point: {lon: 111.47091783391637, lat: 35.68335138295313}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:07:35"
+- seq: 2
+  point: {lon: 111.47088521411798, lat: 35.683354691807686}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:07:59"
+- seq: 3
+  point: {lon: 111.47089325405176, lat: 35.68342288372148}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:09:00"
+- seq: 4
+  point: {lon: 111.47079875254062, lat: 35.68342392763325}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:09:47"
+- seq: 5
+  point: {lon: 111.47079833168185, lat: 35.68340194031744}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:10:09"
+- seq: 6
+  point: {lon: 111.47083263636353, lat: 35.68284248927991}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:47:21"
+- seq: 7
+  point: {lon: 111.4708524561436, lat: 35.68301513221514}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 15:50:13"
+- seq: 8
+  point: {lon: 111.47168251297174, lat: 35.68282245312608}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 16:52:38"
+- seq: 9
+  point: {lon: 111.47130017220684, lat: 35.683364345711205}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 17:11:37"
+- seq: 10
+  point: {lon: 111.4712746614339, lat: 35.68336621605598}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 17:12:22"
+- seq: 11
+  point: {lon: 111.4708045378013, lat: 35.68342668576999}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 17:26:08"
+- seq: 12
+  point: {lon: 111.470806270045, lat: 35.6834271733938}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 17:28:03"
+- seq: 13
+  point: {lon: 111.4707964828597, lat: 35.683360959920854}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-25 17:33:51"
