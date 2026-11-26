@@ -97,6 +97,12 @@ HEADING_ABNORMAL_THRESHOLD = 15.0  # 航向异常阈值（度），连续超限�
 FORCE_BEARING_MAX_RECALIB = 3  # force_bearing 反复原地对准上限，超限判定为极限环并暂停上报
 FORCE_BEARING_DIVERGE_DIST = 0.5  # force_bearing 背离目标阈值（米），比历史最近点远出此值开始计数
 FORCE_BEARING_DIVERGE_COUNT = 10  # force_bearing 连续背离帧数上限（10Hz≈1s），超限暂停上报
+# 越点检测要求投影越过终点2%，距离至少0.5m，并由3个新RTK样本确认。
+WAYPOINT_OVERSHOOT_MIN_PROJECTION = 1.02
+WAYPOINT_OVERSHOOT_MIN_DISTANCE = 0.5
+WAYPOINT_OVERSHOOT_DIVERGE_COUNT = 3
+# 越点恢复阶段的直线轮速，降低打滑和再次横向修正的概率（r/min）。
+WAYPOINT_RECOVERY_SPEED = 15.6
 BOUNDARY_GEOMETRIC_ESCALATE_AFTER_CYCLES = 1  # 局部矫正无效一次后升级GPS几何回退
 BOUNDARY_CYCLE_MAX = 3  # 同一传感器组连续完成的边界矫正周期上限
 RETREAT_ESCAPE_DURATION = 2.0  # 锚点附近原地触发时的短距离脱困时长（秒）
@@ -106,6 +112,7 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "initial_heading_calib_failed",
     "force_bearing_limit_cycle",
     "force_bearing_diverge",
+    "waypoint_recovery_diverge",
     "boundary_retreat_timeout",
     "boundary_cycle_exhausted",
     "imu_odom_fallback_ineligible",
@@ -556,6 +563,12 @@ class RTKNavControlNode(Node):
             "force_bearing_recalib_count": 0,  # force_bearing 原地对准反复触发计数（极限环兜底）
             "force_bearing_min_distance": float('inf'),  # force_bearing 期间到目标的历史最近距离（背离检测基准）
             "distance_increase_count": 0,  # force_bearing 连续背离目标帧数（背离兜底）
+            "waypoint_min_distance": float('inf'),
+            "waypoint_distance_growth_count": 0,
+            "waypoint_divergence_last_sequence": None,
+            "waypoint_recovery_active": False,
+            "waypoint_recovery_aligned": False,
+            "waypoint_recovery_direction": None,
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
             "calib_retry_count": 0,      # 校准卡滞重试次数
             "calib_target_heading": None,  # 当前校准目标航向（重试/恢复时复用，保证一致性）
@@ -3972,6 +3985,33 @@ class RTKNavControlNode(Node):
             self.nav_context["distance_increase_count"] = 0
         return False
 
+    def _record_waypoint_overshoot(self, projection: float, distance: float) -> bool:
+        """要求越过航段终点且新定位持续远离，才进入直线追点恢复。"""
+        sequence = getattr(self, "gps_update_sequence", None)
+        if sequence is None:
+            return False
+        if sequence == self.nav_context.get("waypoint_divergence_last_sequence"):
+            return False
+        self.nav_context["waypoint_divergence_last_sequence"] = sequence
+
+        minimum = self.nav_context.get("waypoint_min_distance", float("inf"))
+        if distance < minimum:
+            self.nav_context["waypoint_min_distance"] = distance
+            self.nav_context["waypoint_distance_growth_count"] = 0
+            return False
+
+        if (
+            projection > WAYPOINT_OVERSHOOT_MIN_PROJECTION
+            and distance >= WAYPOINT_OVERSHOOT_MIN_DISTANCE
+            and distance > minimum + FORCE_BEARING_DIVERGE_DIST
+        ):
+            count = self.nav_context.get("waypoint_distance_growth_count", 0) + 1
+            self.nav_context["waypoint_distance_growth_count"] = count
+            return count >= WAYPOINT_OVERSHOOT_DIVERGE_COUNT
+
+        self.nav_context["waypoint_distance_growth_count"] = 0
+        return False
+
     def _get_resume_path_direction(self, target_waypoint):
         """恢复时仅复用完整航段缓存，否则按当前目标和前置航点重算方向。"""
         if self.stanley_path_start is not None and self.stanley_path_direction is not None:
@@ -3993,6 +4033,12 @@ class RTKNavControlNode(Node):
         self.nav_context["force_bearing_recalib_count"] = 0
         self.nav_context["force_bearing_min_distance"] = float("inf")
         self.nav_context["distance_increase_count"] = 0
+        self.nav_context["waypoint_min_distance"] = float("inf")
+        self.nav_context["waypoint_distance_growth_count"] = 0
+        self.nav_context["waypoint_divergence_last_sequence"] = None
+        self.nav_context["waypoint_recovery_active"] = False
+        self.nav_context["waypoint_recovery_aligned"] = False
+        self.nav_context["waypoint_recovery_direction"] = None
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["waypoint_recalib_count"] = 0
         self.nav_context["bearing_mode_locked"] = False
@@ -4724,6 +4770,12 @@ class RTKNavControlNode(Node):
             "force_bearing_recalib_count": 0,
             "force_bearing_min_distance": float('inf'),
             "distance_increase_count": 0,
+            "waypoint_min_distance": float("inf"),
+            "waypoint_distance_growth_count": 0,
+            "waypoint_divergence_last_sequence": None,
+            "waypoint_recovery_active": False,
+            "waypoint_recovery_aligned": False,
+            "waypoint_recovery_direction": None,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
             "calib_retry_count": 0,
@@ -4891,6 +4943,12 @@ class RTKNavControlNode(Node):
         self.nav_context["force_bearing_recalib_count"] = 0
         self.nav_context["force_bearing_min_distance"] = float('inf')
         self.nav_context["distance_increase_count"] = 0
+        self.nav_context["waypoint_min_distance"] = float("inf")
+        self.nav_context["waypoint_distance_growth_count"] = 0
+        self.nav_context["waypoint_divergence_last_sequence"] = None
+        self.nav_context["waypoint_recovery_active"] = False
+        self.nav_context["waypoint_recovery_aligned"] = False
+        self.nav_context["waypoint_recovery_direction"] = None
         self.nav_context["bearing_mode_locked"] = False
         self.nav_context["pre_pause_state"] = None
         self.nav_context["pause_reason"] = None
@@ -5375,6 +5433,12 @@ class RTKNavControlNode(Node):
                         self.nav_context["force_bearing_recalib_count"] = 0
                         self.nav_context["force_bearing_min_distance"] = float('inf')
                         self.nav_context["distance_increase_count"] = 0
+                        self.nav_context["waypoint_min_distance"] = float("inf")
+                        self.nav_context["waypoint_distance_growth_count"] = 0
+                        self.nav_context["waypoint_divergence_last_sequence"] = None
+                        self.nav_context["waypoint_recovery_active"] = False
+                        self.nav_context["waypoint_recovery_aligned"] = False
+                        self.nav_context["waypoint_recovery_direction"] = None
                         self.nav_context["bearing_mode_locked"] = False
                         # 仅在正常航点切换时获取新航点
                         target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
@@ -5546,6 +5610,61 @@ class RTKNavControlNode(Node):
 
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
+                if (
+                    self.nav_context.get("waypoint_recovery_active")
+                    and self._record_waypoint_overshoot(t, distance)
+                ):
+                    self.get_logger().error(
+                        f"[Stanley] 航点{self.current_waypoint_idx}直线恢复仍持续远离目标，停车暂停"
+                    )
+                    self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                    self.nav_context["calib_generator"] = None
+                    self.nav_context["nav_state"] = NavState.PAUSE
+                    self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
+                    self.nav_context["pause_reason"] = "waypoint_recovery_diverge"
+                    self.nav_context["manual_intervention_seen"] = False
+                    self.nav_context["brush_active"] = self.brush_active
+                    self.nav_running = False
+                    self.publish_nav_state(NavState.PAUSE)
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    return
+                if (
+                    not self.nav_context.get("waypoint_recovery_active")
+                    and self._record_waypoint_overshoot(t, distance)
+                ):
+                    self.publish_stop_speed()
+                    target_bearing = self.calculate_bearing(
+                        current_lat, current_lon, target_lat, target_lon
+                    )
+                    reverse = abs(self.normalize_angle(target_bearing - self.imu_yaw)) > 90.0
+                    recovery_heading = self.normalize_angle(
+                        target_bearing + (180.0 if reverse else 0.0)
+                    )
+                    self.nav_context["waypoint_recovery_active"] = True
+                    self.nav_context["waypoint_recovery_aligned"] = False
+                    self.nav_context["waypoint_recovery_direction"] = -1 if reverse else 1
+                    self.nav_context["force_bearing_recalib_count"] = 0
+                    self.nav_context["force_bearing_mode"] = True
+                    self.nav_context["force_bearing_target"] = recovery_heading
+                    self.nav_context["waypoint_min_distance"] = distance
+                    self.nav_context["waypoint_distance_growth_count"] = 0
+                    self.nav_context["force_bearing_min_distance"] = distance
+                    self.nav_context["distance_increase_count"] = 0
+                    self.get_logger().warn(
+                        f"[Stanley] 已越过航点{self.current_waypoint_idx}并持续远离，"
+                        f"切入{'倒车' if reverse else '前进'}直线恢复，车体目标航向={recovery_heading:.1f}°"
+                    )
+                    self.start_heading_recalibration(
+                        recovery_heading,
+                        self.normalize_angle(recovery_heading - self.imu_yaw),
+                        "越过航点后低转向直线恢复",
+                    )
+                    self.nav_context["calib_origin"] = CalibOrigin.FORCE_BEARING
+                    self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
+                    current_nav_state = NavState.WAYPOINT_CALIB
+                    yield (0.0, 0.0)
+                    continue
                 lateral_error = self.calculate_lateral_error(
                     current_pos, self.stanley_path_start, path_end
                 )
@@ -5555,9 +5674,12 @@ class RTKNavControlNode(Node):
                 if self.nav_context.get("force_bearing_mode"):
                     # 实时算目标方位，偏差大则先原地旋转对准再走，偏差小直接跟
                     current_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+                    if self.nav_context.get("waypoint_recovery_active"):
+                        current_bearing = self.nav_context["force_bearing_target"]
                     self.nav_context["force_bearing_target"] = current_bearing
                     bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
-                    if bearing_err > 15.0:
+                    alignment_limit = 3.0 if self.nav_context.get("waypoint_recovery_active") else 15.0
+                    if bearing_err > alignment_limit:
                         self.nav_context["force_bearing_recalib_count"] += 1
                         if self.nav_context["force_bearing_recalib_count"] > FORCE_BEARING_MAX_RECALIB:
                             self.get_logger().error(
@@ -5578,10 +5700,13 @@ class RTKNavControlNode(Node):
                             return
                         # 航向偏差大→先原地旋转对准目标，防止追尾螺旋
                         self.get_logger().warn(
-                            f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
+                            f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>"
+                            f"{alignment_limit:.1f}°，原地旋转对准{current_bearing:.1f}°")
                         yield from self._calibrate_with_boundary_retreat(
                             current_bearing, target_waypoint, "force_bearing原地对准")
                         continue
+                    if self.nav_context.get("waypoint_recovery_active"):
+                        self.nav_context["waypoint_recovery_aligned"] = True
                     # 偏差可接受→用实时方位角（偏差小不会螺旋，且自适应车体位移）
                     if self._force_bearing_diverging(distance):
                         self.get_logger().error(
@@ -5675,10 +5800,21 @@ class RTKNavControlNode(Node):
                     path_start=self.stanley_path_start,
                     path_end=path_end,
                     path_direction=path_direction,
-                    velocity=current_base_speed,
+                    velocity=(
+                        -current_base_speed
+                        if self.nav_context.get("waypoint_recovery_active")
+                        and self.nav_context.get("waypoint_recovery_direction") == -1
+                        else current_base_speed
+                    ),
                     distance_to_target=distance,
                     bearing_only=in_bearing_mode,
             )
+
+                if self.nav_context.get("waypoint_recovery_active"):
+                    recovery_direction = self.nav_context.get("waypoint_recovery_direction", 1)
+                    recovery_speed = min(abs(current_base_speed), WAYPOINT_RECOVERY_SPEED)
+                    left_speed = -recovery_speed * recovery_direction
+                    right_speed = recovery_speed * recovery_direction
 
                 left_speed, right_speed = self._apply_travel_boundary(left_speed, right_speed)
                 if self.nav_context.get("nav_state") == NavState.PAUSE:

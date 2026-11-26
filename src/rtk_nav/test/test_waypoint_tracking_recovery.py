@@ -25,6 +25,8 @@ def _load_navigation():
         "stanley_steering_control", "_stanley_lateral_angle",
         "_tracking_heading_guard_error", "_reset_waypoint_tracking",
         "_record_force_bearing_progress", "_force_bearing_diverging",
+        "_record_waypoint_overshoot",
+        "_speed_for_lateral_error_growth",
         "start_heading_recalibration", "multi_waypoint_nav_generator",
         "move_to_first_waypoint",
         "_confirm_waypoint_arrival", "_get_resume_path_direction",
@@ -35,7 +37,9 @@ def _load_navigation():
     body += [n for n in tree.body if isinstance(n, ast.ClassDef)
              and n.name in {"NavState", "ControlMode", "CalibOrigin"}]
     body += [n for n in tree.body if isinstance(n, ast.FunctionDef)
-             and n.name in {"combine_stanley_and_visual_correction",
+             and n.name in {"combine_rtk_correction",
+                            "combine_stanley_and_visual_correction",
+                            "select_geofence_recovery_heading",
                             "calculate_uncommanded_heading_error"}]
     body.append(ast.ClassDef(
         name="Navigation", bases=[], keywords=[], decorator_list=[],
@@ -83,6 +87,10 @@ def _make_node():
     node._position_sample_trusted = True
     node.gps_update_sequence = 1
     node.current_control_mode = ns["ControlMode"].AUTO_CLEANING
+    node.enable_geofence = False
+    node.raw_ins_heading = 0.0
+    node.rtk_install_offset = 0.0
+    node.last_orientation_status = 4
     node.brush_active = False
     node.boundary_correct_locked = False
     node.blocked_directions = set()
@@ -101,6 +109,7 @@ def _make_node():
     node._last_visual_heading_correction = 0.0
     node._last_visual_lateral_correction = 0.0
     node._last_stanley_log_time = 0.0
+    node.gps_update_sequence = 1
     node.nav_context = {
         "nav_state": ns["NavState"].WAYPOINT_MOVE,
         "target_waypoint": node.waypoints[1],
@@ -242,6 +251,94 @@ def test_real_backtracking_still_triggers_divergence_protection():
 
     assert not any(node._force_bearing_diverging(1.6) for _ in range(9))
     assert node._force_bearing_diverging(1.6)
+
+
+def test_waypoint_overshoot_requires_distinct_gps_samples_and_divergence():
+    node, _ = _make_node()
+    node.nav_context.update(
+        waypoint_min_distance=float("inf"),
+        waypoint_distance_growth_count=0,
+        waypoint_divergence_last_sequence=-1,
+    )
+
+    assert not node._record_waypoint_overshoot(1.01, 0.07)
+    node.gps_update_sequence = 2
+    assert not node._record_waypoint_overshoot(1.03, 0.70)
+    node.gps_update_sequence = 3
+    assert not node._record_waypoint_overshoot(1.05, 0.72)
+    node.gps_update_sequence = 4
+    assert node._record_waypoint_overshoot(1.08, 0.80)
+
+
+def test_waypoint_overshoot_does_not_accumulate_repeated_position_sample():
+    node, _ = _make_node()
+    node.nav_context.update(
+        waypoint_min_distance=0.7,
+        waypoint_distance_growth_count=1,
+        waypoint_divergence_last_sequence=1,
+    )
+
+    assert not node._record_waypoint_overshoot(1.3, 1.1)
+    assert node.nav_context["waypoint_distance_growth_count"] == 1
+
+
+def test_waypoint_tracking_reset_clears_overshoot_and_recovery_state():
+    node, _ = _make_node()
+    node.nav_context.update(
+        waypoint_min_distance=0.6,
+        waypoint_distance_growth_count=2,
+        waypoint_divergence_last_sequence=7,
+        waypoint_recovery_active=True,
+        waypoint_recovery_aligned=True,
+        waypoint_recovery_direction=-1,
+    )
+
+    node._reset_waypoint_tracking()
+
+    assert node.nav_context["waypoint_min_distance"] == float("inf")
+    assert node.nav_context["waypoint_distance_growth_count"] == 0
+    assert node.nav_context["waypoint_divergence_last_sequence"] is None
+    assert not node.nav_context["waypoint_recovery_active"]
+    assert not node.nav_context["waypoint_recovery_aligned"]
+    assert node.nav_context["waypoint_recovery_direction"] is None
+
+
+def test_overshoot_stops_then_enters_low_speed_straight_recovery():
+    node, ns = _make_node()
+    node.calc_distance_to_waypoint.return_value = 0.8
+    node._confirm_waypoint_arrival = Mock(return_value=False)
+    node._get_projection_ratio = Mock(return_value=1.1)
+    node._record_waypoint_overshoot = Mock(side_effect=[True, False])
+    node.calculate_bearing = Mock(return_value=-6.8)
+    node.imu_yaw = -6.8
+    node.stanley_steering_control = Mock(return_value=(-52.0, 52.0))
+    generator = node.multi_waypoint_nav_generator()
+
+    assert next(generator) == (0.0, 0.0)
+    assert node.nav_context["waypoint_recovery_active"]
+    assert node.nav_context["waypoint_recovery_direction"] == 1
+    assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_CALIB
+
+    assert next(generator) == (3.0, 3.0)
+    assert next(generator) == (0.0, 0.0)
+    assert next(generator) == (0.0, 0.0)
+    assert next(generator) == (-15.6, 15.6)
+    node.stanley_steering_control.assert_called_once()
+
+
+def test_overshoot_recovery_chooses_reverse_to_avoid_large_turn():
+    node, _ = _make_node()
+    node.calc_distance_to_waypoint.return_value = 0.8
+    node._confirm_waypoint_arrival = Mock(return_value=False)
+    node._get_projection_ratio = Mock(return_value=1.1)
+    node._record_waypoint_overshoot = Mock(return_value=True)
+    node.calculate_bearing = Mock(return_value=150.0)
+    node.imu_yaw = 0.0
+
+    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+
+    assert node.nav_context["waypoint_recovery_direction"] == -1
+    assert node.nav_context["force_bearing_target"] == pytest.approx(-30.0)
 
 
 @pytest.mark.parametrize("heading,lateral,expected", [
