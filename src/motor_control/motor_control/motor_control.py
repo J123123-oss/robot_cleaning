@@ -2553,6 +2553,9 @@ class MotorControlNode(Node):
 
         self.charging_v = round(msg.data[0], 2) if msg.data[0] else 0.0  # 充电电压（索引0）
         self.charging_i = round(msg.data[1], 2) if msg.data[1] else 0.0  # 充电电流（索引1）
+        if self.current_status == "DISABLE" and self.charging_i <= 1.0:
+            self.is_charging = False
+            self.is_charge_paused = True
         # self.battery_remaining = self.voltage_to_soc(self.charging_v) if self.charging_v > 0 else 0.0  # 电池百分比估计
 
     def charging_fault_code_cb(self, msg: Int16):

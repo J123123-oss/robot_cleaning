@@ -2,6 +2,10 @@
 
 按日期记录已提交的功能、修复与现场配置。最新条目放在前面。每次更新写明影响范围、行为变化与实际验证结果。对已提交的工作可附 Git 短哈希。
 
+## 2026-11-26
+
+- **低电量自动回充状态**：修正 `DISABLE` 状态收到 `charging_i <= 1.0A` 时未重新设置 `is_charge_paused` 的问题。充电服务成功仍按原逻辑设置 `is_charging=True`；后续电流回调确认断充后设置 `is_charging=False` 和 `is_charge_paused=True`，低于 90% 时可重新进入已有磁导航到位和充电请求流程。新增充电门控回归测试，聚焦测试 29 项通过；未进行 ROS2 现场验证。完整测试目录受本机缺少 `rclpy`、`ament_*` 及既有文件/路径问题影响，存在与本改动无关的收集错误和失败。
+
 ## 2026-11-25
 
 - **虚拟机 DDS 网卡**：修正 `/home/ubuntu/cyclonedds.xml` 将不存在的 `192.168.0.245` 改为当前接口 `ens37`。在虚拟机交互式 shell 中使用 `/usr/bin/python src/rtk_nav/rtk_nav/full_path_planner_dense.py` 验证通过，成功生成 261 个路径点；原配置已备份为 `cyclonedds.xml.bak-20261125-stale`。

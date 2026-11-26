@@ -19,6 +19,7 @@ def controller():
     names = {
         "_request_charge_if_docked", "start_charge_async", "_start_charge_callback",
         "charge_resume_callback", "magnetic_mask_callback",
+        "charging_volt_curr_cb",
         "_disable_if_docked_while_enabled", "charging_fault_code_cb",
     }
     methods = [n for n in node_class.body
@@ -26,7 +27,7 @@ def controller():
     clock = SimpleNamespace(now=1000.0)
     namespace = {
         "time": SimpleNamespace(monotonic=lambda: clock.now, time=lambda: clock.now),
-        "UInt16": object, "Int16": object,
+        "UInt16": object, "Int16": object, "Float32MultiArray": object,
         "ChargeControl": SimpleNamespace(Request=SimpleNamespace),
     }
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"),
@@ -159,6 +160,30 @@ def test_charger_fault_recovers_with_current_dock_signal_without_new_edge(contro
     controller.clock.now += 30.0
     controller.magnetic_mask_callback(SimpleNamespace(data=0xFC))
     assert controller.cli_start_charge.call_async.call_count == 2
+
+
+def test_disable_low_current_marks_charge_paused_and_retries(controller):
+    controller.is_charging = True
+    controller.is_charge_paused = False
+    controller.magnetic_raw_mask = 0xFC
+    controller.magnetic_mask_update_time = controller.clock.now
+    controller.charging_volt_curr_cb(SimpleNamespace(data=[50.55, 0.04]))
+
+    assert not controller.is_charging
+    assert controller.is_charge_paused
+
+    controller.charge_resume_callback()
+    assert controller.cli_start_charge.call_async.call_count == 1
+
+
+def test_successful_command_with_low_current_keeps_service_success_state(controller):
+    controller.magnetic_mask_callback(SimpleNamespace(data=0xFC))
+    controller.charge_futures[0].set_result(
+        SimpleNamespace(success=True, message="command accepted"))
+
+    assert controller.charging_i == 0.04
+    assert controller.is_charging
+    assert not controller.is_charge_paused
 
 
 def test_service_unavailable_does_not_block_later_valid_retry(controller):
