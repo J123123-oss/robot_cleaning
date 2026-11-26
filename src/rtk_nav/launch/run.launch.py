@@ -11,7 +11,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     """构建并返回 RTK 导航系统的完整 ROS 2 launch 描述。"""
     # 全局路径配置
-    rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/test.txt'
+    rtk_path_file = '/home/forlinx/robot_cleaning/src/rtk_nav/rtk_nav/cleaning_path/001.txt'
     # 固定进仓RTK航点：[经度, 纬度, 航向角]。现场标定后填写，避免使用出仓漂移后的实时点。
     loading_gps = [111.47168251297174,35.68282245312608,-86.0]
 
@@ -130,7 +130,7 @@ def generate_launch_description():
         description="Use W200B magnetic correction in loading/unloading straight phases",
     )
 
-    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="true"), description="LOADING直接进入后退磁导航测试")
+    declare_magnetic_test_loading_arg = DeclareLaunchArgument("magnetic_test_loading_direct", default_value=TextSubstitution(text="false"), description="LOADING直接进入后退磁导航测试")
     declare_unloading_magnetic_arg = DeclareLaunchArgument(
         "unloading_use_magnetic_navigation",
         default_value=TextSubstitution(text="true"),
@@ -138,7 +138,7 @@ def generate_launch_description():
     )
     declare_unloading_duration_arg = DeclareLaunchArgument(
         "unloading_forward_duration_sec",
-        default_value=TextSubstitution(text="14.0"),
+        default_value=TextSubstitution(text="20.0"),
         description="出仓前进总时长（秒），包含磁条段和无磁条段",
     )
     declare_cleaning_low_battery_threshold_arg = DeclareLaunchArgument("cleaning_low_battery_threshold", default_value=TextSubstitution(text="90.0"), description="清扫/出仓低电量阈值(%)")
