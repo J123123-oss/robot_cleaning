@@ -964,12 +964,12 @@ class RTKNavControlNode(Node):
         radius = float(self.geofence_payload.get("expansion_radius_m", 0.2))
         first = self.waypoints[0]
         last = self.waypoints[-1]
-        loading_e, loading_n, _, _ = self.latlon_to_utm(
+        loading_e, loading_n = self.latlon_to_utm(
             self.loading_waypoint[1], self.loading_waypoint[0]
         )
         bridges = self.geofence_payload.setdefault("bridges", [])
-        first_e, first_n, _, _ = self.latlon_to_utm(first[1], first[0])
-        last_e, last_n, _, _ = self.latlon_to_utm(last[1], last[0])
+        first_e, first_n = self.latlon_to_utm(first[1], first[0])
+        last_e, last_n = self.latlon_to_utm(last[1], last[0])
         endpoint_pairs = (
             ("loading_to_route_start", [[loading_e, loading_n], [first_e, first_n]]),
             ("route_end_to_loading", [[last_e, last_n], [loading_e, loading_n]]),
@@ -3540,7 +3540,8 @@ class RTKNavControlNode(Node):
                                         (61 - 58 * t + t ** 2 + 600 * c - 330 * e_sq) * a1 ** 6 / 720)
 
         # 东向偏移500km，避免负数
-        x += 500000.0
+        x = x * 0.9996 + 500000.0
+        y *= 0.9996
         # 南半球偏移10000km（本方案默认北半球，若需支持南半球可添加判断）
         if lat < 0:
             y += 10000000.0
