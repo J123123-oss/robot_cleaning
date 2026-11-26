@@ -2333,6 +2333,13 @@ class MotorControlNode(Node):
             and self.current_control_mode == "AUTO_CLEANING"
             and not self.is_in_bin_process
         ):
+            self.rtk_error_code = 0
+            self.low_battery_warning = False
+            self.auto_cleaning_low_battery_fault = False
+            self.loading_timeout_error = False
+            self.geofence_fault_latched = False
+            self.geofence_recovery_ready = False
+            self.geofence_recovery_active = False
             if getattr(self, "brush_use_kinco", False):
                 self._cancel_kinco_motion()
             if self.auto_cleaning_finish_to_loading:

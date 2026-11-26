@@ -4878,6 +4878,14 @@ class RTKNavControlNode(Node):
     def finish_navigation_task(self):
         """统一处理任务完成后的停车、状态重置和下一路径预加载。"""
         has_pending_path = self.pending_next_path_file is not None
+        self.rtk_error_code = 0
+        self.update_rtk_error_status(0, force=True)
+        self.geofence_latched = False
+        self.geofence_outside_count = 0
+        self.geofence_recovery_active = False
+        self.geofence_recovery = None
+        self.publish_geofence_recovery_ready(False)
+        self._publish_geofence_recovery_active(False)
         self.nav_context["nav_state"] = NavState.COMPLETED
         self.publish_nav_state(NavState.COMPLETED)
         self.multi_waypoint_generator = None

@@ -79,6 +79,14 @@ def navigator():
     node._boundary_stop_stamp_ns = None
     node._boundary_motion_inhibited = Mock(return_value=False)
     node._boundary_blocks_motion = Mock(return_value=False)
+    node.rtk_error_code = 0
+    node.update_rtk_error_status = Mock()
+    node.geofence_latched = False
+    node.geofence_outside_count = 0
+    node.geofence_recovery_active = False
+    node.geofence_recovery = None
+    node.publish_geofence_recovery_ready = Mock()
+    node._publish_geofence_recovery_active = Mock()
     namespace["time"] = Mock()
     return node, namespace
 
