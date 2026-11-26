@@ -1,0 +1,19 @@
+[Unit]
+Description=Network Watchdog (4G-CMNET WWAN recovery)
+Wants=NetworkManager.service ModemManager.service
+After=NetworkManager.service ModemManager.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Environment=WWAN_PROFILE=4G-CMNET
+Environment=WWAN_MODEM_DEVICE=cdc-wdm0
+Environment=WWAN_TARGET_IP=121.40.57.48
+Environment=WWAN_TARGET_PORT=7000
+ExecStart=/bin/bash /home/forlinx/robot_cleaning/network_watchdog_wwan.sh
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
