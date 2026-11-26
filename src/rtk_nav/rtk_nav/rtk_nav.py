@@ -3987,6 +3987,8 @@ class RTKNavControlNode(Node):
 
     def _record_waypoint_overshoot(self, projection: float, distance: float) -> bool:
         """要求越过航段终点且新定位持续远离，才进入直线追点恢复。"""
+        if not self._position_sample_trusted:
+            return False
         sequence = getattr(self, "gps_update_sequence", None)
         if sequence is None:
             return False
@@ -4001,7 +4003,8 @@ class RTKNavControlNode(Node):
             return False
 
         if (
-            projection > WAYPOINT_OVERSHOOT_MIN_PROJECTION
+            (self.nav_context.get("waypoint_recovery_active")
+             or projection > WAYPOINT_OVERSHOOT_MIN_PROJECTION)
             and distance >= WAYPOINT_OVERSHOOT_MIN_DISTANCE
             and distance > minimum + FORCE_BEARING_DIVERGE_DIST
         ):
@@ -4011,6 +4014,18 @@ class RTKNavControlNode(Node):
 
         self.nav_context["waypoint_distance_growth_count"] = 0
         return False
+
+    def _waypoint_initial_recovery_needed(self, pos, path_start, path_end, distance):
+        if distance < RTK_WAYPOINT_TOLERANCE:
+            return False
+        cx, cy = self.latlon_to_utm(pos[1], pos[0])
+        ax, ay = self.latlon_to_utm(path_start[1], path_start[0])
+        bx, by = self.latlon_to_utm(path_end[1], path_end[0])
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy)
+        if length < 0.10:
+            return True
+        return ((cx - bx) * dx + (cy - by) * dy) / length > 0.30
 
     def _get_resume_path_direction(self, target_waypoint):
         """恢复时仅复用完整航段缓存，否则按当前目标和前置航点重算方向。"""
@@ -4039,6 +4054,7 @@ class RTKNavControlNode(Node):
         self.nav_context["waypoint_recovery_active"] = False
         self.nav_context["waypoint_recovery_aligned"] = False
         self.nav_context["waypoint_recovery_direction"] = None
+        self.nav_context["waypoint_recovery_pending"] = False
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["waypoint_recalib_count"] = 0
         self.nav_context["bearing_mode_locked"] = False
@@ -5439,6 +5455,7 @@ class RTKNavControlNode(Node):
                         self.nav_context["waypoint_recovery_active"] = False
                         self.nav_context["waypoint_recovery_aligned"] = False
                         self.nav_context["waypoint_recovery_direction"] = None
+                        self.nav_context["waypoint_recovery_pending"] = False
                         self.nav_context["bearing_mode_locked"] = False
                         # 仅在正常航点切换时获取新航点
                         target_waypoint = self.get_target_waypoint(self.current_waypoint_idx)
@@ -5579,6 +5596,10 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     continue
 
+                if not self._position_sample_trusted:
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    continue
                 path_initialized_now = False
                 if not hasattr(self, 'stanley_path_start') or self.stanley_path_start is None:
                     if self.last_waypoint_cache:
@@ -5611,6 +5632,17 @@ class RTKNavControlNode(Node):
                 path_end = (target_lon, target_lat)
                 t = self._get_projection_ratio(current_pos, self.stanley_path_start, path_end)
                 if (
+                    path_initialized_now
+                    and not self.nav_context.get("waypoint_recovery_active")
+                    and self._waypoint_initial_recovery_needed(
+                        current_pos, self.stanley_path_start, path_end, distance
+                    )
+                ):
+                    self.nav_context["waypoint_recovery_pending"] = True
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    continue
+                if (
                     self.nav_context.get("waypoint_recovery_active")
                     and self._record_waypoint_overshoot(t, distance)
                 ):
@@ -5631,9 +5663,29 @@ class RTKNavControlNode(Node):
                     return
                 if (
                     not self.nav_context.get("waypoint_recovery_active")
+                    and not self.nav_context.get("waypoint_recovery_pending")
                     and self._record_waypoint_overshoot(t, distance)
                 ):
+                    self.nav_context["waypoint_recovery_pending"] = True
                     self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    continue
+                if self.nav_context.get("waypoint_recovery_pending"):
+                    if not self._boundary_chassis_stopped():
+                        self.publish_stop_speed()
+                        yield (0.0, 0.0)
+                        continue
+                    if self.enable_geofence and (
+                        self.geofence_payload is None or not segment_allowed_by_payload(
+                            self.latlon_to_utm(current_lat, current_lon),
+                            self.latlon_to_utm(target_lat, target_lon),
+                            self.geofence_payload,
+                        )
+                    ):
+                        self.trip_geofence_stop("waypoint_recovery_outside_allowed_region")
+                        yield (0.0, 0.0)
+                        return
+                    self.nav_context["waypoint_recovery_pending"] = False
                     target_bearing = self.calculate_bearing(
                         current_lat, current_lon, target_lat, target_lon
                     )
@@ -5675,11 +5727,28 @@ class RTKNavControlNode(Node):
                     # 实时算目标方位，偏差大则先原地旋转对准再走，偏差小直接跟
                     current_bearing = self.calculate_bearing(current_lat, current_lon, target_lat, target_lon)
                     if self.nav_context.get("waypoint_recovery_active"):
-                        current_bearing = self.nav_context["force_bearing_target"]
+                        if self.enable_geofence and (
+                            self.geofence_payload is None or not segment_allowed_by_payload(
+                                self.latlon_to_utm(current_lat, current_lon),
+                                self.latlon_to_utm(target_lat, target_lon),
+                                self.geofence_payload,
+                            )
+                        ):
+                            self.trip_geofence_stop("waypoint_recovery_outside_allowed_region")
+                            yield (0.0, 0.0)
+                            return
+                        if self.nav_context.get("waypoint_recovery_direction") == -1:
+                            current_bearing = self.normalize_angle(current_bearing + 180.0)
                     self.nav_context["force_bearing_target"] = current_bearing
                     bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
                     alignment_limit = 3.0 if self.nav_context.get("waypoint_recovery_active") else 15.0
                     if bearing_err > alignment_limit:
+                        if self.nav_context.get("waypoint_recovery_active"):
+                            self.publish_stop_speed()
+                            if not self._boundary_chassis_stopped():
+                                yield (0.0, 0.0)
+                                continue
+                            self.nav_context["waypoint_recovery_aligned"] = False
                         self.nav_context["force_bearing_recalib_count"] += 1
                         if self.nav_context["force_bearing_recalib_count"] > FORCE_BEARING_MAX_RECALIB:
                             self.get_logger().error(
@@ -5706,9 +5775,15 @@ class RTKNavControlNode(Node):
                             current_bearing, target_waypoint, "force_bearing原地对准")
                         continue
                     if self.nav_context.get("waypoint_recovery_active"):
+                        if not self.nav_context.get("waypoint_recovery_aligned"):
+                            self.publish_stop_speed()
+                            if not self._boundary_chassis_stopped():
+                                yield (0.0, 0.0)
+                                continue
                         self.nav_context["waypoint_recovery_aligned"] = True
                     # 偏差可接受→用实时方位角（偏差小不会螺旋，且自适应车体位移）
-                    if self._force_bearing_diverging(distance):
+                    if (not self.nav_context.get("waypoint_recovery_active")
+                            and self._force_bearing_diverging(distance)):
                         self.get_logger().error(
                             f"[Stanley] force_bearing 持续背离目标（距最近点+{FORCE_BEARING_DIVERGE_DIST}m超"
                             f"{FORCE_BEARING_DIVERGE_COUNT}帧，当前{distance:.2f}m），暂停导航等待人工介入"
