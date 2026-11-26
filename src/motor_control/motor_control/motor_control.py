@@ -778,7 +778,9 @@ class MotorControlNode(Node):
 
         self.current_location = None
         self.rtk_position_status = 0
+        self.wtrtk_position_status = 0
         self.rtk_orientation_status = 0
+        self.rtk_position_data_valid = False
         self.rtk_error_code = 0
         self.current_lon = 0.0
         self.current_lat = 0.0
@@ -1063,7 +1065,9 @@ class MotorControlNode(Node):
         self.angle_x = msg.angle_x
         self.angle_y = msg.angle_y
         self.rtk_position_status = msg.position_status
+        self.wtrtk_position_status = msg.position_status
         self.rtk_orientation_status = msg.fix_status
+        self.rtk_position_data_valid = msg.position_data_valid
 
     def haversine_distance(self, lon1: float, lat1: float, lon2: float, lat2: float) -> float:
         """计算两个GPS坐标的大圆距离（米）"""
@@ -2930,6 +2934,25 @@ class MotorControlNode(Node):
         if new_state == "START" and self.current_status not in ["DISABLE", "ENABLE"]:
             self.get_logger().warn(
                 f"[START] 当前状态={self.current_status}，仅允许从DISABLE或ENABLE发起出仓，忽略重复START")
+            self.publish_state()
+            return
+
+        if (
+            new_state == "START"
+            and not self._magnetic_unloading_request_pending
+            and not (
+                self.wtrtk_position_status == 4
+                and self.rtk_orientation_status == 4
+                and self.rtk_position_data_valid
+            )
+        ):
+            self.rtk_error_code |= ERROR_RTK_NOT_FIXED
+            self.get_logger().warn(
+                f"[START] RTK未满足双Fixed条件（定位={self.rtk_position_status}，"
+                f"定向={self.rtk_orientation_status}，"
+                f"GGA有效={self.rtk_position_data_valid}），"
+                "拒绝执行出仓任务，保持当前状态并上报故障码4"
+            )
             self.publish_state()
             return
 
