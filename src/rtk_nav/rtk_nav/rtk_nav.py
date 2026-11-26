@@ -121,6 +121,14 @@ def select_geofence_recovery_heading(current: float, bearing: float) -> Tuple[fl
     backward = (bearing + 180.0) % 360.0
     backward_error = (backward - current + 180.0) % 360.0 - 180.0
     return (bearing, "FORWARD") if abs(forward_error) <= abs(backward_error) else (backward, "BACKWARD")
+
+
+def apply_drive_direction(left_speed: float, right_speed: float, direction: str) -> Tuple[float, float]:
+    if direction == "FORWARD":
+        return left_speed, right_speed
+    if direction == "BACKWARD":
+        return -left_speed, -right_speed
+    raise ValueError(f"unsupported drive direction: {direction}")
 # 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
 # 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
 INITIAL_HEADING_MIN = -180 #-100.0
@@ -4407,6 +4415,7 @@ class RTKNavControlNode(Node):
             self.calc_distance_to_waypoint(first_waypoint) < INITIAL_MOVE_TOLERANCE
         )
         heading_aligned = initially_at_waypoint
+        initial_direction = "FORWARD"
         last_heading = None
         if initially_at_waypoint:
             # 已在首点容差内时，首段方位没有可靠长度；先停车并确认RTK位置。
@@ -4417,11 +4426,14 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
         else:
             initial_bearing = self.calculate_bearing(init_lat, init_lon, first_lat, first_lon)
+            target_heading, initial_direction = select_geofence_recovery_heading(
+                self.imu_yaw, initial_bearing
+            )
             self.get_logger().info(
-                f"公共区域起点→首航点接入方向：{initial_bearing:.2f}°"
+                f"公共区域起点→首航点接入方向：{initial_bearing:.2f}°，"
+                f"选择{initial_direction}，车体航向={target_heading:.2f}°"
             )
 
-            target_heading = initial_bearing
             self.get_logger().info(f"开始初始航向对准：目标航向{target_heading:.2f}°")
             try:
                 heading_aligned = yield from self._calibrate_with_boundary_retreat(
@@ -4603,18 +4615,29 @@ class RTKNavControlNode(Node):
             else:
                 path_direction = fixed_path_dir
 
+            if initial_direction == "BACKWARD":
+                path_direction = self.normalize_angle(path_direction + 180.0)
+                control_path_start, control_path_end = path_end, path_start
+                control_heading = self.normalize_angle(self.imu_yaw + 180.0)
+            else:
+                control_path_start, control_path_end = path_start, path_end
+                control_heading = self.imu_yaw
             left_speed, right_speed = self.stanley_steering_control(
                 current_pos=current_pos,
-                current_heading=self.imu_yaw,
-                path_start=path_start,
-                path_end=path_end,
+                current_heading=control_heading,
+                path_start=control_path_start,
+                path_end=control_path_end,
                 path_direction=path_direction,
                 velocity=current_base_speed,
                 distance_to_target=distance,
                 bearing_only=self.nav_context.get("force_bearing_mode", False),
             )
+            if initial_direction == "BACKWARD":
+                left_speed, right_speed = apply_drive_direction(
+                    left_speed, right_speed, initial_direction
+                )
 
-            heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+            heading_err = self.normalize_angle(path_direction - control_heading)
             # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
             in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
             if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD and not near_first_waypoint:

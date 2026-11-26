@@ -35,3 +35,23 @@ def test_recovery_selects_backward_when_backward_requires_less_rotation():
 
     assert math.isclose(heading, 180.0)
     assert direction == "BACKWARD"
+
+
+def test_initial_entry_selects_reverse_when_it_reduces_turn():
+    select_heading = load_heading_selector()
+
+    heading, direction = select_heading(170.0, 0.0)
+
+    assert math.isclose(heading, 180.0)
+    assert direction == "BACKWARD"
+
+
+def test_backward_stanley_commands_are_reversed_without_swapping_sides():
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    function = next(node for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == "apply_drive_direction")
+    scope = {"Tuple": tuple}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), scope)
+
+    assert scope["apply_drive_direction"](10.0, 20.0, "FORWARD") == (10.0, 20.0)
+    assert scope["apply_drive_direction"](10.0, 20.0, "BACKWARD") == (-10.0, -20.0)
