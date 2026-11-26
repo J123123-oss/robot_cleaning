@@ -2,8 +2,8 @@
 # 网络看门狗 (wlan0/WiFi版)
 #   假活特征：接口 UP、有 IP、但出口不通
 #   恢复手段（逐级升级）：
-#     L1: nmcli device wifi rescan → 重新扫描 AP
-#     L2: nmcli connection up → 用已保存 profile 重连
+#     L1: nmcli device wifi rescan → 匹配已保存 profile 并重连
+#     L2: 断开后匹配已保存 profile 并重连
 #     L3: ip link down/up → 内核层重置接口
 #     L4: rfkill block/unblock → 硬件层重置（最后手段）
 
@@ -23,7 +23,67 @@ get_ip() {
 }
 
 get_ssid() {
-    nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" 2>/dev/null | cut -d: -f2
+    nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" 2>/dev/null | cut -d: -f2-
+}
+
+get_saved_wifi_profiles() {
+    nmcli -t -f NAME,TYPE connection show 2>/dev/null |
+        awk -F: '$2 == "802-11-wireless" { print $1 }'
+}
+
+get_profile_ssid() {
+    nmcli -g 802-11-wireless.ssid connection show "$1" 2>/dev/null | head -1
+}
+
+get_profile_priority() {
+    nmcli -g connection.autoconnect-priority connection show "$1" 2>/dev/null | head -1
+}
+
+is_scanned_ssid() {
+    local target_ssid="$1"
+    nmcli -t -f SSID device wifi list ifname "$INTERFACE" 2>/dev/null |
+        awk -v target="$target_ssid" '$0 == target { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+connect_saved_wifi_profiles() {
+    local profile profile_ssid priority
+    local attempted=0
+    local matched=0
+    local profiles
+
+    profiles=$(while IFS= read -r profile; do
+        [ -n "$profile" ] || continue
+        priority=$(get_profile_priority "$profile")
+        priority=${priority:-0}
+        printf '%s\t%s\n' "$priority" "$profile"
+    done < <(get_saved_wifi_profiles) | sort -t $'\t' -k1,1nr -k2,2)
+
+    while IFS=$'\t' read -r priority profile; do
+        [ -n "$profile" ] || continue
+        profile_ssid=$(get_profile_ssid "$profile")
+        [ -n "$profile_ssid" ] || continue
+        matched=1
+
+        if ! is_scanned_ssid "$profile_ssid"; then
+            log "跳过历史 WiFi: $profile (SSID 未出现在当前扫描结果)"
+            continue
+        fi
+
+        attempted=1
+        log "尝试连接历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
+        if nmcli connection up "$profile" ifname "$INTERFACE" 2>/dev/null; then
+            log "已发起连接: $profile"
+            return 0
+        fi
+        log "连接失败: $profile，继续尝试其他历史 WiFi"
+    done <<< "$profiles"
+
+    if [ "$matched" -eq 0 ]; then
+        log "没有已保存的无线连接 profile"
+    elif [ "$attempted" -eq 0 ]; then
+        log "扫描结果中没有匹配的历史 WiFi"
+    fi
+    return 1
 }
 
 # 等待 WiFi 完全就绪：接口 UP → 已关联 SSID → 拿到 IP → ping 通
@@ -88,29 +148,21 @@ wait_for_wifi_ready() {
 
 # L1: 软恢复 —— 重新扫描 WiFi
 do_l1_recovery() {
-    log "[L1] 触发 WiFi 重新扫描"
-    nmcli device wifi rescan 2>/dev/null || true
-    # rescan 只是触发扫描，NM 需要时间处理结果
+    log "[L1] 重新扫描并匹配历史 WiFi"
+    nmcli device wifi rescan ifname "$INTERFACE" 2>/dev/null || true
+    sleep 3
+    connect_saved_wifi_profiles || true
     wait_for_wifi_ready 30
 }
 
 # L2: 中恢复 —— 用已保存的连接配置重新激活
 do_l2_recovery() {
-    local conn_name
-    conn_name=$(nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" 2>/dev/null | cut -d: -f2)
-
-    log "[L2] 断开 $INTERFACE (连接: ${conn_name:-未知})"
+    log "[L2] 断开 $INTERFACE，并按历史 WiFi 配置重新连接"
     nmcli device disconnect "$INTERFACE" 2>/dev/null || true
     sleep 2
-
-    if [ -n "$conn_name" ]; then
-        log "[L2] 使用已保存配置重新连接: $conn_name"
-        nmcli connection up "$conn_name" 2>/dev/null || true
-    else
-        log "[L2] 无已保存连接，由 NM 自动连接"
-        nmcli device connect "$INTERFACE" 2>/dev/null || true
-    fi
-
+    nmcli device wifi rescan ifname "$INTERFACE" 2>/dev/null || true
+    sleep 3
+    connect_saved_wifi_profiles || true
     wait_for_wifi_ready 30
 }
 
@@ -122,7 +174,9 @@ do_l3_recovery() {
     ip link set "$INTERFACE" up 2>/dev/null || true
     # down/up 后 NM 需要重新扫描和关联，给够时间
     sleep 3
-    nmcli device wifi rescan 2>/dev/null || true
+    nmcli device wifi rescan ifname "$INTERFACE" 2>/dev/null || true
+    sleep 3
+    connect_saved_wifi_profiles || true
     wait_for_wifi_ready 60
 }
 
@@ -141,7 +195,9 @@ do_l4_recovery() {
 
     # rfkill 后驱动需要重新加载，给够时间
     sleep 5
-    nmcli device wifi rescan 2>/dev/null || true
+    nmcli device wifi rescan ifname "$INTERFACE" 2>/dev/null || true
+    sleep 3
+    connect_saved_wifi_profiles || true
     wait_for_wifi_ready 90
 
     l4_cooldown_remain=$L4_COOLDOWN
