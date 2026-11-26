@@ -405,6 +405,8 @@ class MotorControlNode(Node):
         self.magnetic_search_retry_count = 0
         self.magnetic_search_retry_max = 1
         self.magnetic_search_retry_backward_duration = 3.0
+        self.magnetic_gps_exit_count = 0
+        self.magnetic_gps_exit_required = 2
         self.magnetic_last_nonzero_mask = 0
         self.magnetic_last_nonzero_time = 0.0
         self.magnetic_search_min_hold_sec = 0.5
@@ -1356,10 +1358,70 @@ class MotorControlNode(Node):
         self.finish_loading_process()
         return True
 
+    def _update_loading_gps_magnetic_count(self, raw_mask: int) -> None:
+        """累计GPS进仓阶段的连续磁条采样，其他阶段清零。"""
+        gps_phases = {
+            "LOADING_NAV_TO_GPS",
+            "LOADING_TURN",
+            "LOADING_POS_RECOVER",
+        }
+        if (
+            not self.enable_magnetic_navigation
+            or self.current_status != "LOADING"
+            or not self.is_in_bin_process
+            or self.bin_process_paused
+            or getattr(self, "loading_phase", None) not in gps_phases
+        ):
+            self.magnetic_gps_exit_count = 0
+            return
+        if raw_mask:
+            self.magnetic_gps_exit_count += 1
+        else:
+            self.magnetic_gps_exit_count = 0
+
+    def _handoff_to_magnetic_loading_if_ready(self, current_time: float) -> bool:
+        """GPS阶段确认磁条后切入现有磁导航后退阶段。"""
+        mask_age = (time.monotonic() - self.magnetic_mask_update_time
+                    if self.magnetic_mask_update_time is not None else None)
+        if (
+            not self.enable_magnetic_navigation
+            or self.bin_process_paused
+            or self.loading_phase not in (
+                "LOADING_NAV_TO_GPS", "LOADING_TURN", "LOADING_POS_RECOVER"
+            )
+            or mask_age is None or not 0.0 <= mask_age <= 0.5
+            or not self.magnetic_raw_mask
+            or self.magnetic_gps_exit_count < self.magnetic_gps_exit_required
+        ):
+            return False
+
+        self.set_motors_speed(0.0, 0.0)
+        self.loading_phase = "LOADING_DIRECT_BACKWARD"
+        self.loading_direct_start_time = current_time
+        self.loading_direct_elapsed = 0.0
+        self.loading_direct_last_update_time = current_time
+        self.loading_direct_motion_active = False
+        self.loading_countdown_started = False
+        self.magnetic_search_phase = "RIGHT_SEARCH"
+        self.magnetic_search_phase_start = current_time
+        self.magnetic_search_reference_yaw = self.imu_yaw_deg
+        self.magnetic_search_recover_target_yaw = None
+        self.magnetic_gps_exit_count = 0
+        self.get_logger().info(
+            "[LOADING] GPS微调阶段连续检测到磁条，结束GPS寻点，"
+            "切换磁导航后退进仓"
+        )
+        return True
+
     def magnetic_mask_callback(self, msg: UInt16):
         raw_mask = int(msg.data) & 0xFF
         self.magnetic_raw_mask = raw_mask
-        self.magnetic_mask_update_time = time.monotonic()
+        sample_time = time.monotonic()
+        if (self.magnetic_mask_update_time is None
+                or not 0.0 <= sample_time - self.magnetic_mask_update_time <= 0.5):
+            self.magnetic_gps_exit_count = 0
+        self.magnetic_mask_update_time = sample_time
+        self._update_loading_gps_magnetic_count(raw_mask)
         if self.current_status == "LOADING" and self.loading_countdown_started:
             if raw_mask == 0:
                 # 后退阶段复用最近一次有效磁条状态，持续后退纠偏；
@@ -3064,6 +3126,7 @@ class MotorControlNode(Node):
             self.magnetic_search_recover_target_yaw = None
             self.magnetic_search_failure_logged = False
             self.magnetic_search_retry_count = 0
+            self.magnetic_gps_exit_count = 0
             self.magnetic_last_nonzero_mask = self.magnetic_mask
             self.magnetic_last_nonzero_time = (
                 time.time() if self.magnetic_mask else 0.0
@@ -3921,10 +3984,13 @@ class MotorControlNode(Node):
             self.set_motors_speed(0.0, 0.0)
             return
 
+        current_time = time.time()
+        if self._handoff_to_magnetic_loading_if_ready(current_time):
+            return
+
         # ========== 阶段0：导航到进仓目标GPS点（不依赖dock传感器） ==========
         # 参考 rtk_nav move_to_first_waypoint: 先航向对准，再 Stanley 直线行驶
         if self.loading_phase == "LOADING_NAV_TO_GPS":
-            current_time = time.time()
             gps_dist = self.haversine_distance(
                 self.current_lon, self.current_lat,
                 self.loading_gps[0], self.loading_gps[1])

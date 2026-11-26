@@ -19,6 +19,7 @@ def controller():
     names = {
         "_request_charge_if_docked", "start_charge_async", "_start_charge_callback",
         "charge_resume_callback", "magnetic_mask_callback",
+        "_update_loading_gps_magnetic_count",
         "charging_volt_curr_cb",
         "_disable_if_docked_while_enabled", "charging_fault_code_cb",
     }
