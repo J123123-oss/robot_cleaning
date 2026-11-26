@@ -33,7 +33,10 @@ from rtk_nav.imu_odom_fallback import (
 from rtk_nav.geofence_geometry import (
     build_polyline_corridor,
     load_geofence_payload,
+    nearest_recovery_target,
     point_allowed_by_payload,
+    segment_allowed_by_payload,
+    validate_convex_polygon,
 )
 from rtk_nav.progress_store import load_progress, save_progress
 from rtk_nav.navigation_position_safety import ArrivalConfirmation, PositionJumpGuard
@@ -110,8 +113,14 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "imu_odom_fallback_boundary_blocked",
     "imu_odom_fallback_recovery_mismatch",
     "imu_odom_fallback_manual_takeover",
-    "geofence_stop",
 })
+
+
+def select_geofence_recovery_heading(current: float, bearing: float) -> Tuple[float, str]:
+    forward_error = (bearing - current + 180.0) % 360.0 - 180.0
+    backward = (bearing + 180.0) % 360.0
+    backward_error = (backward - current + 180.0) % 360.0 - 180.0
+    return (bearing, "FORWARD") if abs(forward_error) <= abs(backward_error) else (backward, "BACKWARD")
 # 出仓后首次进入清扫时，除稳定性外还必须确认车头朝向作业方向。
 # 运行中 RTK 恢复或姿态突变恢复不使用该绝对方向限制。
 INITIAL_HEADING_MIN = -180 #-100.0
@@ -466,8 +475,13 @@ class RTKNavControlNode(Node):
         )
         self.declare_parameter("enable_geofence", True)
         self.enable_geofence = bool(self.get_parameter("enable_geofence").value)
+        self.declare_parameter("geofence_entry_area_path", "")
+        self.geofence_entry_area_path = str(
+            self.get_parameter("geofence_entry_area_path").value or ""
+        ).strip()
         self.get_logger().info(
-            f"[电子围栏] 启动配置: enable_geofence={self.enable_geofence}"
+            f"[电子围栏] 启动配置: enable_geofence={self.enable_geofence}, "
+            f"entry_area={self.geofence_entry_area_path or 'auto'}"
         )
         self.geofence_path = os.path.splitext(self.rtk_path_file)[0] + ".fence.json"
         self.geofence_payload = None
@@ -475,6 +489,11 @@ class RTKNavControlNode(Node):
         self.geofence_confirm_frames = 3
         self.geofence_latched = False
         self.geofence_recovery_ready = False
+        self.geofence_recovery_active = False
+        self.geofence_recovery = None
+        self.geofence_entry_payload = None
+        self.geofence_entry_pending = True
+        self._position_trusted_time = None
         self.declare_parameter("enable_io_timeout_protection", True)
         self.enable_io_timeout_protection = self.get_parameter(
             "enable_io_timeout_protection"
@@ -619,6 +638,12 @@ class RTKNavControlNode(Node):
         )
         self.geofence_recovery_pub = self.create_publisher(
             Bool, "/rtk/geofence_recovery_ready", 10
+        )
+        self.geofence_recovery_active_pub = self.create_publisher(
+            Bool, "/rtk/geofence_recovery_active", 10
+        )
+        self.geofence_recovery_complete_pub = self.create_publisher(
+            Bool, "/rtk/geofence_recovery_complete", 10
         )
         self._nav_state_seq = 0
         self.cleaning_area_pub = self.create_publisher(String, "/rtk/cleaning_area", 10)
@@ -932,12 +957,17 @@ class RTKNavControlNode(Node):
         """Load the legacy dense planner's fence sidecar for the active route."""
         if not self.enable_geofence:
             self.geofence_payload = None
+            self.geofence_entry_payload = None
+            self.geofence_entry_pending = True
             self.geofence_outside_count = 0
             self.geofence_latched = False
             return True
         self.publish_geofence_recovery_ready(False)
+        self.geofence_entry_payload = None
+        self.geofence_entry_pending = True
         try:
             self.geofence_payload = load_geofence_payload(path)
+            self._load_common_entry_area()
             self._append_loading_bridges_to_geofence()
             self.geofence_outside_count = 0
             self.geofence_latched = False
@@ -951,6 +981,39 @@ class RTKNavControlNode(Node):
             self.geofence_payload = None
             self.get_logger().error(f"[电子围栏] 加载失败，自动清扫将被锁定: {exc}")
             return False
+
+    def _load_common_entry_area(self) -> None:
+        """Load the pre-surveyed common route-entry area for initial navigation."""
+        configured_path = self.geofence_entry_area_path
+        if configured_path:
+            entry_path = configured_path
+            if not os.path.isfile(entry_path):
+                raise OSError(f"公共接入区域文件不存在: {entry_path}")
+        else:
+            entry_path = os.path.join(
+                os.path.dirname(self.geofence_path),
+                "common_entry_area.fence.json",
+            )
+            if not os.path.isfile(entry_path):
+                return
+
+        entry_payload = load_geofence_payload(entry_path)
+        route_zone = self.geofence_payload.get("utm_zone")
+        entry_zone = entry_payload.get("utm_zone")
+        if not route_zone or not entry_zone or list(route_zone) != list(entry_zone):
+            raise ValueError(
+                f"公共接入区域UTM分带不一致: route={route_zone}, entry={entry_zone}"
+            )
+        entry_areas = entry_payload.get("areas", [])
+        if not isinstance(entry_areas, list) or not entry_areas:
+            raise ValueError("公共接入区域文件必须包含非空 areas")
+        for area in entry_areas:
+            validate_convex_polygon(area.get("boundary_utm", []))
+        self.geofence_entry_payload = {"areas": entry_areas, "bridges": []}
+        self.get_logger().info(
+            f"[电子围栏] 已合并公共接入区域: {entry_path}, "
+            f"areas={len(entry_areas)}"
+        )
 
     def _append_loading_bridges_to_geofence(self) -> None:
         """Add narrow route-end/loading corridors to the loaded fence payload."""
@@ -1005,6 +1068,9 @@ class RTKNavControlNode(Node):
         ready = bool(
             self.geofence_latched
             and self.geofence_payload is not None
+            and self.rtk_solution_ready
+            and self._position_sample_trusted
+            and self._fallback_age(time.monotonic(), self._position_trusted_time) <= 0.5
             and self.check_geofence_position()
         )
         self.publish_geofence_recovery_ready(ready)
@@ -1018,7 +1084,13 @@ class RTKNavControlNode(Node):
         lon, lat = self.current_gps
         if not (math.isfinite(lon) and math.isfinite(lat)):
             return False
-        return point_allowed_by_payload(self.latlon_to_utm(lat, lon), self.geofence_payload)
+        point = self.latlon_to_utm(lat, lon)
+        return bool(self.geofence_payload and point_allowed_by_payload(
+            point, self.geofence_payload
+        )) or bool(
+            self.geofence_entry_pending and self.geofence_entry_payload
+            and point_allowed_by_payload(point, self.geofence_entry_payload)
+        )
 
     def enforce_geofence(self) -> bool:
         """Return True when navigation must remain stopped by the geofence."""
@@ -1044,6 +1116,9 @@ class RTKNavControlNode(Node):
 
     def trip_geofence_stop(self, reason: str) -> None:
         already_latched = self.geofence_latched
+        self.geofence_recovery_active = False
+        self.geofence_recovery = None
+        self._publish_geofence_recovery_active(False)
         self.geofence_latched = True
         self.publish_geofence_recovery_ready(False)
         self.nav_running = False
@@ -1053,7 +1128,7 @@ class RTKNavControlNode(Node):
         self.nav_context["pre_pause_state"] = NavState.WAYPOINT_MOVE
         self.publish_stop_speed()
         self.publish_nav_state(NavState.PAUSE)
-        if not already_latched:
+        if not already_latched or self.current_control_mode == ControlMode.AUTO_CLEANING:
             hold_msg = String()
             hold_msg.data = "h"
             self.keyboard_control_pub.publish(hold_msg)
@@ -1064,6 +1139,137 @@ class RTKNavControlNode(Node):
                 f"[电子围栏] 已请求HOLD并上报故障码: {ERROR_GEOFENCE_OUTSIDE}"
             )
         self.get_logger().error(f"[电子围栏] 已停车并锁定: {reason}")
+
+    def _publish_geofence_recovery_active(self, active: bool) -> None:
+        msg = Bool()
+        msg.data = active
+        self.geofence_recovery_active_pub.publish(msg)
+
+    def _begin_geofence_recovery(self) -> None:
+        if not self.geofence_latched or self.geofence_recovery_active:
+            return
+        self.geofence_recovery_active = True
+        self.publish_geofence_recovery_ready(False)
+        self.geofence_recovery = {"started": time.monotonic(), "phase": "WAIT",
+                                  "last_sequence": self.gps_update_sequence, "inside_count": 0}
+        self.brush_active = False
+        self._arrival_confirmation.reset()
+        self.publish_stop_speed()
+        self.get_logger().info("[电子围栏] 收到新的AUTO请求，等待安全条件后尝试回边")
+
+    def _service_geofence_recovery(self, now: float) -> None:
+        recovery = self.geofence_recovery
+        if not recovery or now - recovery["started"] > 90.0:
+            self.trip_geofence_stop("recovery_timeout")
+            return
+        if (self.geofence_payload is None or not self.waypoints
+                or self._position_guard.blocked or not self.rtk_solution_ready
+                or not self._position_sample_trusted
+                or self._fallback_age(now, self._position_trusted_time) > 0.5
+                or self._fallback_age(now, self.last_wtrtk_time) > 0.5
+                or self._fallback_age(now, self.last_io_time) > BOUNDARY_IO_MAX_AGE):
+            if recovery["phase"] != "WAIT":
+                self.trip_geofence_stop("recovery_data_unavailable")
+            else:
+                self.publish_stop_speed()
+            return
+        if self._auto_heading_gate_pending:
+            if (not self._last_heading_stable
+                    or self._auto_heading_gate_fixed_since is None
+                    or now - self._auto_heading_gate_fixed_since < HEADING_FIXED_CONFIRM_WINDOW):
+                self.publish_stop_speed()
+                return
+            self._auto_heading_gate_pending = False
+        if self._boundary_motion_inhibited(now):
+            self.trip_geofence_stop("recovery_motion_inhibited")
+            return
+        if self._boundary_stop_until is not None:
+            self.trip_geofence_stop("recovery_boundary_triggered")
+            return
+        self._publish_geofence_recovery_active(True)
+        if self.gps_update_sequence != recovery["last_sequence"]:
+            recovery["last_sequence"] = self.gps_update_sequence
+            recovery["inside_count"] = recovery["inside_count"] + 1 if self.check_geofence_position() else 0
+        if recovery["inside_count"]:
+            if recovery["phase"] != "CONFIRM":
+                recovery["phase"] = "CONFIRM"
+                self.publish_stop_speed()
+            if recovery["inside_count"] >= 3 and self._boundary_chassis_stopped():
+                self.geofence_latched = False
+                self.geofence_outside_count = 0
+                self.geofence_recovery_active = False
+                self.geofence_recovery = None
+                self.nav_context["nav_state"] = NavState.INITIAL_MOVE if self.current_waypoint_idx == 0 else NavState.WAYPOINT_MOVE
+                self.nav_context["pause_reason"] = None
+                self.nav_context["pre_pause_state"] = None
+                self.stanley_path_start = self.stanley_path_direction = None
+                self.multi_waypoint_generator = None
+                self.nav_running = False
+                self.publish_geofence_recovery_ready(True)
+                completed = Bool()
+                completed.data = True
+                self.geofence_recovery_complete_pub.publish(completed)
+                self.publish_nav_state(self.nav_context["nav_state"])
+                self.get_logger().info("[电子围栏] 回边完成，恢复当前航点")
+            return
+        if recovery["phase"] == "CONFIRM":
+            recovery["phase"] = "WAIT"
+        if recovery["phase"] == "WAIT":
+            if not self._boundary_chassis_stopped():
+                self.publish_stop_speed()
+                return
+            point = self.latlon_to_utm(self.current_gps[1], self.current_gps[0])
+            entry_areas = (
+                (self.geofence_entry_payload or {}).get("areas", [])
+                if self.geofence_entry_pending else []
+            )
+            safety_payload = {"areas": [
+                *self.geofence_payload.get("areas", []),
+                *entry_areas,
+            ], "bridges": self.geofence_payload.get("bridges", []),
+                "expansion_radius_m": self.geofence_payload.get("expansion_radius_m", 0.0)}
+            target = nearest_recovery_target(point, safety_payload)
+            if target is None or math.hypot(target[0] - point[0], target[1] - point[1]) > 2.0:
+                self.trip_geofence_stop("recovery_target_unavailable_or_too_far")
+                return
+            if not segment_allowed_by_payload(point, target, safety_payload):
+                self.trip_geofence_stop("recovery_path_not_in_surveyed_area")
+                return
+            bearing = math.degrees(math.atan2(target[0] - point[0], target[1] - point[1]))
+            recovery["heading"], recovery["direction"] = select_geofence_recovery_heading(self.imu_yaw, bearing)
+            recovery["origin"] = point
+            recovery["phase"] = "TURN"
+            self.nav_context["nav_state"] = "GEOFENCE_RECOVERY"
+            self.nav_context["pause_reason"] = None
+            self.publish_nav_state("GEOFENCE_RECOVERY")
+        point = self.latlon_to_utm(self.current_gps[1], self.current_gps[0])
+        if math.hypot(point[0] - recovery["origin"][0], point[1] - recovery["origin"][1]) > 2.0:
+            self.trip_geofence_stop("recovery_distance_exceeded")
+            return
+        error = self.get_heading_error(recovery["heading"])
+        if recovery["phase"] == "TURN":
+            if abs(error) <= 2.0:
+                recovery["phase"] = "SETTLE"
+                self.publish_stop_speed()
+                return
+            if self._boundary_blocks_motion("TURN"):
+                self.trip_geofence_stop("recovery_turn_blocked")
+                return
+            speed = -TURN_SPEED_SLOW if error > 0 else TURN_SPEED_SLOW
+            self._publish_geofence_recovery_active(True)
+            self._publish_motor_speed(speed, speed)
+            return
+        if recovery["phase"] == "SETTLE":
+            if not self._boundary_chassis_stopped():
+                self.publish_stop_speed()
+                return
+            recovery["phase"] = "DRIVE"
+        if abs(error) > 10.0 or self._boundary_blocks_motion(recovery["direction"]):
+            self.trip_geofence_stop("recovery_heading_or_direction_blocked")
+            return
+        speed = 6.0 if recovery["direction"] == "FORWARD" else -6.0
+        self._publish_geofence_recovery_active(True)
+        self._publish_motor_speed(-speed, speed)
 
     def update_boundary_parameter(self, params):
         """
@@ -3425,6 +3631,8 @@ class RTKNavControlNode(Node):
             and getattr(self, "_fallback_position_blend", None) is None
             and not (episode and episode.get("integrating"))
         )
+        if self._position_sample_trusted:
+            self._position_trusted_time = now
         self._confirm_waypoint_arrival(self.nav_context.get("target_waypoint"))
 
     def _confirm_waypoint_arrival(self, target_waypoint) -> bool:
@@ -4163,6 +4371,25 @@ class RTKNavControlNode(Node):
                 self.get_logger().error("获取GPS初始位置超时，无法计算行驶朝向")
                 return False
         self.get_logger().info(f"GPS初始位置获取成功：({self.current_gps[0]:.6f}, {self.current_gps[1]:.6f})")
+
+        if self.enable_geofence:
+            approach_start = self.latlon_to_utm(self.current_gps[1], self.current_gps[0])
+            approach_end = self.latlon_to_utm(first_waypoint[1], first_waypoint[0])
+            approach_payload = dict(self.geofence_payload or {})
+            if self.geofence_entry_pending and self.geofence_entry_payload:
+                approach_payload["areas"] = [
+                    *approach_payload.get("areas", []),
+                    *self.geofence_entry_payload["areas"],
+                ]
+            if (self.geofence_payload is None or not segment_allowed_by_payload(
+                    approach_start, approach_end, approach_payload)):
+                self.get_logger().error(
+                    "[电子围栏] 首点直线接入路径不在允许区域内，拒绝移动并保持HOLD"
+                )
+                self.trip_geofence_stop("initial_approach_outside_allowed_region")
+                yield (0.0, 0.0)
+                return False
+            self.get_logger().info("[电子围栏] 首点接入检查通过，使用当前位置重算方向")
         
         start_imu_time = self.get_clock().now()
         while not self.imu_initialized and rclpy.ok():
@@ -4190,7 +4417,9 @@ class RTKNavControlNode(Node):
             self.publish_stop_speed()
         else:
             initial_bearing = self.calculate_bearing(init_lat, init_lon, first_lat, first_lon)
-            self.get_logger().info(f"初始点→第一个航点 初始朝向角：{initial_bearing:.2f}°")
+            self.get_logger().info(
+                f"公共区域起点→首航点接入方向：{initial_bearing:.2f}°"
+            )
 
             target_heading = initial_bearing
             self.get_logger().info(f"开始初始航向对准：目标航向{target_heading:.2f}°")
@@ -4279,6 +4508,7 @@ class RTKNavControlNode(Node):
                             )
                         arrival_hold_active = False
                 if arrival_confirmed:
+                    self.geofence_entry_pending = False
                     self.get_logger().info(f"已到达第一个航点距离阈值：{distance:.2f} m")
                     target_waypoint_heading = self.get_path_heading(first_waypoint)
                     self.get_logger().info(f"开始最终航向校准：目标{target_waypoint_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
@@ -5457,6 +5687,7 @@ class RTKNavControlNode(Node):
             if (
                 not reason
                 or reason in MANUAL_INTERVENTION_PAUSE_REASONS
+                or reason == "geofence_stop"
                 or reason == "auto_heading_gate_timeout"
             ):
                 return RtkMotionCommand.DISABLE
@@ -5548,6 +5779,7 @@ class RTKNavControlNode(Node):
                 nav_state == NavState.PAUSE
                 and pause_reason
                 and pause_reason not in MANUAL_INTERVENTION_PAUSE_REASONS
+                and pause_reason != "geofence_stop"
                 and pause_reason != "auto_heading_gate_timeout"
             ),
             "seq": self._nav_state_seq + 1,
@@ -6080,6 +6312,12 @@ class RTKNavControlNode(Node):
             self._exit_ultrasonic_suppression(f"motor_state={msg.data}")
 
         if msg.data == "HOLD" and self.last_state != "HOLD":
+            if getattr(self, "geofence_recovery_active", False):
+                self.geofence_recovery_active = False
+                self.geofence_recovery = None
+                self._publish_geofence_recovery_active(False)
+                self.nav_context["nav_state"] = NavState.PAUSE
+                self.nav_context["pause_reason"] = "geofence_stop"
             if (
                 (self._fallback_episode or self._fallback_candidate)
                 and not self._fallback_lockout_reason
@@ -6103,7 +6341,10 @@ class RTKNavControlNode(Node):
             self.current_control_mode = ControlMode.AUTO_CLEANING
             self._exit_ultrasonic_suppression("enter_auto_cleaning")
             self._prepare_auto_cleaning_heading_gate("/motor/state")
-            if self._is_manual_intervention_pause():
+            self._begin_geofence_recovery()
+            if self.geofence_recovery_active:
+                self.publish_stop_speed()
+            elif self._is_manual_intervention_pause():
                 if not self._resume_manual_intervention_pause():
                     self.get_logger().error(
                         f"[RTKNav] 收到AUTO_CLEANING状态但尚未确认人工接管，保持PAUSE"
@@ -6155,6 +6396,7 @@ class RTKNavControlNode(Node):
         self.is_first_file_load = False
         self.rtk_path_file = new_path_file
         self.current_waypoint_idx = 0  # 重置航点索引为0
+        self.geofence_entry_pending = True
         self.get_logger().info(f"[RTKNav] 路径切换时重置航点索引为0")
         self.return_to_loading_added = False  # 重置出仓点追加标志
         self.brush_start_indices.clear()
@@ -6394,6 +6636,7 @@ class RTKNavControlNode(Node):
         if self.current_control_mode == ControlMode.AUTO_CLEANING and previous_mode != ControlMode.AUTO_CLEANING:
             self._exit_ultrasonic_suppression("enter_auto_cleaning")
             self._prepare_auto_cleaning_heading_gate("/control/mode")
+            self._begin_geofence_recovery()
             if self.waiting_for_next_unloading:
                 self.waiting_for_next_unloading = False
                 self.get_logger().info("[RTKNav] 检测到下一次UNLOADING后的AUTO_CLEANING，允许启动预加载路径")
@@ -6404,7 +6647,7 @@ class RTKNavControlNode(Node):
             self.heading_timed_out = False
             self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
-            if self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]:
+            if (not self.geofence_recovery_active and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]):
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE
             if self._is_manual_intervention_pause():
                 if not self._resume_manual_intervention_pause():
@@ -6419,6 +6662,12 @@ class RTKNavControlNode(Node):
 
         # 切换非RTK模式时, 保存导航状态, 停止导航
         if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            if getattr(self, "geofence_recovery_active", False):
+                self.geofence_recovery_active = False
+                self.geofence_recovery = None
+                self._publish_geofence_recovery_active(False)
+                self.nav_context["nav_state"] = NavState.PAUSE
+                self.nav_context["pause_reason"] = "geofence_stop"
             self._disarm_auto_cleaning_heading_gate()
             self._exit_ultrasonic_suppression(
                 f"control_mode={self.current_control_mode}"
@@ -6462,6 +6711,9 @@ class RTKNavControlNode(Node):
         # self.is_boundary_triggered = self.get_parameter('is_boundary_triggered').value
         # 仅在RTK导航模式下执行导航逻辑
         if self.current_control_mode == ControlMode.AUTO_CLEANING:
+            if getattr(self, "geofence_recovery_active", False):
+                self._service_geofence_recovery(time.monotonic())
+                return
             if self._position_guard.blocked:
                 self._arrival_confirmation.reset()
                 self.publish_stop_speed()

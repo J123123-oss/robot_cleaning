@@ -35,6 +35,16 @@ def test_auto_entry_is_gated_by_fence_and_recovery_readiness():
     )
 
 
+def test_auto_entry_can_start_rtk_geofence_recovery():
+    source = (
+        Path(__file__).parents[1] / "motor_control" / "motor_control.py"
+    ).read_text(encoding="utf-8")
+    assert "def geofence_recovery_active_callback" in source
+    assert "self.geofence_recovery_active" in source
+    callback = source[source.index("def rtk_speed_callback"):source.index("def _service_legacy_rtk_motion")]
+    assert 'getattr(self, "geofence_recovery_active", False)' in callback
+
+
 def test_geofence_fault_keeps_nav_status_pause():
     source = (
         Path(__file__).parents[1] / "motor_control" / "motor_control.py"

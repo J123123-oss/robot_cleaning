@@ -682,6 +682,8 @@ class MotorControlNode(Node):
         self.current_stall_fault = False
         self.geofence_fault_latched = False
         self.geofence_recovery_ready = False
+        self.geofence_recovery_active = False
+        self.geofence_recovery_last_time = 0.0
         self.total_current_fault = False
         self.total_current_fault_current = 0.0
         self.current_stall_fault_source = None
@@ -836,6 +838,12 @@ class MotorControlNode(Node):
             "/rtk/geofence_recovery_ready",
             self.geofence_recovery_ready_callback,
             10,
+        )
+        self.geofence_recovery_active_sub = self.create_subscription(
+            Bool, "/rtk/geofence_recovery_active", self.geofence_recovery_active_callback, 10
+        )
+        self.geofence_recovery_complete_sub = self.create_subscription(
+            Bool, "/rtk/geofence_recovery_complete", self.geofence_recovery_complete_callback, 10
         )
         self.cleaning_area_sub = self.create_subscription(
             String,
@@ -1651,6 +1659,12 @@ class MotorControlNode(Node):
         return SetParametersResult(successful=True)
 
     def timer_callback(self):
+        if (self.geofence_fault_latched and self.geofence_recovery_active
+                and time.monotonic() - self.geofence_recovery_last_time > 0.5):
+            self.geofence_recovery_active = False
+            self.rtk_left_speed = self.rtk_right_speed = 0.0
+            self.set_motors_speed(0.0, 0.0)
+            self.switch_state("h")
         if getattr(self, "brush_use_kinco", False):
             self._service_kinco_motion()
         elif getattr(self, "_rtk_motion_deadline", None) is not None:
@@ -1982,10 +1996,14 @@ class MotorControlNode(Node):
             self.current_control_mode != "AUTO_CLEANING"
             or self.current_status in ("DISABLE", "START", "LOADING") or self.is_in_bin_process
             or self.web_control_active or self.rc_control
-            or self.current_stall_fault or self.geofence_fault_latched
+            or self.current_stall_fault or (self.geofence_fault_latched
+                and (not getattr(self, "geofence_recovery_active", False)
+                     or time.monotonic() - self.geofence_recovery_last_time > 0.5))
         ):
             return
         left, right, brush = float(msg.x), float(msg.y), float(msg.z)
+        if self.geofence_fault_latched:
+            brush = 0.0
         if self._rtk_auto_pause or not all(math.isfinite(speed) for speed in (left, right, brush)):
             left = right = brush = 0.0
         self.rtk_left_speed, self.rtk_right_speed = left, right
@@ -2080,7 +2098,9 @@ class MotorControlNode(Node):
             self.current_control_mode != "AUTO_CLEANING" or self.web_control_active
             or self.rc_control or self.current_status in ("DISABLE", "START", "LOADING")
             or self.is_in_bin_process or self.current_stall_fault
-            or self.geofence_fault_latched
+            or (self.geofence_fault_latched
+                and (not getattr(self, "geofence_recovery_active", False)
+                     or time.monotonic() - self.geofence_recovery_last_time > 0.5))
         ):
             return
         stamp = msg.stamp.sec * 1_000_000_000 + msg.stamp.nanosec
@@ -2096,6 +2116,8 @@ class MotorControlNode(Node):
         except ValueError:
             self._cancel_kinco_motion()
             return
+        if self.geofence_fault_latched:
+            action = BrushAction.DISABLE
         lifetime = RTK_MOTION_MAX_AGE - age
         self._rtk_motion_stamp = stamp
         self._rtk_motion_deadline = time.monotonic() + lifetime
@@ -2339,6 +2361,7 @@ class MotorControlNode(Node):
         if int(msg.data) & ERROR_GEOFENCE_OUTSIDE:
             was_latched = self.geofence_fault_latched
             self.geofence_fault_latched = True
+            self.geofence_recovery_active = False
             self.nav_status = "PAUSE"
             self.geofence_recovery_ready = False
             self.rtk_left_speed = 0.0
@@ -2357,8 +2380,29 @@ class MotorControlNode(Node):
         self.geofence_recovery_ready = bool(msg.data)
         if self.geofence_recovery_ready:
             self.get_logger().info(
-                "[电子围栏] RTK确认当前位置已回到允许区域，下一次AUTO可恢复"
+                "[电子围栏] RTK报告当前位置位于允许区域"
             )
+
+    def geofence_recovery_complete_callback(self, msg: Bool):
+        if (msg.data and self.geofence_fault_latched
+                and self.current_control_mode == "AUTO_CLEANING"
+                and self.geofence_recovery_active
+                and time.monotonic() - self.geofence_recovery_last_time <= 0.5):
+            self.geofence_fault_latched = False
+            self.geofence_recovery_active = False
+            self.publish_state()
+
+    def geofence_recovery_active_callback(self, msg: Bool):
+        self.geofence_recovery_active = bool(
+            msg.data and self.geofence_fault_latched
+            and self.current_control_mode == "AUTO_CLEANING"
+            and not self.web_control_active and not self.rc_control
+        )
+        if self.geofence_recovery_active:
+            self.geofence_recovery_last_time = time.monotonic()
+        else:
+            self.rtk_left_speed = self.rtk_right_speed = 0.0
+            self.set_motors_speed(0.0, 0.0)
 
     def cleaning_area_callback(self, msg: String):
         self.cleaning_area = msg.data.strip()
@@ -3226,15 +3270,10 @@ class MotorControlNode(Node):
             )
             return False
         if self.geofence_fault_latched:
-            if not self.geofence_recovery_ready:
-                self._reject_auto_cleaning_entry(
-                    "电子围栏故障已锁存，等待人工移回允许区域"
-                )
-                return False
-            self.geofence_fault_latched = False
+            self.geofence_recovery_active = False
             self.geofence_recovery_ready = False
             self.get_logger().info(
-                "[电子围栏] 已确认人工移回允许区域，清除1024锁存并允许AUTO"
+                "[电子围栏] 保持1024锁存，等待导航节点检查并执行回边"
             )
         return True
 

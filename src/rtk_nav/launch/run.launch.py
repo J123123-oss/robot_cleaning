@@ -21,6 +21,14 @@ def generate_launch_description():
         default_value=TextSubstitution(text="true"),
         description="Enable electronic fence file checks and outside-region stops",
     )
+    declare_geofence_entry_area_path_arg = DeclareLaunchArgument(
+        "geofence_entry_area_path",
+        default_value=TextSubstitution(text=""),
+        description=(
+            "Optional pre-surveyed common entry-area fence JSON. "
+            "When empty, use cleaning_path/common_entry_area.fence.json if present."
+        ),
+    )
     declare_enable_sensors_485_arg = DeclareLaunchArgument(
         "enable_sensors_485",
         default_value=TextSubstitution(text="true"),
@@ -313,6 +321,9 @@ def generate_launch_description():
             {'enable_geofence': ParameterValue(
                 LaunchConfiguration('enable_geofence'), value_type=bool
             )},
+            {'geofence_entry_area_path': LaunchConfiguration(
+                'geofence_entry_area_path'
+            )},
             {'loading_gps': loading_gps},
             {
                 'enable_io_timeout_protection': ParameterValue(
@@ -395,6 +406,7 @@ def generate_launch_description():
     # 组装所有节点到 LaunchDescription
     ld = LaunchDescription()
     ld.add_action(declare_enable_geofence_arg)
+    ld.add_action(declare_geofence_entry_area_path_arg)
     ld.add_action(declare_enable_sensors_485_arg)
     ld.add_action(declare_enable_io_timeout_protection_arg)
     ld.add_action(declare_robot_id_arg)

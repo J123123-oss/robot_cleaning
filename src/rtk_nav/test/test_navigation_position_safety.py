@@ -435,6 +435,7 @@ def test_first_point_generator_holds_until_five_fresh_samples_then_turns():
 
     node, namespace = make_node()
     node.current_waypoint_idx = 0
+    node.enable_geofence = False
     node.current_gps = node.waypoints[0][:2]
     node.nav_context["nav_state"] = namespace["NavState"].INITIAL_MOVE
     node.imu_initialized = True

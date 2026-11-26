@@ -236,3 +236,137 @@ def point_allowed_by_payload(point: Point, payload: dict) -> bool:
             if point_in_convex_polygon(point, corridor):
                 return True
     return False
+
+
+def validate_convex_polygon(polygon: Sequence[Point]) -> None:
+    if len(polygon) < 3 or not all(
+        len(point) == 2 and all(math.isfinite(float(value)) for value in point)
+        for point in polygon
+    ):
+        raise ValueError("area requires at least three finite XY coordinates")
+    turns = []
+    for index, point in enumerate(polygon):
+        next_point = polygon[(index + 1) % len(polygon)]
+        following = polygon[(index + 2) % len(polygon)]
+        cross = ((next_point[0] - point[0]) * (following[1] - next_point[1])
+                 - (next_point[1] - point[1]) * (following[0] - next_point[0]))
+        if abs(cross) < 1e-9:
+            raise ValueError("area has duplicate or collinear vertices")
+        turns.append(cross > 0)
+    if not all(turn == turns[0] for turn in turns):
+        raise ValueError("area must be a simple convex polygon")
+    edge_count = len(polygon)
+    for first in range(edge_count):
+        a, b = polygon[first], polygon[(first + 1) % edge_count]
+        for second in range(first + 1, edge_count):
+            if second in (first, (first + 1) % edge_count) or (second + 1) % edge_count == first:
+                continue
+            c, d = polygon[second], polygon[(second + 1) % edge_count]
+            ab_c = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            ab_d = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0])
+            cd_a = (d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0])
+            cd_b = (d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0])
+            if ab_c * ab_d < 0 and cd_a * cd_b < 0:
+                raise ValueError("area must be a simple convex polygon")
+
+
+def _segment_polygon_interval(start: Point, end: Point, polygon: Sequence[Point]):
+    if len(polygon) < 3 or abs(_signed_area(polygon)) < 1e-9:
+        return None
+    direction = (end[0] - start[0], end[1] - start[1])
+    orientation = 1.0 if _signed_area(polygon) > 0 else -1.0
+    lower, upper = 0.0, 1.0
+    for vertex, following in zip(polygon, list(polygon[1:]) + [polygon[0]]):
+        edge = (following[0] - vertex[0], following[1] - vertex[1])
+        initial = orientation * (edge[0] * (start[1] - vertex[1])
+                                 - edge[1] * (start[0] - vertex[0]))
+        slope = orientation * (edge[0] * direction[1] - edge[1] * direction[0])
+        if abs(slope) < 1e-12:
+            if initial < -1e-8:
+                return None
+        elif slope > 0:
+            lower = max(lower, -initial / slope)
+        else:
+            upper = min(upper, -initial / slope)
+        if lower > upper:
+            return None
+    return lower, upper
+
+
+def _segment_circle_interval(start: Point, end: Point, center: Point, radius: float):
+    direction = (end[0] - start[0], end[1] - start[1])
+    offset = (start[0] - center[0], start[1] - center[1])
+    squared = direction[0] ** 2 + direction[1] ** 2
+    if squared < 1e-18:
+        return (0.0, 1.0) if math.hypot(*offset) <= radius else None
+    projection = -(offset[0] * direction[0] + offset[1] * direction[1]) / squared
+    closest_squared = (offset[0] + projection * direction[0]) ** 2 + (offset[1] + projection * direction[1]) ** 2
+    remainder = radius ** 2 - closest_squared
+    if remainder < 0:
+        return None
+    span = math.sqrt(remainder / squared)
+    lower, upper = max(0.0, projection - span), min(1.0, projection + span)
+    return (lower, upper) if lower <= upper else None
+
+
+def segment_allowed_by_payload(start: Point, end: Point, payload: dict) -> bool:
+    """Check complete line coverage by the union of fence polygons and corridors."""
+    intervals = []
+    for area in payload.get("areas", []):
+        intervals.append(_segment_polygon_interval(start, end, area.get("boundary_utm", [])))
+    radius = float(payload.get("expansion_radius_m", 0.0))
+    for bridge in payload.get("bridges", []):
+        for corridor in bridge.get("corridors_utm", []):
+            intervals.append(_segment_polygon_interval(start, end, corridor))
+        centerline = bridge.get("centerline_utm", [])
+        for first, second in zip(centerline, centerline[1:]):
+            for corridor in build_polyline_corridor([first, second], radius):
+                intervals.append(_segment_polygon_interval(start, end, corridor))
+            intervals.append(_segment_circle_interval(start, end, first, radius))
+            intervals.append(_segment_circle_interval(start, end, second, radius))
+    covered = 0.0
+    for lower, upper in sorted(interval for interval in intervals if interval is not None):
+        if lower > covered + 1e-9:
+            return False
+        covered = max(covered, upper)
+        if covered >= 1.0 - 1e-9:
+            return True
+    return False
+
+
+def nearest_recovery_target(point: Point, payload: dict) -> Point | None:
+    candidates = []
+    for area in payload.get("areas", []):
+        polygon = area.get("boundary_utm", [])
+        if len(polygon) >= 3:
+            center = (sum(p[0] for p in polygon) / len(polygon),
+                      sum(p[1] for p in polygon) / len(polygon))
+            for start, end in zip(polygon, polygon[1:] + polygon[:1]):
+                delta = (end[0] - start[0], end[1] - start[1])
+                length_squared = delta[0] ** 2 + delta[1] ** 2
+                if length_squared <= 1e-12:
+                    continue
+                ratio = max(0.0, min(1.0, ((point[0] - start[0]) * delta[0]
+                                           + (point[1] - start[1]) * delta[1]) / length_squared))
+                nearest = (start[0] + ratio * delta[0], start[1] + ratio * delta[1])
+                inward = (center[0] - nearest[0], center[1] - nearest[1])
+                distance = math.hypot(*inward)
+                if distance > 1e-9:
+                    scale = min(0.1 / distance, 1.0)
+                    candidates.append((nearest[0] + scale * inward[0],
+                                       nearest[1] + scale * inward[1]))
+    for bridge in payload.get("bridges", []):
+        line = bridge.get("centerline_utm", [])
+        for start, end in zip(line, line[1:]):
+            delta = (end[0] - start[0], end[1] - start[1])
+            length_squared = delta[0] ** 2 + delta[1] ** 2
+            if length_squared <= 1e-12:
+                continue
+            ratio = max(0.0, min(1.0, ((point[0] - start[0]) * delta[0]
+                                       + (point[1] - start[1]) * delta[1]) / length_squared))
+            candidates.append((start[0] + ratio * delta[0], start[1] + ratio * delta[1]))
+    candidates = [candidate for candidate in candidates
+                  if all(math.isfinite(value) for value in candidate)
+                  and point_allowed_by_payload(candidate, payload)]
+    return min(candidates, key=lambda candidate: math.hypot(
+        candidate[0] - point[0], candidate[1] - point[1]), default=None)

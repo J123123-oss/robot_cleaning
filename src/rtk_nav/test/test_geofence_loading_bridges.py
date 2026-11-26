@@ -13,11 +13,17 @@ from geofence_geometry import build_polyline_corridor, load_geofence_payload
 
 def test_loading_valid_fence_adds_both_endpoint_bridges(tmp_path):
     tree = ast.parse((PACKAGE / "rtk_nav.py").read_text(encoding="utf-8"))
-    names = {"load_geofence_sidecar", "_append_loading_bridges_to_geofence", "latlon_to_utm"}
+    names = {
+        "load_geofence_sidecar",
+        "_append_loading_bridges_to_geofence",
+        "_load_common_entry_area",
+        "latlon_to_utm",
+    }
     functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
     scope = {"Tuple": tuple, "math": math, "json": json,
              "load_geofence_payload": load_geofence_payload,
-             "build_polyline_corridor": build_polyline_corridor}
+             "build_polyline_corridor": build_polyline_corridor,
+             "os": __import__("os")}
     exec(compile(ast.Module(body=functions, type_ignores=[]), "rtk_nav.py", "exec"), scope)
     fence = tmp_path / "route.fence.json"
     fence.write_text(json.dumps({"utm_zone": [49, "S"], "expansion_radius_m": 0.2,
@@ -25,10 +31,13 @@ def test_loading_valid_fence_adds_both_endpoint_bridges(tmp_path):
     logger = SimpleNamespace(info=lambda message: None, error=lambda message: None)
     node = SimpleNamespace(enable_geofence=True, waypoints=[(111.0, 35.0, 0), (111.0001, 35.0, 0)],
                            loading_waypoint=(110.9999, 35.0, 0),
+                           geofence_path=str(fence),
+                           geofence_entry_area_path="",
                            publish_geofence_recovery_ready=lambda ready: None,
                            get_logger=lambda: logger)
     node.latlon_to_utm = lambda lat, lon: scope["latlon_to_utm"](node, lat, lon)
     node._append_loading_bridges_to_geofence = lambda: scope["_append_loading_bridges_to_geofence"](node)
+    node._load_common_entry_area = lambda: scope["_load_common_entry_area"](node)
     assert scope["load_geofence_sidecar"](node, str(fence)) is True
     bridges = node.geofence_payload["bridges"]
     assert [bridge["name"] for bridge in bridges] == ["loading_to_route_start", "route_end_to_loading"]

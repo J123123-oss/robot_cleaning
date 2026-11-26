@@ -41,6 +41,25 @@ def test_geofence_recovery_readiness_is_published_for_manual_resume():
     assert "self.publish_geofence_recovery_ready" in source
 
 
+def test_geofence_stop_uses_automatic_recovery_instead_of_manual_intervention():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    reasons = source[source.index("MANUAL_INTERVENTION_PAUSE_REASONS"):source.index(
+        "# 出仓后首次进入清扫"
+    )]
+    assert '"geofence_stop"' not in reasons
+    assert "geofence_recovery_active" in source
+    assert "def _begin_geofence_recovery" in source
+    assert "def _service_geofence_recovery" in source
+
+
+def test_geofence_recovery_is_started_when_auto_mode_reenters():
+    source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    mode_source = source[source.index("def mode_callback"):source.index("def rtk_timer_callback")]
+    state_source = source[source.index("def state_callback"):source.index("def route_change_callback")]
+    assert "self._begin_geofence_recovery()" in mode_source
+    assert "self._begin_geofence_recovery()" in state_source
+
+
 def test_initial_move_does_not_bypass_geofence_position_check():
     source = (Path(__file__).parents[1] / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
     enforce_source = source[source.index("def enforce_geofence"):source.index("def trip_geofence_stop")]
