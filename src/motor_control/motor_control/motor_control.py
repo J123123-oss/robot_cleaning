@@ -412,6 +412,7 @@ class MotorControlNode(Node):
         self.magnetic_search_min_hold_sec = 0.5
         self.magnetic_last_error = 0.0
         self.magnetic_last_time = 0.0
+        self.magnetic_fallback_last_log_time = 0.0
         # 进仓磁导航只做小幅纠偏，避免误差被放大成大角度转向。
         self.magnetic_kp = 2.0
         self.magnetic_max_correction = 4.0
@@ -549,6 +550,11 @@ class MotorControlNode(Node):
         self.loading_start_time = 0.0
         self.loading_timer: Optional[Timer] = None
         self.loading_backward_start_time = 0.0
+        self.loading_turn_slow_started_at = None
+        self.loading_turn_slow_reference_yaw = None
+        self.loading_turn_speed_boosted = False
+        self.loading_turn_slow_timeout = 5.0
+        self.loading_turn_min_yaw_change = 2.0
         self.loading_direct_start_time = None
         self.loading_countdown_started = False
         self.loading_direct_elapsed = 0.0
@@ -1536,8 +1542,15 @@ class MotorControlNode(Node):
                     desired_phase = self._magnetic_search_phase_from_mask(self.magnetic_mask)
                     # 同一边缘信号持续期间保持原搜索计时，不能每个采样周期重置，
                     # 否则搜索永远无法走到 recover 阶段。
-                    if (self.magnetic_search_phase != desired_phase
-                            or self.magnetic_search_phase_start <= 0.0):
+                    if (
+                        self.magnetic_search_phase not in (
+                            "RIGHT_RECOVER", "LEFT_RECOVER", "BACKWARD_RETRY"
+                        )
+                        and (
+                            self.magnetic_search_phase != desired_phase
+                            or self.magnetic_search_phase_start <= 0.0
+                        )
+                    ):
                         self.magnetic_search_phase = desired_phase
                         self.magnetic_search_active_duration = (
                             self._magnetic_search_duration_from_mask(self.magnetic_mask)
@@ -3234,6 +3247,9 @@ class MotorControlNode(Node):
             if self.magnetic_test_loading_direct:
                 self.loading_direct_start_time = time.time()
                 self.get_logger().warn("[LOADING] 测试开关：直接进入LOADING_DIRECT_BACKWARD")
+            self.loading_turn_slow_started_at = None
+            self.loading_turn_slow_reference_yaw = None
+            self.loading_turn_speed_boosted = False
             self.loading_start_time = None  # 暂不记录启动时间
             self.loading_timer = None  # 定时器先置空
             self.is_in_bin_process = True  # 标记进入进出仓流程（防止其他操作）
@@ -4084,6 +4100,9 @@ class MotorControlNode(Node):
                     f"开始进仓角度调整")
                 self.loading_phase = "LOADING_TURN"
                 self.loading_start_time = current_time
+                self.loading_turn_slow_started_at = None
+                self.loading_turn_slow_reference_yaw = None
+                self.loading_turn_speed_boosted = False
                 self.yaw_stable_count = 0
                 self.set_motors_speed(0.0, 0.0)
                 return
@@ -4477,8 +4496,69 @@ class MotorControlNode(Node):
                 magnetic_correction = self.get_magnetic_correction(reverse=True)
                 if self.enable_magnetic_navigation:
                     if magnetic_correction is None:
-                        self.set_motors_speed(0.0, 0.0)
-                        return
+                        mask_age = (
+                            time.monotonic() - self.magnetic_mask_update_time
+                            if self.magnetic_mask_update_time is not None
+                            else None
+                        )
+                        fallback_error = None
+                        if (
+                            self.magnetic_raw_mask
+                            and mask_age is not None
+                            and 0.0 <= mask_age <= 0.5
+                        ):
+                            fallback_error = calculate_magnetic_error(
+                                self.magnetic_raw_mask
+                            )
+                        if fallback_error is not None:
+                            magnetic_correction = max(
+                                -self.magnetic_max_correction,
+                                min(
+                                    self.magnetic_max_correction,
+                                    -self.magnetic_kp * fallback_error,
+                                ),
+                            )
+                            if (
+                                current_time - self.magnetic_fallback_last_log_time
+                                >= 2.0
+                            ):
+                                self.get_logger().warn(
+                                    "[LOADING] 磁导航纠偏数据失效，使用新鲜原始磁条信号回退"
+                                )
+                                self.magnetic_fallback_last_log_time = current_time
+                        else:
+                            self.magnetic_tracking_ready = False
+                            self.magnetic_precise_ready = False
+                            self.magnetic_precise_count = 0
+                            self.magnetic_precise_ready_time = None
+                            if self.magnetic_search_phase not in (
+                                "RIGHT_SEARCH", "LEFT_SEARCH",
+                                "RIGHT_RECOVER", "LEFT_RECOVER",
+                                "BACKWARD_RETRY",
+                            ):
+                                search_mask = (
+                                    self.magnetic_raw_mask or self.magnetic_mask
+                                )
+                                self.magnetic_search_phase = (
+                                    self._magnetic_search_phase_from_mask(search_mask)
+                                )
+                                self.magnetic_search_active_duration = (
+                                    self._magnetic_search_duration_from_mask(search_mask)
+                                )
+                                self.magnetic_search_phase_start = current_time
+                                self.magnetic_search_reference_yaw = self.imu_yaw_deg
+                                self.magnetic_search_recover_target_yaw = None
+                            if (
+                                current_time - self.magnetic_fallback_last_log_time
+                                >= 2.0
+                            ):
+                                self.get_logger().warn(
+                                    "[LOADING] 磁导航纠偏数据失效，停车等待磁条搜索恢复"
+                                )
+                                self.magnetic_fallback_last_log_time = current_time
+                            self.set_motors_speed(0.0, 0.0)
+                            self.loading_direct_motion_active = False
+                            return
                     left_speed = base_speed - magnetic_correction
                     right_speed = -base_speed - magnetic_correction
                     if (self.imu_yaw_deg is not None
@@ -4589,6 +4669,9 @@ class MotorControlNode(Node):
                 self.get_logger().info(f"[LOADING] {dock_label}，初始化进仓流程")
                 self.loading_phase = "LOADING_TURN"  # 第一阶段：调整角度
                 self.loading_start_time = time.time()
+                self.loading_turn_slow_started_at = None
+                self.loading_turn_slow_reference_yaw = None
+                self.loading_turn_speed_boosted = False
                 self.get_logger().info(f"[LOADING] 初始化完成，当前阶段：{self.loading_phase}")
 
         # if self.loading_phase is None:
@@ -4621,8 +4704,38 @@ class MotorControlNode(Node):
             if self.loading_phase == "LOADING_TURN":
                 correction = self.get_speed_correction(self.loading_turn_target_deg)
                 yaw_diff = self.get_heading_error(self.loading_turn_target_deg)
-                # 差值小于0，左转；差值大于0，右转，保持方向正确
-                turn_speed = 0.5 * (self.get_adaptive_turn_speed(yaw_diff) if yaw_diff <= 0 else -self.get_adaptive_turn_speed(yaw_diff))
+                yaw_diff_abs = abs(yaw_diff)
+                slow_turn = yaw_diff_abs <= 10.0
+                if slow_turn and self.imu_yaw_deg is not None:
+                    if self.loading_turn_slow_started_at is None:
+                        self.loading_turn_slow_started_at = current_time
+                        self.loading_turn_slow_reference_yaw = self.imu_yaw_deg
+                        self.loading_turn_speed_boosted = False
+                    elif not self.loading_turn_speed_boosted:
+                        yaw_change = abs(
+                            self.get_heading_error(
+                                self.loading_turn_slow_reference_yaw
+                            )
+                        )
+                        if yaw_change >= self.loading_turn_min_yaw_change:
+                            self.loading_turn_slow_started_at = current_time
+                            self.loading_turn_slow_reference_yaw = self.imu_yaw_deg
+                        elif (
+                            current_time - self.loading_turn_slow_started_at
+                            >= self.loading_turn_slow_timeout
+                        ):
+                            self.loading_turn_speed_boosted = True
+                            self.get_logger().warn(
+                                "[LOADING] 角度校准慢速原地转向超过5秒且航向变化不足，提升转速"
+                            )
+                else:
+                    self.loading_turn_slow_started_at = None
+                    self.loading_turn_slow_reference_yaw = None
+                    self.loading_turn_speed_boosted = False
+                adaptive_turn_speed = self.get_adaptive_turn_speed(yaw_diff_abs)
+                turn_speed_scale = 1.0 if self.loading_turn_speed_boosted else 0.5
+                turn_direction = 1.0 if yaw_diff <= 0 else -1.0
+                turn_speed = turn_speed_scale * turn_direction * adaptive_turn_speed
                 left_speed = turn_speed + correction
                 right_speed = turn_speed + correction
                 self.set_motors_speed(left_speed, right_speed)
@@ -4736,6 +4849,9 @@ class MotorControlNode(Node):
                         f"重新进入角度调整")
                     self.loading_phase = "LOADING_TURN"
                     self.loading_start_time = current_time
+                    self.loading_turn_slow_started_at = None
+                    self.loading_turn_slow_reference_yaw = None
+                    self.loading_turn_speed_boosted = False
                     self.yaw_stable_count = 0
                     self.set_motors_speed(0.0, 0.0)
                     return
