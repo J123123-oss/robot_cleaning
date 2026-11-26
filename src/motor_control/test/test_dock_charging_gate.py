@@ -113,6 +113,32 @@ def test_fresh_six_or_more_bits_start_once(controller, mask):
     controller.cli_start_charge.call_async.assert_called_once()
 
 
+@pytest.mark.parametrize("battery", [95.8, 90.0, None])
+def test_full_charge_pause_does_not_restart_from_local_dock_level(controller, battery):
+    controller.battery_remaining = battery
+    controller.is_charge_paused = True
+    controller.last_charge_stop_time = controller.clock.now
+
+    controller.magnetic_mask_callback(SimpleNamespace(data=0xFC))
+
+    controller.cli_start_charge.call_async.assert_not_called()
+
+
+def test_full_charge_pause_resumes_at_threshold_after_wait(controller):
+    controller.battery_remaining = 90.0
+    controller.is_charge_paused = True
+    controller.last_charge_stop_time = controller.clock.now
+
+    controller.magnetic_mask_callback(SimpleNamespace(data=0xFC))
+    controller.charge_resume_callback()
+    controller.cli_start_charge.call_async.assert_not_called()
+
+    controller.clock.now += 60.0
+    controller.magnetic_mask_callback(SimpleNamespace(data=0xFC))
+    controller.charge_resume_callback()
+    controller.cli_start_charge.call_async.assert_called_once()
+
+
 def test_reused_loading_mask_is_not_current_dock_evidence(controller):
     controller.current_status = "LOADING"
     controller.loading_countdown_started = True

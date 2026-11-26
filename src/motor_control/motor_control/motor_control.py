@@ -1375,9 +1375,14 @@ class MotorControlNode(Node):
             return
         # 进仓完成后会切到DISABLE；如果设备重启时已经停在末端横向磁条上，
         # 没有新的MQTT上升沿也应允许通过本地磁导航电平启动充电。
+        dock_charge_blocked_after_full = (
+            self.is_charge_paused
+            and self.last_charge_stop_time > 0.0
+        )
         if (
             self.current_status == "DISABLE"
             and self.magnetic_mask.bit_count() >= self.magnetic_loading_end_active_bits
+            and not dock_charge_blocked_after_full
         ):
             self._request_charge_if_docked("本地磁导航末端电平")
         # 磁条搜索/中心判定只属于进仓流程。节点启动、DISABLE、ENABLE、
