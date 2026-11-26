@@ -112,7 +112,10 @@ def generate_launch_description():
     declare_kinco_motor_direction_args = tuple(
         DeclareLaunchArgument(
             f"kinco_motor_direction_{motor_id}",
-            default_value=TextSubstitution(text="-1"),
+            default_value=TextSubstitution(
+                text="-1" if motor_id == 3 else "1"
+            ),
+            # default_value=TextSubstitution(text="-1"),
             choices=["1", "-1"],
             description=(
                 f"Kinco 电机 {motor_id} 速度指令方向，1 正常，-1 反向"
