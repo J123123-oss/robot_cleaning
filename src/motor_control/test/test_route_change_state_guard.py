@@ -44,11 +44,11 @@ def _make_controller(route_file, status):
     ), publisher, logger
 
 
-def test_enable_allows_route_change():
+def test_disable_allows_route_change():
     handle_route_change = _load_method()
     with TemporaryDirectory() as temp_dir:
         controller, publisher, logger = _make_controller(
-            Path(temp_dir) / "001.txt", "ENABLE"
+            Path(temp_dir) / "001.txt", "DISABLE"
         )
 
         handle_route_change(controller, "001")
@@ -59,16 +59,16 @@ def test_enable_allows_route_change():
         logger.warn.assert_not_called()
 
 
-def test_disable_rejects_route_change_with_accurate_log():
+def test_enable_rejects_route_change_with_accurate_log():
     handle_route_change = _load_method()
     with TemporaryDirectory() as temp_dir:
         controller, publisher, logger = _make_controller(
-            Path(temp_dir) / "001.txt", "DISABLE"
+            Path(temp_dir) / "001.txt", "ENABLE"
         )
 
         handle_route_change(controller, "001")
 
         publisher.publish.assert_not_called()
         logger.warn.assert_called_once_with(
-            "[ROSNode] 当前状态是DISABLE，忽略路径切换指令"
+            "[ROSNode] 当前状态不是DISABLE（当前状态：ENABLE），忽略路径切换指令"
         )

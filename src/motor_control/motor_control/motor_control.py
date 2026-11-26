@@ -2394,8 +2394,10 @@ class MotorControlNode(Node):
         if not os.path.exists(route_file):
             self.get_logger().error(f"[ROSNode] 路径文件不存在: {route_id}，已检查: {candidates}")
             return
-        if self.current_status == "DISABLE":
-            self.get_logger().warn("[ROSNode] 当前状态是DISABLE，忽略路径切换指令")
+        if self.current_status != "DISABLE":
+            self.get_logger().warn(
+                f"[ROSNode] 当前状态不是DISABLE（当前状态：{self.current_status}），忽略路径切换指令"
+            )
             return
         route_msg = String()
         route_msg.data = route_file
