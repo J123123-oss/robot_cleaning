@@ -90,12 +90,13 @@ connect_saved_wifi_profiles() {
             return 0
         fi
 
-        attempted=1
-        if [ "$visible" -eq 1 ]; then
-            log "尝试连接历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
-        else
-            log "尝试连接未出现在本次扫描的历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
+        if [ "$visible" -ne 1 ]; then
+            log "跳过不可见的历史 WiFi: $profile (SSID: $profile_ssid)"
+            continue
         fi
+
+        attempted=1
+        log "尝试连接可见的历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
         if timeout "$NMCLI_TIMEOUT" nmcli connection up "$profile" ifname "$INTERFACE" 2>/dev/null; then
             log "已发起连接: $profile"
             return 0
@@ -106,7 +107,7 @@ connect_saved_wifi_profiles() {
     if [ "$matched" -eq 0 ]; then
         log "没有已保存的无线连接 profile"
     elif [ "$attempted" -eq 0 ]; then
-        log "没有尝试历史 WiFi profile"
+        log "扫描结果中没有可连接的历史 WiFi，等待 NetworkManager 后续自动连接"
     fi
     return 1
 }
