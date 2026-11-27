@@ -41,6 +41,7 @@ def _load_navigation():
              and n.name in {"combine_rtk_correction",
                             "combine_stanley_and_visual_correction",
                             "select_geofence_recovery_heading",
+                            "apply_drive_direction",
                             "calculate_uncommanded_heading_error"}]
     body.append(ast.ClassDef(
         name="Navigation", bases=[], keywords=[], decorator_list=[],
@@ -548,3 +549,122 @@ def test_initial_waypoint_overshoot_stops_and_realigns_from_current_position():
     assert not node.nav_context["initial_recovery_pending"]
     assert node._calibrate_with_boundary_retreat.call_count == 2
     assert next(generator) == (10.0, 10.0)
+
+
+def test_reverse_first_waypoint_tracks_motion_bearing_without_false_heading_error():
+    node, ns = _make_node()
+    node.current_waypoint_idx = 0
+    node.imu_initialized = True
+    node.get_clock = Mock()
+    node.imu_yaw = 69.23
+    node.calculate_bearing.return_value = -110.77
+    node.calculate_path_bearing.return_value = -110.96
+    node.calculate_lateral_error.return_value = 0.0
+    generator = ns["Navigation"].move_to_first_waypoint(node)
+
+    assert next(generator) == (3.0, 3.0)
+    assert next(generator) == (0.0, 0.0)
+    outputs = [next(generator) for _ in range(5)]
+
+    assert all(left > 0 > right for left, right in outputs)
+    assert node.nav_context["waypoint_recalib_count"] == 0
+    node._calibrate_with_boundary_retreat.assert_called_once()
+
+
+def test_reverse_force_bearing_aligns_vehicle_away_from_target():
+    node, ns = _make_node()
+    node.current_waypoint_idx = 0
+    node.imu_initialized = True
+    node.get_clock = Mock()
+    node.imu_yaw = 69.23
+    node.calculate_bearing.return_value = -110.77
+    node.calculate_path_bearing.return_value = -110.96
+    generator = ns["Navigation"].move_to_first_waypoint(node)
+    next(generator)
+    next(generator)
+    node.nav_context["force_bearing_mode"] = True
+    node.imu_yaw = 20.0
+
+    assert next(generator) == (3.0, 3.0)
+    target = node._calibrate_with_boundary_retreat.call_args.args[0]
+    assert target == pytest.approx(69.23)
+
+
+def test_failed_first_waypoint_final_calibration_does_not_complete():
+    node, ns = _make_node()
+    node.current_waypoint_idx = 0
+    node.imu_initialized = True
+    node.get_clock = Mock()
+    node.calc_distance_to_waypoint.return_value = 0.05
+    node._confirm_waypoint_arrival = Mock(return_value=True)
+    node._pause_initial_heading_calibration_failure = Mock()
+    def failed_calibration(*args):
+        if False:
+            yield
+        return False
+    node._calibrate_with_boundary_retreat = failed_calibration
+
+    generator = ns["Navigation"].move_to_first_waypoint(node)
+    assert next(generator) == (0.0, 0.0)
+    node._pause_initial_heading_calibration_failure.assert_called_once()
+    with pytest.raises(StopIteration) as finished:
+        next(generator)
+    assert finished.value.value is False
+
+
+def test_initial_calibration_preserves_boundary_pause_reason():
+    node, ns = _make_node()
+    node.current_waypoint_idx = 0
+    node.imu_initialized = True
+    node.get_clock = Mock()
+    node._pause_initial_heading_calibration_failure = Mock()
+
+    def blocked_calibration(*args):
+        node.nav_context.update(nav_state=ns["NavState"].PAUSE,
+                                pause_reason="boundary_retreat_timeout")
+        if False:
+            yield
+        return False
+
+    node._calibrate_with_boundary_retreat = blocked_calibration
+    generator = ns["Navigation"].move_to_first_waypoint(node)
+    assert next(generator) == (0.0, 0.0)
+    assert node.nav_context["pause_reason"] == "boundary_retreat_timeout"
+    node._pause_initial_heading_calibration_failure.assert_not_called()
+
+
+def test_waypoint_turn_displacement_does_not_skip_the_current_waypoint():
+    node, ns = _make_node()
+    node.nav_context.update(nav_state=ns["NavState"].WAYPOINT_CALIB,
+                            calib_generator=iter(()), is_angle_recalib=False,
+                            calib_retry_count=0)
+    def completed():
+        if False:
+            yield
+        return True
+    node.nav_context["calib_generator"] = completed()
+    node.calc_distance_to_waypoint.return_value = 0.74
+    generator = node.multi_waypoint_nav_generator()
+
+    assert next(generator) == (0.0, 0.0)
+    assert node.current_waypoint_idx == 1
+    assert node.nav_context["nav_state"] == ns["NavState"].PAUSE
+
+
+@pytest.mark.parametrize("distance, trusted, expected_state", [
+    (0.08, True, "WAYPOINT_MOVE"),
+    (0.74, False, "PAUSE"),
+])
+def test_waypoint_calibration_completion_checks_position(distance, trusted, expected_state):
+    node, ns = _make_node()
+    node.nav_context.update(nav_state=ns["NavState"].WAYPOINT_CALIB,
+                            is_angle_recalib=False, calib_retry_count=0)
+    def completed():
+        if False:
+            yield
+        return True
+    node.nav_context["calib_generator"] = completed()
+    node.calc_distance_to_waypoint.return_value = distance
+    node._position_sample_trusted = trusted
+    next(node.multi_waypoint_nav_generator())
+    assert node.nav_context["nav_state"] == expected_state

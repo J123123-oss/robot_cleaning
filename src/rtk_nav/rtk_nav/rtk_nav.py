@@ -4291,6 +4291,13 @@ class RTKNavControlNode(Node):
         STUCK_ESCALATE_SPEED = 4.679155  # 卡滞提速目标转速（r/min）。
 
         while rclpy.ok():
+            if (self.last_wtrtk_time is None
+                    or time.monotonic() - self.last_wtrtk_time > RTK_DATA_TIMEOUT
+                    or self.last_orientation_status != 4
+                    or not math.isfinite(self.imu_yaw)):
+                self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                self.get_logger().error("[航向校准] 航向数据失效或过期，停止校准")
+                return False
             heading_error = self.get_heading_error(target_heading)
             heading_error = math.fmod(heading_error + 180.0, 360.0) - 180.0
             heading_error_deg = abs(heading_error)
@@ -4322,14 +4329,10 @@ class RTKNavControlNode(Node):
             # 超时处理
             if elapsed_time > HEADING_CALIBRATION_TIMEOUT:
                 self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
-                if heading_error_deg > 5.0:
-                    self.get_logger().error(
-                        f"[航向校准] 超时且误差仍大({heading_error_deg:.1f}°>5°)，"
-                        f"可能机械卡死或阻力过大，暂停导航"
-                    )
-                    return False
-                self.get_logger().warn(f"航向校准超时！误差：{heading_error_deg:.2f}°")
-                return True
+                self.get_logger().error(
+                    f"[航向校准] 超时且误差未达标({heading_error_deg:.2f}°)，停止并等待处理"
+                )
+                return False
 
             # 选择转速：卡滞提速后使用固定提速档
             if escalated:
@@ -4516,7 +4519,8 @@ class RTKNavControlNode(Node):
                 last_heading = (target_heading + 180) % 360 - 180
                 self.get_logger().info(f"记录初始旋转完成航向角：{last_heading:.2f}°")
             else:
-                self._pause_initial_heading_calibration_failure("校准超时且误差仍未达标")
+                if self.nav_context.get("nav_state") != NavState.PAUSE:
+                    self._pause_initial_heading_calibration_failure("校准超时且误差仍未达标")
                 yield (0.0, 0.0)
                 return False
         
@@ -4595,10 +4599,15 @@ class RTKNavControlNode(Node):
                     self.get_logger().info(f"开始最终航向校准：目标{target_waypoint_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
                     self.nav_context["nav_state"] = NavState.WAYPOINT_CALIB
                     self.nav_context["calib_generator"] = None
-                    yield from self._calibrate_with_boundary_retreat(
+                    final_aligned = yield from self._calibrate_with_boundary_retreat(
                         target_waypoint_heading, first_waypoint, "第一个航点最终校准",
                         CalibOrigin.WAYPOINT_FINAL)
                     self.nav_context["calib_generator"] = None
+                    if not final_aligned:
+                        if self.nav_context.get("nav_state") != NavState.PAUSE:
+                            self._pause_initial_heading_calibration_failure("首点最终航向校准失败")
+                        yield (0.0, 0.0)
+                        return False
                     self.nav_context["target_waypoint"] = None
                     return True
                 yield (0.0, 0.0)
@@ -4696,7 +4705,10 @@ class RTKNavControlNode(Node):
             if self.nav_context.get("force_bearing_mode") and not near_first_waypoint:
                 current_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                 self.nav_context["force_bearing_target"] = current_bearing
-                bearing_err = abs(self.normalize_angle(current_bearing - self.imu_yaw))
+                recovery_heading = self.normalize_angle(
+                    current_bearing + (180.0 if initial_direction == "BACKWARD" else 0.0)
+                )
+                bearing_err = abs(self.normalize_angle(recovery_heading - self.imu_yaw))
                 if bearing_err > 15.0:
                     self.nav_context["force_bearing_recalib_count"] += 1
                     if self.nav_context["force_bearing_recalib_count"] > FORCE_BEARING_MAX_RECALIB:
@@ -4717,9 +4729,14 @@ class RTKNavControlNode(Node):
                         yield (0.0, 0.0)
                         return False
                     self.get_logger().warn(
-                        f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{current_bearing:.1f}°")
-                    yield from self._calibrate_with_boundary_retreat(
-                        current_bearing, first_waypoint, "初始force_bearing原地对准")
+                        f"[Stanley] force_bearing 航向偏差{bearing_err:.1f}°>15°，原地旋转对准{recovery_heading:.1f}°")
+                    aligned = yield from self._calibrate_with_boundary_retreat(
+                        recovery_heading, first_waypoint, "初始force_bearing原地对准")
+                    if not aligned:
+                        if self.nav_context.get("nav_state") != NavState.PAUSE:
+                            self._pause_initial_heading_calibration_failure("首点方位恢复校准失败")
+                        yield (0.0, 0.0)
+                        return False
                     continue
                 if self._force_bearing_diverging(distance):
                     self.get_logger().error(
@@ -4745,8 +4762,7 @@ class RTKNavControlNode(Node):
                 path_direction = fixed_path_dir
 
             if initial_direction == "BACKWARD":
-                path_direction = self.normalize_angle(path_direction + 180.0)
-                control_path_start, control_path_end = path_end, path_start
+                control_path_start, control_path_end = path_start, path_end
                 control_heading = self.normalize_angle(self.imu_yaw + 180.0)
             else:
                 control_path_start, control_path_end = path_start, path_end
@@ -4762,9 +4778,7 @@ class RTKNavControlNode(Node):
                 bearing_only=self.nav_context.get("force_bearing_mode", False),
             )
             if initial_direction == "BACKWARD":
-                left_speed, right_speed = apply_drive_direction(
-                    left_speed, right_speed, initial_direction
-                )
+                left_speed, right_speed = right_speed, left_speed
 
             heading_err = self.normalize_angle(path_direction - control_heading)
             # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
@@ -4797,15 +4811,29 @@ class RTKNavControlNode(Node):
                     self.heading_timed_out = False
                     fixed_bearing = self.calculate_bearing(current_lat, current_lon, first_lat, first_lon)
                     self.nav_context["force_bearing_target"] = fixed_bearing
-                    self.nav_context["calib_target_heading"] = fixed_bearing
-                    self.get_logger().warn(
-                        f"[Stanley] 同航点≥2次航向异常，先原地旋转校准到目标方位{fixed_bearing:.1f}°，再直行"
+                    recovery_heading = self.normalize_angle(
+                        fixed_bearing + (180.0 if initial_direction == "BACKWARD" else 0.0)
                     )
-                    yield from self._calibrate_with_boundary_retreat(
-                        fixed_bearing, first_waypoint, "初始航向异常方位校准")
+                    self.nav_context["calib_target_heading"] = recovery_heading
+                    self.get_logger().warn(
+                        f"[Stanley] 同航点≥2次航向异常，先原地旋转校准到车体航向{recovery_heading:.1f}°，再直行"
+                    )
+                    aligned = yield from self._calibrate_with_boundary_retreat(
+                        recovery_heading, first_waypoint, "初始航向异常方位校准")
+                    if not aligned:
+                        if self.nav_context.get("nav_state") != NavState.PAUSE:
+                            self._pause_initial_heading_calibration_failure("首点航向异常方位校准失败")
+                        yield (0.0, 0.0)
+                        return False
                     continue
-                yield from self._calibrate_with_boundary_retreat(
-                    path_direction, first_waypoint, "初始航向异常路径校准")
+                aligned = yield from self._calibrate_with_boundary_retreat(
+                    self.normalize_angle(path_direction + (180.0 if initial_direction == "BACKWARD" else 0.0)),
+                    first_waypoint, "初始航向异常路径校准")
+                if not aligned:
+                    if self.nav_context.get("nav_state") != NavState.PAUSE:
+                        self._pause_initial_heading_calibration_failure("首点航向异常路径校准失败")
+                    yield (0.0, 0.0)
+                    return False
                 continue
 
             left_speed, right_speed = self._apply_travel_boundary(left_speed, right_speed)
@@ -5218,10 +5246,14 @@ class RTKNavControlNode(Node):
                 # 获取初始移动速度
                 try:
                     yield next(initial_move_generator)
-                except StopIteration:
+                except StopIteration as initial_result:
                     # force_bearing 极限环兜底：子生成器已置 PAUSE 并停车，
                     # 不能落入下方"到达第一航点"逻辑误切 WAYPOINT_MOVE
                     if self.nav_context.get("nav_state") == NavState.PAUSE:
+                        yield (0.0, 0.0)
+                        return
+                    if initial_result.value is not True:
+                        self._pause_initial_heading_calibration_failure("首点接入未完成")
                         yield (0.0, 0.0)
                         return
                     if len(self.waypoints) == 0:
@@ -5416,44 +5448,8 @@ class RTKNavControlNode(Node):
                     calib_result = e.value if hasattr(e, 'value') else False
                     # 校准失败（卡滞无法克服）
                     if not calib_result:
-                        self.nav_context["calib_retry_count"] += 1
-                        retry_count = self.nav_context["calib_retry_count"]
-                        if retry_count <= CALIB_STUCK_MAX_RETRIES:
-                            self.get_logger().warn(
-                                f"[ROSNode] 航向校准失败（卡滞），第{retry_count}/{CALIB_STUCK_MAX_RETRIES}次自动重试"
-                            )
-                            # 第2次及以上重试：先短暂后退脱困，再重新校准
-                            if retry_count >= 2 and not self.nav_context.get("retreat_enabled"):
-                                backup_speeds = (
-                                    CALIB_RETRY_BACKUP_SPEED,
-                                    -CALIB_RETRY_BACKUP_SPEED,
-                                )
-                                self.get_logger().info(
-                                    f"[航向校准] 后退{CALIB_RETRY_BACKUP_DURATION:.1f}s脱困...")
-                                backup_start = self.get_clock().now()
-                                while ((self.get_clock().now() - backup_start).nanoseconds / 1e9
-                                       < CALIB_RETRY_BACKUP_DURATION):
-                                    speeds = self._apply_travel_boundary(*backup_speeds)
-                                    yield speeds
-                                    if speeds == (0.0, 0.0):
-                                        break
-                                yield (0.0, 0.0)
-                            elif retry_count >= 2:
-                                self.get_logger().warn(
-                                    "[航向校准] 几何回退来源跳过普通边界后退，"
-                                    "由边界服务统一执行GPS撤退"
-                                )
-                            self.heading_abnormal_start_time = None
-                            self.heading_timed_out = False
-                            self.nav_context["angle_abnormal_count"] = 0
-                            saved = self.nav_context.get("calib_target_heading")
-                            target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
-                            self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
-                            self.get_logger().info(f"重新初始化航向校准（重试{retry_count}）：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
-                            yield (0.0, 0.0)
-                            continue
                         self.get_logger().error(
-                            f"[ROSNode] 航向校准失败（卡滞/阻力过大），已重试{CALIB_STUCK_MAX_RETRIES}次，暂停导航等待人工介入"
+                            "[ROSNode] 航向校准失败（卡滞/超时），暂停导航等待人工介入"
                         )
                         self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
                         self.nav_context["calib_generator"] = None
@@ -5469,6 +5465,27 @@ class RTKNavControlNode(Node):
                         return
 
                     is_recalib = self.nav_context.get("is_angle_recalib", False)
+
+                    if not is_recalib and (
+                        not self._position_sample_trusted
+                        or self.calc_distance_to_waypoint(target_waypoint) >= 0.30
+                    ):
+                        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+                        self.nav_context["calib_generator"] = None
+                        self.nav_context["calibration_active"] = False
+                        self.nav_context["nav_state"] = NavState.PAUSE
+                        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
+                        self.nav_context["pause_reason"] = "calib_stuck"
+                        self.nav_context["manual_intervention_seen"] = False
+                        self.nav_context["brush_active"] = self.brush_active
+                        self.nav_running = False
+                        self.publish_nav_state(NavState.PAUSE)
+                        self.publish_stop_speed()
+                        self.get_logger().error(
+                            "[航向校准] 转向后定位不可信或偏离航点超过0.30m，停车等待人工处理"
+                        )
+                        yield (0.0, 0.0)
+                        return
 
                     # 校准成功，清零卡滞重试计数和暂停原因（防止残留导致StopIteration误判）
                     if self.nav_context.get("calib_retry_count", 0) > 0:

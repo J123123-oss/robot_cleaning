@@ -39,6 +39,8 @@ def boundary_node():
         "_boundary_chassis_stopped", "_stop_on_boundary_io_loss", "_publish_motor_speed",
         "_boundary_blocks_motion", "_boundary_io_timed_out",
         "_reset_boundary_debounce", "drive_twist_callback", "rtk_timer_callback",
+        "_calibrate_with_boundary_retreat", "_is_manual_intervention_pause",
+        "_resume_manual_intervention_pause", "_pause_boundary_retreat_timeout",
     }
     body = [item for item in source_class.body
             if isinstance(item, ast.FunctionDef) and item.name in methods]
@@ -46,11 +48,12 @@ def boundary_node():
     constants = [item for item in tree.body if isinstance(item, ast.Assign)]
     classes = [item for item in tree.body if isinstance(item, ast.ClassDef)
                and item.name in {"NavState", "ControlMode", "BoundaryCorrectState",
-                                 "RetreatPhase", "RetreatResult"}]
+                                  "RetreatPhase", "RetreatResult", "CalibOrigin"}]
     clock = SimpleNamespace(monotonic=Mock(return_value=10.0))
     scope = {"Optional": Optional, "Generator": Generator, "Tuple": Tuple, "math": math,
              "time": clock, "UInt8": SimpleNamespace, "Vector3": SimpleNamespace, "TwistStamped": SimpleNamespace,
-             "RtkMotionCommand": MotionCommand, "fallback_budget_exhausted": Mock(return_value=False)}
+             "RtkMotionCommand": MotionCommand, "fallback_budget_exhausted": Mock(return_value=False),
+             "rclpy": SimpleNamespace(ok=lambda: True)}
     exec(compile(ast.fix_missing_locations(ast.Module(constants + classes + [node_class], [])),
                  str(SOURCE_PATH), "exec"), scope)
     node = scope["BoundaryNode"]()
@@ -99,6 +102,43 @@ def sample_stopped_chassis(node, now):
         header=SimpleNamespace(stamp=SimpleNamespace(sec=sec, nanosec=nanosec)),
         twist=SimpleNamespace(linear=SimpleNamespace(x=0.0), angular=SimpleNamespace(z=0.0)),
     ))
+
+
+@pytest.mark.parametrize("trigger_during_step", [False, True])
+def test_calibration_discards_turn_when_sensor_triggers(boundary_node, trigger_during_step):
+    node = boundary_node
+    node.nav_context = {"nav_state": "INITIAL_MOVE"}
+    node._clear_retreat_context = Mock()
+    node._maybe_enable_geometric_retreat = Mock(return_value=False)
+
+    def turn(target_heading):
+        node.mid_left = True
+        yield (4.0, 4.0)
+
+    node.calibrate_heading_at_waypoint = Mock(side_effect=turn)
+    if not trigger_during_step:
+        node.mid_left = True
+    generator = node._calibrate_with_boundary_retreat(90.0, (120.1, 30.1, 90.0), "test")
+
+    assert next(generator) == (0.0, 0.0)
+    node.publish_stop_speed.assert_called()
+    if not trigger_during_step:
+        node.calibrate_heading_at_waypoint.assert_not_called()
+    generator.close()
+
+
+def test_sensor_release_does_not_clear_boundary_manual_pause(boundary_node):
+    node = boundary_node
+    node._pause_boundary_retreat_timeout = type(node)._pause_boundary_retreat_timeout.__get__(node)
+    node.nav_context = {"nav_state": "WAYPOINT_CALIB"}
+    node.set_rtk_error_bits = Mock()
+    node.publish_nav_state = Mock()
+    node._pause_boundary_retreat_timeout("p1_no_safe_candidate", "test")
+    node.io_data_rtk_callback(SimpleNamespace(data=0b1111))
+
+    assert node._is_manual_intervention_pause()
+    assert not node._resume_manual_intervention_pause()
+    assert node.nav_context["pause_reason"] == "boundary_retreat_timeout"
 
 
 @pytest.mark.parametrize("speed,sensor,should_stop", [

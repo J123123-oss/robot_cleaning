@@ -143,10 +143,11 @@ def test_boundary_cycle_prefers_locked_sensor_signature():
     assert "if not sensor_signature" in source
 
 
-def test_geometric_retry_does_not_use_ordinary_boundary_correction():
-    source, _ = _source_tree()
-    assert 'retry_count >= 2 and not self.nav_context.get("retreat_enabled")' in source
-    assert "几何回退来源跳过普通边界后退" in source
+def test_calibration_failure_pauses_without_automatic_backup():
+    _, tree = _source_tree()
+    navigation = ast.unparse(_function(tree, "multi_waypoint_nav_generator"))
+    assert "self.nav_context['pause_reason'] = 'calib_stuck'" in navigation
+    assert "CALIB_RETRY_BACKUP_SPEED" not in navigation
 
 
 def test_heading_recalibration_does_not_rewrite_navigation_state():
