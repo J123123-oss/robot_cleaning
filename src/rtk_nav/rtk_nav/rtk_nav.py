@@ -783,12 +783,11 @@ class RTKNavControlNode(Node):
         self.stanley_path_direction = None
         self.last_waypoint_cache = self.waypoints[index - 1] if index > 0 else None
         self.nav_context["target_waypoint"] = self.waypoints[index]
-        saved_state = snapshot.get("nav_state")
-        self.nav_context["nav_state"] = (
-            NavState.INITIAL_MOVE
-            if saved_state == NavState.INITIAL_MOVE and index == 0
-            else NavState.WAYPOINT_MOVE
-        )
+        saved_state = snapshot.get("nav_state", "unknown")
+        # A snapshot records the last active phase for diagnostics, but a
+        # restart cannot safely resume a generator or an in-progress turn.
+        # Rejoin the saved waypoint from the current position instead.
+        self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
         self.nav_context["pre_pause_state"] = None
         self.nav_context["pause_reason"] = None
         self.nav_context["manual_intervention_seen"] = False
@@ -799,7 +798,8 @@ class RTKNavControlNode(Node):
         self.publish_nav_state(self.nav_context["nav_state"])
         self.update_cleaning_area(force=True)
         self.get_logger().info(
-            f"[RTK进度] 已恢复路线{snapshot['route_id']}，从航点{index}/{len(self.waypoints)}继续；"
+            f"[RTK进度] 已恢复路线{snapshot['route_id']}，快照阶段={saved_state}，"
+            f"当前目标航点={index}/{len(self.waypoints)}，将从当前位置重新规划；"
             "等待ENABLE和AUTO_CLEANING"
         )
         self._persist_progress()

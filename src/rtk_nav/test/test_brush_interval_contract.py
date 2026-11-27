@@ -272,6 +272,37 @@ def test_progress_restore_loads_markers_from_the_saved_route(navigator, tmp_path
     assert last_message(node.motion_command_pub).brush_action == MotionCommand.RUN
 
 
+@pytest.mark.parametrize("saved_state", ["INITIAL_MOVE", "WAYPOINT_CALIB", "PAUSE"])
+def test_progress_restore_rejoins_current_waypoint_from_current_position(
+    navigator, tmp_path, saved_state
+):
+    node, namespace = navigator
+    route = tmp_path / "saved.txt"
+    route.write_text("header\n0,120,30,0\n1,120.1,30,0\n", encoding="utf-8")
+    node.rtk_path_file = str(route)
+    node.progress_path = str(tmp_path / "progress.json")
+    node.enable_geofence = False
+    node.waiting_for_next_unloading = False
+    node.last_state = "HOLD"
+    node.current_control_mode = "NORMAL"
+    for method in ("_reset_ultrasonic_suppression_runtime", "load_geofence_sidecar",
+                   "update_cleaning_area", "_persist_progress", "publish_nav_state",
+                   "publish_current_route_id"):
+        setattr(node, method, Mock())
+    namespace["load_progress"] = Mock(return_value={
+        "route_path": str(route), "route_id": "saved",
+        "waypoint_idx": 0, "nav_state": saved_state,
+    })
+
+    node.resume_progress_callback(SimpleNamespace(data="RESUME"))
+
+    assert node.current_waypoint_idx == 0
+    assert node.nav_context["target_waypoint"] == node.waypoints[0]
+    assert node.nav_context["nav_state"] == "WAYPOINT_MOVE"
+    assert node.nav_running is False
+    node.motion_command_pub.publish.assert_not_called()
+
+
 def test_publisher_depth_and_all_speed_paths_share_one_entrance():
     tree = ast.parse(RTK_SOURCE_PATH.read_text(encoding="utf-8"))
     init = ast.unparse(_function(tree, "__init__"))
