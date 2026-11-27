@@ -527,3 +527,45 @@
   position_status: 4
   orientation_status: 4
   time: "2026-11-25 17:33:51"
+- seq: 99
+  point: {lon: 111.47087899698147, lat: 35.68301251752333}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 10:40:37"
+- seq: 100
+  point: {lon: 111.47084364381365, lat: 35.68293944770613}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 10:50:45"
+- seq: 101
+  point: {lon: 111.47088783913473, lat: 35.683381888727276}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 14:02:53"
+- seq: 102
+  point: {lon: 111.47080027178771, lat: 35.683432602280824}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 14:41:55"
+- seq: 103
+  point: {lon: 111.47079527719174, lat: 35.68339024589201}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 14:42:19"
+- seq: 104
+  point: {lon: 111.47126536141613, lat: 35.68336672007741}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 15:38:17"
+- seq: 105
+  point: {lon: 111.47130013677253, lat: 35.683364088917536}
+  valid: true
+  position_status: 4
+  orientation_status: 4
+  time: "2026-11-26 15:38:36"
