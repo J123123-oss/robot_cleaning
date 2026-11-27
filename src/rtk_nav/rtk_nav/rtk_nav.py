@@ -90,6 +90,8 @@ RTK_OUTPUT_SPEED_LIMIT = MAX_WHEEL_SPEED_RPM  # 左右轮最终输出上限（r/
 LOW_DISTANCE = 1.5
 BACKUP_DURATION = 2.0  # 后退纠正持续时间（秒）
 BACKUP_SPEED_SCALE = 0.3  # 后退速度缩放系数（相对于基础速度）
+BRIDGE_AREA_PREFIX = "bridge"
+BRIDGE_REVERSE_TURN_THRESHOLD_DEG = 90.0
 DISTANCE_INCREASE_THRESHOLD = 0.05  # 距离增大触发阈值（米）
 DISTANCE_INCREASE_COUNT = 3  # 连续增大次数阈值
 ANGLE_ABNORMAL_COUNT = 5  # 连续角度异常次数阈值（触发重新进入角度校准）
@@ -584,6 +586,7 @@ class RTKNavControlNode(Node):
             "retreat_resume_pending": False,
             "retreat_escape_start_time": None,
             "retreat_escape_attempts": 0,
+            "bridge_entry_direction": None,
         }
 
         # ================== 原有RTKControlNode属性 ==================
@@ -4048,8 +4051,104 @@ class RTKNavControlNode(Node):
             path_start[0], path_start[1], target_waypoint[0], target_waypoint[1]
         )
 
+    def _is_bridge_area_name(self, area_name: Optional[str]) -> bool:
+        return (
+            isinstance(area_name, str)
+            and area_name.strip().lower().startswith(BRIDGE_AREA_PREFIX)
+        )
+
+    def _is_bridge_entry_waypoint(self, index: Optional[int] = None) -> bool:
+        waypoint_index = self.current_waypoint_idx if index is None else int(index)
+        areas = getattr(self, "waypoint_areas", None) or []
+        if not 0 <= waypoint_index < len(areas):
+            return False
+        if not self._is_bridge_area_name(areas[waypoint_index]):
+            return False
+        return waypoint_index == 0 or not self._is_bridge_area_name(
+            areas[waypoint_index - 1]
+        )
+
+    def _select_bridge_drive_direction(self, path_bearing: float) -> str:
+        _, direction = select_geofence_recovery_heading(self.imu_yaw, path_bearing)
+        forward_error = abs(self.normalize_angle(path_bearing - self.imu_yaw))
+        if forward_error <= BRIDGE_REVERSE_TURN_THRESHOLD_DEG:
+            return "FORWARD"
+        return direction
+
+    def _is_bridge_approach_waypoint(self, index: Optional[int] = None) -> bool:
+        waypoint_index = self.current_waypoint_idx if index is None else int(index)
+        areas = getattr(self, "waypoint_areas", None) or []
+        return (
+            0 <= waypoint_index + 1 < len(areas)
+            and not self._is_bridge_area_name(areas[waypoint_index])
+            and self._is_bridge_area_name(areas[waypoint_index + 1])
+        )
+
+    def _get_bridge_approach_bearing(self, index: int) -> Optional[float]:
+        if not self._is_bridge_approach_waypoint(index):
+            return None
+        if not 0 <= index + 1 < len(self.waypoints):
+            return None
+        current_waypoint = self.waypoints[index]
+        bridge_entry = self.waypoints[index + 1]
+        return self.calculate_path_bearing(
+            current_waypoint[0], current_waypoint[1],
+            bridge_entry[0], bridge_entry[1],
+        )
+
+    def _get_waypoint_calibration_heading(
+        self,
+        waypoint: Tuple[float, float, float],
+        index: Optional[int] = None,
+    ) -> float:
+        waypoint_index = self.current_waypoint_idx if index is None else int(index)
+        bridge_bearing = self._get_bridge_approach_bearing(waypoint_index)
+        if bridge_bearing is None:
+            return self.get_path_heading(waypoint)
+
+        direction = self.nav_context.get("bridge_entry_direction")
+        if direction not in ("FORWARD", "BACKWARD"):
+            direction = self._select_bridge_drive_direction(bridge_bearing)
+        self.nav_context["bridge_entry_direction"] = direction
+        target_heading = (
+            self.normalize_angle(bridge_bearing + 180.0)
+            if direction == "BACKWARD" else bridge_bearing
+        )
+        self.get_logger().info(
+            f"[桥架接入] 清扫末点到桥架入口方向={bridge_bearing:.1f}°，"
+            f"选择{direction}，末点校准目标={target_heading:.1f}°"
+        )
+        return target_heading
+
+    def _get_effective_path_heading(self, path_direction: float) -> float:
+        if self._is_bridge_approach_waypoint():
+            return self._get_waypoint_calibration_heading(
+                self.nav_context.get("target_waypoint"), self.current_waypoint_idx
+            )
+        self._ensure_bridge_entry_direction(path_direction)
+        if self.nav_context.get("bridge_entry_direction") == "BACKWARD":
+            return self.normalize_angle(path_direction + 180.0)
+        return path_direction
+
+    def _ensure_bridge_entry_direction(self, path_bearing: float) -> str:
+        if not self._is_bridge_entry_waypoint():
+            return "FORWARD"
+        direction = self.nav_context.get("bridge_entry_direction")
+        if direction not in ("FORWARD", "BACKWARD"):
+            direction = self._select_bridge_drive_direction(path_bearing)
+            self.nav_context["bridge_entry_direction"] = direction
+            self.get_logger().info(
+                f"[桥架接入] 当前目标为桥架入口，路径方向={path_bearing:.1f}°，"
+                f"选择{direction}"
+            )
+        return direction
+
     def _reset_waypoint_tracking(self):
         """切换目标后清除上一目标的 force_bearing 距离和计数状态。"""
+        bridge_entry_direction = (
+            self.nav_context.get("bridge_entry_direction")
+            if self._is_bridge_entry_waypoint() else None
+        )
         self.nav_context["force_bearing_mode"] = False
         self.nav_context["force_bearing_target"] = None
         self.nav_context["force_bearing_recalib_count"] = 0
@@ -4065,6 +4164,7 @@ class RTKNavControlNode(Node):
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["waypoint_recalib_count"] = 0
         self.nav_context["bearing_mode_locked"] = False
+        self.nav_context["bridge_entry_direction"] = bridge_entry_direction
         self.heading_abnormal_start_time = None
         self.heading_timed_out = False
 
@@ -4901,6 +5001,7 @@ class RTKNavControlNode(Node):
             "retreat_drive_mode": None,
             "retreat_target_heading": None,
             "retreat_resume_pending": False,
+            "bridge_entry_direction": None,
         }
         self.heading_abnormal_start_time = None  # 重置航向异常计时
         self.heading_timed_out = False
@@ -5149,7 +5250,9 @@ class RTKNavControlNode(Node):
                         target_waypoint = self.nav_context.get("target_waypoint")
                         if target_waypoint:
                             saved = self.nav_context.get("calib_target_heading")
-                            target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
+                            target_heading = saved if saved is not None else self._get_effective_path_heading(
+                                self._get_resume_path_direction(target_waypoint)
+                            )
                             self.nav_context["calibration_active"] = True
                             self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
                             self.get_logger().info(f"重新初始化航向校准：目标{target_heading:.2f}°, 当前{self.imu_yaw:.2f}°")
@@ -5170,7 +5273,9 @@ class RTKNavControlNode(Node):
                 target_waypoint = self.nav_context["target_waypoint"]
                 if target_waypoint:
                     saved = self.nav_context.get("calib_target_heading")
-                    target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
+                    target_heading = saved if saved is not None else self._get_effective_path_heading(
+                        self._get_resume_path_direction(target_waypoint)
+                    )
                     self.nav_context["calibration_active"] = True
                     # 重新创建校准生成器（重置超时计时和误差计算）
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
@@ -5192,6 +5297,14 @@ class RTKNavControlNode(Node):
                     path_direction = self._get_resume_path_direction(
                         self.nav_context["target_waypoint"]
                     )
+                    if self._is_bridge_entry_waypoint():
+                        bridge_bearing = self._get_bridge_approach_bearing(
+                            self.current_waypoint_idx - 1
+                        )
+                        if bridge_bearing is not None:
+                            self._ensure_bridge_entry_direction(bridge_bearing)
+                            if self.nav_context.get("bridge_entry_direction") == "BACKWARD":
+                                path_direction = self.normalize_angle(path_direction + 180.0)
 
                     heading_err = self.normalize_angle(path_direction - self.imu_yaw)
                     if abs(heading_err) > HEADING_ABNORMAL_THRESHOLD:
@@ -5378,7 +5491,9 @@ class RTKNavControlNode(Node):
                         self._pause_boundary_retreat_timeout(retreat_result, "撤退恢复")
                         yield (0.0, 0.0)
                         return
-                    target_heading = self.get_path_heading(retreat_target)
+                    target_heading = self._get_effective_path_heading(
+                        self._get_resume_path_direction(retreat_target)
+                    )
                     self.nav_context["calibration_active"] = True
                     self.nav_context["calib_target_heading"] = target_heading
                     self.nav_context["calib_generator"] = self.calibrate_heading_at_waypoint(target_heading)
@@ -5388,7 +5503,9 @@ class RTKNavControlNode(Node):
                 if not calib_generator:
                     self.get_logger().warn("[ROSNode] 校准生成器不存在, 重新初始化")
                     saved = self.nav_context.get("calib_target_heading")
-                    target_heading = saved if saved is not None else self.get_path_heading(target_waypoint)
+                    target_heading = saved if saved is not None else self._get_effective_path_heading(
+                        self._get_resume_path_direction(target_waypoint)
+                    )
                     self.nav_context["calib_target_heading"] = target_heading
                     calib_generator = self.calibrate_heading_at_waypoint(target_heading)
                     self.nav_context["calib_generator"] = calib_generator
@@ -5397,7 +5514,9 @@ class RTKNavControlNode(Node):
                     next_heading = (
                         saved_heading
                         if saved_heading is not None
-                        else self.get_path_heading(target_waypoint)
+                        else self._get_effective_path_heading(
+                            self._get_resume_path_direction(target_waypoint)
+                        )
                     )
                     self.nav_context["calibration_active"] = True
                     self.nav_context["calib_target_heading"] = next_heading
@@ -5513,6 +5632,10 @@ class RTKNavControlNode(Node):
                         )
                         self._reset_boundary_cycle_tracking()
                         self.current_waypoint_idx += 1
+                        if self._is_bridge_entry_waypoint(
+                            self.current_waypoint_idx - 1
+                        ):
+                            self.nav_context["bridge_entry_direction"] = None
                         self._persist_progress()
                         self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
                         current_nav_state = NavState.WAYPOINT_MOVE
@@ -5677,7 +5800,11 @@ class RTKNavControlNode(Node):
                     )
                     self._reset_boundary_cycle_tracking()
                     self.nav_context["angle_abnormal_count"] = 0
-                    calib_target_heading = self.get_path_heading(target_waypoint)
+                    calib_target_heading = (
+                        self.get_path_heading(target_waypoint)
+                        if self._is_bridge_entry_waypoint()
+                        else self._get_waypoint_calibration_heading(target_waypoint)
+                    )
                     self.nav_context["calibration_active"] = True
                     self.nav_context["calib_origin"] = CalibOrigin.WAYPOINT_FINAL
                     self.nav_context["retreat_enabled"] = True
@@ -5900,14 +6027,20 @@ class RTKNavControlNode(Node):
                 else:
                     path_direction = self.stanley_path_direction
 
-                heading_err = self.normalize_angle(path_direction - self.imu_yaw)
+                bridge_drive_direction = self._ensure_bridge_entry_direction(
+                    path_direction
+                )
+                control_heading = self.imu_yaw
+                if bridge_drive_direction == "BACKWARD":
+                    control_heading = self.normalize_angle(self.imu_yaw + 180.0)
+                heading_err = self.normalize_angle(path_direction - control_heading)
                 # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
                 in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
                 if (path_initialized_now
                         and not in_bearing_mode
                         and abs(heading_err) > HEADING_ABNORMAL_THRESHOLD):
                     self.start_heading_recalibration(
-                        path_direction,
+                        control_heading,
                         heading_err,
                         "新航段首帧航向差过大，先停车校准"
                     )
@@ -5955,7 +6088,7 @@ class RTKNavControlNode(Node):
                         yield (0.0, 0.0)
                         continue
                     self.start_heading_recalibration(
-                        path_direction,
+                        control_heading,
                         heading_err,
                         f"航向异常持续{self.nav_context['angle_abnormal_count']}帧"
                     )
@@ -5965,7 +6098,7 @@ class RTKNavControlNode(Node):
 
                 left_speed, right_speed = self.stanley_steering_control(
                     current_pos=current_pos,
-                    current_heading=self.imu_yaw,
+                    current_heading=control_heading,
                     path_start=self.stanley_path_start,
                     path_end=path_end,
                     path_direction=path_direction,
@@ -5978,6 +6111,9 @@ class RTKNavControlNode(Node):
                     distance_to_target=distance,
                     bearing_only=in_bearing_mode,
             )
+
+                if bridge_drive_direction == "BACKWARD":
+                    left_speed, right_speed = right_speed, left_speed
 
                 if self.nav_context.get("waypoint_recovery_active"):
                     recovery_direction = self.nav_context.get("waypoint_recovery_direction", 1)
@@ -6503,7 +6639,9 @@ class RTKNavControlNode(Node):
             self.get_logger().warn("[AUTO航向门控] 等待当前路径目标，保持停车")
             return False
 
-        path_direction = self._get_resume_path_direction(target_waypoint)
+        path_direction = self._get_effective_path_heading(
+            self._get_resume_path_direction(target_waypoint)
+        )
 
         heading_err = self.normalize_angle(path_direction - self.imu_yaw)
         self.start_heading_recalibration(

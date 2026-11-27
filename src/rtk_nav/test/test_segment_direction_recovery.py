@@ -19,6 +19,11 @@ def load_navigation():
     method_names = {
         "normalize_angle", "latlon_to_utm", "calculate_path_bearing",
         "calculate_bearing", "get_path_heading", "_get_resume_path_direction",
+        "_is_bridge_area_name", "_is_bridge_entry_waypoint",
+        "_select_bridge_drive_direction", "_is_bridge_approach_waypoint",
+        "_get_bridge_approach_bearing", "_get_waypoint_calibration_heading",
+        "_get_effective_path_heading", "_ensure_bridge_entry_direction",
+        "_reset_waypoint_tracking",
         "multi_waypoint_nav_generator", "_start_auto_heading_gate_path_alignment",
         "_confirm_waypoint_arrival",
         "move_to_first_waypoint",
@@ -28,10 +33,16 @@ def load_navigation():
         if isinstance(item, ast.ClassDef) and item.name == "RTKNavControlNode"
     )
     body = [item for item in tree.body if isinstance(item, ast.Assign)]
+    body += [item for item in tree.body if isinstance(item, ast.AnnAssign)]
     body += [
         item for item in tree.body
         if isinstance(item, ast.ClassDef)
         and item.name in {"NavState", "ControlMode", "CalibOrigin"}
+    ]
+    body += [
+        item for item in tree.body
+        if isinstance(item, ast.FunctionDef)
+        and item.name == "select_geofence_recovery_heading"
     ]
     body.append(ast.ClassDef(
         name="Navigation", bases=[], keywords=[], decorator_list=[],
@@ -166,3 +177,80 @@ def test_first_point_resume_uses_cross_file_anchor_or_current_position(cross_fil
     assert node._start_auto_heading_gate_path_alignment()
 
     assert 91.0 < node.nav_context["calib_target_heading"] < 92.0
+
+
+def test_bridge_entry_is_only_the_first_waypoint_of_a_bridge_area():
+    node, _ = make_node()
+    node.waypoint_areas = ["cleaning", "bridge-2-3", "bridge-2-3", "cleaning"]
+
+    assert node._is_bridge_area_name(" bridge-2-3 ")
+    assert not node._is_bridge_area_name("cleaning")
+    assert node._is_bridge_entry_waypoint(1)
+    assert not node._is_bridge_entry_waypoint(2)
+    assert not node._is_bridge_entry_waypoint(3)
+
+
+def test_cleaning_endpoint_calibrates_for_reverse_bridge_approach():
+    node, _ = make_node()
+    node.waypoints = [
+        (120.0, 30.0, 180.0),
+        (120.00001, 30.0, 180.0),
+    ]
+    node.waypoint_areas = ["cleaning", "bridge-2-3"]
+    node.current_waypoint_idx = 0
+    node.imu_yaw = 200.0
+
+    target_heading = node._get_waypoint_calibration_heading(node.waypoints[0])
+
+    assert node.nav_context["bridge_entry_direction"] == "BACKWARD"
+    assert target_heading == pytest.approx(-88.5, abs=0.1)
+
+
+def test_reverse_direction_survives_tracking_reset_at_bridge_entry():
+    node, _ = make_node()
+    node.waypoints = [
+        (120.0, 30.0, 180.0),
+        (120.00001, 30.0, 180.0),
+        (120.00002, 30.0, 180.0),
+    ]
+    node.waypoint_areas = ["cleaning", "bridge-2-3", "bridge-2-3"]
+    node.current_waypoint_idx = 1
+    node.nav_context["bridge_entry_direction"] = "BACKWARD"
+
+    node._reset_waypoint_tracking()
+
+    assert node.nav_context["bridge_entry_direction"] == "BACKWARD"
+
+
+def test_bridge_approach_direction_stays_locked_during_calibration_retry():
+    node, _ = make_node()
+    node.waypoints = [
+        (120.0, 30.0, 180.0),
+        (120.00001, 30.0, 180.0),
+    ]
+    node.waypoint_areas = ["cleaning", "bridge-2-3"]
+    node.current_waypoint_idx = 0
+    node.imu_yaw = 200.0
+    node._get_waypoint_calibration_heading(node.waypoints[0])
+
+    node.imu_yaw = 20.0
+    target_heading = node._get_waypoint_calibration_heading(node.waypoints[0])
+
+    assert node.nav_context["bridge_entry_direction"] == "BACKWARD"
+    assert target_heading == pytest.approx(-88.5, abs=0.1)
+
+
+@pytest.mark.parametrize(
+    ("imu_yaw", "path_bearing", "expected"),
+    [
+        (90.0, 0.0, "FORWARD"),
+        (180.0, 0.0, "BACKWARD"),
+    ],
+)
+def test_bridge_entry_uses_reverse_only_when_forward_turn_exceeds_90_degrees(
+    imu_yaw, path_bearing, expected
+):
+    node, _ = make_node()
+    node.imu_yaw = imu_yaw
+
+    assert node._select_bridge_drive_direction(path_bearing) == expected

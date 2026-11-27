@@ -28,6 +28,10 @@ def _load_navigation():
         "_record_waypoint_overshoot",
         "_waypoint_initial_recovery_needed",
         "_speed_for_lateral_error_growth",
+        "_is_bridge_area_name", "_is_bridge_entry_waypoint",
+        "_select_bridge_drive_direction", "_is_bridge_approach_waypoint",
+        "_get_bridge_approach_bearing", "_get_waypoint_calibration_heading",
+        "_get_effective_path_heading", "_ensure_bridge_entry_direction",
         "start_heading_recalibration", "multi_waypoint_nav_generator",
         "move_to_first_waypoint",
         "_confirm_waypoint_arrival", "_get_resume_path_direction",
@@ -35,6 +39,7 @@ def _load_navigation():
     node_class = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                       and n.name == "RTKNavControlNode")
     body = [n for n in tree.body if isinstance(n, ast.Assign)]
+    body += [n for n in tree.body if isinstance(n, ast.AnnAssign)]
     body += [n for n in tree.body if isinstance(n, ast.ClassDef)
              and n.name in {"NavState", "ControlMode", "CalibOrigin"}]
     body += [n for n in tree.body if isinstance(n, ast.FunctionDef)
@@ -668,3 +673,57 @@ def test_waypoint_calibration_completion_checks_position(distance, trusted, expe
     node._position_sample_trusted = trusted
     next(node.multi_waypoint_nav_generator())
     assert node.nav_context["nav_state"] == expected_state
+
+
+def test_bridge_entry_reverse_swaps_stanley_output_and_uses_virtual_heading():
+    node, ns = _make_node()
+    node.waypoint_areas = ["cleaning", "bridge-2-3", "bridge-2-3"]
+    node.imu_yaw = 180.0
+    node.stanley_path_start = None
+    node.stanley_path_direction = None
+    node.calculate_path_bearing = Mock(return_value=-6.8)
+    node.stanley_steering_control = Mock(return_value=(-52.0, 52.0))
+
+    output = next(node.multi_waypoint_nav_generator())
+
+    assert output == (52.0, -52.0)
+    assert node.nav_context["bridge_entry_direction"] == "BACKWARD"
+    call = node.stanley_steering_control.call_args.kwargs
+    assert call["path_direction"] == pytest.approx(-6.8)
+    assert call["current_heading"] == pytest.approx(0.0)
+    assert call["velocity"] == pytest.approx(52.0)
+
+
+def test_bridge_entry_reverse_uses_shared_near_waypoint_speed_scaling():
+    node, ns = _make_node()
+    node.waypoint_areas = ["cleaning", "bridge-2-3", "bridge-2-3"]
+    node.imu_yaw = 180.0
+    node.stanley_path_start = None
+    node.stanley_path_direction = None
+    node.calculate_path_bearing = Mock(return_value=-6.8)
+    node.calc_distance_to_waypoint.return_value = 0.75
+    node.stanley_steering_control = Mock(return_value=(-18.2, 18.2))
+
+    next(node.multi_waypoint_nav_generator())
+
+    call = node.stanley_steering_control.call_args.kwargs
+    expected_speed = 52.0 * (0.75 / 1.5 * 0.7)
+    assert call["velocity"] == pytest.approx(expected_speed)
+
+
+def test_second_waypoint_in_bridge_area_keeps_forward_stanley_output():
+    node, ns = _make_node()
+    node.waypoints.append((120.06971500, 30.32028000, 171.80))
+    node.waypoint_areas = ["cleaning", "bridge-2-3", "bridge-2-3"]
+    node.current_waypoint_idx = 2
+    node.nav_context["target_waypoint"] = node.waypoints[2]
+    node.current_gps = node.waypoints[1][:2]
+    node.imu_yaw = 0.0
+    node.stanley_path_start = node.waypoints[1][:2]
+    node.stanley_path_direction = 0.0
+    node.stanley_steering_control = Mock(return_value=(-52.0, 52.0))
+
+    output = next(node.multi_waypoint_nav_generator())
+
+    assert output == (-52.0, 52.0)
+    assert node.nav_context.get("bridge_entry_direction") is None
