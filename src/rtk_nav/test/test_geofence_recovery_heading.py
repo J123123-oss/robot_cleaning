@@ -46,6 +46,15 @@ def test_initial_entry_selects_reverse_when_it_reduces_turn():
     assert direction == "BACKWARD"
 
 
+def test_field_case_selects_reverse_for_nearly_opposite_initial_bearing():
+    select_heading = load_heading_selector()
+
+    heading, direction = select_heading(100.98, -81.40)
+
+    assert math.isclose(heading, 98.60, abs_tol=1e-6)
+    assert direction == "BACKWARD"
+
+
 def test_backward_stanley_commands_are_reversed_without_swapping_sides():
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     function = next(node for node in ast.walk(tree)
