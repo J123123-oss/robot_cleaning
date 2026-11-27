@@ -6561,7 +6561,8 @@ class RTKNavControlNode(Node):
                 self.nav_context["nav_state"] = NavState.PAUSE
                 self.nav_context["pause_reason"] = "geofence_stop"
             if (
-                (self._fallback_episode or self._fallback_candidate)
+                not self.geofence_latched
+                and (self._fallback_episode or self._fallback_candidate)
                 and not self._fallback_lockout_reason
             ):
                 self._pause_imu_odom_fallback(
@@ -6569,7 +6570,7 @@ class RTKNavControlNode(Node):
                 )
             self.current_control_mode = ControlMode.NORMAL
             self.get_logger().warn("[RTKNav] 电机状态为HOLD，强制停止导航")
-            if self._is_manual_intervention_pause():
+            if not self.geofence_latched and self._is_manual_intervention_pause():
                 self.nav_context["manual_intervention_seen"] = True
                 self.get_logger().info("[RTKNav] 已确认人工接管，等待重新进入AUTO_CLEANING恢复当前航点")
             self.nav_running = False
@@ -6914,7 +6915,8 @@ class RTKNavControlNode(Node):
             self._exit_ultrasonic_suppression(
                 f"control_mode={self.current_control_mode}"
             )
-            if (self._is_manual_intervention_pause()
+            if (not self.geofence_latched
+                    and self._is_manual_intervention_pause()
                     and not self.nav_context.get("manual_intervention_seen", False)):
                 self.nav_context["manual_intervention_seen"] = True
                 self.get_logger().info(

@@ -66,6 +66,15 @@ class NavPauseProtocolContractTest(unittest.TestCase):
         self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT = 64", motor_source)
         self.assertIn("ERROR_HEADING_STABILITY_TIMEOUT", motor_source)
 
+    def test_geofence_hold_is_not_classified_as_manual_takeover(self):
+        source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        state_callback = ast.unparse(_function(tree, "state_callback"))
+        mode_callback = ast.unparse(_function(tree, "mode_callback"))
+
+        self.assertIn("not self.geofence_latched", state_callback)
+        self.assertIn("not self.geofence_latched", mode_callback)
+
     def test_rtk_and_motor_share_calibration_error_bit_128(self):
         rtk_source = RTK_SOURCE_PATH.read_text(encoding="utf-8")
         motor_source = MOTOR_SOURCE_PATH.read_text(encoding="utf-8")
