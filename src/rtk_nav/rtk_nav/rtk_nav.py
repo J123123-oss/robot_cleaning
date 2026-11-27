@@ -569,6 +569,7 @@ class RTKNavControlNode(Node):
             "waypoint_recovery_active": False,
             "waypoint_recovery_aligned": False,
             "waypoint_recovery_direction": None,
+            "initial_recovery_pending": False,
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
             "calib_retry_count": 0,      # 校准卡滞重试次数
             "calib_target_heading": None,  # 当前校准目标航向（重试/恢复时复用，保证一致性）
@@ -4614,6 +4615,66 @@ class RTKNavControlNode(Node):
                 current_base_speed = LINEAR_SPEED_BASE
 
             t = self._get_projection_ratio(current_pos, path_start, path_end)
+            if (
+                t > WAYPOINT_OVERSHOOT_MIN_PROJECTION
+                and not self.nav_context.get("initial_recovery_pending")
+                and self._waypoint_initial_recovery_needed(
+                    current_pos, path_start, path_end, distance
+                )
+            ):
+                self.nav_context["initial_recovery_pending"] = True
+                self.publish_stop_speed()
+                self.get_logger().warn(
+                    f"[Stanley] 初始移动已越过首航点（距目标{distance:.2f}m），"
+                    "停车确认后从当前位置重新规划接入方向"
+                )
+                yield (0.0, 0.0)
+                continue
+            if self.nav_context.get("initial_recovery_pending"):
+                if not self._boundary_chassis_stopped():
+                    self.publish_stop_speed()
+                    yield (0.0, 0.0)
+                    continue
+                if self.enable_geofence and (
+                    self.geofence_payload is None or not segment_allowed_by_payload(
+                        self.latlon_to_utm(current_lat, current_lon),
+                        self.latlon_to_utm(first_lat, first_lon),
+                        self.geofence_payload,
+                    )
+                ):
+                    self.trip_geofence_stop("initial_recovery_outside_allowed_region")
+                    yield (0.0, 0.0)
+                    return False
+
+                self.nav_context["initial_recovery_pending"] = False
+                recovery_bearing = self.calculate_bearing(
+                    current_lat, current_lon, first_lat, first_lon
+                )
+                recovery_heading, initial_direction = select_geofence_recovery_heading(
+                    self.imu_yaw, recovery_bearing
+                )
+                path_start = current_pos
+                fixed_path_dir = recovery_bearing
+                self.get_logger().warn(
+                    f"[Stanley] 首点越点恢复选择{initial_direction}，"
+                    f"车体目标航向={recovery_heading:.1f}°，重新执行航向对准"
+                )
+                heading_aligned = yield from self._calibrate_with_boundary_retreat(
+                    recovery_heading, first_waypoint, "首点越点恢复航向对准",
+                    CalibOrigin.FORCE_BEARING,
+                )
+                if not heading_aligned:
+                    self._pause_initial_heading_calibration_failure(
+                        "首点越点恢复航向校准失败"
+                    )
+                    yield (0.0, 0.0)
+                    return False
+                arrival_hold_active = False
+                last_distance = distance
+                self.get_logger().info(
+                    "首点越点恢复航向对准完成，继续从当前位置跟踪首航点"
+                )
+                continue
             lateral_error = self.calculate_lateral_error(current_pos, path_start, path_end)
             current_base_speed = self._speed_for_lateral_error_growth(
                 current_base_speed, lateral_error
@@ -4798,6 +4859,7 @@ class RTKNavControlNode(Node):
             "waypoint_recovery_active": False,
             "waypoint_recovery_aligned": False,
             "waypoint_recovery_direction": None,
+            "initial_recovery_pending": False,
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
             "calib_retry_count": 0,
@@ -4979,6 +5041,7 @@ class RTKNavControlNode(Node):
         self.nav_context["waypoint_recovery_active"] = False
         self.nav_context["waypoint_recovery_aligned"] = False
         self.nav_context["waypoint_recovery_direction"] = None
+        self.nav_context["initial_recovery_pending"] = False
         self.nav_context["bearing_mode_locked"] = False
         self.nav_context["pre_pause_state"] = None
         self.nav_context["pause_reason"] = None

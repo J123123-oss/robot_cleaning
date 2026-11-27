@@ -242,14 +242,16 @@ def test_legacy_rtk_speed_expires_and_zero_stops_before_the_next_timer():
                if isinstance(node, ast.FunctionDef) and node.name in names]
     clock = Mock(return_value=10.0)
     namespace = dict(Vector3=SimpleNamespace, time=SimpleNamespace(monotonic=clock),
-                     math=math, RTK_MOTION_MAX_AGE=0.5)
+                     math=math, RTK_MOTION_MAX_AGE=0.5, ERROR_RTK_TIMEOUT=8)
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"), namespace)
     controller = SimpleNamespace(
         current_status="AUTO_CLEANING", current_control_mode="AUTO_CLEANING",
         web_control_active=False, rc_control=False, is_in_bin_process=False,
         current_stall_fault=False, geofence_fault_latched=False,
         _rtk_auto_pause=False, _rtk_motion_deadline=None,
+        _rtk_motion_timeout_reported=False, rtk_error_code=0,
         get_logger=Mock(), set_motors_speed=Mock(), set_brush_speed=Mock(),
+        switch_state=Mock(), publish_state=Mock(),
     )
     receive = namespace["rtk_speed_callback"]
     receive(controller, SimpleNamespace(x=-12.0, y=12.0, z=40.0))
@@ -257,6 +259,13 @@ def test_legacy_rtk_speed_expires_and_zero_stops_before_the_next_timer():
     clock.return_value = 10.51
     namespace["_service_legacy_rtk_motion"](controller)
     assert (controller.rtk_left_speed, controller.rtk_right_speed) == (0.0, 0.0)
+    assert controller.rtk_error_code & 8
+    controller.switch_state.assert_called_once_with("h")
+    controller.publish_state.assert_called_once_with()
+    assert any(
+        "运动指令超时" in call.args[0]
+        for call in controller.get_logger.return_value.error.call_args_list
+    )
     controller.set_motors_speed.assert_called_with(0.0, 0.0)
     controller.set_brush_speed.assert_called_with(0.0)
     controller.set_motors_speed.reset_mock()

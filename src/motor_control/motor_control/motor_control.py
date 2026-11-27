@@ -770,6 +770,7 @@ class MotorControlNode(Node):
         self.motor_fault_codes = [0] * len(self.motor_ctrl.motors)
         self._rtk_motion_stamp = -1
         self._rtk_motion_deadline = None
+        self._rtk_motion_timeout_reported = False
         self._kinco_brush = (
             KincoBrushControl(
                 self.motor_ctrl, self.brush_motor_ids,
@@ -1977,6 +1978,7 @@ class MotorControlNode(Node):
                         self.rtk_left_speed = self.rtk_right_speed = 0.0
                 self._brush_test_wheel_hold = False
                 self.current_control_mode = "AUTO_CLEANING"
+                self._rtk_motion_timeout_reported = False
                 self.get_logger().info(f"[ROSNode] 控制模式切换：→ AUTO_CLEANING")
                 if fault_cleared:
                     self.publish_state()
@@ -2039,6 +2041,15 @@ class MotorControlNode(Node):
         if auto_active:
             self.set_motors_speed(0.0, 0.0)
             self.set_brush_speed(0.0)
+            if not getattr(self, "_rtk_motion_timeout_reported", False):
+                self._rtk_motion_timeout_reported = True
+                self.rtk_error_code |= ERROR_RTK_TIMEOUT
+                self.get_logger().error(
+                    f"[RTK] 运动指令超时（超过{RTK_MOTION_MAX_AGE:.1f}s未更新），"
+                    f"已停车并切换HOLD，上报故障码{ERROR_RTK_TIMEOUT}"
+                )
+                self.switch_state("h")
+                self.publish_state()
 
     def _enable_brush_test_can_run(self):
         if (

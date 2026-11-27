@@ -521,3 +521,30 @@ def test_first_waypoint_uses_same_recovery_guard_after_initial_alignment(yaw, ex
     else:
         assert outputs[-1] == (3.0, 3.0)
         assert node.nav_context["waypoint_recalib_count"] == 1
+
+
+def test_initial_waypoint_overshoot_stops_and_realigns_from_current_position():
+    node, ns = _make_node()
+    node.current_waypoint_idx = 0
+    node.current_gps = (120.06970, 30.32020)
+    node.imu_initialized = True
+    node.get_clock = Mock()
+    node.calc_distance_to_waypoint = Mock(return_value=0.8)
+    node._confirm_waypoint_arrival = Mock(return_value=False)
+    node._waypoint_initial_recovery_needed = Mock(side_effect=[True, False])
+    node._get_projection_ratio = Mock(return_value=1.1)
+    node.calculate_bearing = Mock(return_value=0.0)
+    node.imu_yaw = 0.0
+    node.stanley_steering_control = Mock(return_value=(10.0, 10.0))
+    generator = ns["Navigation"].move_to_first_waypoint(node)
+
+    assert next(generator) == (3.0, 3.0)
+    assert next(generator) == (0.0, 0.0)
+    assert next(generator) == (0.0, 0.0)
+    assert node.nav_context["initial_recovery_pending"]
+
+    assert next(generator) == (3.0, 3.0)
+    assert next(generator) == (0.0, 0.0)
+    assert not node.nav_context["initial_recovery_pending"]
+    assert node._calibrate_with_boundary_retreat.call_count == 2
+    assert next(generator) == (10.0, 10.0)
