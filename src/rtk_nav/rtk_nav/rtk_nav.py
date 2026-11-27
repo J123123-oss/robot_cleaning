@@ -1055,7 +1055,10 @@ class RTKNavControlNode(Node):
         zone = self.geofence_payload.get("utm_zone")
         if not isinstance(zone, (list, tuple)) or len(zone) != 2:
             return
-        radius = float(self.geofence_payload.get("expansion_radius_m", 0.2))
+        radius = float(self.geofence_payload.get(
+            "bridge_expansion_radius_m",
+            self.geofence_payload.get("expansion_radius_m", 0.2),
+        ))
         first = self.waypoints[0]
         last = self.waypoints[-1]
         loading_e, loading_n = self.latlon_to_utm(

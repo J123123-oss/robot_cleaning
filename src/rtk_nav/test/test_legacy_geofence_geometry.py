@@ -32,6 +32,37 @@ def test_bridge_corridor_uses_polyline_distance():
     assert point_to_polyline_distance((2.5, 0.21), centerline) > 0.2
 
 
+def test_bridge_corridor_fills_the_outer_corner_join():
+    centerline = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+    corridor = build_polyline_corridor(centerline, 0.2)
+
+    assert any(
+        point_in_convex_polygon((1.14, -0.14), polygon)
+        for polygon in corridor
+    )
+
+
+def test_payload_uses_separate_cleaning_and_bridge_expansion_radii():
+    payload = build_geofence_payload(
+        ["E1"],
+        [[(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]],
+        [{
+            "name": "turning_bridge",
+            "from_area": "E1",
+            "to_area": "E1",
+            "centerline_utm": [(10.0, 7.5), (20.0, 7.5)],
+        }],
+        (49, "S"),
+        area_expansion_radius_m=0.6,
+        bridge_expansion_radius_m=0.3,
+    )
+
+    assert payload["area_expansion_radius_m"] == 0.6
+    assert payload["bridge_expansion_radius_m"] == 0.3
+    assert point_allowed_by_payload((10.0, 7.79), payload)
+    assert not point_allowed_by_payload((10.0, 7.91), payload)
+
+
 def test_payload_allows_area_and_bridge_union():
     payload = build_geofence_payload(
         ["E1", "E2"],

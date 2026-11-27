@@ -923,7 +923,8 @@ class MultiAreaCleaningPathPlanner(Node):
                 all_inner_corners,
                 bridge_tracks,
                 utm_zone,
-                expansion_radius_m=0.2,
+                area_expansion_radius_m=0.6,
+                bridge_expansion_radius_m=0.3,
             )
             with open(fence_filename, "w", encoding="utf-8") as fence_file:
                 json.dump(fence_payload, fence_file, ensure_ascii=False, indent=2)
@@ -1014,7 +1015,7 @@ class MultiAreaCleaningPathPlanner(Node):
             ax.annotate(f'{i}-C-{area_name}', (c_e, c_n), xytext=(5, 5), textcoords='offset points', fontsize=9)
 
         # 绘制电子围栏侧车文件中的清扫区域安全边界。
-        # 该边界已经包含 0.2 m 外扩，作为 PNG 中的主要安全区域底色。
+        # 该边界已经包含 0.6 m 外扩，作为 PNG 中的主要安全区域底色。
         fence_area_label_added = False
         for area_index, area in enumerate((fence_payload or {}).get("areas", [])):
             boundary = area.get("boundary_utm", [])
@@ -1049,6 +1050,7 @@ class MultiAreaCleaningPathPlanner(Node):
         bridge_centerline_label_added = False
         for bridge in (fence_payload or {}).get("bridges", []):
             bridge_name = bridge.get("name", "bridge")
+            bridge_radius = bridge.get("expansion_radius_m", 0.3)
             for corridor in bridge.get("corridors_utm", []):
                 if len(corridor) < 3:
                     continue
@@ -1061,7 +1063,10 @@ class MultiAreaCleaningPathPlanner(Node):
                     alpha=0.22,
                     edgecolor="#17becf",
                     linewidth=1.0,
-                    label="bridge corridor (±0.2 m)" if not bridge_corridor_label_added else None,
+                    label=(
+                        f"bridge corridor (±{bridge_radius} m)"
+                        if not bridge_corridor_label_added else None
+                    ),
                     zorder=1,
                 )
                 bridge_corridor_label_added = True

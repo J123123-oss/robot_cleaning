@@ -317,7 +317,8 @@ def process_config(config_file, output_dir):
         all_inner_corners,
         bridge_tracks,
         utm_zone,
-        expansion_radius_m=0.2,
+        area_expansion_radius_m=0.6,
+        bridge_expansion_radius_m=0.3,
     )
     with open(fence_filename, "w", encoding="utf-8") as fence_file:
         json.dump(fence_payload, fence_file, ensure_ascii=False, indent=2)

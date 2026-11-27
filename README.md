@@ -80,6 +80,11 @@ ros2 topic pub /robot_cmd std_msgs/msg/String \
 连续 3 个新可信位置在允许区域内且停稳后才恢复当前航点；条件不满足时继续停车。
 首次使用前须在现场复核边界并受控测试，位置和传感器无法替代障碍物检测。
 
+路线 `.fence.json` 支持分别设置 `area_expansion_radius_m` 和
+`bridge_expansion_radius_m`。当前密集路径规划器使用清扫区域 `0.6 m`、桥架走廊
+`0.3 m`；桥架折点同时生成圆角连接区，避免分段矩形之间出现几何缺口。旧文件只有
+`expansion_radius_m` 时仍按该值同时兼容清扫区域和桥架走廊。
+
 ### `skip_to_area`（从指定区域续扫）
 
 区域跳转仅接受如下 JSON：

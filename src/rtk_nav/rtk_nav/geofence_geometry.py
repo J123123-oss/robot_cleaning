@@ -118,6 +118,17 @@ def _point_to_segment_distance(point: Point, start: Point, end: Point) -> float:
     return math.hypot(point[0] - closest[0], point[1] - closest[1])
 
 
+def _build_circle_polygon(center: Point, radius_m: float, side_count: int = 16) -> list[Point]:
+    """Approximate a round corridor join with a convex polygon."""
+    return [
+        (
+            center[0] + radius_m * math.cos(2.0 * math.pi * index / side_count),
+            center[1] + radius_m * math.sin(2.0 * math.pi * index / side_count),
+        )
+        for index in range(side_count)
+    ]
+
+
 def point_to_polyline_distance(point: Point, polyline: Sequence[Point]) -> float:
     if len(polyline) < 2:
         raise ValueError("polyline must contain at least two points")
@@ -131,10 +142,10 @@ def build_polyline_corridor(
     polyline: Sequence[Point],
     radius_m: float,
 ) -> list[list[Point]]:
-    """Return one expanded rectangle per polyline segment.
+    """Return expanded segment rectangles and round joins for a polyline.
 
-    Segment rectangles overlap at shared vertices; runtime checks can treat
-    the returned list as a logical union.
+    The round joins close the outer corner gap between adjacent segment
+    rectangles. Runtime checks treat all returned polygons as a logical union.
     """
     if len(polyline) < 2:
         raise ValueError("polyline must contain at least two points")
@@ -155,6 +166,11 @@ def build_polyline_corridor(
                 (start[0] - normal[0] * radius_m, start[1] - normal[1] * radius_m),
             ]
         )
+    if radius_m > 1e-9:
+        corridors.extend(
+            _build_circle_polygon(vertex, radius_m)
+            for vertex in polyline
+        )
     return corridors
 
 
@@ -164,8 +180,27 @@ def build_geofence_payload(
     bridge_tracks: Sequence[dict],
     utm_zone: Sequence[object],
     expansion_radius_m: float = 0.2,
+    *,
+    area_expansion_radius_m: float | None = None,
+    bridge_expansion_radius_m: float | None = None,
 ) -> dict:
     """Build JSON-compatible fence metadata from legacy planner geometry."""
+    area_radius = (
+        expansion_radius_m
+        if area_expansion_radius_m is None
+        else area_expansion_radius_m
+    )
+    bridge_radius = (
+        expansion_radius_m
+        if bridge_expansion_radius_m is None
+        else bridge_expansion_radius_m
+    )
+    if not math.isfinite(float(area_radius)) or float(area_radius) < 0.0:
+        raise ValueError("area_expansion_radius_m must be finite and non-negative")
+    if not math.isfinite(float(bridge_radius)) or float(bridge_radius) < 0.0:
+        raise ValueError("bridge_expansion_radius_m must be finite and non-negative")
+    area_radius = float(area_radius)
+    bridge_radius = float(bridge_radius)
     areas = []
     placeholder_tracks = []
     for name, corners in zip(area_names, inner_corners_utm):
@@ -186,7 +221,7 @@ def build_geofence_payload(
                     "centerline_utm": [start, end],
                 })
             continue
-        boundary = expand_convex_polygon(corners, expansion_radius_m)
+        boundary = expand_convex_polygon(corners, area_radius)
         areas.append({
             "name": name,
             "boundary_utm": [list(point) for point in boundary],
@@ -195,12 +230,13 @@ def build_geofence_payload(
     bridges = []
     for bridge in [*placeholder_tracks, *bridge_tracks]:
         centerline = bridge["centerline_utm"]
-        corridors = build_polyline_corridor(centerline, expansion_radius_m)
+        corridors = build_polyline_corridor(centerline, bridge_radius)
         bridges.append({
             "name": bridge["name"],
             "from_area": bridge["from_area"],
             "to_area": bridge["to_area"],
             "centerline_utm": [list(point) for point in centerline],
+            "expansion_radius_m": bridge_radius,
             "corridors_utm": [
                 [list(point) for point in corridor]
                 for corridor in corridors
@@ -208,7 +244,10 @@ def build_geofence_payload(
         })
     return {
         "version": 1,
-        "expansion_radius_m": expansion_radius_m,
+        # Keep the legacy key as the cleaning-area radius for old readers.
+        "expansion_radius_m": area_radius,
+        "area_expansion_radius_m": area_radius,
+        "bridge_expansion_radius_m": bridge_radius,
         "utm_zone": list(utm_zone),
         "areas": areas,
         "bridges": bridges,
@@ -229,7 +268,13 @@ def point_allowed_by_payload(point: Point, payload: dict) -> bool:
             return True
     for bridge in payload.get("bridges", []):
         centerline = bridge.get("centerline_utm", [])
-        radius = float(payload.get("expansion_radius_m", 0.0))
+        radius = float(bridge.get(
+            "expansion_radius_m",
+            payload.get(
+                "bridge_expansion_radius_m",
+                payload.get("expansion_radius_m", 0.0),
+            ),
+        ))
         if len(centerline) >= 2 and point_to_polyline_distance(point, centerline) <= radius + 1e-6:
             return True
         for corridor in bridge.get("corridors_utm", []):
@@ -314,8 +359,14 @@ def segment_allowed_by_payload(start: Point, end: Point, payload: dict) -> bool:
     intervals = []
     for area in payload.get("areas", []):
         intervals.append(_segment_polygon_interval(start, end, area.get("boundary_utm", [])))
-    radius = float(payload.get("expansion_radius_m", 0.0))
     for bridge in payload.get("bridges", []):
+        radius = float(bridge.get(
+            "expansion_radius_m",
+            payload.get(
+                "bridge_expansion_radius_m",
+                payload.get("expansion_radius_m", 0.0),
+            ),
+        ))
         for corridor in bridge.get("corridors_utm", []):
             intervals.append(_segment_polygon_interval(start, end, corridor))
         centerline = bridge.get("centerline_utm", [])
