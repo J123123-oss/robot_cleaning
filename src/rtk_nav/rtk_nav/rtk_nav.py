@@ -741,6 +741,12 @@ class RTKNavControlNode(Node):
 
     def resume_progress_callback(self, msg: String) -> None:
         """Restore a saved route/waypoint without starting the motors."""
+        if self.last_state not in ("DISABLE", "ENABLE"):
+            self.get_logger().warn(
+                f"[RTK进度] 当前电机状态={self.last_state or '未知'}，"
+                "仅允许DISABLE或ENABLE状态恢复，拒绝RESUME"
+            )
+            return
         if (
             self.current_control_mode == ControlMode.AUTO_CLEANING
             or self.last_state == ControlMode.AUTO_CLEANING

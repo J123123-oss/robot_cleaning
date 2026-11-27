@@ -249,7 +249,7 @@ def test_progress_restore_loads_markers_from_the_saved_route(navigator, tmp_path
     node.progress_path = str(tmp_path / "progress.json")
     node.enable_geofence = False
     node.waiting_for_next_unloading = False
-    node.last_state = "HOLD"
+    node.last_state = "DISABLE"
     node.current_control_mode = "NORMAL"
     for method in ("_reset_ultrasonic_suppression_runtime", "load_geofence_sidecar",
                    "update_cleaning_area", "_persist_progress", "publish_nav_state",
@@ -283,7 +283,7 @@ def test_progress_restore_rejoins_current_waypoint_from_current_position(
     node.progress_path = str(tmp_path / "progress.json")
     node.enable_geofence = False
     node.waiting_for_next_unloading = False
-    node.last_state = "HOLD"
+    node.last_state = "DISABLE"
     node.current_control_mode = "NORMAL"
     for method in ("_reset_ultrasonic_suppression_runtime", "load_geofence_sidecar",
                    "update_cleaning_area", "_persist_progress", "publish_nav_state",
@@ -301,6 +301,63 @@ def test_progress_restore_rejoins_current_waypoint_from_current_position(
     assert node.nav_context["nav_state"] == "WAYPOINT_MOVE"
     assert node.nav_running is False
     node.motion_command_pub.publish.assert_not_called()
+
+
+@pytest.mark.parametrize("motor_state", ["DISABLE", "ENABLE"])
+def test_progress_resume_is_allowed_only_in_disable_or_enable(
+    navigator, tmp_path, motor_state
+):
+    node, namespace = navigator
+    route = tmp_path / "saved.txt"
+    route.write_text("header\n0,120,30,0\n1,120.1,30,0\n", encoding="utf-8")
+    node.rtk_path_file = str(route)
+    node.progress_path = str(tmp_path / "progress.json")
+    node.enable_geofence = False
+    node.waiting_for_next_unloading = False
+    node.last_state = motor_state
+    node.current_control_mode = "NORMAL"
+    for method in ("_reset_ultrasonic_suppression_runtime", "load_geofence_sidecar",
+                   "update_cleaning_area", "_persist_progress", "publish_nav_state",
+                   "publish_current_route_id"):
+        setattr(node, method, Mock())
+    namespace["load_progress"] = Mock(return_value={
+        "route_path": str(route), "route_id": "saved",
+        "waypoint_idx": 0, "nav_state": "WAYPOINT_MOVE",
+    })
+
+    node.resume_progress_callback(SimpleNamespace(data="RESUME"))
+
+    namespace["load_progress"].assert_called_once_with(node.progress_path)
+    assert node.current_waypoint_idx == 0
+    assert node.nav_context["nav_state"] == "WAYPOINT_MOVE"
+
+
+@pytest.mark.parametrize(
+    "motor_state,current_control_mode",
+    [
+        ("HOLD", "NORMAL"),
+        ("START", "NORMAL"),
+        ("LOADING", "NORMAL"),
+        ("UNLOADING", "NORMAL"),
+        ("AUTO_CLEANING", "AUTO_CLEANING"),
+        (None, "NORMAL"),
+    ],
+)
+def test_progress_resume_is_rejected_outside_disable_or_enable(
+    navigator, tmp_path, motor_state, current_control_mode
+):
+    node, namespace = navigator
+    node.progress_path = str(tmp_path / "progress.json")
+    node.last_state = motor_state
+    node.current_control_mode = current_control_mode
+    node.waiting_for_next_unloading = False
+    namespace["load_progress"] = Mock()
+
+    node.resume_progress_callback(SimpleNamespace(data="RESUME"))
+
+    namespace["load_progress"].assert_not_called()
+    assert node.current_waypoint_idx == 3
+    node.get_logger().warning.assert_not_called()
 
 
 def test_publisher_depth_and_all_speed_paths_share_one_entrance():
