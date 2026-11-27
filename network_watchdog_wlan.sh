@@ -11,6 +11,7 @@ TARGET_IP="121.40.57.48"
 INTERFACE="wlan0"
 MAX_FAIL=3
 CHECK_INTERVAL=10
+NMCLI_TIMEOUT=15
 
 # 各级恢复的冷却计数（避免频繁核弹级恢复）
 L4_COOLDOWN=6       # 6 轮 × 10s = 1 分钟后才允许再次 L4
@@ -24,6 +25,24 @@ get_ip() {
 
 get_ssid() {
     nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" 2>/dev/null | cut -d: -f2-
+}
+
+get_state() {
+    nmcli -g GENERAL.STATE device show "$INTERFACE" 2>/dev/null | tail -1
+}
+
+get_gateway() {
+    nmcli -g IP4.GATEWAY device show "$INTERFACE" 2>/dev/null | head -1
+}
+
+has_local_wifi_link() {
+    local gateway ip
+    ip=$(get_ip)
+    gateway=$(get_gateway)
+    [ "$(get_state)" = "100 (connected)" ] || return 1
+    [ -n "$ip" ] || return 1
+    [ -n "$gateway" ] && [ "$gateway" != "--" ] || return 1
+    ip route get "$gateway" 2>/dev/null | grep -q "dev $INTERFACE"
 }
 
 get_saved_wifi_profiles() {
@@ -46,32 +65,38 @@ is_scanned_ssid() {
 }
 
 connect_saved_wifi_profiles() {
-    local profile profile_ssid priority
+    local profile profile_ssid priority visible
     local attempted=0
     local matched=0
     local profiles
 
     profiles=$(while IFS= read -r profile; do
         [ -n "$profile" ] || continue
-        priority=$(get_profile_priority "$profile")
-        priority=${priority:-0}
-        printf '%s\t%s\n' "$priority" "$profile"
-    done < <(get_saved_wifi_profiles) | sort -t $'\t' -k1,1nr -k2,2)
-
-    while IFS=$'\t' read -r priority profile; do
-        [ -n "$profile" ] || continue
         profile_ssid=$(get_profile_ssid "$profile")
         [ -n "$profile_ssid" ] || continue
+        priority=$(get_profile_priority "$profile")
+        priority=${priority:-0}
+        visible=0
+        is_scanned_ssid "$profile_ssid" && visible=1
+        printf '%s\t%s\t%s\t%s\n' "$visible" "$priority" "$profile" "$profile_ssid"
+    done < <(get_saved_wifi_profiles) | sort -t $'\t' -k1,1nr -k2,2nr -k3,3)
+
+    while IFS=$'\t' read -r visible priority profile profile_ssid; do
+        [ -n "$profile" ] || continue
         matched=1
 
-        if ! is_scanned_ssid "$profile_ssid"; then
-            log "跳过历史 WiFi: $profile (SSID 未出现在当前扫描结果)"
-            continue
+        if [ "$profile" = "$(get_ssid)" ] && has_local_wifi_link; then
+            log "保持当前 WiFi 连接: $profile (SSID: $profile_ssid)"
+            return 0
         fi
 
         attempted=1
-        log "尝试连接历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
-        if nmcli connection up "$profile" ifname "$INTERFACE" 2>/dev/null; then
+        if [ "$visible" -eq 1 ]; then
+            log "尝试连接历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
+        else
+            log "尝试连接未出现在本次扫描的历史 WiFi: $profile (SSID: $profile_ssid, priority: $priority)"
+        fi
+        if timeout "$NMCLI_TIMEOUT" nmcli connection up "$profile" ifname "$INTERFACE" 2>/dev/null; then
             log "已发起连接: $profile"
             return 0
         fi
@@ -81,7 +106,7 @@ connect_saved_wifi_profiles() {
     if [ "$matched" -eq 0 ]; then
         log "没有已保存的无线连接 profile"
     elif [ "$attempted" -eq 0 ]; then
-        log "扫描结果中没有匹配的历史 WiFi"
+        log "没有尝试历史 WiFi profile"
     fi
     return 1
 }
@@ -259,6 +284,14 @@ while true; do
         log "ping $TARGET_IP 失败，SSID: ${SSID:-无}, IP: ${OLD_IP:-无} (fail_count=$fail_count/$MAX_FAIL, level=$level)"
 
         if [ "$fail_count" -ge "$MAX_FAIL" ]; then
+            if has_local_wifi_link; then
+                log "WiFi 已关联且本地链路正常，目标服务器暂时不可达，跳过重连 (SSID: ${SSID:-无}, IP: ${OLD_IP:-无})"
+                fail_count=0
+                level=1
+                sleep "$CHECK_INTERVAL"
+                continue
+            fi
+
             log "连续 $MAX_FAIL 次失败，开始恢复流程 (当前等级: L$level)"
 
             case $level in
