@@ -112,7 +112,7 @@ WAYPOINT_OVERSHOOT_DIVERGE_COUNT = 3
 WAYPOINT_RECOVERY_SPEED = 15.6
 BOUNDARY_GEOMETRIC_ESCALATE_AFTER_CYCLES = 1  # 局部矫正无效一次后升级GPS几何回退
 BOUNDARY_CYCLE_MAX = 3  # 同一传感器组连续完成的边界矫正周期上限
-RETREAT_ESCAPE_DURATION = 2.0  # 锚点附近原地触发时的短距离脱困时长（秒）
+RETREAT_ESCAPE_DURATION = 3.0  # 锚点附近原地触发时的短距离脱困时长（秒）
 RETREAT_ESCAPE_MAX_ATTEMPTS = 2  # 原地脱困最多尝试次数
 MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "calib_stuck",
@@ -594,6 +594,7 @@ class RTKNavControlNode(Node):
             "retreat_target_heading": None,
             "retreat_resume_pending": False,
             "retreat_escape_start_time": None,
+            "retreat_escape_clear_since": None,
             "retreat_escape_attempts": 0,
             "bridge_entry_direction": None,
         }
@@ -1674,6 +1675,7 @@ class RTKNavControlNode(Node):
         self.nav_context["retreat_target_heading"] = None
         self.nav_context["retreat_resume_pending"] = False
         self.nav_context["retreat_escape_start_time"] = None
+        self.nav_context["retreat_escape_clear_since"] = None
         self.nav_context["retreat_escape_attempts"] = 0
 
     def _select_retreat_plan(self, anchor: Tuple[float, float]) -> bool:
@@ -1736,6 +1738,7 @@ class RTKNavControlNode(Node):
             self.nav_context["retreat_drive_mode"] = drive_mode
             self.nav_context["retreat_escape_attempts"] = attempts + 1
             self.nav_context["retreat_escape_start_time"] = None
+            self.nav_context["retreat_escape_clear_since"] = None
             self.nav_context["retreat_phase"] = RetreatPhase.P1_ESCAPE
             self.nav_context["calibration_active"] = False
             self.get_logger().warn(
@@ -1822,12 +1825,16 @@ class RTKNavControlNode(Node):
                 escape_start = self.nav_context.get("retreat_escape_start_time")
                 drive_mode = self.nav_context.get("retreat_drive_mode")
                 blocked_directions = self._get_live_blocked_directions()
+                now = time.monotonic()
 
                 if not self._is_calibration_boundary_active():
-                    self.get_logger().info("[RTKNav] 撤退P1脱困后传感器释放，重新检查回退锚点")
-                    self.nav_context["retreat_phase"] = RetreatPhase.P1_PLAN
-                    yield (0.0, 0.0)
-                    continue
+                    if self.nav_context.get("retreat_escape_clear_since") is None:
+                        self.nav_context["retreat_escape_clear_since"] = now
+                        self.get_logger().info(
+                            "[RTKNav] 撤退P1脱困后传感器释放，继续倒车完成安全退距"
+                        )
+                else:
+                    self.nav_context["retreat_escape_clear_since"] = None
 
                 if drive_mode in blocked_directions:
                     self.nav_context["retreat_phase"] = RetreatPhase.P1_PLAN
@@ -1842,8 +1849,12 @@ class RTKNavControlNode(Node):
                     yield (0.0, 0.0)
                     continue
 
-                now = time.monotonic()
                 if escape_start is not None and now - escape_start >= RETREAT_ESCAPE_DURATION:
+                    if not self._is_calibration_boundary_active():
+                        self.nav_context["retreat_escape_clear_since"] = None
+                        self.nav_context["retreat_phase"] = RetreatPhase.P1_PLAN
+                        yield (0.0, 0.0)
+                        continue
                     attempts = int(self.nav_context.get("retreat_escape_attempts") or 0)
                     if attempts >= RETREAT_ESCAPE_MAX_ATTEMPTS:
                         self.nav_context["calibration_active"] = False
@@ -1854,6 +1865,7 @@ class RTKNavControlNode(Node):
                         yield (0.0, 0.0)
                         return RetreatResult.P1_ESCAPE_TIMEOUT
                     self.nav_context["retreat_escape_start_time"] = None
+                    self.nav_context["retreat_escape_clear_since"] = None
                     if self._select_escape_plan():
                         yield (0.0, 0.0)
                         continue

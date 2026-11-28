@@ -248,6 +248,31 @@ def test_geometric_retreat_uses_straight_escape_when_turn_is_blocked(
     assert completed.value.value == "p1_no_safe_candidate"
 
 
+def test_geometric_escape_keeps_reversing_after_sensor_release(boundary_node):
+    node = boundary_node
+    node.calc_distance_to_waypoint = lambda _: 1.0
+    node.calculate_bearing = lambda *_: 15.0
+    node.normalize_angle = lambda value: (value + 180) % 360 - 180
+    node.get_heading_error = lambda target: target
+    node.calibrate_heading_at_waypoint = Mock(return_value=iter([(4.0, 4.0)]))
+    retreat = node._retreat_to_waypoint((120.0, 30.0, 90.0))
+
+    assert next(retreat) == (0.0, 0.0)
+    node.publish_stop_speed()
+    sample_stopped_chassis(node, 10.1)
+    node.mid_left = True
+    assert next(retreat) == (0.0, 0.0)
+    sample_stopped_chassis(node, 10.2)
+    left, right = next(retreat)
+    assert left > 0 > right
+    node._publish_motor_speed(left, right)
+
+    node.mid_left = False
+    node.clock.monotonic.return_value = 10.5
+    left, right = next(retreat)
+    assert left > 0 > right
+
+
 def test_fallback_filters_sensors_on_entry_callback_and_timer(boundary_node):
     node = boundary_node
     node.current_control_mode = node.last_state = "AUTO_CLEANING"
