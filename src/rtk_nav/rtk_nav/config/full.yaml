@@ -147,7 +147,7 @@ areas:
     calib_point_b: {lon: 111.47087899698147, lat: 35.68301251752333}
     calib_point_c: {lon: 111.4708524561436, lat: 35.68301513221514}
 default:
-  interval: 50.0
+  interval: 0.9
   start_corner: "top_left"
   swap_wh_select: False
   edge_distance_lon: 0.0

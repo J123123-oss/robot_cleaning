@@ -23,7 +23,8 @@ def test_loading_valid_fence_adds_both_endpoint_bridges(tmp_path):
     scope = {"Tuple": tuple, "math": math, "json": json,
              "load_geofence_payload": load_geofence_payload,
              "build_polyline_corridor": build_polyline_corridor,
-             "os": __import__("os")}
+             "os": __import__("os"),
+             "ensure_generated": lambda **kwargs: None}
     exec(compile(ast.Module(body=functions, type_ignores=[]), "rtk_nav.py", "exec"), scope)
     fence = tmp_path / "route.fence.json"
     fence.write_text(json.dumps({"utm_zone": [49, "S"], "expansion_radius_m": 0.2,

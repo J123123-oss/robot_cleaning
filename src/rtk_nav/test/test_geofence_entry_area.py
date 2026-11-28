@@ -71,9 +71,11 @@ def test_shared_area_loads_and_rejects_zone_mismatch():
     tree = ast.parse(source.read_text(encoding="utf-8"))
     method = next(item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef)
                   and item.name == "_load_common_entry_area")
+    ensure_calls = []
     scope = {"os": SimpleNamespace(path=SimpleNamespace(isfile=lambda path: True)),
              "load_geofence_payload": lambda path: {"utm_zone": [49, "S"], "areas": [rectangle(0, 10, 0, 10)]},
-             "validate_convex_polygon": validate_convex_polygon}
+             "validate_convex_polygon": validate_convex_polygon,
+             "ensure_generated": lambda **kwargs: ensure_calls.append(kwargs)}
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), scope)
     node = SimpleNamespace(geofence_entry_area_path="common_entry_area.fence.json", geofence_path="route.fence.json",
                            geofence_payload={"utm_zone": [49, "S"], "areas": []},
@@ -81,6 +83,87 @@ def test_shared_area_loads_and_rejects_zone_mismatch():
     scope["_load_common_entry_area"](node)
     assert len(node.geofence_entry_payload["areas"]) == 1
     assert node.geofence_payload["areas"] == []
+    assert ensure_calls == []
     node.geofence_payload["utm_zone"] = [50, "S"]
     with pytest.raises(ValueError):
         scope["_load_common_entry_area"](node)
+
+
+def test_default_shared_area_loading_refreshes_generated_file(tmp_path):
+    source = PACKAGE / "rtk_nav" / "rtk_nav.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    method = next(item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef)
+                  and item.name == "_load_common_entry_area")
+    route_path = tmp_path / "route.fence.json"
+    entry_path = tmp_path / "common_entry_area.fence.json"
+    entry_path.write_text("generated", encoding="utf-8")
+    ensure_calls = []
+    scope = {
+        "os": os,
+        "load_geofence_payload": lambda path: {
+            "utm_zone": [49, "S"],
+            "areas": [rectangle(0, 10, 0, 10)],
+        },
+        "validate_convex_polygon": validate_convex_polygon,
+        "ensure_generated": lambda **kwargs: ensure_calls.append(kwargs),
+    }
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), scope)
+    node = SimpleNamespace(
+        geofence_entry_area_path="",
+        geofence_path=str(route_path),
+        geofence_payload={"utm_zone": [49, "S"], "areas": []},
+        get_logger=Mock(),
+    )
+
+    scope["_load_common_entry_area"](node)
+
+    assert ensure_calls == [{"output_path": str(entry_path)}]
+    assert len(node.geofence_entry_payload["areas"]) == 1
+
+
+def test_load_geofence_sidecar_rejects_generated_area_failure():
+    source = PACKAGE / "rtk_nav" / "rtk_nav.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    method = next(item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef)
+                  and item.name == "load_geofence_sidecar")
+    scope = {"load_geofence_payload": lambda path: {"utm_zone": [49, "S"], "areas": []},
+             "json": __import__("json")}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), scope)
+    node = SimpleNamespace(
+        enable_geofence=True,
+        geofence_payload={"areas": []},
+        geofence_entry_payload={"areas": []},
+        geofence_entry_pending=False,
+        geofence_outside_count=3,
+        geofence_latched=True,
+        publish_geofence_recovery_ready=Mock(),
+        _load_common_entry_area=Mock(side_effect=ValueError("full.yaml 无效")),
+        _append_loading_bridges_to_geofence=Mock(),
+        get_logger=Mock(),
+    )
+
+    assert scope["load_geofence_sidecar"](node, "route.fence.json") is False
+    assert node.geofence_payload is None
+    node.get_logger.return_value.error.assert_called_once()
+
+
+def test_initial_approach_rejection_logs_coverage_diagnostics():
+    source = (PACKAGE / "rtk_nav" / "rtk_nav.py").read_text(encoding="utf-8")
+    assert "[电子围栏] 首点接入拒绝:" in source
+    assert "起点路线围栏覆盖" in source
+    assert "起点公共接入区域覆盖" in source
+    assert "直线全程覆盖" in source
+
+
+def test_full_config_entry_fence_covers_reported_bridge2_approach():
+    from rtk_nav.geofence_geometry import point_allowed_by_payload
+
+    fence_path = PACKAGE / "rtk_nav" / "cleaning_path" / "common_entry_area.fence.json"
+    payload = load_geofence_payload(str(fence_path))
+    assert payload["utm_zone"] == [49, "S"]
+
+    start = (542612.5893860583, 3948936.050272386)
+    first_waypoint = (542611.8793754438, 3948930.567575089)
+    assert point_allowed_by_payload(start, payload)
+    assert point_allowed_by_payload(first_waypoint, payload)
+    assert segment_allowed_by_payload(start, first_waypoint, payload)

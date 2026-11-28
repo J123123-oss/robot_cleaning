@@ -256,3 +256,32 @@ python batch_generate_paths.py
 - 遍历 `config/` 下所有 `*.yaml` 配置文件
 - 每个配置文件生成一个 `{配置名}.txt` 密集点路径文件
 - 图片绘制已注释，需要时取消注释 `plot_multi_area_path` 和 matplotlib 导入即可
+
+### 更新公共首点接入围栏
+
+公共首点接入围栏由 `full.yaml` 的现有稠密规划器几何生成。`rtk_nav` 启动和切换路线
+时会自动检查 `full.yaml` 的修改时间。配置比围栏文件更新，或围栏文件不存在时，
+节点会先原子生成默认围栏，再加载电子围栏。生成失败会拒绝加载围栏并锁定自动导航。
+显式设置 `geofence_entry_area_path` 时继续使用指定文件，不会自动覆盖。
+
+需要立即手动刷新时，在仓库根目录执行：
+
+```bash
+python3 src/rtk_nav/rtk_nav/generate_common_entry_area.py
+```
+
+脚本默认更新 `src/rtk_nav/rtk_nav/cleaning_path/common_entry_area.fence.json`。
+手动刷新和节点自动刷新使用同一套生成逻辑。
+也可以显式指定输入和输出路径：
+
+```bash
+python3 src/rtk_nav/rtk_nav/generate_common_entry_area.py \
+  --config src/rtk_nav/rtk_nav/config/full.yaml \
+  --output src/rtk_nav/rtk_nav/cleaning_path/common_entry_area.fence.json
+```
+
+ROS2 工作区构建后，也可以使用：
+
+```bash
+ros2 run rtk_nav generate_common_entry_area
+```

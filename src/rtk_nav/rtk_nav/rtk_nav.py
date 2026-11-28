@@ -38,6 +38,7 @@ from rtk_nav.geofence_geometry import (
     segment_allowed_by_payload,
     validate_convex_polygon,
 )
+from rtk_nav.generate_common_entry_area import ensure_generated
 from rtk_nav.progress_store import load_progress, save_progress
 from rtk_nav.navigation_position_safety import ArrivalConfirmation, PositionJumpGuard
 
@@ -1035,6 +1036,7 @@ class RTKNavControlNode(Node):
                 os.path.dirname(self.geofence_path),
                 "common_entry_area.fence.json",
             )
+            ensure_generated(output_path=entry_path)
             if not os.path.isfile(entry_path):
                 return
 
@@ -4672,16 +4674,38 @@ class RTKNavControlNode(Node):
         if self.enable_geofence:
             approach_start = self.latlon_to_utm(self.current_gps[1], self.current_gps[0])
             approach_end = self.latlon_to_utm(first_waypoint[1], first_waypoint[0])
-            approach_payload = dict(self.geofence_payload or {})
-            if self.geofence_entry_pending and self.geofence_entry_payload:
+            route_payload = self.geofence_payload or {}
+            entry_payload = (
+                self.geofence_entry_payload
+                if self.geofence_entry_pending and self.geofence_entry_payload
+                else {}
+            )
+            approach_payload = dict(route_payload)
+            if entry_payload:
                 approach_payload["areas"] = [
                     *approach_payload.get("areas", []),
-                    *self.geofence_entry_payload["areas"],
+                    *entry_payload["areas"],
                 ]
-            if (self.geofence_payload is None or not segment_allowed_by_payload(
-                    approach_start, approach_end, approach_payload)):
+            start_in_route = point_allowed_by_payload(approach_start, route_payload)
+            start_in_entry = point_allowed_by_payload(approach_start, entry_payload)
+            end_in_route = point_allowed_by_payload(approach_end, route_payload)
+            end_in_entry = point_allowed_by_payload(approach_end, entry_payload)
+            segment_allowed = segment_allowed_by_payload(
+                approach_start, approach_end, approach_payload
+            )
+            if self.geofence_payload is None or not segment_allowed:
+                entry_path = self.geofence_entry_area_path or os.path.join(
+                    os.path.dirname(self.geofence_path),
+                    "common_entry_area.fence.json",
+                )
                 self.get_logger().error(
-                    "[电子围栏] 首点直线接入路径不在允许区域内，拒绝移动并保持HOLD"
+                    "[电子围栏] 首点接入拒绝: "
+                    f"起点路线围栏覆盖={start_in_route}, "
+                    f"起点公共接入区域覆盖={start_in_entry}, "
+                    f"首点路线围栏覆盖={end_in_route}, "
+                    f"首点公共接入区域覆盖={end_in_entry}, "
+                    f"直线全程覆盖={segment_allowed}, "
+                    f"公共接入文件={entry_path}"
                 )
                 self.trip_geofence_stop("initial_approach_outside_allowed_region")
                 yield (0.0, 0.0)
