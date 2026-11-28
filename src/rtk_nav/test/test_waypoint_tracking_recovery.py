@@ -36,6 +36,7 @@ def _load_navigation():
         "move_to_first_waypoint",
         "_confirm_waypoint_arrival", "_get_resume_path_direction",
         "_pause_waypoint_calibration",
+        "_get_calib_slip_prebias_waypoint",
     }
     node_class = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                       and n.name == "RTKNavControlNode")
@@ -657,6 +658,112 @@ def test_waypoint_turn_displacement_does_not_skip_the_current_waypoint():
     assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_MOVE
     assert node.nav_context["waypoint_recovery_pending"] is True
     assert node.nav_context["calib_realign_count"] == 1
+
+
+def test_calibration_slip_prebias_offsets_opposite_to_observed_drift():
+    node, _ = _make_node()
+    node.latlon_to_utm = lambda lat, lon: (lon, lat)
+    waypoint = (120.0, 30.0, 90.0)
+
+    prebiased = node._get_calib_slip_prebias_waypoint(
+        waypoint, (120.0, 30.0), (120.000005, 30.0)
+    )
+
+    east_offset_m = (prebiased[0] - waypoint[0]) * 111320 * math.cos(math.radians(30.0))
+    north_offset_m = (prebiased[1] - waypoint[1]) * 111320
+    assert east_offset_m == pytest.approx(-0.4, abs=0.002)
+    assert north_offset_m == pytest.approx(0.0, abs=0.002)
+    assert prebiased[2] == waypoint[2]
+
+
+def test_calibration_slip_prebias_is_capped_at_four_tenths_meter():
+    node, _ = _make_node()
+    node.latlon_to_utm = lambda lat, lon: (lon, lat)
+    waypoint = (120.0, 30.0, 90.0)
+
+    prebiased = node._get_calib_slip_prebias_waypoint(
+        waypoint, (120.0, 30.0), (120.000020, 30.0)
+    )
+
+    offset_m = abs(prebiased[0] - waypoint[0]) * 111320 * math.cos(math.radians(30.0))
+    assert offset_m == pytest.approx(0.4, abs=0.002)
+
+
+def test_calibration_slip_prebias_ignores_invalid_or_negligible_drift():
+    node, _ = _make_node()
+    node.latlon_to_utm = lambda lat, lon: (lon, lat)
+    waypoint = (120.0, 30.0, 90.0)
+
+    assert node._get_calib_slip_prebias_waypoint(waypoint, waypoint, waypoint) == waypoint
+    assert node._get_calib_slip_prebias_waypoint(
+        waypoint, waypoint, (float("nan"), 30.0)
+    ) == waypoint
+
+
+def test_calibration_prebias_recovery_checks_actual_target_against_geofence():
+    node, _ = _make_node()
+    original = node.waypoints[1]
+    prebiased = (original[0] - 0.000004, original[1], original[2])
+    node.nav_context.update(calib_prebias_waypoint=prebiased,
+                            waypoint_recovery_pending=True)
+    node.calc_distance_to_waypoint.return_value = 0.8
+    node._confirm_waypoint_arrival = Mock(return_value=False)
+    node.enable_geofence = True
+    node.geofence_payload = {"areas": []}
+    node.trip_geofence_stop = Mock()
+    segment_check = Mock(return_value=False)
+    node.multi_waypoint_nav_generator.__func__.__globals__["segment_allowed_by_payload"] = segment_check
+
+    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+
+    assert segment_check.call_args.args[1] == node.latlon_to_utm(prebiased[1], prebiased[0])
+    node.trip_geofence_stop.assert_called_once_with("waypoint_recovery_outside_allowed_region")
+    node.calibrate_heading_at_waypoint.assert_not_called()
+
+
+def test_prebias_arrival_calibrates_original_waypoint_and_keeps_original_target():
+    node, ns = _make_node()
+    original = node.waypoints[1]
+    prebiased = (original[0] - 0.000004, original[1], original[2])
+    node.current_gps = prebiased[:2]
+    node.nav_context.update(calib_prebias_waypoint=prebiased,
+                            waypoint_recovery_active=True)
+    node.calc_distance_to_waypoint = Mock(return_value=0.0)
+    node._confirm_waypoint_arrival = Mock(return_value=True)
+
+    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+
+    node.calc_distance_to_waypoint.assert_called_with(prebiased)
+    assert node.nav_context["target_waypoint"] == original
+    assert node.nav_context["calib_prebias_waypoint"] is None
+    assert node.nav_context["calib_slip_start"] == prebiased[:2]
+    assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_CALIB
+    node.calibrate_heading_at_waypoint.assert_called_once_with(
+        node.normalize_angle(original[2])
+    )
+
+
+def test_turn_slip_sets_prebias_from_calibration_start_not_original_point():
+    node, ns = _make_node()
+    original = node.waypoints[1]
+    start = (original[0] + 0.000002, original[1])
+    node.current_gps = (start[0] + 0.000006, start[1])
+    node.nav_context.update(nav_state=ns["NavState"].WAYPOINT_CALIB,
+                            is_angle_recalib=False, calib_retry_count=0,
+                            calib_slip_start=start)
+    def completed():
+        if False:
+            yield
+        return True
+    node.nav_context["calib_generator"] = completed()
+    node.calc_distance_to_waypoint.return_value = 0.74
+
+    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+
+    prebiased = node.nav_context["calib_prebias_waypoint"]
+    assert prebiased[0] < original[0]
+    assert prebiased[1] == original[1]
+    assert node.current_waypoint_idx == 1
 
 
 @pytest.mark.parametrize("distance, trusted, expected_state", [

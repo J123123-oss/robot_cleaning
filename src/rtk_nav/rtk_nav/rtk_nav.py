@@ -77,8 +77,9 @@ CALIB_RETRY_BACKUP_SPEED = 6.684508  # 航向校准卡滞重试的后退速度�
 CALIB_RETRY_BACKUP_DURATION = 1.5  # 校准卡滞重试的后退脱困时长（秒）
 # 最终航向校准会原地转向，打滑或转向中心与定位参考点不重合时会产生位移；
 # 该偏差可信时先自动回对准原航点，不直接按人工介入停车。
-CALIB_POSITION_DRIFT_TOLERANCE = 0.30  # 校准后允许的航点位置偏差（米）
+CALIB_POSITION_DRIFT_TOLERANCE = 0.50  # 校准后允许的航点位置偏差（米）
 CALIB_REALIGN_MAX_RETRIES = 2  # 校准后位置超差的自动回对准次数上限
+CALIB_SLIP_PREBIAS_MAX = 0.4
 
 TURN_SPEED_FAST = 10.026761  # 航向误差较大时的转向基准速度（r/min）。
 TURN_SPEED_MID = 6.684508  # 航向误差中等时的转向基准速度（r/min）。
@@ -3744,6 +3745,7 @@ class RTKNavControlNode(Node):
         self._arrival_confirmation.required_samples = (
             5 if nav_state == NavState.INITIAL_MOVE else 3
         )
+        target_waypoint = self.nav_context.get("calib_prebias_waypoint") or target_waypoint
         return self._arrival_confirmation.update(
             (nav_state, self.current_waypoint_idx, tuple(target_waypoint)),
             self.gps_update_sequence,
@@ -4040,6 +4042,29 @@ class RTKNavControlNode(Node):
         ap_dy = cy - ay
         return (ap_dx * dx + ap_dy * dy) / len_sq
 
+    def _get_calib_slip_prebias_waypoint(self, waypoint, before, after):
+        try:
+            lon, lat, heading = waypoint
+            before_lon, before_lat = before[:2]
+            after_lon, after_lat = after[:2]
+            if not all(math.isfinite(value) for value in (
+                lon, lat, heading, before_lon, before_lat, after_lon, after_lat
+            )):
+                return waypoint
+            east_scale = 111320.0 * math.cos(math.radians(lat))
+            if abs(east_scale) < 1.0:
+                return waypoint
+            east = (after_lon - before_lon) * east_scale
+            north = (after_lat - before_lat) * 111320.0
+            drift = math.hypot(east, north)
+            if drift < 0.01:
+                return waypoint
+            scale = min(drift, CALIB_SLIP_PREBIAS_MAX) / drift
+            return (lon - east * scale / east_scale,
+                    lat - north * scale / 111320.0, heading)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return waypoint
+
     def _force_bearing_diverging(self, distance: float) -> bool:
         """force_bearing 直行时检测是否持续背离目标。
 
@@ -4224,6 +4249,8 @@ class RTKNavControlNode(Node):
         self.nav_context["waypoint_recovery_aligned"] = False
         self.nav_context["waypoint_recovery_direction"] = None
         self.nav_context["waypoint_recovery_pending"] = False
+        self.nav_context["calib_prebias_waypoint"] = None
+        self.nav_context["calib_slip_start"] = None
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["waypoint_recalib_count"] = 0
         self.nav_context["bearing_mode_locked"] = False
@@ -5236,6 +5263,8 @@ class RTKNavControlNode(Node):
         self._clear_retreat_context()
         self.nav_context["calib_retry_count"] = 0
         self.nav_context["calib_realign_count"] = 0
+        self.nav_context["calib_prebias_waypoint"] = None
+        self.nav_context["calib_slip_start"] = None
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["is_angle_recalib"] = False
         self.nav_context["waypoint_recalib_count"] = 0
@@ -5680,10 +5709,16 @@ class RTKNavControlNode(Node):
                             )
                             if realign_count < CALIB_REALIGN_MAX_RETRIES:
                                 self.nav_context["calib_realign_count"] = realign_count + 1
+                                prebias = self._get_calib_slip_prebias_waypoint(
+                                    target_waypoint,
+                                    self.nav_context.get("calib_slip_start"),
+                                    self.current_gps,
+                                )
+                                self.nav_context["calib_prebias_waypoint"] = prebias
                                 self.get_logger().warn(
                                     f"[航向校准] 校准后偏离航点{position_drift:.2f}m"
                                     f"（打滑/转向位移），第{realign_count + 1}/"
-                                    f"{CALIB_REALIGN_MAX_RETRIES}次自动回对准原航点"
+                                    f"{CALIB_REALIGN_MAX_RETRIES}次自动回对准，预偏置目标={prebias[:2]}"
                                 )
                                 self.nav_context["calib_generator"] = None
                                 self.nav_context["calibration_active"] = False
@@ -5773,6 +5808,8 @@ class RTKNavControlNode(Node):
                         # 正常航点切换时才清零打滑计数器和方位角直行模式
                         self.nav_context["waypoint_recalib_count"] = 0
                         self.nav_context["calib_realign_count"] = 0
+                        self.nav_context["calib_prebias_waypoint"] = None
+                        self.nav_context["calib_slip_start"] = None
                         self.nav_context["force_bearing_mode"] = False
                         self.nav_context["force_bearing_target"] = None
                         self.nav_context["force_bearing_recalib_count"] = 0
@@ -5897,9 +5934,10 @@ class RTKNavControlNode(Node):
                     continue
                 current_lon, current_lat = self.current_gps
                 current_pos = (current_lon, current_lat)
-                target_lon, target_lat, target_heading = target_waypoint
+                approach_waypoint = self.nav_context.get("calib_prebias_waypoint") or target_waypoint
+                target_lon, target_lat, target_heading = approach_waypoint
 
-                distance = self.calc_distance_to_waypoint(target_waypoint)
+                distance = self.calc_distance_to_waypoint(approach_waypoint)
                 arrival_confirmed = self._confirm_waypoint_arrival(target_waypoint)
 
                 if distance < RTK_WAYPOINT_TOLERANCE:
@@ -5921,6 +5959,8 @@ class RTKNavControlNode(Node):
                     self.nav_context["calib_origin"] = CalibOrigin.WAYPOINT_FINAL
                     self.nav_context["retreat_enabled"] = True
                     self.nav_context["retreat_anchor"] = tuple(self.current_gps)
+                    self.nav_context["calib_slip_start"] = tuple(self.current_gps)
+                    self.nav_context["calib_prebias_waypoint"] = None
                     self.nav_context["calib_target_heading"] = calib_target_heading
                     calib_generator = self.calibrate_heading_at_waypoint(calib_target_heading)
                     self.nav_context["calib_generator"] = calib_generator
@@ -6994,6 +7034,8 @@ class RTKNavControlNode(Node):
         self.nav_context["calib_generator"] = None
         self.nav_context["calib_retry_count"] = 0
         self.nav_context["calib_realign_count"] = 0
+        self.nav_context["calib_prebias_waypoint"] = None
+        self.nav_context["calib_slip_start"] = None
         self.nav_context["force_bearing_mode"] = False
         self.nav_context["force_bearing_target"] = None
         self.nav_context["force_bearing_recalib_count"] = 0
@@ -7170,6 +7212,8 @@ class RTKNavControlNode(Node):
         self.nav_context["calib_generator"] = None
         self.nav_context["calib_retry_count"] = 0
         self.nav_context["calib_realign_count"] = 0
+        self.nav_context["calib_prebias_waypoint"] = None
+        self.nav_context["calib_slip_start"] = None
         self.nav_context["calibration_active"] = False
         self.nav_context["force_bearing_mode"] = False
         self.nav_context["force_bearing_target"] = None
@@ -7234,6 +7278,8 @@ class RTKNavControlNode(Node):
             self.heading_timed_out = False
             self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
             self.nav_context["calib_realign_count"] = 0  # 重新进入AUTO后恢复自动回对准预算
+            self.nav_context["calib_prebias_waypoint"] = None
+            self.nav_context["calib_slip_start"] = None
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
             if (not self.geofence_recovery_active and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]):
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE

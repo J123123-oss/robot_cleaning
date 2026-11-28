@@ -169,6 +169,22 @@ def test_calibration_position_drift_realigns_same_waypoint_before_pause():
     assert "self.nav_context['calib_realign_count'] = 0" in navigation
 
 
+def test_calibration_position_drift_tolerance_allows_measured_turning_slip():
+    _, tree = _source_tree()
+    tolerance = next(
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "CALIB_POSITION_DRIFT_TOLERANCE"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+    )
+    assert tolerance == 0.50
+
+
 def test_heading_recalibration_does_not_rewrite_navigation_state():
     _, tree = _source_tree()
     recalibration = _function(tree, "start_heading_recalibration")
