@@ -22,37 +22,37 @@ areas:
     calib_point_b: {lon: 111.47127835254572, lat: 35.68338075800595}
     calib_point_c: {lon: 111.47110148987859, lat: 35.68339334817261}
     edge_distance_lon: 0.2
-    edge_distance_lat: [0.0, 0.8]
+    edge_distance_lat: [1.0, 0.8]
   - name: "4-2Bay-W-W"
     calib_point_a: {lon: 111.47102985023075, lat: 35.68286857333928}
     calib_point_b: {lon: 111.47108637987859, lat: 35.68339437183928}
     calib_point_c: {lon: 111.47090906104476, lat: 35.68340721100595}
-    edge_distance_lon: [0.5, 0]
-    edge_distance_lat: [0.0, 0.2]
+    edge_distance_lon: 0.5
+    edge_distance_lat: [1.0, 0.2]
   - name: "6-Big-S"
     calib_point_a: {lon: 111.47078647087750, lat: 35.68342400617261}
     calib_point_b: {lon: 111.47142674137905, lat: 35.68338059467261}
     calib_point_c: {lon: 111.47143269737690, lat: 35.68344076500595}
-    edge_distance_lon: 0
-    edge_distance_lat: 0
+    edge_distance_lon: [0.5, 0.2]
+    edge_distance_lat: [0.5, 0]
   - name: "5-Big-N"
     calib_point_a: {lon: 111.47079383770826, lat: 35.68349644083928}
     calib_point_b: {lon: 111.47143356004312, lat: 35.68345298567262}
     calib_point_c: {lon: 111.47144012504096, lat: 35.68351386517261}
-    edge_distance_lon: 0
-    edge_distance_lat: 0
+    edge_distance_lon: 0.5
+    edge_distance_lat: [0.5, 0]
   - name: "8-Small-E"
     calib_point_a: {lon: 111.47083658573030, lat: 35.68288184917261}
     calib_point_b: {lon: 111.47088114437828, lat: 35.68340252983928}
     calib_point_c: {lon: 111.47080470171127, lat: 35.68341135717261}
-    edge_distance_lon: 0
-    edge_distance_lat: 0
+    edge_distance_lon: [1.0, 0]
+    edge_distance_lat: [1.0, 0]
   - name: "7-Small-W"
     calib_point_a: {lon: 111.47073381839672, lat: 35.68288820500594}
     calib_point_b: {lon: 111.47078989171126, lat: 35.68341212267261}
     calib_point_c: {lon: 111.47070311271106, lat: 35.68341818533928}
-    edge_distance_lon: 0
-    edge_distance_lat: 0
+    edge_distance_lon: [0, 1.0]
+    edge_distance_lat: [1.0, 0]
   - name: "9-3Bay-N-N"
     calib_point_a: {lon: 111.47065041506740, lat: 35.68277623200594}
     calib_point_b: {lon: 111.47096566023505, lat: 35.68274911617261}
