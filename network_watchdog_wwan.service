@@ -11,6 +11,8 @@ Environment=WWAN_PROFILE=4G-CMNET
 Environment=WWAN_MODEM_DEVICE=cdc-wdm0
 Environment=WWAN_TARGET_IP=121.40.57.48
 Environment=WWAN_TARGET_PORT=7000
+Environment=WWAN_ROUTE_FAIL_MAX=3
+Environment=WWAN_FRPC_SERVICE=frpc.service
 ExecStart=/bin/bash /home/forlinx/robot_cleaning/network_watchdog_wwan.sh
 Restart=always
 RestartSec=10s

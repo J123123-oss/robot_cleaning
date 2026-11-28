@@ -36,6 +36,7 @@ def boundary_node():
         "get_boundary_correct_speed", "_reset_boundary_correction", "_reset_boundary_cycle_tracking",
         "_fallback_entry_block_reason", "_fallback_age", "_process_imu_odom_fallback",
         "_update_blocked_directions", "io_data_rtk_callback", "_boundary_motion_inhibited",
+        "_handle_boundary_stop_feedback_missing",
         "_boundary_chassis_stopped", "_stop_on_boundary_io_loss", "_publish_motor_speed",
         "_boundary_blocks_motion", "_boundary_io_timed_out",
         "_reset_boundary_debounce", "drive_twist_callback", "rtk_timer_callback",
@@ -77,6 +78,11 @@ def boundary_node():
     node._boundary_stop_stamp_ns = None
     node._boundary_drive_stamp_ns = 0
     node._boundary_drive_velocity = (0.0, 0.0)
+    node._boundary_feedback_warn_time = 0.0
+    node.nav_running = False
+    node.multi_waypoint_generator = None
+    node.brush_active = False
+    node.publish_nav_state = Mock()
     node.last_io_time = 10.0
     node.enable_io_timeout_protection = True
     node._arrival_confirmation = Mock()
@@ -406,3 +412,82 @@ def test_io_gap_during_escape_pauses_even_if_the_next_frame_is_clear(boundary_no
     node.io_data_rtk_callback(SimpleNamespace(data=0b1111))
     assert not node.boundary_correct_locked
     node._pause_boundary_retreat_timeout.assert_called_once()
+
+
+def test_boundary_stop_without_drive_feedback_times_out_to_pause(boundary_node):
+    node = boundary_node
+    node.nav_context = {"nav_state": "WAYPOINT_MOVE"}
+    node.current_control_mode = "AUTO_CLEANING"
+    node.nav_running = True
+    node.multi_waypoint_generator = object()
+    node.brush_active = True
+
+    node._publish_motor_speed(-10.0, 10.0)
+    node.clock.monotonic.return_value = 10.1
+    node.last_io_time = 10.1
+    node.io_data_rtk_callback(SimpleNamespace(data=0b1110))
+    assert node._boundary_stop_until == pytest.approx(10.3)
+    node.publish_stop_speed.assert_called()
+    assert node.get_logger.return_value.warn.called
+
+    # 未到锁存上限：保持停车，不进入 PAUSE。
+    node.clock.monotonic.return_value = 11.0
+    node.last_io_time = 11.0
+    assert node._boundary_motion_inhibited(11.0)
+    assert node.nav_context["nav_state"] == "WAYPOINT_MOVE"
+
+    # 超过 2.0s 仍无 /motor/drive_twist：转 PAUSE 并上报原因。
+    node.clock.monotonic.return_value = 12.11
+    node.last_io_time = 12.11
+    assert node._boundary_motion_inhibited(12.11)
+    assert node.nav_context["nav_state"] == "PAUSE"
+    assert node.nav_context["pause_reason"] == "boundary_feedback_missing"
+    assert node.nav_context["pre_pause_state"] == "WAYPOINT_MOVE"
+    assert node.nav_context["manual_intervention_seen"] is False
+    assert not node.nav_running
+    assert node.multi_waypoint_generator is None
+    node.publish_nav_state.assert_called_with("PAUSE")
+    assert node.get_logger.return_value.error.called
+
+    node.publish_nav_state.reset_mock()
+    node.clock.monotonic.return_value = 13.0
+    node.last_io_time = 13.0
+    assert node._boundary_motion_inhibited(13.0)
+    node.publish_nav_state.assert_not_called()
+
+
+def test_boundary_stop_with_fresh_feedback_clears_latch(boundary_node):
+    node = boundary_node
+    node.nav_context = {"nav_state": "WAYPOINT_MOVE"}
+    node.current_control_mode = "AUTO_CLEANING"
+
+    node._publish_motor_speed(-10.0, 10.0)
+    node.clock.monotonic.return_value = 10.1
+    node.last_io_time = 10.1
+    node.io_data_rtk_callback(SimpleNamespace(data=0b1110))
+    assert node._boundary_stop_until == pytest.approx(10.3)
+
+    sample_stopped_chassis(node, 10.31)
+    assert not node._boundary_motion_inhibited(10.31)
+    assert node._boundary_stop_until is None
+    assert node.nav_context["nav_state"] == "WAYPOINT_MOVE"
+
+
+def test_boundary_feedback_warn_time_is_initialized_in_constructor():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    node_class = next(
+        item for item in tree.body
+        if isinstance(item, ast.ClassDef) and item.name == "RTKNavControlNode"
+    )
+    init = next(
+        item for item in node_class.body
+        if isinstance(item, ast.FunctionDef) and item.name == "__init__"
+    )
+    assigned = {
+        target.attr
+        for item in ast.walk(init)
+        if isinstance(item, ast.Assign)
+        for target in item.targets
+        if isinstance(target, ast.Attribute)
+    }
+    assert "_boundary_feedback_warn_time" in assigned

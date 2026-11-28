@@ -35,6 +35,7 @@ def _load_navigation():
         "start_heading_recalibration", "multi_waypoint_nav_generator",
         "move_to_first_waypoint",
         "_confirm_waypoint_arrival", "_get_resume_path_direction",
+        "_pause_waypoint_calibration",
     }
     node_class = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                       and n.name == "RTKNavControlNode")
@@ -653,11 +654,14 @@ def test_waypoint_turn_displacement_does_not_skip_the_current_waypoint():
 
     assert next(generator) == (0.0, 0.0)
     assert node.current_waypoint_idx == 1
-    assert node.nav_context["nav_state"] == ns["NavState"].PAUSE
+    assert node.nav_context["nav_state"] == ns["NavState"].WAYPOINT_MOVE
+    assert node.nav_context["waypoint_recovery_pending"] is True
+    assert node.nav_context["calib_realign_count"] == 1
 
 
 @pytest.mark.parametrize("distance, trusted, expected_state", [
     (0.08, True, "WAYPOINT_MOVE"),
+    (0.74, True, "WAYPOINT_MOVE"),
     (0.74, False, "PAUSE"),
 ])
 def test_waypoint_calibration_completion_checks_position(distance, trusted, expected_state):
@@ -673,6 +677,22 @@ def test_waypoint_calibration_completion_checks_position(distance, trusted, expe
     node._position_sample_trusted = trusted
     next(node.multi_waypoint_nav_generator())
     assert node.nav_context["nav_state"] == expected_state
+
+
+def test_waypoint_calibration_pauses_after_realign_budget_is_exhausted():
+    node, ns = _make_node()
+    node.nav_context.update(nav_state=ns["NavState"].WAYPOINT_CALIB,
+                            is_angle_recalib=False, calib_retry_count=0,
+                            calib_realign_count=2)
+    def completed():
+        if False:
+            yield
+        return True
+    node.nav_context["calib_generator"] = completed()
+    node.calc_distance_to_waypoint.return_value = 0.74
+    next(node.multi_waypoint_nav_generator())
+    assert node.nav_context["nav_state"] == ns["NavState"].PAUSE
+    assert node.nav_context["pause_reason"] == "calib_stuck"
 
 
 def test_bridge_entry_reverse_swaps_stanley_output_and_uses_virtual_heading():

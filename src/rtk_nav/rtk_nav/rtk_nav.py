@@ -75,6 +75,10 @@ HEADING_RECOVERY_CHECK_INTERVAL = 3.0  # 航向异常超时后恢复检查间隔
 CALIB_STUCK_MAX_RETRIES = 3  # 校准卡滞最大重试次数，超此次数后才永久暂停
 CALIB_RETRY_BACKUP_SPEED = 6.684508  # 航向校准卡滞重试的后退速度（r/min）。
 CALIB_RETRY_BACKUP_DURATION = 1.5  # 校准卡滞重试的后退脱困时长（秒）
+# 最终航向校准会原地转向，打滑或转向中心与定位参考点不重合时会产生位移；
+# 该偏差可信时先自动回对准原航点，不直接按人工介入停车。
+CALIB_POSITION_DRIFT_TOLERANCE = 0.30  # 校准后允许的航点位置偏差（米）
+CALIB_REALIGN_MAX_RETRIES = 2  # 校准后位置超差的自动回对准次数上限
 
 TURN_SPEED_FAST = 10.026761  # 航向误差较大时的转向基准速度（r/min）。
 TURN_SPEED_MID = 6.684508  # 航向误差中等时的转向基准速度（r/min）。
@@ -117,6 +121,7 @@ MANUAL_INTERVENTION_PAUSE_REASONS = frozenset({
     "waypoint_recovery_diverge",
     "boundary_retreat_timeout",
     "boundary_cycle_exhausted",
+    "boundary_feedback_missing",
     "imu_odom_fallback_ineligible",
     "imu_odom_fallback_stale_data",
     "imu_odom_fallback_boundary_blocked",
@@ -195,6 +200,7 @@ BOUNDARY_CLEAR_CONFIRM_SEC = 0.2
 BOUNDARY_IO_MAX_AGE = 0.25  # IO 接收时效（秒），包括桥架区域。
 BOUNDARY_STOP_MIN_SEC = 0.2  # 原始短触发停车的最短保持时间。
 BOUNDARY_DRIVE_FEEDBACK_MAX_AGE = 0.25  # 停稳确认所用实测轮速的时效（秒）。
+BOUNDARY_STOP_CONFIRM_TIMEOUT = 2.0  # 停稳反馈缺失时，边界停车锁存的最长时间（秒）。
 BOUNDARY_STOP_LINEAR_MPS = 0.01
 BOUNDARY_STOP_ANGULAR_RAD_S = 0.05
 BOUNDARY_TIGHT_ARC_WHEEL_RATIO = 0.5
@@ -208,9 +214,9 @@ ERROR_CALIB_TIMEOUT = 128    # 航向校准卡滞/超时及相关人工介入故
 
 # 航向稳定性检查（基于 ins_heading，静止时无漂移才放行）
 # 不限制固定角度范围——出仓后遥控接管等场景下车头朝向不固定，只要IMU不漂移就判定为稳定
-HEADING_STABILITY_WINDOW = 5.0      # 稳定性检查窗口（秒）
+HEADING_STABILITY_WINDOW = 3.0      # 稳定性检查窗口（秒）
 HEADING_STABILITY_RANGE = 1.0       # 窗口内最大允许变化（度），超出判定漂移中
-HEADING_STABILITY_SETTLE_WINDOW = 30.0  # 慢漂移收敛窗口（秒）
+HEADING_STABILITY_SETTLE_WINDOW = 5.0  # 慢漂移收敛窗口（秒）
 HEADING_STABILITY_SETTLE_RANGE = 1.0    # 收敛窗口内最大允许变化（度）
 # 保留少量边界余量，避免滚动队列在窗口边界时先删掉首帧，导致窗口永远无法 ready。
 HEADING_STABILITY_HISTORY_RETENTION = HEADING_STABILITY_SETTLE_WINDOW + 1.0
@@ -450,6 +456,7 @@ class RTKNavControlNode(Node):
         self._boundary_stop_stamp_ns = None
         self._boundary_drive_stamp_ns = 0
         self._boundary_drive_velocity = (float("nan"), float("nan"))
+        self._boundary_feedback_warn_time = 0.0
 
         self.gps_cache = []
         # 距离历史缓存（用于异常检测）
@@ -574,6 +581,7 @@ class RTKNavControlNode(Node):
             "initial_recovery_pending": False,
             "bearing_mode_locked": False,  # 一旦t>1.0锁定方位角模式，防振荡
             "calib_retry_count": 0,      # 校准卡滞重试次数
+            "calib_realign_count": 0,    # 校准后位置超差自动回对准次数
             "calib_target_heading": None,  # 当前校准目标航向（重试/恢复时复用，保证一致性）
             "calibration_active": False,
             "calib_origin": None,
@@ -1576,10 +1584,56 @@ class RTKNavControlNode(Node):
         if self._boundary_io_timed_out(now):
             return True
         if self._boundary_stop_until is not None:
-            if now < self._boundary_stop_until or not self._boundary_chassis_stopped():
+            if now < self._boundary_stop_until:
                 return True
-            self._boundary_stop_until = None
+            if self._boundary_chassis_stopped():
+                self._boundary_stop_until = None
+                self._boundary_feedback_warn_time = 0.0
+                return False
+            self._handle_boundary_stop_feedback_missing(now)
+            return True
         return False
+
+    def _handle_boundary_stop_feedback_missing(self, now: float) -> None:
+        """轮速反馈缺失时先限频告警，超过锁存上限后转入可诊断的PAUSE。"""
+        if self._boundary_stop_until is None:
+            return
+        trigger_time = self._boundary_stop_until - BOUNDARY_STOP_MIN_SEC
+        waited = max(0.0, now - trigger_time)
+        if waited < BOUNDARY_STOP_CONFIRM_TIMEOUT:
+            if now - self._boundary_feedback_warn_time >= 5.0:
+                self._boundary_feedback_warn_time = now
+                self.get_logger().warn(
+                    "[RTKNav] 边界停车等待底盘轮速反馈确认，"
+                    f"/motor/drive_twist 缺失或过期，已等待{waited:.1f}s"
+                )
+            return
+        if self.current_control_mode != ControlMode.AUTO_CLEANING:
+            self._boundary_stop_until = None
+            self._boundary_feedback_warn_time = 0.0
+            return
+        if (self.nav_context.get("nav_state") == NavState.PAUSE
+                and self.nav_context.get("pause_reason") == "boundary_feedback_missing"):
+            return
+        pre_pause_state = self.nav_context.get("nav_state", NavState.WAYPOINT_MOVE)
+        if pre_pause_state == NavState.PAUSE:
+            pre_pause_state = (
+                self.nav_context.get("pre_pause_state") or NavState.WAYPOINT_MOVE
+            )
+        self.nav_context["pre_pause_state"] = pre_pause_state
+        self.nav_context["nav_state"] = NavState.PAUSE
+        self.nav_context["pause_reason"] = "boundary_feedback_missing"
+        self.nav_context["manual_intervention_seen"] = False
+        self.nav_context["brush_active"] = self.brush_active
+        self.nav_running = False
+        self.multi_waypoint_generator = None
+        self.publish_nav_state(NavState.PAUSE)
+        self.publish_stop_speed()
+        self.get_logger().error(
+            "[RTKNav] 边界停车后超过"
+            f"{BOUNDARY_STOP_CONFIRM_TIMEOUT:.1f}s未收到新鲜底盘轮速反馈"
+            "（/motor/drive_twist），进入PAUSE等待人工处理"
+        )
 
     def _stop_on_boundary_io_loss(self) -> None:
         """停车等待 IO 恢复，已启动的脱困转入人工处理。"""
@@ -2146,8 +2200,14 @@ class RTKNavControlNode(Node):
         if (self.current_control_mode == ControlMode.AUTO_CLEANING
                 and motion and self._boundary_blocks_motion(motion)):
             self._boundary_stop_until = now + BOUNDARY_STOP_MIN_SEC
+            self._boundary_feedback_warn_time = 0.0
             self._arrival_confirmation.reset()
             self.publish_stop_speed()
+            self.get_logger().warn(
+                "[RTKNav] 原始边界触发停车：sensors="
+                f"{sorted(self._raw_boundary_sensor_names())}, motion={motion}",
+                throttle_duration_sec=1.0,
+            )
         episode = getattr(self, "_fallback_episode", None)
         if episode and episode.get("active") and (
             self.boundary_correct_locked
@@ -4502,6 +4562,21 @@ class RTKNavControlNode(Node):
         self.publish_stop_speed()
         self.get_logger().error(f"[初始航向对准] {detail}，已停车并进入PAUSE等待人工处理")
 
+    def _pause_waypoint_calibration(self, detail: str) -> None:
+        """普通航点最终校准无法自动恢复时锁定停车，等待人工处理。"""
+        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
+        self.nav_context["calib_generator"] = None
+        self.nav_context["calibration_active"] = False
+        self.nav_context["nav_state"] = NavState.PAUSE
+        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
+        self.nav_context["pause_reason"] = "calib_stuck"
+        self.nav_context["manual_intervention_seen"] = False
+        self.nav_context["brush_active"] = self.brush_active
+        self.nav_running = False
+        self.publish_nav_state(NavState.PAUSE)
+        self.publish_stop_speed()
+        self.get_logger().error(detail)
+
     def _pause_boundary_retreat_timeout(self, result: str, label: str) -> None:
         """边界矫正或撤退无法继续时锁定停车，等待人工处理。"""
         phase = {
@@ -4994,6 +5069,7 @@ class RTKNavControlNode(Node):
             "bearing_mode_locked": False,
             "brush_active": False,  # 滚刷是否激活
             "calib_retry_count": 0,
+            "calib_realign_count": 0,
             "calib_target_heading": None,
             "calibration_active": False,
             "calib_origin": None,
@@ -5159,6 +5235,7 @@ class RTKNavControlNode(Node):
         self.nav_context["retreat_enabled"] = False
         self._clear_retreat_context()
         self.nav_context["calib_retry_count"] = 0
+        self.nav_context["calib_realign_count"] = 0
         self.nav_context["angle_abnormal_count"] = 0
         self.nav_context["is_angle_recalib"] = False
         self.nav_context["waypoint_recalib_count"] = 0
@@ -5588,26 +5665,57 @@ class RTKNavControlNode(Node):
 
                     is_recalib = self.nav_context.get("is_angle_recalib", False)
 
-                    if not is_recalib and (
-                        not self._position_sample_trusted
-                        or self.calc_distance_to_waypoint(target_waypoint) >= 0.30
-                    ):
-                        self.set_rtk_error_bits(ERROR_CALIB_TIMEOUT)
-                        self.nav_context["calib_generator"] = None
-                        self.nav_context["calibration_active"] = False
-                        self.nav_context["nav_state"] = NavState.PAUSE
-                        self.nav_context["pre_pause_state"] = NavState.WAYPOINT_CALIB
-                        self.nav_context["pause_reason"] = "calib_stuck"
-                        self.nav_context["manual_intervention_seen"] = False
-                        self.nav_context["brush_active"] = self.brush_active
-                        self.nav_running = False
-                        self.publish_nav_state(NavState.PAUSE)
-                        self.publish_stop_speed()
-                        self.get_logger().error(
-                            "[航向校准] 转向后定位不可信或偏离航点超过0.30m，停车等待人工处理"
+                    if not is_recalib and not self._position_sample_trusted:
+                        self._pause_waypoint_calibration(
+                            "[航向校准] 转向后定位不可信，停车等待人工处理"
                         )
                         yield (0.0, 0.0)
                         return
+
+                    if not is_recalib:
+                        position_drift = self.calc_distance_to_waypoint(target_waypoint)
+                        if position_drift >= CALIB_POSITION_DRIFT_TOLERANCE:
+                            realign_count = self.nav_context.get(
+                                "calib_realign_count", 0
+                            )
+                            if realign_count < CALIB_REALIGN_MAX_RETRIES:
+                                self.nav_context["calib_realign_count"] = realign_count + 1
+                                self.get_logger().warn(
+                                    f"[航向校准] 校准后偏离航点{position_drift:.2f}m"
+                                    f"（打滑/转向位移），第{realign_count + 1}/"
+                                    f"{CALIB_REALIGN_MAX_RETRIES}次自动回对准原航点"
+                                )
+                                self.nav_context["calib_generator"] = None
+                                self.nav_context["calibration_active"] = False
+                                self.nav_context["calib_origin"] = None
+                                self.nav_context["retreat_enabled"] = False
+                                self._clear_retreat_context()
+                                self.nav_context["waypoint_recovery_pending"] = True
+                                self.nav_context["waypoint_recovery_active"] = False
+                                self.nav_context["waypoint_recovery_aligned"] = False
+                                self.nav_context["waypoint_recovery_direction"] = None
+                                self.nav_context["force_bearing_mode"] = False
+                                self.nav_context["force_bearing_target"] = None
+                                self.nav_context["force_bearing_recalib_count"] = 0
+                                self.nav_context["force_bearing_min_distance"] = float("inf")
+                                self.nav_context["distance_increase_count"] = 0
+                                self.nav_context["angle_abnormal_count"] = 0
+                                self.heading_abnormal_start_time = None
+                                self.heading_timed_out = False
+                                self.nav_context["pause_reason"] = None
+                                self.nav_context["nav_state"] = NavState.WAYPOINT_MOVE
+                                current_nav_state = NavState.WAYPOINT_MOVE
+                                self._arrival_confirmation.reset()
+                                self.publish_stop_speed()
+                                yield (0.0, 0.0)
+                                continue
+
+                            self._pause_waypoint_calibration(
+                                f"[航向校准] 自动回对准{CALIB_REALIGN_MAX_RETRIES}次后"
+                                f"仍偏离航点{position_drift:.2f}m，停车等待人工处理"
+                            )
+                            yield (0.0, 0.0)
+                            return
 
                     # 校准成功，清零卡滞重试计数和暂停原因（防止残留导致StopIteration误判）
                     if self.nav_context.get("calib_retry_count", 0) > 0:
@@ -5664,6 +5772,7 @@ class RTKNavControlNode(Node):
                     if not is_recalib:
                         # 正常航点切换时才清零打滑计数器和方位角直行模式
                         self.nav_context["waypoint_recalib_count"] = 0
+                        self.nav_context["calib_realign_count"] = 0
                         self.nav_context["force_bearing_mode"] = False
                         self.nav_context["force_bearing_target"] = None
                         self.nav_context["force_bearing_recalib_count"] = 0
@@ -6036,6 +6145,11 @@ class RTKNavControlNode(Node):
                 control_heading = self.imu_yaw
                 if bridge_drive_direction == "BACKWARD":
                     control_heading = self.normalize_angle(self.imu_yaw + 180.0)
+                recalib_target_heading = path_direction
+                if bridge_drive_direction == "BACKWARD":
+                    recalib_target_heading = self.normalize_angle(
+                        path_direction + 180.0
+                    )
                 heading_err = self.normalize_angle(path_direction - control_heading)
                 # force_bearing_mode 时航向误差来自侧向接近目标，非 IMU 异常，跳过重校准
                 in_bearing_mode = self.nav_context.get("force_bearing_mode", False)
@@ -6043,7 +6157,7 @@ class RTKNavControlNode(Node):
                         and not in_bearing_mode
                         and abs(heading_err) > HEADING_ABNORMAL_THRESHOLD):
                     self.start_heading_recalibration(
-                        control_heading,
+                        recalib_target_heading,
                         heading_err,
                         "新航段首帧航向差过大，先停车校准"
                     )
@@ -6066,9 +6180,10 @@ class RTKNavControlNode(Node):
 
                 # 连续航向异常触发即时重校准；同航点≥2次则切换到方位角直行模式
                 if self.nav_context["angle_abnormal_count"] >= ANGLE_ABNORMAL_COUNT:
+                    abnormal_count = self.nav_context["angle_abnormal_count"]
                     self.nav_context["waypoint_recalib_count"] += 1
                     self.get_logger().warn(
-                        f"[Stanley] 航向异常持续{self.nav_context['angle_abnormal_count']}帧："
+                        f"[Stanley] 航向异常持续{abnormal_count}帧："
                         f"hdg_err={heading_err:.1f}°，同航点第{self.nav_context['waypoint_recalib_count']}次校准"
                     )
                     self.nav_context["angle_abnormal_count"] = 0
@@ -6091,9 +6206,9 @@ class RTKNavControlNode(Node):
                         yield (0.0, 0.0)
                         continue
                     self.start_heading_recalibration(
-                        control_heading,
+                        recalib_target_heading,
                         heading_err,
-                        f"航向异常持续{self.nav_context['angle_abnormal_count']}帧"
+                        f"航向异常持续{abnormal_count}帧"
                     )
                     current_nav_state = NavState.WAYPOINT_CALIB
                     yield (0.0, 0.0)
@@ -6878,6 +6993,7 @@ class RTKNavControlNode(Node):
         self.nav_context["manual_intervention_seen"] = False
         self.nav_context["calib_generator"] = None
         self.nav_context["calib_retry_count"] = 0
+        self.nav_context["calib_realign_count"] = 0
         self.nav_context["force_bearing_mode"] = False
         self.nav_context["force_bearing_target"] = None
         self.nav_context["force_bearing_recalib_count"] = 0
@@ -7053,6 +7169,7 @@ class RTKNavControlNode(Node):
         self.nav_context["manual_intervention_seen"] = False
         self.nav_context["calib_generator"] = None
         self.nav_context["calib_retry_count"] = 0
+        self.nav_context["calib_realign_count"] = 0
         self.nav_context["calibration_active"] = False
         self.nav_context["force_bearing_mode"] = False
         self.nav_context["force_bearing_target"] = None
@@ -7116,6 +7233,7 @@ class RTKNavControlNode(Node):
             self.heading_abnormal_start_time = None
             self.heading_timed_out = False
             self.nav_context["calib_retry_count"] = 0  # 清零校准卡滞重试计数
+            self.nav_context["calib_realign_count"] = 0  # 重新进入AUTO后恢复自动回对准预算
             # 核心修改：若之前是初始移动中断，强制保留/重置为INITIAL_MOVE
             if (not self.geofence_recovery_active and self.nav_context["nav_state"] not in [NavState.IDLE, NavState.WAYPOINT_MOVE, NavState.WAYPOINT_CALIB, NavState.COMPLETED, NavState.PAUSE]):
                 self.nav_context["nav_state"] = NavState.INITIAL_MOVE

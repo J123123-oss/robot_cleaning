@@ -133,6 +133,57 @@ def test_resume_retains_valid_segment_heading_when_robot_is_off_path():
     assert not node.nav_context.get("calibration_active", False)
 
 
+@pytest.mark.parametrize(
+    ("imu_yaw", "waypoint_areas", "backward"),
+    [
+        pytest.param(20.0, None, False, id="forward"),
+        pytest.param(
+            200.0, ["cleaning", "bridge-2-3"], True, id="bridge-backward"
+        ),
+    ],
+)
+def test_waypoint_recalibration_targets_effective_path_heading(
+    imu_yaw, waypoint_areas, backward
+):
+    node, _ = make_node()
+    node.imu_yaw = imu_yaw
+    node.last_waypoint_cache = node.waypoints[0]
+    if waypoint_areas is not None:
+        node.waypoint_areas = waypoint_areas
+    node.check_control_mode = lambda: True
+    node.get_target_waypoint = lambda index: node.waypoints[index]
+    node.calc_distance_to_waypoint = lambda *_: 2.0
+    node._get_projection_ratio = lambda *_: 0.0
+    node._waypoint_initial_recovery_needed = lambda *_: False
+    node._record_waypoint_overshoot = lambda *_: False
+    node.calculate_lateral_error = lambda *_: 0.0
+    node._speed_for_lateral_error_growth = lambda speed, *_: speed
+
+    path_direction = node.calculate_path_bearing(
+        node.last_waypoint_cache[0], node.last_waypoint_cache[1],
+        node.waypoints[1][0], node.waypoints[1][1],
+    )
+    if backward:
+        assert node._ensure_bridge_entry_direction(path_direction) == "BACKWARD"
+    control_heading = (
+        node.normalize_angle(imu_yaw + 180.0) if backward else imu_yaw
+    )
+    assert abs(node.normalize_angle(path_direction - control_heading)) > 15.0
+
+    recorded_targets = []
+    node.start_heading_recalibration = (
+        lambda target, *_: recorded_targets.append(target)
+    )
+
+    assert next(node.multi_waypoint_nav_generator()) == (0.0, 0.0)
+
+    expected_target = (
+        node.normalize_angle(path_direction + 180.0)
+        if backward else path_direction
+    )
+    assert recorded_targets == [pytest.approx(expected_target)]
+
+
 def test_completed_turn_invalidates_both_path_cache_fields_before_next_tick():
     node, namespace = make_node()
     node.waypoints.append((120.00001, 30.00001, 0.0))

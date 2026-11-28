@@ -2,6 +2,12 @@
 
 按日期记录已提交的功能、修复与现场配置。最新条目放在前面。每次更新写明影响范围、行为变化与实际验证结果。对已提交的工作可附 Git 短哈希。
 
+## 2026-11-28
+
+- **航点校准后打滑自动回对准**：普通航点最终航向校准成功后，若定位可信但车体中心距原航点不小于 `0.30 m`（原地转向打滑，或转向中心与定位参考点不重合），不再直接按 `calib_stuck` 人工暂停，而是保持当前航点，复用 `waypoint_recovery_pending` 的停车确认、围栏校验、前进/倒车选择和低转向直线恢复流程回对准，到达后重新执行到点确认和最终航向校准。定位不可信仍直接人工暂停；自动回对准最多 `2` 次，重试耗尽后保持 `calib_stuck`。`rtk_nav.py` 新增 `CALIB_POSITION_DRIFT_TOLERANCE`、`CALIB_REALIGN_MAX_RETRIES` 和 `calib_realign_count`，并在切换航点、人工恢复、路径切换、区域跳转和重新进入 AUTO 时清零计数。新增回对准分支、定位不可信暂停和重试预算耗尽回归用例；`test_boundary_calibration_contract.py`、`test_calibration_timeout.py` 及 `test_waypoint_tracking_recovery.py` 相关用例通过，其余失败为改动前基线（缺配置、旧 AST 夹具）。未做 ROS2 构建或实车验证。
+- **航向异常重校准目标修正**：`multi_waypoint_nav_generator` 的 WAYPOINT_MOVE 航向异常重校准原先传入 `control_heading`（当前车体实测航向），校准目标等于当前航向，误差立即为 0；现场恢复清扫时横向偏差 3.8 m，右转纠偏超过 15° 触发重校准后，日志持续打印“重新校准到路径方向 27°/26.9°”（实际路径方向 4.7°），约 5 Hz 循环 55 次直至 15 s 航向超时暂停。现改为使用当前有效路径方向：前进段直接使用 `path_direction`，桥架倒车段使用 `path_direction + 180°`。触发时的异常帧数改为在清零前保存，避免日志打印“持续 0 帧”。新增前进和桥架倒车两种重校准目标回归测试；相关定向测试通过，先前失败的 `test_uncommanded_turn_still_stops_and_requests_recalibration` 恢复通过。`test_logged_stanley_recovery_is_not_interrupted_after_five_frames` 等缺少 AST 夹具成员的失败为改动前基线，本次未处理；未做 ROS2 构建或实车验证。
+- **4G 动态路由与 FRP 回退**：WWAN 看门狗按当前 `wwan0` 地址和网关动态维护 FRP 服务端 `/32` 路由，连续 3 次 4G 探测失败后移除专用路由并重建 `frpc`，让新控制连接回到 Wi-Fi 默认路由（metric 100）；4G 地址或路径变化时同样重建连接，避免已有 TCP 会话继续锁在旧出口。看门狗改用 `Type=simple`，消除 `Type=notify` 与 `frpc.service After=` 组合造成的启动死锁。远端 Bash 语法检查通过，两个服务连续观察期间保持 `active/running`，`forlinxfrp` SSH 可用；未强制中断 4G 做现场切换测试。
+
 ## 2026-11-27
 
 - **电子围栏弯点与区域余量**：桥架走廊增加圆角连接区，消除分段矩形在拐角外侧的几何缺口；围栏副文件支持清扫区域和桥架分别设置外扩半径，当前规划器和 `001`、`020_20261127_100322` 路线副文件分别调整为 `0.6 m` 与 `0.3 m`。现有副文件的清扫边界从原有 0.2 m 外扩结果继续外扩 0.4 m。虚拟机 ROS2 Jazzy 隔离目录中三个依赖包构建成功，围栏几何、首点公共区域和桥架加载专项测试 22 项通过；扩展测试有既有断言不符及隔离副本缺配置导致的失败，尚未进行实车验证。

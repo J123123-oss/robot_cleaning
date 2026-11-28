@@ -150,6 +150,25 @@ def test_calibration_failure_pauses_without_automatic_backup():
     assert "CALIB_RETRY_BACKUP_SPEED" not in navigation
 
 
+def test_calibration_position_drift_realigns_same_waypoint_before_pause():
+    _, tree = _source_tree()
+    navigation = ast.unparse(_function(tree, "multi_waypoint_nav_generator"))
+    assert "CALIB_POSITION_DRIFT_TOLERANCE" in navigation
+    assert "CALIB_REALIGN_MAX_RETRIES" in navigation
+    assert "self.nav_context['calib_realign_count']" in navigation
+    assert "self.nav_context['waypoint_recovery_pending'] = True" in navigation
+    # 定位不可信仍直接进入人工暂停，不允许带病回对准。
+    assert "if not is_recalib and (not self._position_sample_trusted):" in navigation
+    assert "self.calc_distance_to_waypoint(target_waypoint)" in navigation
+    # 回对准分支必须先于重试耗尽后的 calib_stuck 暂停。
+    drift_pos = navigation.index("CALIB_POSITION_DRIFT_TOLERANCE")
+    exhaust_pause_pos = navigation.rindex("self._pause_waypoint_calibration(")
+    assert drift_pos < exhaust_pause_pos
+    helper = ast.unparse(_function(tree, "_pause_waypoint_calibration"))
+    assert "self.nav_context['pause_reason'] = 'calib_stuck'" in helper
+    assert "self.nav_context['calib_realign_count'] = 0" in navigation
+
+
 def test_heading_recalibration_does_not_rewrite_navigation_state():
     _, tree = _source_tree()
     recalibration = _function(tree, "start_heading_recalibration")

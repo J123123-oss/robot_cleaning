@@ -1689,6 +1689,9 @@ class MotorControlNode(Node):
             self.motor_ctrl.reconnect_can_bus()
         # AIMotor 驱动由当前控制节点主动轮询，并发布最新反馈话题。
         self.motor_ctrl.poll_feedback()
+        # can_motor_driver 未加入执行器，其自身定时器不会运行；统一由控制
+        # 节点推进里程计，持续发布 /odom 和 /motor/drive_twist。
+        self.motor_ctrl.update_odometry()
         self._check_current_protection()
         if self.current_stall_fault:
             # 故障锁存期间屏蔽所有控制源，直到显式恢复命令清除故障。

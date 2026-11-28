@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -451,3 +451,18 @@ def test_remote_timer_controls_wheels_and_keeps_launch_brush_speed(web_active, f
     controller._kinco_brush.request.assert_called_once_with(
         BrushAction.RUN, 25.0, source="enable_test", valid_for=0.5,
     )
+
+
+def test_timer_publishes_odometry_after_feedback_poll():
+    controller = make_enable_brush_test_controller(
+        web_control_active=False, rc_control=True, current_status="RC_ENABLE",
+        web_rc_last_update=0.0, current_left_speed=0.0, current_right_speed=0.0,
+        _service_kinco_motion=Mock(), _check_current_protection=Mock(),
+        is_laser_timeout=Mock(return_value=False), mode_pub=Mock(),
+    )
+    controller.timer_callback()
+
+    assert controller.motor_ctrl.mock_calls[:2] == [
+        call.poll_feedback(),
+        call.update_odometry(),
+    ]
