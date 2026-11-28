@@ -2521,6 +2521,13 @@ class MotorControlNode(Node):
             | (int(self.back_right) << 3)
         )
 
+        if self.current_status == "DISABLE":
+            self.confirmed_sensors.clear()
+            self.blocked_directions.clear()
+            self.boundary_active_count = 0
+            self.boundary_clear_count = 0
+            return
+
         # 仅自动清扫交由rtk_nav处理；进出仓即使从自动模式发起也必须
         # 执行本节点的方向保护，不能因流程标记而跳过防跌落。
         if self.current_control_mode == "AUTO_CLEANING" and not self.is_in_bin_process:

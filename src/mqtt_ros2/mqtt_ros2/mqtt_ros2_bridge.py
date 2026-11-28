@@ -70,7 +70,7 @@ class MQTTRos2Bridge(Node):
         self.topic_command = self.declare_parameter('topic_command', 'robot/HEJIN_Huaxinyuan/command').value
         self.topic_result = self.declare_parameter('topic_result', 'robot/HEJIN_Huaxinyuan/result').value
         self.client_id = self.declare_parameter('client_id', 'python-mqtt-client-ID').value
-        self.ca_cert = self.declare_parameter('ca_cert', None).value
+        self.ca_cert = self.declare_parameter('ca_cert', '').value or None
 
         # 打印最终配置
         self.config = {

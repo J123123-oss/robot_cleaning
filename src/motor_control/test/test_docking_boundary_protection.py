@@ -82,3 +82,23 @@ def test_cleaning_keeps_rtk_boundary_ownership():
     assert not node.blocked_directions
     node.set_motors_speed(-10.0, 10.0)
     assert (node.current_left_speed, node.current_right_speed) == (-10.0, 10.0)
+
+
+def test_disable_reports_sensor_state_without_running_boundary_protection():
+    node = make_node(mode="NORMAL")
+    logger = Mock()
+    node.get_logger = lambda: logger
+    node.current_status = "DISABLE"
+    node.confirmed_sensors = {"back_left"}
+    node.blocked_directions = {"BACKWARD", "LEFT"}
+    node.boundary_active_count = 3
+    node.boundary_clear_count = 1
+
+    node.io_data_callback(SimpleNamespace(data=0x0B))
+
+    assert node.sensors_status == 4
+    assert not node.confirmed_sensors
+    assert not node.blocked_directions
+    assert node.boundary_active_count == 0
+    assert node.boundary_clear_count == 0
+    logger.warn.assert_not_called()
